@@ -1,0 +1,36 @@
+name: "Separation Sequence"
+difficulty: INTERMEDIATE
+duration_s: 3600
+briefing: |
+  Simulate the full separation sequence from launch vehicle.
+  The spacecraft starts in PRE_SEPARATION phase. A 30-minute
+  separation timer counts down, after which the OBC bootloader
+  powers on and begins transmitting a beacon. The first ground
+  station contact occurs at Iqaluit approximately 45 minutes
+  after separation. Operators must establish contact, verify
+  bootloader beacon, boot application software, perform initial
+  health check, and begin sequential power-on of subsystems.
+
+initial_conditions:
+  spacecraft_phase: 0  # PRE_SEPARATION
+  speed: 10  # 10x to speed through timer
+
+events:
+  - time_s: 5
+    type: instructor
+    action: start_separation
+    description: "Launch vehicle separation — 30 min timer starts"
+
+  - time_s: 1805
+    type: instructor
+    action: set_speed
+    value: 1
+    description: "Timer expired — slow to real-time for first contact"
+
+expected_responses:
+  - { category: detect, description: "Observe separation timer expiry and OBC bootloader power-on" }
+  - { category: detect, description: "Detect beacon telemetry (SID 11) during first contact" }
+  - { category: command, description: "Boot application software (S8 func_id 42)" }
+  - { category: command, description: "Set onboard time (S9.1)" }
+  - { category: detect, description: "Verify full HK (all SIDs) after app boot" }
+  - { category: command, description: "Deploy antennas (S8 func_id 56)" }

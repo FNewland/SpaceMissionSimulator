@@ -1,0 +1,19 @@
+name: "OBC Watchdog Reset to Boot Loader"
+difficulty: ADVANCED
+duration_s: 3600
+briefing: |
+  The OBC application software crashes at T+60s, triggering a watchdog reset.
+  The OBC drops to boot loader mode with minimal HK. The operator must detect
+  the reboot, verify boot loader HK, and boot the application software.
+events:
+  - time_offset_s: 60
+    action: inject
+    params:
+      subsystem: obdh
+      failure: obc_crash
+      magnitude: 1.0
+      onset: step
+expected_responses:
+  - { category: detect, description: "Detect loss of full HK; only SID 11 beacon on bootloader APID 0x002" }
+  - { category: isolate, description: "Identify watchdog reset from reboot cause and uptime" }
+  - { category: recover, description: "Boot application via OBC_BOOT_APP, verify all SIDs resume" }

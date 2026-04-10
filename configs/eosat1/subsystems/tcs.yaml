@@ -1,0 +1,78 @@
+model: tcs_basic
+
+zones:
+  - name: panel_px
+    capacitance_j_per_c: 5000
+    time_constant_s: 600
+    initial_temp_c: 15.0
+  - name: panel_mx
+    capacitance_j_per_c: 5000
+    time_constant_s: 600
+    initial_temp_c: 12.0
+  - name: panel_py
+    capacitance_j_per_c: 4000
+    time_constant_s: 500
+    initial_temp_c: 20.0
+  - name: panel_my
+    capacitance_j_per_c: 4000
+    time_constant_s: 500
+    initial_temp_c: 18.0
+  - name: panel_pz
+    capacitance_j_per_c: 3000
+    time_constant_s: 800
+    initial_temp_c: 10.0
+  - name: panel_mz
+    capacitance_j_per_c: 3000
+    time_constant_s: 800
+    initial_temp_c: 8.0
+
+heaters:
+  - name: battery
+    power_w: 6.0
+    on_temp_c: 1.0
+    off_temp_c: 5.0
+  - name: obc
+    power_w: 4.0
+    on_temp_c: 5.0
+    off_temp_c: 10.0
+
+fpa_cooler_target_c: -15.0
+
+# Thermal zone coupling (conduction/radiation parameters)
+thermal_coupling:
+  zone_conductance:
+    battery_obc: 0.5     # W/K conduction between battery and OBC
+    structure_electronics: 0.8
+    payload_structure: 0.4
+  space_radiation_g: 0.2  # W/K radiative coupling to space (3K sink)
+
+# Event thresholds
+event_thresholds:
+  temperature_warning:
+    battery: [0.0, 40.0]    # [low_warn_C, high_warn_C]
+    obc: [5.0, 50.0]
+    fpa: [-50.0, -5.0]
+  temperature_alarm:
+    battery: [-10.0, 50.0]
+    obc: [-5.0, 60.0]
+    fpa: [-60.0, 0.0]
+  thermal_runaway_rate_deg_per_min: 2.0
+
+param_ids:
+  temp_panel_px: 0x0400
+  temp_panel_mx: 0x0401
+  temp_panel_py: 0x0402
+  temp_panel_my: 0x0403
+  temp_panel_pz: 0x0404
+  temp_panel_mz: 0x0405
+  temp_obc: 0x0406
+  temp_battery: 0x0407
+  temp_fpa: 0x0408
+  htr_battery: 0x040A
+  htr_obc: 0x040B
+  cooler_fpa: 0x040C
+  htr_duty_battery: 0x040E
+  htr_duty_obc: 0x040F
+  htr_total_power_w: 0x0411
+  decontamination_active: 0x0418
+  thermal_gradient: 0x0419

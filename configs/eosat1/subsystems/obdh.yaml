@@ -1,0 +1,18 @@
+model: obdh_basic
+modes: [nominal, safe, emergency]
+watchdog_period_ticks: 30
+cpu_baseline_pct: 35.0
+
+param_ids:
+  obc_mode: 0x0300
+  obc_temp: 0x0301
+  cpu_load: 0x0302
+  mmm_used: 0x0303
+  tc_rx: 0x0304
+  tc_acc: 0x0305
+  tc_rej: 0x0306
+  tm_pkt: 0x0307
+  uptime: 0x0308
+  obc_time: 0x0309
+  reboot_count: 0x030A
+  sw_version: 0x030B

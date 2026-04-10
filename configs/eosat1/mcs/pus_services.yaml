@@ -1,0 +1,69 @@
+services:
+  s1:
+    label: "Request Verification"
+    enabled: true
+    description: "TC acceptance, execution and completion reports"
+  s3:
+    label: "Housekeeping"
+    enabled: true
+    default_interval_s: 4
+    max_sids: 32
+    description: "Periodic and one-shot housekeeping telemetry collection"
+  s5:
+    label: "Event Reporting"
+    enabled: true
+    max_log_entries: 500
+    description: "Onboard event detection and reporting by severity"
+  s6:
+    label: "Memory Management"
+    enabled: true
+    max_dump_bytes: 4096
+    description: "Onboard memory load, dump, and checksum verification"
+  s8:
+    label: "Function Management"
+    enabled: true
+    description: "Direct function execution on subsystems"
+  s9:
+    label: "Time Management"
+    enabled: true
+    description: "Spacecraft time synchronisation and correlation"
+  s11:
+    label: "Time-Tagged Scheduling"
+    enabled: true
+    max_commands: 256
+    description: "Deferred command execution at specified UTC times"
+  s12:
+    label: "Onboard Monitoring"
+    enabled: true
+    max_definitions: 64
+    description: "Parameter limit checking and out-of-limit event generation"
+  s15:
+    label: "Onboard Storage"
+    enabled: true
+    stores:
+      - id: 1
+        name: "HK Store"
+        capacity_bytes: 1048576
+      - id: 2
+        name: "Event Store"
+        capacity_bytes: 524288
+      - id: 3
+        name: "Science Store"
+        capacity_bytes: 8388608
+      - id: 4
+        name: "Alarm Store"
+        capacity_bytes: 262144
+    description: "Packet storage and retrieval for downlink scheduling"
+  s17:
+    label: "Connection Test"
+    enabled: true
+    description: "Echo-based link connectivity verification"
+  s19:
+    label: "Event-Action"
+    enabled: true
+    max_rules: 32
+    description: "Autonomous response rules triggered by onboard events"
+  s20:
+    label: "Parameter Management"
+    enabled: true
+    description: "Direct read/write of onboard parameter values"

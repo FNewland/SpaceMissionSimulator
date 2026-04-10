@@ -1,0 +1,21 @@
+name: "Reaction Wheel Bearing Failure"
+difficulty: ADVANCED
+duration_s: 2700
+briefing: |
+  RW-2 bearing will gradually degrade starting at T+180s.
+  Wheel temperature will rise and speed control will deteriorate.
+  The operator must detect, disable the wheel, and initiate desaturation.
+events:
+  - time_offset_s: 180
+    action: inject
+    params:
+      subsystem: aocs
+      failure: rw_bearing
+      magnitude: 0.8
+      onset: gradual
+      onset_duration_s: 300
+      wheel: 1
+expected_responses:
+  - { category: detect, description: "Detect RW-2 temperature anomaly" }
+  - { category: isolate, description: "Identify bearing degradation on RW-2" }
+  - { category: recover, description: "Disable RW-2 and command desaturation" }

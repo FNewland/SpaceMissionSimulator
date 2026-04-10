@@ -1,0 +1,315 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>EOSAT-1 — TCS / Thermal</title><link rel="stylesheet" href="../vendor/css/fonts.css"><style>*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg0: #060b10; --bg1: #0a1520; --bg2: #0d1e2d; --bg3: #112535;
+  --c0: #4a7090; --c1: #7ac0e0; --c2: #a0d8f8;
+  --grn: #39e05b; --yel: #f0c040; --red: #f04040; --cyn: #00e8ff; --mag: #e040ff;
+  --font: 'Share Tech Mono', monospace; --head: 'Orbitron', sans-serif;
+}
+body { background: var(--bg0); color: var(--c1); font-family: var(--font); font-size: 12px; overflow-x: hidden; }
+a { color: var(--cyn); text-decoration: none; }
+#nav { display: flex; align-items: center; gap: 2px; background: var(--bg1); border-bottom: 1px solid #1a3a50; padding: 4px 8px; position: sticky; top: 0; z-index: 100; }
+#nav a { padding: 4px 12px; border-radius: 3px; color: var(--c0); font-family: var(--head); font-size: 10px; letter-spacing: .1em; border: 1px solid transparent; }
+#nav a:hover, #nav a.active { color: var(--cyn); border-color: #1a4a60; background: var(--bg3); }
+#nav a.active { color: #0ff; border-color: var(--cyn); }
+#nav .spacer { flex: 1; }
+#nav .sc-id { font-family: var(--head); font-size: 11px; color: var(--cyn); letter-spacing: .15em; }
+#ws-status { font-size: 10px; padding: 2px 8px; border-radius: 3px; background: var(--bg3); }
+.ws-ok { color: #39e05b; } .ws-err { color: #f04040; }
+.main-grid { display: grid; gap: 6px; padding: 6px; height: calc(100vh - 38px); }
+.panel { background: var(--bg1); border: 1px solid #1a3a50; border-radius: 4px; padding: 8px; overflow: hidden; display: flex; flex-direction: column; }
+.panel-title { font-family: var(--head); font-size: 9px; letter-spacing: .15em; color: var(--c0); text-transform: uppercase; margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid #1a3a50; flex-shrink: 0; }
+.panel-body { flex: 1; overflow-y: auto; }
+.tm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
+.tm-row { display: flex; justify-content: space-between; align-items: center; padding: 2px 4px; border-radius: 2px; background: var(--bg2); }
+.tm-row:hover { background: var(--bg3); }
+.tm-lbl { color: var(--c0); font-size: 10px; white-space: nowrap; margin-right: 4px; }
+.tm-val { font-size: 12px; font-weight: bold; text-align: right; min-width: 70px; }
+.tm-unit { font-size: 9px; color: var(--c0); margin-left: 3px; }
+.green { color: #39e05b; } .yellow { color: #f0c040; } .red { color: #f04040; } .cyan { color: #00e8ff; } .white { color: #fff; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-family: var(--head); letter-spacing: .1em; }
+.badge-ok { background: #0a2e14; color: #39e05b; border: 1px solid #1a5a2a; }
+.badge-warn { background: #2e2200; color: #f0c040; border: 1px solid #5a4400; }
+.badge-alarm { background: #2e0808; color: #f04040; border: 1px solid #5a1010; }
+.badge-off { background: #141414; color: #444; border: 1px solid #333; }
+.badge-info { background: #0a1e30; color: #00e8ff; border: 1px solid #1a4060; }
+.pbar-wrap { background: var(--bg3); border-radius: 3px; height: 8px; overflow: hidden; margin: 2px 0; }
+.pbar-fill { height: 100%; border-radius: 3px; transition: width .5s; }
+.pbar-grn { background: #39e05b; } .pbar-yel { background: #f0c040; } .pbar-red { background: #f04040; }
+.tc-form { display: flex; flex-direction: column; gap: 4px; }
+.tc-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tc-label { color: var(--c0); font-size: 10px; min-width: 90px; flex-shrink: 0; }
+.tc-input { background: var(--bg3); border: 1px solid #1a3a50; color: var(--c2); padding: 3px 6px; border-radius: 3px; font-family: var(--font); font-size: 11px; width: 140px; }
+.tc-input:focus { border-color: #00e8ff; outline: none; }
+select.tc-input { cursor: pointer; }
+.btn { background: var(--bg3); border: 1px solid var(--c0); color: var(--c1); padding: 4px 12px; border-radius: 3px; cursor: pointer; font-family: var(--font); font-size: 11px; letter-spacing: .05em; transition: all .15s; }
+.btn:hover { border-color: #00e8ff; color: #00e8ff; }
+.btn-grn { border-color: #39e05b; color: #39e05b; } .btn-grn:hover { background: #0a2e14; }
+.btn-red { border-color: #f04040; color: #f04040; } .btn-red:hover { background: #2e0808; }
+.btn-yel { border-color: #f0c040; color: #f0c040; }
+.btn-mag { border-color: #e040ff; color: #e040ff; }
+#event-log { font-size: 10px; line-height: 1.6; }
+.le { padding: 1px 3px; border-radius: 2px; }
+.le:hover { background: var(--bg3); }
+.lt { color: #3a6080; margin-right: 5px; }
+.lc { margin-right: 5px; font-weight: bold; }
+.le.ok .lc { color: #39e05b; } .le.err .lc { color: #f04040; }
+.le.tm .lc { color: #5090b0; } .le.warn .lc { color: #f0c040; } .le.info .lc { color: #00e8ff; }
+canvas { background: #000; border-radius: 4px; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+.data-table th { color: var(--c0); text-align: left; padding: 2px 6px; border-bottom: 1px solid #1a3a50; font-family: var(--head); font-size: 8px; letter-spacing: .1em; }
+.data-table td { padding: 2px 6px; border-bottom: 1px solid #0e1e2c; }
+.data-table tr:hover td { background: var(--bg3); }
+.main-grid{grid-template-columns:280px 1fr 260px;grid-template-rows:1fr 1fr}.p-thermal{grid-column:1;grid-row:1/3}.p-trend{grid-column:2;grid-row:1}.p-panels{grid-column:2;grid-row:2}.p-tc{grid-column:3;grid-row:1}.p-log{grid-column:3;grid-row:2}</style></head>
+<body data-pos="tcs">
+<div id="nav">
+  <span class="sc-id">EOSAT-1</span><div class="spacer"></div>
+  <a href="/fd">FD</a><a href="/eps">EPS</a><a href="/ttc">TTC</a><a href="/payload">PLD</a><a href="/tcs" class="active">TCS</a><a href="/sys">SYS</a><a href="/fdir">FDIR</a><a href="/instr">INSTR</a>
+  <div class="spacer"></div>
+  <span id="sim-time" style="color:#7ac0e0;font-size:10px;margin-right:10px"></span>
+  <span id="ws-status" class="ws-err">NO LINK</span>
+</div>
+<div class="main-grid">
+  <div class="panel p-thermal">
+    <div class="panel-title">Thermal Status</div>
+    <div class="panel-body">
+      <div class="tm-grid">
+        <div class="tm-row"><span class="tm-lbl">PANEL +X</span><span class="tm-val" id="temp-px">---</span><span class="tm-unit">°C</span></div>
+        <div class="tm-row"><span class="tm-lbl">PANEL -X</span><span class="tm-val" id="temp-mx">---</span><span class="tm-unit">°C</span></div>
+        <div class="tm-row"><span class="tm-lbl">PANEL +Y</span><span class="tm-val" id="temp-py">---</span><span class="tm-unit">°C</span></div>
+        <div class="tm-row"><span class="tm-lbl">PANEL -Y</span><span class="tm-val" id="temp-my">---</span><span class="tm-unit">°C</span></div>
+        <div class="tm-row"><span class="tm-lbl">PANEL +Z</span><span class="tm-val" id="temp-pz">---</span><span class="tm-unit">°C</span></div>
+        <div class="tm-row"><span class="tm-lbl">PANEL -Z</span><span class="tm-val" id="temp-mz">---</span><span class="tm-unit">°C</span></div>
+        <div class="tm-row"><span class="tm-lbl">OBC</span><span class="tm-val" id="temp-obc">---</span><span class="tm-unit">°C</span></div>
+        <div class="tm-row"><span class="tm-lbl">BATTERY</span><span class="tm-val" id="temp-bat">---</span><span class="tm-unit">°C</span></div>
+        <div class="tm-row"><span class="tm-lbl">FPA</span><span class="tm-val" id="temp-fpa">---</span><span class="tm-unit">°C</span></div>
+        <div class="tm-row"><span class="tm-lbl">THRUSTER</span><span class="tm-val" id="temp-thr">---</span><span class="tm-unit">°C</span></div>
+      </div>
+      <div style="margin-top:8px;padding-top:8px;border-top:1px solid #1a3a50">
+        <div class="tm-row" style="margin-bottom:4px;justify-content:center"><strong style="font-size:11px">HEATER CONTROL</strong></div>
+        <div style="display:flex;flex-wrap:wrap;gap:3px">
+          <button class="btn btn-grn" onclick="sendTC(8,1,{function_id:0x28})">HEATER BAT</button>
+          <button class="btn" onclick="sendTC(8,1,{function_id:0x29})">HEATER OBC</button>
+          <button class="btn" onclick="sendTC(8,1,{function_id:0x2A})">HEATER THR</button>
+          <button class="btn btn-yel" onclick="sendTC(8,1,{function_id:0x2B})">FPA COOL</button>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:4px">
+          <button class="btn btn-mag" onclick="sendTC(8,1,{function_id:0x2F,target_temp_c:50.0})">DECON START</button>
+          <button class="btn btn-red" onclick="sendTC(8,1,{function_id:0x30})">DECON STOP</button>
+          <button class="btn" onclick="sendTC(8,1,{function_id:0x31})">MAP REQUEST</button>
+        </div>
+      </div>
+      <div style="margin-top:8px;padding-top:8px;border-top:1px solid #1a3a50">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="tm-lbl">HTR BATTERY</span><span id="htr-bat" class="badge badge-off">OFF</span></div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="tm-lbl">HTR OBC</span><span id="htr-obc" class="badge badge-off">OFF</span></div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span class="tm-lbl">HTR THRUSTER</span><span id="htr-thr" class="badge badge-off">OFF</span></div>
+        <div style="display:flex;justify-content:space-between"><span class="tm-lbl">COOLER FPA</span><span id="cool-fpa" class="badge badge-off">OFF</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="panel p-trend">
+    <div class="panel-title">Internal Temperature Trends</div>
+    <canvas id="trend-canvas" width="600" height="180" style="width:100%;height:calc(100% - 26px)"></canvas>
+  </div>
+  <div class="panel p-panels">
+    <div class="panel-title">Panel Temperature Trends</div>
+    <canvas id="panel-canvas" width="600" height="180" style="width:100%;height:calc(100% - 26px)"></canvas>
+  </div>
+  <div class="panel p-tc">
+    <div class="panel-title">TC Uplink</div>
+    <div class="panel-body">
+      <div class="tc-form">
+        <div class="tc-row"><span class="tc-label">Command</span>
+          <select id="tc-sel" class="tc-input" style="width:200px" onchange="populateTcFields()"></select>
+        </div>
+        <div id="tc-fields"></div>
+        <div class="tc-row" style="margin-top:4px">
+          <span class="tc-label">APID</span>
+          <input id="tc-apid" class="tc-input" value="1" style="width:60px">
+          <button class="btn btn-grn" onclick="sendTCFromForm()">SEND TC</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="panel p-log">
+    <div class="panel-title">Event Log</div>
+    <div class="panel-body"><div id="event-log"></div></div>
+  </div>
+</div>
+<script>
+// ── COMMON JS (inlined into each position page) ──────────────────────────
+
+const WS_URL   = `ws://${location.host}/ws`;
+const CAT_URL  = `/catalog`;
+let ws, catalog = {tc:[], failures:{}};
+let state = {};
+let log = [];
+const MAX_LOG = 200;
+
+// ── WebSocket ────────────────────────────────────────────────────────────
+function connectWS() {
+  ws = new WebSocket(WS_URL);
+  ws.onopen  = () => { wsStatus('LINK', 'ok'); fetchCatalog(); };
+  ws.onclose = () => { wsStatus('NO LINK', 'err'); setTimeout(connectWS, 3000); };
+  ws.onerror = () => wsStatus('ERROR', 'err');
+  ws.onmessage = e => {
+    try {
+      const m = JSON.parse(e.data);
+      if (m.type === 'state')     { state = m.data; onState(m.data); }
+      if (m.type === 'tm_packet') onTmPacket(m);
+      if (m.type === 'tc_ack')    onTcAck(m);
+      if (m.type === 'tc_err')    onTcErr(m);
+    } catch(ex) {}
+  };
+}
+
+function wsStatus(txt, cls) {
+  const el = document.getElementById('ws-status');
+  if (!el) return;
+  el.textContent = txt;
+  el.className   = 'ws-' + cls;
+}
+
+async function fetchCatalog() {
+  try {
+    const pos = document.body.dataset.pos || '';
+    const r   = await fetch(CAT_URL + (pos ? `?pos=${pos}` : ''));
+    catalog   = await r.json();
+    if (typeof onCatalog === 'function') onCatalog(catalog);
+  } catch(ex) {}
+}
+
+// ── TC send ──────────────────────────────────────────────────────────────
+function sendTC(service, subtype, params, apid=1) {
+  if (!ws || ws.readyState !== 1) { addLog('SYS','WS not connected','err'); return; }
+  ws.send(JSON.stringify({type:'tc', service, subtype, params, apid}));
+}
+
+function sendInstr(cmd) {
+  if (!ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({type:'instr', cmd}));
+}
+
+// ── Event log ────────────────────────────────────────────────────────────
+function addLog(cat, msg, cls='info') {
+  const t  = new Date().toISOString().slice(11,23);
+  log.unshift({t, cat, msg, cls});
+  if (log.length > MAX_LOG) log.length = MAX_LOG;
+  renderLog();
+}
+
+function renderLog() {
+  const el = document.getElementById('event-log');
+  if (!el) return;
+  el.innerHTML = log.slice(0,60).map(e =>
+    `<div class="le ${e.cls}"><span class="lt">${e.t}</span>` +
+    `<span class="lc">[${e.cat}]</span> ${e.msg}</div>`
+  ).join('');
+}
+
+function onTcAck(m)  { addLog('TC',  `ACK S${m.service}/${m.subtype} seq=${m.seq}`, 'ok'); }
+function onTcErr(m)  { addLog('TC',  `ERR ${m.error}`, 'err'); }
+function onTmPacket(m) { addLog('TM', `APID=${m.apid} S${m.service}/${m.subtype} len=${m.len}`, 'tm'); }
+
+// ── Limit CSS ─────────────────────────────────────────────────────────────
+function limitCls(val, ylo, yhi, rlo, rhi) {
+  if (val <= rlo || val >= rhi)    return 'red';
+  if (val <= ylo || val >= yhi)    return 'yellow';
+  return 'green';
+}
+
+function fmtNum(v, dp=2) { return (v == null ? '---' : Number(v).toFixed(dp)); }
+function fmtBool(v, t='ON', f='OFF') { return v ? t : f; }
+
+// ── Navigation bar ────────────────────────────────────────────────────────
+function buildNav(active) {
+  const positions = {
+    fd:'FD', eps:'EPS', ttc:'TTC', payload:'PLD', tcs:'TCS', sys:'SYS', fdir:'FDIR', instr:'INSTR'
+  };
+  return Object.entries(positions).map(([k,v]) =>
+    `<a href="/${k}" class="${k===active?'active':''}">${v}</a>`
+  ).join('');
+}
+
+// ── Sim time display ──────────────────────────────────────────────────────
+function fmtSimTime(s) {
+  if (!s) return '---';
+  const d = new Date(s * 1000);
+  return d.toISOString().slice(0,19).replace('T',' ') + 'Z';
+}
+
+const TREND_BUF=[],PANEL_BUF=[];const TREND_MAX=120;
+function onState(s) {
+  document.getElementById('sim-time').textContent = fmtSimTime(s.sim_time);
+  const t=s.tcs||{};
+  setV('temp-px',  t.temp_panel_px,  -25, 70, -30, 80);
+  setV('temp-mx',  t.temp_panel_mx,  -25, 70, -30, 80);
+  setV('temp-py',  t.temp_panel_py,  -25, 65, -30, 75);
+  setV('temp-my',  t.temp_panel_my,  -25, 65, -30, 75);
+  setV('temp-pz',  t.temp_panel_pz,  -25, 70, -30, 80);
+  setV('temp-mz',  t.temp_panel_mz,  -25, 70, -30, 80);
+  setV('temp-obc', t.temp_obc,         5, 60,   0, 70);
+  setV('temp-bat', t.temp_battery,     2, 40,   0, 45);
+  setV('temp-fpa', t.temp_fpa,       -18,  8, -20, 12);
+  setV('temp-thr', t.temp_thruster,  -10, 20, -15, 30);
+  const el_htr_bat=document.getElementById('htr-bat');
+  if(el_htr_bat){el_htr_bat.className='badge '+(t.htr_battery?'badge-ok':'badge-off');el_htr_bat.textContent=t.htr_battery?'ON':'OFF';}
+  const el_htr_obc=document.getElementById('htr-obc');
+  if(el_htr_obc){el_htr_obc.className='badge '+(t.htr_obc?'badge-ok':'badge-off');el_htr_obc.textContent=t.htr_obc?'ON':'OFF';}
+  const el_htr_thr=document.getElementById('htr-thr');
+  if(el_htr_thr){el_htr_thr.className='badge '+(t.htr_thruster?'badge-ok':'badge-off');el_htr_thr.textContent=t.htr_thruster?'ON':'OFF';}
+  const el_cool=document.getElementById('cool-fpa');
+  if(el_cool){el_cool.className='badge '+(t.cooler_fpa?'badge-ok':'badge-off');el_cool.textContent=t.cooler_fpa?'ON':'OFF';}
+  TREND_BUF.push([parseFloat(t.temp_battery)||0, parseFloat(t.temp_obc)||0, parseFloat(t.temp_fpa)||0, parseFloat(t.temp_thruster)||0]);
+  PANEL_BUF.push([parseFloat(t.temp_panel_px)||0, parseFloat(t.temp_panel_mx)||0, parseFloat(t.temp_panel_py)||0, parseFloat(t.temp_panel_my)||0, parseFloat(t.temp_panel_pz)||0, parseFloat(t.temp_panel_mz)||0]);
+  if(TREND_BUF.length>TREND_MAX){TREND_BUF.shift();PANEL_BUF.shift();}
+  drawTrend(); drawPanels();
+}
+function setV(id,val,ylo,yhi,rlo,rhi){const e=document.getElementById(id);if(!e)return;e.textContent=fmtNum(val,1);e.className='tm-val '+limitCls(val||0,ylo,yhi,rlo,rhi);}
+function setText(id,v){const e=document.getElementById(id);if(e)e.textContent=v;}
+function drawTimeSeries(canvasId,bufs,cols,labels,mins,maxs){
+  const cv=document.getElementById(canvasId);if(!cv)return;
+  const ctx=cv.getContext('2d'),W=cv.width,H=cv.height;
+  ctx.fillStyle='#050d14';ctx.fillRect(0,0,W,H);
+  if(!bufs[0]||bufs[0].length<2)return;
+  const N=TREND_MAX;
+  bufs.forEach((buf,bi)=>{
+    const mn=mins[bi],mx=maxs[bi],rng=mx-mn||1;
+    const toY=v=>H-10-((v-mn)/rng)*(H-20);
+    ctx.strokeStyle=cols[bi];ctx.lineWidth=1.5;ctx.beginPath();
+    buf.forEach((v,i)=>{const x=(i/N)*W;i===0?ctx.moveTo(x,toY(v)):ctx.lineTo(x,toY(v));});
+    ctx.stroke();
+    ctx.fillStyle=cols[bi];ctx.font='9px Share Tech Mono';
+    ctx.fillText(labels[bi]+': '+fmtNum(buf[buf.length-1],1),4+bi*80,12);
+  });
+}
+function drawTrend(){const bufs=TREND_BUF.length>0?[[],[], [], []]:[];TREND_BUF.forEach((row,i)=>{bufs[0].push(row[0]);bufs[1].push(row[1]);bufs[2].push(row[2]);bufs[3].push(row[3]);});drawTimeSeries('trend-canvas',bufs,['#39e05b','#7ac0e0','#f0c040','#e040ff'],['Bat °C','OBC °C','FPA °C','Thr °C'],[0, 0, -20, -10],[45, 70, 12, 30]);}
+function drawPanels(){const bufs=PANEL_BUF.length>0?[[],[], [], [], [], []]:[];PANEL_BUF.forEach((row,i)=>{bufs[0].push(row[0]);bufs[1].push(row[1]);bufs[2].push(row[2]);bufs[3].push(row[3]);bufs[4].push(row[4]);bufs[5].push(row[5]);});drawTimeSeries('panel-canvas',bufs,['#00e8ff','#7ac0e0','#f04040','#f0c040','#39e05b','#e040ff'],['PX','MX','PY','MY','PZ','MZ'],[-30, -30, -30, -30, -30, -30],[80, 80, 75, 75, 80, 80]);}
+
+let tcsTCs = [];
+function onCatalog(cat) {
+  tcsTCs = cat.tc.filter(t => ['tcs','sys'].includes(t.position) || !t.position);
+  const sel = document.getElementById('tc-sel'); sel.innerHTML='';
+  tcsTCs.forEach((t,i) => { const o=document.createElement('option'); o.value=i; o.textContent=t.label; sel.appendChild(o); });
+  populateTcFields();
+}
+function populateTcFields() {
+  const i=parseInt(document.getElementById('tc-sel').value);
+  const tc=tcsTCs[i]; if(!tc) return;
+  const div=document.getElementById('tc-fields'); div.innerHTML='';
+  (tc.fields||[]).forEach(f => {
+    if(f.n==='dummy') return;
+    const row=document.createElement('div'); row.className='tc-row';
+    row.innerHTML=`<span class="tc-label">${f.label}</span><input class="tc-input" id="tcf-${f.n}" value="${f.d}">`;
+    div.appendChild(row);
+  });
+}
+function sendTCFromForm() {
+  const i=parseInt(document.getElementById('tc-sel').value);
+  const tc=tcsTCs[i]; if(!tc) return;
+  const params={};
+  (tc.fields||[]).forEach(f => { const el=document.getElementById('tcf-'+f.n); if(el) params[f.n]=f.t==='float'?parseFloat(el.value):el.value; });
+  const apid=parseInt(document.getElementById('tc-apid').value)||1;
+  sendTC(tc.service, tc.subtype, params, apid);
+}
+connectWS();
+</script></body></html>

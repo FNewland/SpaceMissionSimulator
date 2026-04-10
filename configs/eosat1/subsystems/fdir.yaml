@@ -1,0 +1,99 @@
+enabled: true
+rules:
+  - parameter: eps.bat_soc
+    condition: "< 20"
+    threshold: 20.0
+    level: 1
+    action: payload_poweroff
+  - parameter: eps.bat_soc
+    condition: "< 15"
+    threshold: 15.0
+    level: 2
+    action: safe_mode_eps
+  - parameter: eps.bus_voltage
+    condition: "< 26"
+    threshold: 26.0
+    level: 2
+    action: safe_mode_eps
+  - parameter: tcs.temp_battery
+    condition: "> 42"
+    threshold: 42.0
+    level: 1
+    action: heater_off_battery
+  - parameter: tcs.temp_battery
+    condition: "< 1"
+    threshold: 1.0
+    level: 1
+    action: heater_on_battery
+  - parameter: aocs.att_error
+    condition: "> 5"
+    threshold: 5.0
+    level: 2
+    action: safe_mode_aocs
+  - parameter: obdh.temp
+    condition: "> 65"
+    threshold: 65.0
+    level: 2
+    action: safe_mode_obc
+  - parameter: obdh.reboot_count
+    condition: "> 4"
+    threshold: 4.0
+    level: 3
+    action: spacecraft_emergency
+  - parameter: aocs.rw1_temp
+    condition: "> 65"
+    threshold: 65.0
+    level: 1
+    action: disable_rw1
+  - parameter: aocs.rw2_temp
+    condition: "> 65"
+    threshold: 65.0
+    level: 1
+    action: disable_rw2
+  - parameter: aocs.rw3_temp
+    condition: "> 65"
+    threshold: 65.0
+    level: 1
+    action: disable_rw3
+  - parameter: aocs.rw4_temp
+    condition: "> 65"
+    threshold: 65.0
+    level: 1
+    action: disable_rw4
+
+  # Additional cascading fault rules
+
+  - parameter: eps.bus_voltage
+    condition: "< 24"
+    threshold: 24.0
+    level: 2
+    action: safe_mode_aocs
+    description: "Critical undervoltage triggers AOCS safe mode"
+
+  - parameter: tcs.temp_battery
+    condition: "> 50"
+    threshold: 50.0
+    level: 2
+    action: payload_poweroff
+    description: "Battery overtemp triggers payload power-off"
+
+  - parameter: aocs.wheels_enabled
+    condition: "< 2"
+    threshold: 2.0
+    level: 2
+    action: safe_mode_aocs
+    description: "Multi-wheel failure triggers safe mode"
+
+  - parameter: obdh.can_bus_status
+    condition: "< 1"
+    threshold: 1.0
+    level: 3
+    action: spacecraft_emergency
+    description: "CAN bus loss triggers emergency mode"
+
+  - parameter: ttc.pa_temp
+    condition: "> 75"
+    threshold: 75.0
+    level: 1
+    action: safe_mode_eps
+    description: "TTC PA overtemp reduction triggered"

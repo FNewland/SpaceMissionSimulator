@@ -1,0 +1,343 @@
+# S12 On-Board Monitoring Definitions
+# Format: param_id, check_type (0=absolute, 1=delta), low_limit, high_limit, severity
+#
+# This configuration defines 25+ monitoring rules covering all spacecraft subsystems.
+# Rules are loaded at engine startup and checked every tick via S12 framework.
+
+s12_definitions:
+  # ===== EPS (0x0100-0x013F) =====
+  # Battery State of Charge (SoC) monitoring
+  - param_id: 0x0101  # eps.bat_soc
+    name: "EPS Battery SoC Warning"
+    check_type: 0  # absolute
+    low_limit: 20.0
+    high_limit: 100.0
+    severity: WARNING
+    description: "Battery state of charge below 20%"
+
+  - param_id: 0x0101  # eps.bat_soc (different rule)
+    name: "EPS Battery SoC Critical"
+    check_type: 0  # absolute
+    low_limit: 10.0
+    high_limit: 100.0
+    severity: ALARM
+    description: "Battery state of charge below 10%"
+
+  # Bus voltage monitoring
+  - param_id: 0x0105  # eps.bus_voltage
+    name: "EPS Bus Voltage Low"
+    check_type: 0  # absolute
+    low_limit: 27.0
+    high_limit: 35.0
+    severity: WARNING
+    description: "Bus voltage below 27V (safe threshold)"
+
+  - param_id: 0x0105  # eps.bus_voltage (different rule)
+    name: "EPS Bus Voltage Critical"
+    check_type: 0  # absolute
+    low_limit: 25.0
+    high_limit: 35.0
+    severity: ALARM
+    description: "Bus voltage below 25V (critical)"
+
+  # Battery current monitoring
+  - param_id: 0x0109  # eps.bat_current
+    name: "EPS Battery Overcurrent"
+    check_type: 0  # absolute
+    low_limit: -15.0
+    high_limit: 15.0
+    severity: WARNING
+    description: "Battery current magnitude exceeds 15A"
+
+  # Battery temperature monitoring
+  - param_id: 0x0102  # eps.bat_temp
+    name: "EPS Battery Overtemp"
+    check_type: 0  # absolute
+    low_limit: -5.0
+    high_limit: 45.0
+    severity: WARNING
+    description: "Battery temperature exceeds 45°C"
+
+  - param_id: 0x0102  # eps.bat_temp (different rule)
+    name: "EPS Battery Undertemp"
+    check_type: 0  # absolute
+    low_limit: -5.0
+    high_limit: 50.0
+    severity: WARNING
+    description: "Battery temperature below -5°C"
+
+  # Solar array current monitoring (during sunlit)
+  - param_id: 0x0103  # eps.sa_a_current
+    name: "EPS Solar Array A Low Current"
+    check_type: 0  # absolute
+    low_limit: 0.1
+    high_limit: 50.0
+    severity: WARNING
+    description: "Solar array A current below 0.1A in sunlight"
+
+  - param_id: 0x0104  # eps.sa_b_current
+    name: "EPS Solar Array B Low Current"
+    check_type: 0  # absolute
+    low_limit: 0.1
+    high_limit: 50.0
+    severity: WARNING
+    description: "Solar array B current below 0.1A in sunlight"
+
+  # ===== AOCS (0x0200-0x027F) =====
+  # Reaction wheel speed monitoring (per wheel, max ~5000 RPM)
+  - param_id: 0x0207  # aocs.rw1_speed
+    name: "AOCS Reaction Wheel 1 Overspeed"
+    check_type: 0  # absolute
+    low_limit: -5000.0
+    high_limit: 5000.0
+    severity: WARNING
+    description: "Reaction wheel 1 speed exceeds ±5000 RPM"
+
+  - param_id: 0x0208  # aocs.rw2_speed
+    name: "AOCS Reaction Wheel 2 Overspeed"
+    check_type: 0  # absolute
+    low_limit: -5000.0
+    high_limit: 5000.0
+    severity: WARNING
+    description: "Reaction wheel 2 speed exceeds ±5000 RPM"
+
+  - param_id: 0x0209  # aocs.rw3_speed
+    name: "AOCS Reaction Wheel 3 Overspeed"
+    check_type: 0  # absolute
+    low_limit: -5000.0
+    high_limit: 5000.0
+    severity: WARNING
+    description: "Reaction wheel 3 speed exceeds ±5000 RPM"
+
+  - param_id: 0x020A  # aocs.rw4_speed
+    name: "AOCS Reaction Wheel 4 Overspeed"
+    check_type: 0  # absolute
+    low_limit: -5000.0
+    high_limit: 5000.0
+    severity: WARNING
+    description: "Reaction wheel 4 speed exceeds ±5000 RPM"
+
+  # Total angular momentum saturation monitoring
+  - param_id: 0x025B  # aocs.total_momentum
+    name: "AOCS Total Momentum Saturated"
+    check_type: 0  # absolute
+    low_limit: -90.0
+    high_limit: 90.0
+    severity: WARNING
+    description: "Total system angular momentum exceeds 90% saturation"
+
+  # Attitude error monitoring
+  - param_id: 0x0217  # aocs.att_error
+    name: "AOCS Attitude Error High"
+    check_type: 0  # absolute
+    low_limit: 0.0
+    high_limit: 1.0
+    severity: WARNING
+    description: "Attitude error exceeds 1.0 degree"
+
+  # Star tracker status monitoring (status 3=blind, 4=failed)
+  - param_id: 0x0240  # aocs.st1_status
+    name: "AOCS Star Tracker 1 Blind"
+    check_type: 0  # absolute
+    low_limit: 0.0
+    high_limit: 2.5  # 0=off, 1=boot, 2=tracking; >2 is blind/failed
+    severity: ALARM
+    description: "Star tracker 1 lost lock (status 3+)"
+
+  - param_id: 0x0243  # aocs.st2_status
+    name: "AOCS Star Tracker 2 Blind"
+    check_type: 0  # absolute
+    low_limit: 0.0
+    high_limit: 2.5  # same logic
+    severity: ALARM
+    description: "Star tracker 2 lost lock (status 3+)"
+
+  # Gyro bias monitoring (threshold ~0.5 deg/s per axis)
+  - param_id: 0x0270  # aocs.gyro_bias_x
+    name: "AOCS Gyro X-Axis Bias High"
+    check_type: 0  # absolute
+    low_limit: -0.5
+    high_limit: 0.5
+    severity: WARNING
+    description: "Gyroscope X-axis bias estimate exceeds ±0.5 deg/s"
+
+  - param_id: 0x0271  # aocs.gyro_bias_y
+    name: "AOCS Gyro Y-Axis Bias High"
+    check_type: 0  # absolute
+    low_limit: -0.5
+    high_limit: 0.5
+    severity: WARNING
+    description: "Gyroscope Y-axis bias estimate exceeds ±0.5 deg/s"
+
+  - param_id: 0x0272  # aocs.gyro_bias_z
+    name: "AOCS Gyro Z-Axis Bias High"
+    check_type: 0  # absolute
+    low_limit: -0.5
+    high_limit: 0.5
+    severity: WARNING
+    description: "Gyroscope Z-axis bias estimate exceeds ±0.5 deg/s"
+
+  # ===== TCS (0x0400-0x0417) =====
+  # FPA temperature monitoring (target ~-10°C, acceptable range -15 to -3°C)
+  - param_id: 0x0408  # tcs.temp_fpa
+    name: "TCS FPA Temperature High"
+    check_type: 0  # absolute
+    low_limit: -15.0
+    high_limit: -3.0
+    severity: WARNING
+    description: "FPA temperature above -3°C (degraded performance)"
+
+  - param_id: 0x0408  # tcs.temp_fpa (different rule)
+    name: "TCS FPA Temperature Low"
+    check_type: 0  # absolute
+    low_limit: -15.0
+    high_limit: -20.0
+    severity: WARNING
+    description: "FPA temperature below -15°C (risk of over-cooling)"
+
+  # Battery temperature monitoring (internal to TCS)
+  - param_id: 0x0407  # tcs.temp_battery
+    name: "TCS Battery Overtemp"
+    check_type: 0  # absolute
+    low_limit: -10.0
+    high_limit: 45.0
+    severity: WARNING
+    description: "Battery temperature exceeds 45°C"
+
+  # OBC temperature monitoring
+  - param_id: 0x0406  # tcs.temp_obc
+    name: "TCS OBC Overtemp"
+    check_type: 0  # absolute
+    low_limit: 0.0
+    high_limit: 60.0
+    severity: ALARM
+    description: "OBC temperature exceeds 60°C"
+
+  # Heater power monitoring (all heaters combined)
+  - param_id: 0x0411  # tcs.htr_total_power
+    name: "TCS Heater Power Limit"
+    check_type: 0  # absolute
+    low_limit: 0.0
+    high_limit: 50.0
+    severity: WARNING
+    description: "Total heater power consumption exceeds 50W"
+
+  # ===== TTC (0x0500-0x0524) =====
+  # RSSI monitoring (typical range -95 to -60 dBm; below -95 is poor)
+  - param_id: 0x0502  # ttc.rssi
+    name: "TTC RSSI Low"
+    check_type: 0  # absolute
+    low_limit: -95.0
+    high_limit: 0.0
+    severity: WARNING
+    description: "Received Signal Strength Indicator below -95 dBm"
+
+  # Link margin monitoring (threshold 3 dB is critical)
+  - param_id: 0x0503  # ttc.link_margin
+    name: "TTC Link Margin Critical"
+    check_type: 0  # absolute
+    low_limit: 3.0
+    high_limit: 100.0
+    severity: ALARM
+    description: "Link margin below 3 dB (critical)"
+
+  # Energy per bit to noise density (threshold 4 dB)
+  - param_id: 0x0519  # ttc.eb_n0
+    name: "TTC Eb/N0 Low"
+    check_type: 0  # absolute
+    low_limit: 4.0
+    high_limit: 100.0
+    severity: WARNING
+    description: "Energy per bit to noise density below 4 dB"
+
+  # Power amplifier temperature monitoring
+  - param_id: 0x050F  # ttc.pa_temp
+    name: "TTC PA Overtemp"
+    check_type: 0  # absolute
+    low_limit: -10.0
+    high_limit: 60.0
+    severity: ALARM
+    description: "Power amplifier temperature exceeds 60°C"
+
+  # Bit error rate monitoring (log10 scale: -6 = 1e-6)
+  - param_id: 0x050C  # ttc.ber
+    name: "TTC Bit Error Rate High"
+    check_type: 0  # absolute
+    low_limit: -5.0  # 1e-5 is threshold
+    high_limit: 0.0
+    severity: WARNING
+    description: "Bit error rate exceeds 1e-5"
+
+  # ===== OBDH (0x0300-0x031E) =====
+  # CPU load monitoring
+  - param_id: 0x0302  # obdh.cpu_load
+    name: "OBDH CPU Load High"
+    check_type: 0  # absolute
+    low_limit: 0.0
+    high_limit: 90.0
+    severity: WARNING
+    description: "CPU load exceeds 90%"
+
+  # Memory usage monitoring
+  - param_id: 0x0303  # obdh.mmm_used
+    name: "OBDH Memory Usage High"
+    check_type: 0  # absolute
+    low_limit: 0.0
+    high_limit: 90.0
+    severity: WARNING
+    description: "Memory usage exceeds 90%"
+
+  # Reboot count monitoring
+  - param_id: 0x030A  # obdh.reboot_count
+    name: "OBDH Excessive Reboots"
+    check_type: 0  # absolute
+    low_limit: 0.0
+    high_limit: 3.0
+    severity: ALARM
+    description: "Reboot count exceeds 3 (anomaly indicator)"
+
+  # Memory error count monitoring
+  - param_id: 0x031E  # obdh.mem_errors
+    name: "OBDH Memory Errors"
+    check_type: 0  # absolute
+    low_limit: 0.0
+    high_limit: 5.0
+    severity: WARNING
+    description: "Memory error count exceeds 5"
+
+  # ===== Payload (0x0600-0x0629) =====
+  # FPA temperature (payload-specific; target ~-10°C)
+  - param_id: 0x0601  # payload.fpa_temp
+    name: "Payload FPA Temperature High"
+    check_type: 0  # absolute
+    low_limit: -15.0
+    high_limit: -3.0
+    severity: WARNING
+    description: "Payload FPA temperature above -3°C"
+
+  # Storage utilization monitoring
+  - param_id: 0x0604  # payload.store_used
+    name: "Payload Storage Full"
+    check_type: 0  # absolute
+    low_limit: 0.0
+    high_limit: 95.0
+    severity: WARNING
+    description: "Payload storage exceeds 95% full"
+
+  # Checksum error monitoring (should be 0)
+  - param_id: 0x0609  # payload.checksum_errors
+    name: "Payload Checksum Errors"
+    check_type: 0  # absolute
+    low_limit: 0.0
+    high_limit: 0.5  # triggers if > 0
+    severity: WARNING
+    description: "Payload checksum errors detected"
+
+  # Signal-to-noise ratio monitoring
+  - param_id: 0x0616  # payload.snr
+    name: "Payload SNR Low"
+    check_type: 0  # absolute
+    low_limit: 25.0
+    high_limit: 100.0
+    severity: WARNING
+    description: "Signal-to-noise ratio below 25 dB"

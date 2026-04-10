@@ -1,0 +1,38 @@
+# TTC Emergency Shutdown - Level 3 Recovery for TTC Failure
+# Shuts down TTC completely to prevent further damage
+
+procedure_id: "ttc_emergency_shutdown"
+name: "TTC Emergency Shutdown"
+category: "fdir_response"
+description: "Level 3 recovery: TTC emergency shutdown"
+
+steps:
+  - step_id: 1
+    name: "Disable TX"
+    description: "Disable TTC transmitter"
+    delay_s: 0.0
+    command: "s8_command"
+    params:
+      func_id: 66  # TTC_PA_ON
+      data: [0x00]  # turn off
+
+  - step_id: 2
+    name: "Disable Primary Transponder"
+    description: "Switch off primary transponder"
+    delay_s: 1.0
+    command: "s8_command"
+    params:
+      func_id: 63  # TTC_SWITCH_PRIMARY
+      data: [0x00]  # off
+
+  - step_id: 3
+    name: "Switch to Redundant (RX Only)"
+    description: "Enable redundant for RX only"
+    delay_s: 2.0
+    command: "s8_command"
+    params:
+      func_id: 64  # TTC_SWITCH_REDUNDANT
+      data: [0x01]  # rx only
+
+timeout_s: 15.0
+max_retries: 0

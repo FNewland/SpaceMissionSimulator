@@ -1,0 +1,26 @@
+name: "First Contact"
+difficulty: BASIC
+duration_s: 1800
+briefing: |
+  Spacecraft has completed separation timer and OBC is running
+  bootloader firmware. The first ground station pass over Iqaluit
+  is beginning. Operators must establish RF link, verify beacon
+  telemetry, boot application software, set the onboard clock,
+  and begin initial checkout.
+
+  This scenario starts at phase 3 (BOOTLOADER_OPS) with the
+  spacecraft in view of Iqaluit ground station.
+
+initial_conditions:
+  spacecraft_phase: 3  # BOOTLOADER_OPS
+  override_passes: true  # Ensure contact
+
+events: []
+
+expected_responses:
+  - { category: detect, description: "Verify carrier lock and beacon reception" }
+  - { category: command, description: "Send S17.1 connection test" }
+  - { category: command, description: "Boot application software (S8 func_id 42)" }
+  - { category: command, description: "Set onboard time via S9.1" }
+  - { category: command, description: "Deploy antennas (S8 func_id 56)" }
+  - { category: detect, description: "Confirm high-rate link after antenna deployment" }

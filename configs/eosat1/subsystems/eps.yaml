@@ -1,0 +1,49 @@
+model: eps_basic
+technology: triple_junction_gaas
+
+arrays:
+  - name: A
+    area_m2: 0.314
+    efficiency: 0.295
+  - name: B
+    area_m2: 0.314
+    efficiency: 0.295
+
+battery:
+  type: li_ion
+  capacity_wh: 120.0
+  voltage_nom: 26.4
+  soc_100_v: 29.2
+  soc_0_v: 21.5
+  internal_r_ohm: 0.05
+
+platform_idle_power_w: 95.0
+payload_power_w: 45.0
+payload_standby_power_w: 8.0
+fpa_cooler_power_w: 15.0
+transponder_power_w: 20.0
+transponder_rx_power_w: 5.0
+
+# Power line initial states (overrides defaults)
+power_lines:
+  obc: true          # non-switchable, always ON
+  ttc_rx: true       # non-switchable, always ON
+  ttc_tx: false      # switchable, default OFF (commanded on after AOS)
+  payload: false     # switchable, default OFF
+  fpa_cooler: false  # switchable, default OFF
+  htr_bat: false     # switchable, default OFF
+  htr_obc: false     # switchable, default OFF
+  aocs_wheels: false # switchable, default OFF — AOCS commissioned in LEOP
+
+param_ids:
+  bat_voltage: 0x0100
+  bat_soc: 0x0101
+  bat_temp: 0x0102
+  sa_a_current: 0x0103
+  sa_b_current: 0x0104
+  bus_voltage: 0x0105
+  power_cons: 0x0106
+  power_gen: 0x0107
+  eclipse_flag: 0x0108
+  bat_current: 0x0109
+  bat_capacity_wh: 0x010A

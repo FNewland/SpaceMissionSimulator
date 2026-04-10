@@ -1,0 +1,383 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<title>EOSAT-1 — Power & Thermal</title>
+<link rel="stylesheet" href="../vendor/css/fonts.css">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg0: #060b10; --bg1: #0a1520; --bg2: #0d1e2d; --bg3: #112535;
+  --c0: #4a7090; --c1: #7ac0e0; --c2: #a0d8f8;
+  --grn: #39e05b; --yel: #f0c040; --red: #f04040; --cyn: #00e8ff; --mag: #e040ff;
+  --font: 'Share Tech Mono', monospace; --head: 'Orbitron', sans-serif;
+}
+body { background: var(--bg0); color: var(--c1); font-family: var(--font); font-size: 12px; overflow-x: hidden; }
+a { color: var(--cyn); text-decoration: none; }
+#nav { display: flex; align-items: center; gap: 2px; background: var(--bg1); border-bottom: 1px solid #1a3a50; padding: 4px 8px; position: sticky; top: 0; z-index: 100; }
+#nav a { padding: 4px 12px; border-radius: 3px; color: var(--c0); font-family: var(--head); font-size: 10px; letter-spacing: .1em; border: 1px solid transparent; }
+#nav a:hover, #nav a.active { color: var(--cyn); border-color: #1a4a60; background: var(--bg3); }
+#nav a.active { color: #0ff; border-color: var(--cyn); }
+#nav .spacer { flex: 1; }
+#nav .sc-id { font-family: var(--head); font-size: 11px; color: var(--cyn); letter-spacing: .15em; }
+#ws-status { font-size: 10px; padding: 2px 8px; border-radius: 3px; background: var(--bg3); }
+.ws-ok { color: #39e05b; } .ws-err { color: #f04040; }
+.main-grid { display: grid; gap: 6px; padding: 6px; height: calc(100vh - 38px); }
+.panel { background: var(--bg1); border: 1px solid #1a3a50; border-radius: 4px; padding: 8px; overflow: hidden; display: flex; flex-direction: column; }
+.panel-title { font-family: var(--head); font-size: 9px; letter-spacing: .15em; color: var(--c0); text-transform: uppercase; margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid #1a3a50; flex-shrink: 0; }
+.panel-body { flex: 1; overflow-y: auto; }
+.tm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
+.tm-row { display: flex; justify-content: space-between; align-items: center; padding: 2px 4px; border-radius: 2px; background: var(--bg2); }
+.tm-row:hover { background: var(--bg3); }
+.tm-lbl { color: var(--c0); font-size: 10px; white-space: nowrap; margin-right: 4px; }
+.tm-val { font-size: 12px; font-weight: bold; text-align: right; min-width: 70px; }
+.tm-unit { font-size: 9px; color: var(--c0); margin-left: 3px; }
+.green { color: #39e05b; } .yellow { color: #f0c040; } .red { color: #f04040; } .cyan { color: #00e8ff; } .white { color: #fff; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-family: var(--head); letter-spacing: .1em; }
+.badge-ok { background: #0a2e14; color: #39e05b; border: 1px solid #1a5a2a; }
+.badge-warn { background: #2e2200; color: #f0c040; border: 1px solid #5a4400; }
+.badge-alarm { background: #2e0808; color: #f04040; border: 1px solid #5a1010; }
+.badge-off { background: #141414; color: #444; border: 1px solid #333; }
+.badge-info { background: #0a1e30; color: #00e8ff; border: 1px solid #1a4060; }
+.pbar-wrap { background: var(--bg3); border-radius: 3px; height: 8px; overflow: hidden; margin: 2px 0; }
+.pbar-fill { height: 100%; border-radius: 3px; transition: width .5s; }
+.pbar-grn { background: #39e05b; } .pbar-yel { background: #f0c040; } .pbar-red { background: #f04040; }
+.tc-form { display: flex; flex-direction: column; gap: 4px; }
+.tc-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tc-label { color: var(--c0); font-size: 10px; min-width: 90px; flex-shrink: 0; }
+.tc-input { background: var(--bg3); border: 1px solid #1a3a50; color: var(--c2); padding: 3px 6px; border-radius: 3px; font-family: var(--font); font-size: 11px; width: 140px; }
+.tc-input:focus { border-color: #00e8ff; outline: none; }
+select.tc-input { cursor: pointer; }
+.btn { background: var(--bg3); border: 1px solid var(--c0); color: var(--c1); padding: 4px 12px; border-radius: 3px; cursor: pointer; font-family: var(--font); font-size: 11px; letter-spacing: .05em; transition: all .15s; }
+.btn:hover { border-color: #00e8ff; color: #00e8ff; }
+.btn-grn { border-color: #39e05b; color: #39e05b; } .btn-grn:hover { background: #0a2e14; }
+.btn-red { border-color: #f04040; color: #f04040; } .btn-red:hover { background: #2e0808; }
+.btn-yel { border-color: #f0c040; color: #f0c040; }
+.btn-mag { border-color: #e040ff; color: #e040ff; }
+#event-log { font-size: 10px; line-height: 1.6; }
+.le { padding: 1px 3px; border-radius: 2px; }
+.le:hover { background: var(--bg3); }
+.lt { color: #3a6080; margin-right: 5px; }
+.lc { margin-right: 5px; font-weight: bold; }
+.le.ok .lc { color: #39e05b; } .le.err .lc { color: #f04040; }
+.le.tm .lc { color: #5090b0; } .le.warn .lc { color: #f0c040; } .le.info .lc { color: #00e8ff; }
+canvas { background: #000; border-radius: 4px; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+.data-table th { color: var(--c0); text-align: left; padding: 2px 6px; border-bottom: 1px solid #1a3a50; font-family: var(--head); font-size: 8px; letter-spacing: .1em; }
+.data-table td { padding: 2px 6px; border-bottom: 1px solid #0e1e2c; }
+.data-table tr:hover td { background: var(--bg3); }
+.rw-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.rw-cell { background: var(--bg2); border-radius: 4px; padding: 6px; text-align: center; }
+.rw-id { font-family: var(--head); font-size: 8px; color: var(--c0); margin-bottom: 3px; }
+.rw-rpm { font-size: 14px; font-weight: bold; }
+
+.main-grid { grid-template-columns: 1fr 1fr 280px; grid-template-rows: 1fr 1fr; }
+.p-eps   { grid-column:1; grid-row:1; }
+.p-tcs   { grid-column:1; grid-row:2; }
+.p-power { grid-column:2; grid-row:1 / 3; }
+.p-tc    { grid-column:3; grid-row:1; }
+.p-log   { grid-column:3; grid-row:2; }
+</style></head>
+<body data-pos="eps">
+<div id="nav">
+  <span class="sc-id">EOSAT-1</span><div class="spacer"></div>
+  <a href="/fd">FD</a><a href="/eps" class="active">EPS</a><a href="/ttc">TTC</a>
+  <a href="/payload">PLD</a><a href="/sys">SYS</a><a href="/fdir">FDIR</a><a href="/instr">INSTR</a>
+  <div class="spacer"></div>
+  <span id="sim-time" style="color:#7ac0e0;font-size:10px;margin-right:10px"></span>
+  <span id="ws-status" class="ws-err">NO LINK</span>
+</div>
+<div class="main-grid">
+
+  <!-- EPS Panel -->
+  <div class="panel p-eps">
+    <div class="panel-title">Electrical Power</div>
+    <div class="panel-body">
+      <div style="margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
+          <span class="tm-lbl">BATTERY SOC</span>
+          <span class="tm-val" id="soc">---</span><span class="tm-unit">%</span>
+        </div>
+        <div class="pbar-wrap"><div class="pbar-fill pbar-grn" id="soc-bar" style="width:0%"></div></div>
+      </div>
+      <div class="tm-grid">
+        <div class="tm-row"><span class="tm-lbl">BUS V</span><span class="tm-val" id="bus-v">---</span><span class="tm-unit">V</span></div>
+        <div class="tm-row"><span class="tm-lbl">BAT V</span><span class="tm-val" id="bat-v">---</span><span class="tm-unit">V</span></div>
+        <div class="tm-row"><span class="tm-lbl">BAT I</span><span class="tm-val" id="bat-i">---</span><span class="tm-unit">A</span></div>
+        <div class="tm-row"><span class="tm-lbl">BAT T</span><span class="tm-val" id="bat-t">---</span><span class="tm-unit">°C</span></div>
+        <div class="tm-row"><span class="tm-lbl">SA-A I</span><span class="tm-val" id="sa-a">---</span><span class="tm-unit">A</span></div>
+        <div class="tm-row"><span class="tm-lbl">SA-B I</span><span class="tm-val" id="sa-b">---</span><span class="tm-unit">A</span></div>
+        <div class="tm-row"><span class="tm-lbl">POWER GEN</span><span class="tm-val green" id="pgen">---</span><span class="tm-unit">W</span></div>
+        <div class="tm-row"><span class="tm-lbl">POWER CONS</span><span class="tm-val" id="pcons">---</span><span class="tm-unit">W</span></div>
+      </div>
+      <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px">
+        <button class="btn btn-grn" onclick="sendTC(8,1,{function_id:100})">SA-A ON</button>
+        <button class="btn btn-red"  onclick="sendTC(8,1,{function_id:101})">SA-A OFF</button>
+        <button class="btn btn-grn" onclick="sendTC(8,1,{function_id:102})">SA-B ON</button>
+        <button class="btn btn-red"  onclick="sendTC(8,1,{function_id:103})">SA-B OFF</button>
+        <button class="btn" onclick="sendTC(8,1,{function_id:104})">BAT HTR ON</button>
+        <button class="btn" onclick="sendTC(8,1,{function_id:105})">BAT HTR OFF</button>
+        <button class="btn" onclick="sendTC(8,1,{function_id:106})">OBC HTR ON</button>
+        <button class="btn" onclick="sendTC(8,1,{function_id:107})">OBC HTR OFF</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Thermal Panel -->
+  <div class="panel p-tcs">
+    <div class="panel-title">Thermal Control</div>
+    <div class="panel-body">
+      <div class="tm-grid">
+        <div class="tm-row"><span class="tm-lbl">OBC TEMP</span><span class="tm-val" id="t-obc">---</span><span class="tm-unit">°C</span></div>
+        <div class="tm-row"><span class="tm-lbl">BAT TEMP</span><span class="tm-val" id="t-bat">---</span><span class="tm-unit">°C</span></div>
+        <div class="tm-row"><span class="tm-lbl">FPA TEMP</span><span class="tm-val" id="t-fpa">---</span><span class="tm-unit">°C</span></div>
+        <div class="tm-row"><span class="tm-lbl">PANEL +X</span><span class="tm-val" id="t-px">---</span><span class="tm-unit">°C</span></div>
+        <div class="tm-row"><span class="tm-lbl">PANEL +Y</span><span class="tm-val" id="t-py">---</span><span class="tm-unit">°C</span></div>
+        <div class="tm-row"><span class="tm-lbl">HTR BAT</span><span class="tm-val" id="htr-bat">---</span></div>
+        <div class="tm-row"><span class="tm-lbl">HTR OBC</span><span class="tm-val" id="htr-obc">---</span></div>
+        <div class="tm-row"><span class="tm-lbl">FPA COOLER</span><span class="tm-val" id="cooler-fpa">---</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Power timeline canvas -->
+  <div class="panel p-power" style="padding:6px">
+    <div class="panel-title">Power History</div>
+    <canvas id="pwr-canvas" width="400" height="340" style="width:100%;height:calc(100% - 30px)"></canvas>
+  </div>
+
+  <!-- TC Panel -->
+  <div class="panel p-tc">
+    <div class="panel-title">TC Uplink — EPS</div>
+    <div class="panel-body">
+      <div class="tc-form">
+        <div class="tc-row"><span class="tc-label">Command</span>
+          <select id="tc-sel" class="tc-input" style="width:200px" onchange="populateTcFields()"></select>
+        </div>
+        <div id="tc-fields"></div>
+        <div class="tc-row" style="margin-top:4px">
+          <span class="tc-label">APID</span>
+          <input id="tc-apid" class="tc-input" value="1" style="width:60px">
+          <button class="btn btn-grn" onclick="sendTCFromForm()">SEND TC</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Event log -->
+  <div class="panel p-log">
+    <div class="panel-title">Event Log</div>
+    <div class="panel-body"><div id="event-log"></div></div>
+  </div>
+
+</div>
+<script>
+// ── COMMON JS (inlined into each position page) ──────────────────────────
+
+const WS_URL   = `ws://${location.host}/ws`;
+const CAT_URL  = `/catalog`;
+let ws, catalog = {tc:[], failures:{}};
+let state = {};
+let log = [];
+const MAX_LOG = 200;
+
+// ── WebSocket ────────────────────────────────────────────────────────────
+function connectWS() {
+  ws = new WebSocket(WS_URL);
+  ws.onopen  = () => { wsStatus('LINK', 'ok'); fetchCatalog(); };
+  ws.onclose = () => { wsStatus('NO LINK', 'err'); setTimeout(connectWS, 3000); };
+  ws.onerror = () => wsStatus('ERROR', 'err');
+  ws.onmessage = e => {
+    try {
+      const m = JSON.parse(e.data);
+      if (m.type === 'state')     { state = m.data; onState(m.data); }
+      if (m.type === 'tm_packet') onTmPacket(m);
+      if (m.type === 'tc_ack')    onTcAck(m);
+      if (m.type === 'tc_err')    onTcErr(m);
+    } catch(ex) {}
+  };
+}
+
+function wsStatus(txt, cls) {
+  const el = document.getElementById('ws-status');
+  if (!el) return;
+  el.textContent = txt;
+  el.className   = 'ws-' + cls;
+}
+
+async function fetchCatalog() {
+  try {
+    const pos = document.body.dataset.pos || '';
+    const r   = await fetch(CAT_URL + (pos ? `?pos=${pos}` : ''));
+    catalog   = await r.json();
+    if (typeof onCatalog === 'function') onCatalog(catalog);
+  } catch(ex) {}
+}
+
+// ── TC send ──────────────────────────────────────────────────────────────
+function sendTC(service, subtype, params, apid=1) {
+  if (!ws || ws.readyState !== 1) { addLog('SYS','WS not connected','err'); return; }
+  ws.send(JSON.stringify({type:'tc', service, subtype, params, apid}));
+}
+
+function sendInstr(cmd) {
+  if (!ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({type:'instr', cmd}));
+}
+
+// ── Event log ────────────────────────────────────────────────────────────
+function addLog(cat, msg, cls='info') {
+  const t  = new Date().toISOString().slice(11,23);
+  log.unshift({t, cat, msg, cls});
+  if (log.length > MAX_LOG) log.length = MAX_LOG;
+  renderLog();
+}
+
+function renderLog() {
+  const el = document.getElementById('event-log');
+  if (!el) return;
+  el.innerHTML = log.slice(0,60).map(e =>
+    `<div class="le ${e.cls}"><span class="lt">${e.t}</span>` +
+    `<span class="lc">[${e.cat}]</span> ${e.msg}</div>`
+  ).join('');
+}
+
+function onTcAck(m)  { addLog('TC',  `ACK S${m.service}/${m.subtype} seq=${m.seq}`, 'ok'); }
+function onTcErr(m)  { addLog('TC',  `ERR ${m.error}`, 'err'); }
+function onTmPacket(m) { addLog('TM', `APID=${m.apid} S${m.service}/${m.subtype} len=${m.len}`, 'tm'); }
+
+// ── Limit CSS ─────────────────────────────────────────────────────────────
+function limitCls(val, ylo, yhi, rlo, rhi) {
+  if (val <= rlo || val >= rhi)    return 'red';
+  if (val <= ylo || val >= yhi)    return 'yellow';
+  return 'green';
+}
+
+function fmtNum(v, dp=2) { return (v == null ? '---' : Number(v).toFixed(dp)); }
+function fmtBool(v, t='ON', f='OFF') { return v ? t : f; }
+
+// ── Navigation bar ────────────────────────────────────────────────────────
+function buildNav(active) {
+  const positions = {
+    fd:'FD', eps:'EPS', ttc:'TTC', payload:'PLD', sys:'SYS', fdir:'FDIR', instr:'INSTR'
+  };
+  return Object.entries(positions).map(([k,v]) =>
+    `<a href="/${k}" class="${k===active?'active':''}">${v}</a>`
+  ).join('');
+}
+
+// ── Sim time display ──────────────────────────────────────────────────────
+function fmtSimTime(s) {
+  if (!s) return '---';
+  const d = new Date(s * 1000);
+  return d.toISOString().slice(0,19).replace('T',' ') + 'Z';
+}
+
+
+const PWR_BUF_GEN  = [], PWR_BUF_CON = [], PWR_BUF_SOC = [];
+const PWR_MAX = 120;
+
+function onState(s) {
+  document.getElementById('sim-time').textContent = fmtSimTime(s.sim_time);
+  const e = s.eps || {}, t = s.tcs || {};
+  const soc = parseFloat(e.soc_pct) || 0;
+  document.getElementById('soc').textContent = fmtNum(soc,1);
+  const bar = document.getElementById('soc-bar');
+  bar.style.width = soc + '%';
+  bar.className = 'pbar-fill ' + (soc>40?'pbar-grn':soc>20?'pbar-yel':'pbar-red');
+  setV('bus-v',  e.bus_voltage_V,  22, 30, 20, 32);
+  setV('bat-v',  e.bat_voltage_V,  24, 29, 22, 30);
+  setV('bat-i',  e.bat_current_A, -5,  5, -8, 8);
+  setV('bat-t',  e.bat_temp_C,   -10, 40,-20, 50);
+  setV('sa-a',   e.sa_a_A,         0, 10, -1, 15);
+  setV('sa-b',   e.sa_b_A,         0, 10, -1, 15);
+  setV('pgen',   e.power_gen_W,    10, 80,  0, 120);
+  setV('pcons',  e.power_cons_W,    5, 70,  0, 100);
+  setV('t-obc',  t.temp_obc_C,    -5, 60,-15, 75);
+  setV('t-bat',  t.temp_bat_C,    -5, 35,-15, 50);
+  setV('t-fpa',  t.temp_fpa_C,  -200, -40,-220, -30);
+  setV('t-px',   t.temp_panel_px, -40, 80,-60, 100);
+  setV('t-py',   t.temp_panel_py, -40, 80,-60, 100);
+  setBool('htr-bat',  t.htr_bat);
+  setBool('htr-obc',  t.htr_obc);
+  setBool('cooler-fpa', t.cooler_fpa);
+  PWR_BUF_GEN.push(parseFloat(e.power_gen_W)||0);
+  PWR_BUF_CON.push(parseFloat(e.power_cons_W)||0);
+  PWR_BUF_SOC.push(soc);
+  if (PWR_BUF_GEN.length > PWR_MAX) { PWR_BUF_GEN.shift(); PWR_BUF_CON.shift(); PWR_BUF_SOC.shift(); }
+  drawPower();
+}
+
+function setV(id, val, ylo, yhi, rlo, rhi) {
+  const e = document.getElementById(id); if(!e) return;
+  e.textContent = fmtNum(val, 2);
+  e.className = 'tm-val ' + limitCls(val||0, ylo, yhi, rlo, rhi);
+}
+function setBool(id, v) {
+  const e = document.getElementById(id); if(!e) return;
+  e.className = 'badge ' + (v ? 'badge-ok' : 'badge-off');
+  e.textContent = v ? 'ON' : 'OFF';
+}
+
+function drawPower() {
+  const cv = document.getElementById('pwr-canvas'); if(!cv) return;
+  const ctx = cv.getContext('2d'), W=cv.width, H=cv.height;
+  ctx.fillStyle='#050d14'; ctx.fillRect(0,0,W,H);
+  const n = PWR_BUF_GEN.length; if(n<2) return;
+  const maxW = 120, scale = W/maxW, scaleH = H*0.4/100;
+  const drawLine = (buf, col, yBase, scH) => {
+    ctx.strokeStyle=col; ctx.lineWidth=1.5; ctx.beginPath();
+    buf.forEach((v,i) => {
+      const x = (i/maxW)*W, y = yBase - v*scH;
+      i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+    });
+    ctx.stroke();
+  };
+  // Grid
+  ctx.strokeStyle='#0e2030'; ctx.lineWidth=0.5;
+  [0,25,50,75,100].forEach(v => {
+    const y = H*0.45 - v*scaleH;
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke();
+    ctx.fillStyle='#3a6080'; ctx.font='9px Share Tech Mono';
+    ctx.fillText(v+'W', 3, y-2);
+  });
+  // Power gen / cons
+  drawLine(PWR_BUF_GEN, '#39e05b', H*0.45, scaleH);
+  drawLine(PWR_BUF_CON, '#f0c040', H*0.45, scaleH);
+  // SoC bottom panel
+  const socBase = H*0.9, socScH = H*0.4/100;
+  ctx.fillStyle='#1a3a50'; ctx.font='9px Share Tech Mono';
+  ctx.fillText('SoC %', 3, socBase - 42*socScH - 2);
+  drawLine(PWR_BUF_SOC, '#00e8ff', socBase, socScH);
+  // Legend
+  ctx.font='9px Share Tech Mono';
+  [['#39e05b','GEN'],['#f0c040','CONS'],['#00e8ff','SOC%']].forEach(([c,l],i) => {
+    ctx.fillStyle=c; ctx.fillText(l, W-50, 12+i*14);
+  });
+}
+
+let epsTCs = [];
+function onCatalog(cat) {
+  epsTCs = cat.tc.filter(t => t.position === 'eps' || t.position === 'sys');
+  const sel = document.getElementById('tc-sel'); sel.innerHTML='';
+  epsTCs.forEach((t,i) => { const o=document.createElement('option'); o.value=i; o.textContent=t.label; sel.appendChild(o); });
+  populateTcFields();
+}
+function populateTcFields() {
+  const i = parseInt(document.getElementById('tc-sel').value);
+  const tc = epsTCs[i]; if(!tc) return;
+  const div = document.getElementById('tc-fields'); div.innerHTML='';
+  (tc.fields||[]).forEach(f => {
+    if(f.n==='dummy') return;
+    const row=document.createElement('div'); row.className='tc-row';
+    row.innerHTML=`<span class="tc-label">${f.label}</span><input class="tc-input" id="tcf-${f.n}" value="${f.d}">`;
+    div.appendChild(row);
+  });
+}
+function sendTCFromForm() {
+  const i=parseInt(document.getElementById('tc-sel').value);
+  const tc=epsTCs[i]; if(!tc) return;
+  const params={};
+  (tc.fields||[]).forEach(f => { const el=document.getElementById('tcf-'+f.n); if(el) params[f.n]=f.t==='float'?parseFloat(el.value):el.value; });
+  const apid=parseInt(document.getElementById('tc-apid').value)||1;
+  sendTC(tc.service, tc.subtype, params, apid);
+}
+connectWS();
+</script></body></html>

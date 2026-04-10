@@ -1,0 +1,727 @@
+/**
+ * MCS Display Panels CSS
+ * Styling for new enhanced display panels
+ */
+
+:root {
+  --panel-bg: var(--surface-primary, #10101e);
+  --panel-border: var(--surface-tertiary, #222236);
+  --text-primary: var(--text-primary, #eaeaf2);
+  --text-secondary: var(--text-secondary, #a8a8c0);
+  --green: var(--status-nominal, #00C896);
+  --yellow: var(--status-warning, #F0B429);
+  --orange: #FF9500;
+  --red: var(--status-alarm, #FF6B6B);
+  --blue: var(--status-commanding, #6BB3FF);
+}
+
+/* ── CONTACT SCHEDULE PANEL ── */
+
+.contact-panel {
+  padding: 12px;
+}
+
+.contact-status {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 6px 12px;
+  border-radius: 3px;
+  font-weight: 600;
+  font-size: 11px;
+  margin-bottom: 8px;
+}
+
+.status-badge.in-contact {
+  background: rgba(0, 200, 150, 0.15);
+  color: var(--green);
+  border: 1px solid rgba(0, 200, 150, 0.3);
+}
+
+.status-badge.no-contact {
+  background: rgba(100, 150, 180, 0.1);
+  color: var(--blue);
+  border: 1px solid rgba(100, 150, 180, 0.3);
+}
+
+.contact-info {
+  font-size: 10px;
+  color: var(--text-secondary);
+  padding: 3px 0;
+}
+
+.passes-table {
+  width: 100%;
+  margin-top: 8px;
+  border-collapse: collapse;
+}
+
+.passes-table th {
+  background: var(--panel-border);
+  padding: 5px 8px;
+  text-align: left;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.passes-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid rgba(34, 34, 54, 0.6);
+  font-size: 10px;
+}
+
+.passes-table tr.elevation-green td { color: var(--green); }
+.passes-table tr.elevation-yellow td { color: var(--yellow); }
+.passes-table tr.elevation-orange td { color: var(--orange); }
+.passes-table tr.elevation-red td { color: var(--red); }
+
+.elev-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-weight: 600;
+  font-size: 9px;
+}
+
+.elevation-green { background: rgba(0, 200, 150, 0.2); }
+.elevation-yellow { background: rgba(240, 180, 41, 0.2); }
+.elevation-orange { background: rgba(255, 149, 0, 0.2); }
+.elevation-red { background: rgba(255, 107, 107, 0.2); }
+
+/* ── POWER BUDGET PANEL ── */
+
+.power-panel {
+  padding: 12px;
+}
+
+.power-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.metric {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 8px;
+  text-align: center;
+}
+
+.metric .label {
+  display: block;
+  font-size: 10px;
+  color: var(--text-secondary);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.metric .value {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.metric .value.positive { color: var(--green); }
+.metric .value.negative { color: var(--red); }
+
+.battery-status {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+
+.soc-bar {
+  width: 100%;
+  height: 20px;
+  background: var(--panel-border);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+
+.soc-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--green) 0%, var(--yellow) 70%, var(--red) 100%);
+  transition: width 0.3s ease;
+}
+
+.soc-label {
+  font-size: 11px;
+  color: var(--text-primary);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.battery-temp {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.load-shedding {
+  padding: 8px;
+  border-radius: 4px;
+  margin-bottom: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.load-shedding.nominal {
+  background: rgba(0, 200, 150, 0.1);
+  color: var(--green);
+  border: 1px solid rgba(0, 200, 150, 0.3);
+}
+
+.load-shedding.active {
+  background: rgba(255, 107, 107, 0.15);
+  color: var(--red);
+  border: 1px solid rgba(255, 107, 107, 0.3);
+}
+
+.eclipse-badge, .eclipse-info {
+  padding: 6px;
+  border-radius: 4px;
+  margin-bottom: 8px;
+  font-size: 10px;
+  background: rgba(255, 149, 0, 0.1);
+  color: var(--orange);
+  border: 1px solid rgba(255, 149, 0, 0.3);
+}
+
+.subsystem-power {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 10px;
+}
+
+.subsystem-power h4 {
+  margin: 0 0 8px 0;
+  font-size: 10px;
+  color: var(--text-secondary);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.power-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 10px;
+}
+
+.power-bar .label {
+  flex: 0 0 50px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.power-bar .bar {
+  flex: 1;
+  height: 12px;
+  background: var(--panel-border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.power-bar .fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--blue) 0%, var(--green) 100%);
+}
+
+.power-bar .value {
+  flex: 0 0 45px;
+  text-align: right;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* ── FDIR/ALARM PANEL ── */
+
+.fdir-panel {
+  padding: 12px;
+}
+
+.fdir-level {
+  padding: 10px;
+  border-radius: 4px;
+  font-weight: 700;
+  font-size: 12px;
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+.fdir-level.level-green {
+  background: rgba(0, 200, 150, 0.15);
+  color: var(--green);
+  border: 1px solid rgba(0, 200, 150, 0.3);
+}
+
+.fdir-level.level-yellow {
+  background: rgba(240, 180, 41, 0.15);
+  color: var(--yellow);
+  border: 1px solid rgba(240, 180, 41, 0.3);
+}
+
+.fdir-level.level-orange {
+  background: rgba(255, 149, 0, 0.15);
+  color: var(--orange);
+  border: 1px solid rgba(255, 149, 0, 0.3);
+}
+
+.fdir-level.level-red {
+  background: rgba(255, 107, 107, 0.15);
+  color: var(--red);
+  border: 1px solid rgba(255, 107, 107, 0.3);
+}
+
+.alarm-counts {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.alarm-counts span {
+  padding: 4px 8px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.alarm-counts .critical {
+  background: rgba(255, 107, 107, 0.15);
+  color: var(--red);
+  border: 1px solid rgba(255, 107, 107, 0.3);
+}
+
+.alarm-counts .high {
+  background: rgba(255, 149, 0, 0.15);
+  color: var(--orange);
+  border: 1px solid rgba(255, 149, 0, 0.3);
+}
+
+.alarm-counts .medium {
+  background: rgba(240, 180, 41, 0.15);
+  color: var(--yellow);
+  border: 1px solid rgba(240, 180, 41, 0.3);
+}
+
+.alarm-counts .low {
+  background: rgba(0, 200, 150, 0.15);
+  color: var(--green);
+  border: 1px solid rgba(0, 200, 150, 0.3);
+}
+
+.fdir-panel h4 {
+  margin: 12px 0 8px 0;
+  font-size: 10px;
+  color: var(--text-secondary);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.no-alarms {
+  color: var(--text-secondary);
+  font-size: 10px;
+  padding: 8px;
+  text-align: center;
+}
+
+.alarms-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 12px;
+}
+
+.alarms-table th {
+  background: var(--panel-border);
+  padding: 5px 8px;
+  text-align: left;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.alarms-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid rgba(34, 34, 54, 0.6);
+  font-size: 10px;
+}
+
+.alarms-table tr.alarm-critical { color: var(--red); }
+.alarms-table tr.alarm-high { color: var(--orange); }
+.alarms-table tr.alarm-medium { color: var(--yellow); }
+.alarms-table tr.alarm-low { color: var(--green); }
+
+.ack-btn {
+  padding: 2px 6px;
+  font-size: 9px;
+  background: var(--blue);
+  color: white;
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.ack-btn:hover {
+  opacity: 0.8;
+}
+
+.s12-status, .s19-status {
+  padding: 8px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+}
+
+/* ── PROCEDURE STATUS PANEL ── */
+
+.procedure-panel {
+  padding: 12px;
+}
+
+.executing {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+
+.executing h4 {
+  margin: 0 0 8px 0;
+  font-size: 11px;
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 16px;
+  background: var(--panel-border);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--blue) 0%, var(--green) 100%);
+  transition: width 0.3s ease;
+}
+
+.progress-label {
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.state-badge {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.state-badge.state-idle {
+  background: rgba(100, 150, 180, 0.1);
+  color: var(--blue);
+}
+
+.state-badge.state-running {
+  background: rgba(0, 200, 150, 0.15);
+  color: var(--green);
+}
+
+.state-badge.state-paused {
+  background: rgba(240, 180, 41, 0.15);
+  color: var(--yellow);
+}
+
+.state-badge.state-completed {
+  background: rgba(0, 200, 150, 0.15);
+  color: var(--green);
+}
+
+.state-badge.state-error {
+  background: rgba(255, 107, 107, 0.15);
+  color: var(--red);
+}
+
+.steps {
+  margin-bottom: 12px;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 3px;
+  margin-bottom: 4px;
+  font-size: 10px;
+  border: 1px solid var(--panel-border);
+  background: var(--panel-border);
+}
+
+.step.step-completed {
+  background: rgba(0, 200, 150, 0.1);
+  border-color: rgba(0, 200, 150, 0.3);
+  color: var(--green);
+}
+
+.step.step-current {
+  background: rgba(107, 179, 255, 0.1);
+  border-color: rgba(107, 179, 255, 0.3);
+  color: var(--blue);
+  font-weight: 600;
+}
+
+.step.step-pending {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--panel-border);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.step.step-completed .step-num {
+  background: var(--green);
+  color: white;
+}
+
+.step.step-current .step-num {
+  background: var(--blue);
+  color: white;
+}
+
+.no-procedure {
+  color: var(--text-secondary);
+  text-align: center;
+  padding: 12px;
+  font-size: 10px;
+}
+
+.procedure-list {
+  list-style: none;
+  margin: 8px 0 0 0;
+  padding: 0;
+}
+
+.procedure-list li {
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(34, 34, 54, 0.6);
+  font-size: 10px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.procedure-list li:hover {
+  background: rgba(34, 34, 54, 0.4);
+  color: var(--text-primary);
+}
+
+/* ── SYSTEM OVERVIEW DASHBOARD ── */
+
+.system-overview {
+  padding: 12px;
+}
+
+.sat-mode {
+  padding: 12px;
+  border-radius: 4px;
+  font-weight: 700;
+  font-size: 13px;
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+.sat-mode.mode-green {
+  background: rgba(0, 200, 150, 0.15);
+  color: var(--green);
+  border: 1px solid rgba(0, 200, 150, 0.3);
+}
+
+.sat-mode.mode-yellow {
+  background: rgba(240, 180, 41, 0.15);
+  color: var(--yellow);
+  border: 1px solid rgba(240, 180, 41, 0.3);
+}
+
+.sat-mode.mode-orange {
+  background: rgba(255, 149, 0, 0.15);
+  color: var(--orange);
+  border: 1px solid rgba(255, 149, 0, 0.3);
+}
+
+.sat-mode.mode-blue {
+  background: rgba(107, 179, 255, 0.1);
+  color: var(--blue);
+  border: 1px solid rgba(107, 179, 255, 0.3);
+}
+
+.sat-mode.mode-gray {
+  background: rgba(100, 100, 120, 0.1);
+  color: var(--text-secondary);
+  border: 1px solid var(--panel-border);
+}
+
+.health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.health-box {
+  padding: 10px 8px;
+  border-radius: 4px;
+  text-align: center;
+  border: 1px solid var(--panel-border);
+  cursor: pointer;
+}
+
+.health-box.health-green {
+  background: rgba(0, 200, 150, 0.1);
+  color: var(--green);
+  border-color: rgba(0, 200, 150, 0.3);
+}
+
+.health-box.health-yellow {
+  background: rgba(240, 180, 41, 0.1);
+  color: var(--yellow);
+  border-color: rgba(240, 180, 41, 0.3);
+}
+
+.health-box.health-red {
+  background: rgba(255, 107, 107, 0.15);
+  color: var(--red);
+  border-color: rgba(255, 107, 107, 0.3);
+}
+
+.health-name {
+  font-size: 10px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.health-status {
+  font-size: 9px;
+  opacity: 0.8;
+}
+
+.key-params {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+
+.key-params h4 {
+  margin: 0 0 8px 0;
+  font-size: 10px;
+  color: var(--text-secondary);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.param-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 5px 6px;
+  border-bottom: 1px solid rgba(34, 34, 54, 0.6);
+  font-size: 10px;
+}
+
+.param-row:last-child {
+  border-bottom: none;
+}
+
+.param-row.param-green .param-value { color: var(--green); }
+.param-row.param-yellow .param-value { color: var(--yellow); }
+.param-row.param-red .param-value { color: var(--red); }
+
+.param-name {
+  color: var(--text-secondary);
+}
+
+.param-value {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.contact-alarms {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.contact-alarms .item {
+  padding: 8px;
+  border-radius: 4px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  font-size: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.contact-alarms .item span {
+  color: var(--text-secondary);
+}
+
+.contact-alarms .item .value {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.contact-alarms .item.alarm-item.alarm-active {
+  background: rgba(255, 107, 107, 0.1);
+  border-color: rgba(255, 107, 107, 0.3);
+}
+
+.contact-alarms .item.alarm-item.alarm-active .value {
+  color: var(--red);
+}
+
+.contact-alarms .item.alarm-item.nominal {
+  background: rgba(0, 200, 150, 0.1);
+  border-color: rgba(0, 200, 150, 0.3);
+}
+
+.contact-alarms .item.alarm-item.nominal .value {
+  color: var(--green);
+}

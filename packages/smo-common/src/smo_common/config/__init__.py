@@ -1,0 +1,1 @@
+"""SMO Common — Configuration management."""

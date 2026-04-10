@@ -1,0 +1,20 @@
+name: "LCL Overcurrent Trip"
+difficulty: INTERMEDIATE
+duration_s: 1800
+briefing: |
+  An overcurrent condition develops on the payload power line at T+180s,
+  causing the LCL to trip. The operator must detect the tripped line,
+  diagnose the cause, and decide whether to re-enable.
+events:
+  - time_offset_s: 180
+    action: inject
+    params:
+      subsystem: eps
+      failure: overcurrent
+      magnitude: 2.0
+      onset: step
+      line_index: 3
+expected_responses:
+  - { category: detect, description: "Detect overcurrent trip flag and payload power line OFF" }
+  - { category: isolate, description: "Identify payload line as the tripped circuit" }
+  - { category: recover, description: "Investigate cause, then reset OC flag and re-enable if safe" }

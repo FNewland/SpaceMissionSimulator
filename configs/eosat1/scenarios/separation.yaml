@@ -1,0 +1,25 @@
+name: "Post-Separation"
+difficulty: BASIC
+duration_s: 3600
+briefing: |
+  Post-separation scenario. Spacecraft has just separated from launch vehicle.
+  All subsystems are powered down except OBC bootloader. Battery is at 95% SoC.
+  AOCS is in OFF mode with random tumble rates (~1-2 deg/s) from separation impulse.
+  TTC antenna is NOT deployed — only bootloader beacon is active.
+  Battery heater is OFF. All temperature zones at ambient (~20°C).
+
+  Your mission: Commission the spacecraft for nominal operations.
+  1. Monitor separation timer (30 min countdown)
+  2. Boot OBC and establish telecommand link
+  3. Deploy antenna and verify uplink
+  4. Initiate AOCS detumble sequence
+  5. Enable thermal control and nominal power loads
+
+events: []
+expected_responses:
+  - { category: monitor, description: "Observe separation timer countdown" }
+  - { category: action, description: "Boot OBC when separation timer expires" }
+  - { category: action, description: "Deploy antenna via mechanical deployment" }
+  - { category: action, description: "Establish command link and verify comms" }
+  - { category: action, description: "Initiate AOCS detumble sequence" }
+  - { category: monitor, description: "Monitor attitudes rates during detumble" }

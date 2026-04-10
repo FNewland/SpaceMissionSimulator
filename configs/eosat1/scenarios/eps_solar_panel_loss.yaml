@@ -1,0 +1,32 @@
+name: "Solar Panel Loss"
+difficulty: ADVANCED
+duration_s: 3000
+briefing: |
+  During nominal sunlit operations, the +X solar panel suffers partial degradation
+  at T+120s (50% output loss). The operator must detect the per-panel current drop
+  and identify the affected face. At T+600s the +Y panel is lost completely, further
+  reducing power generation. The operator must recalculate the power budget, determine
+  whether the remaining panels can sustain nominal operations, and shed loads if
+  necessary to maintain a positive energy balance over the orbit.
+events:
+  - time_offset_s: 120
+    action: inject
+    params:
+      subsystem: eps
+      failure: solar_panel_loss
+      magnitude: 0.5
+      onset: step
+      face: px
+  - time_offset_s: 600
+    action: inject
+    params:
+      subsystem: eps
+      failure: solar_panel_loss
+      magnitude: 1.0
+      onset: step
+      face: py
+expected_responses:
+  - { category: detect, description: "Detect power generation drop and identify +X panel degradation via per-panel current (0x012B)" }
+  - { category: detect, description: "Detect complete +Y panel loss via per-panel current (0x012D) dropping to zero" }
+  - { category: isolate, description: "Compare per-panel currents (0x012B-0x0130) to identify affected panels vs attitude error" }
+  - { category: recover, description: "Recalculate power budget, shed loads if margin insufficient, adjust operations plan" }

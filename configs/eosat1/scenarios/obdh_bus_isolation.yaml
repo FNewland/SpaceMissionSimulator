@@ -1,0 +1,28 @@
+name: "CAN Bus A Failure Isolation"
+difficulty: ADVANCED
+duration_s: 3000
+briefing: |
+  The OBC loses communication with subsystems on CAN Bus A at T+120s.
+  Housekeeping data from subsystems connected via Bus A stops arriving.
+  The operator must detect the missing HK, diagnose the bus failure using
+  OBDH bus status telemetry, command a switchover to CAN Bus B via
+  OBC_SELECT_BUS (func_id 44), and verify that all subsystem responses
+  resume on the redundant bus.
+
+events:
+  - time_offset_s: 120
+    action: inject
+    params:
+      subsystem: obdh
+      failure: bus_failure
+      magnitude: 1.0
+      onset: step
+      bus: A
+
+expected_responses:
+  - { category: detect, description: "Detect missing or stale HK from subsystems on Bus A" }
+  - { category: isolate, description: "Query obdh.bus_a_status — confirm ERROR state" }
+  - { category: isolate, description: "Confirm obdh.active_bus = 0 (Bus A) as current active bus" }
+  - { category: command, description: "Command OBC_SELECT_BUS(bus=1) to switch to Bus B (func_id 44)" }
+  - { category: detect, description: "Verify all subsystem HK resumes on Bus B within 15 s" }
+  - { category: recover, description: "Confirm all subsystems nominal on redundant bus, log failure" }

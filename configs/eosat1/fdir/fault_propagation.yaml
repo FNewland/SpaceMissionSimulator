@@ -1,0 +1,285 @@
+# Fault Propagation Configuration for EOSAT-1
+# Models how faults cascade across subsystems and trigger secondary effects
+
+fault_cascades:
+  # EPS Primary Failures → Cascading Effects
+
+  - fault_id: "eps_undervoltage"
+    description: "EPS bus voltage drops below safe operating level"
+    primary_param: "eps.bus_voltage"
+    threshold: 26.0
+    cascades:
+      - target_subsystem: "aocs"
+        action: "enter_safe_mode"
+        description: "Reduced power available, AOCS switches to safe mode to conserve power"
+        delay_s: 5.0
+      - target_subsystem: "payload"
+        action: "power_off"
+        description: "Non-essential payload powered off to conserve bus current"
+        delay_s: 2.0
+      - target_subsystem: "tcs"
+        action: "heater_standby"
+        description: "Non-essential heaters disabled"
+        delay_s: 1.0
+
+  - fault_id: "eps_overcurrent_aocs"
+    description: "EPS overcurrent trip on AOCS power bus"
+    primary_param: "eps.overcurrent_flags"
+    flags: [2]  # bus 2 = AOCS
+    cascades:
+      - target_subsystem: "aocs"
+        action: "enter_safe_mode"
+        description: "Bus power lost, AOCS enters safe mode"
+        delay_s: 0.5
+      - target_subsystem: "payload"
+        action: "power_off"
+        description: "Payload imaging stops due to attitude instability"
+        delay_s: 3.0
+
+  - fault_id: "eps_low_soc"
+    description: "Battery state of charge critically low"
+    primary_param: "eps.bat_soc"
+    threshold: 10.0
+    cascades:
+      - target_subsystem: "payload"
+        action: "power_off"
+        description: "Payload powered off in survival mode"
+        delay_s: 1.0
+      - target_subsystem: "aocs"
+        action: "enter_safe_mode"
+        description: "AOCS reduced mode to minimize power draw"
+        delay_s: 2.0
+      - target_subsystem: "ttc"
+        action: "reduce_tx_power"
+        description: "TX power reduced to preserve battery"
+        delay_s: 3.0
+
+  # AOCS Primary Failures → Cascading Effects
+
+  - fault_id: "aocs_wheel_failure_dual"
+    description: "Multiple reaction wheels failed (2+ wheels)"
+    primary_param: "aocs.wheels_enabled"
+    threshold: 2.0  # less than 2 wheels available
+    cascades:
+      - target_subsystem: "aocs"
+        action: "enter_safe_mode"
+        description: "Insufficient wheels for 3-axis control, entering safe mode"
+        delay_s: 1.0
+      - target_subsystem: "payload"
+        action: "power_off"
+        description: "Payload imaging disabled due to attitude instability"
+        delay_s: 2.0
+      - target_subsystem: "eps"
+        action: "reduce_power_to_aocs"
+        description: "AOCS power reduced when in safe mode"
+        delay_s: 3.0
+
+  - fault_id: "aocs_safe_mode_entry"
+    description: "AOCS entered safe mode due to any cause"
+    primary_param: "aocs.mode"
+    threshold: 2.0  # mode 2 = safe
+    cascades:
+      - target_subsystem: "payload"
+        action: "standby"
+        description: "Payload enters standby (not off) when AOCS in safe mode"
+        delay_s: 5.0
+
+  # TCS Primary Failures → Cascading Effects
+
+  - fault_id: "tcs_battery_overtemp"
+    description: "Battery temperature exceeds safe limit"
+    primary_param: "tcs.temp_battery"
+    threshold: 45.0
+    cascades:
+      - target_subsystem: "eps"
+        action: "reduce_charge_rate"
+        description: "Reduce battery charge rate to lower temps"
+        delay_s: 2.0
+      - target_subsystem: "tcs"
+        action: "heater_emergency_off"
+        description: "Emergency heater shutdown to prevent further heating"
+        delay_s: 0.5
+      - target_subsystem: "payload"
+        action: "reduce_duty_cycle"
+        description: "Reduce payload duty cycle to lower system heat"
+        delay_s: 5.0
+
+  # OBDH Primary Failures → Cascading Effects
+
+  - fault_id: "obdh_can_bus_failure"
+    description: "OBDH CAN bus communication loss"
+    primary_param: "obdh.can_bus_status"
+    threshold: 0.0  # 0 = failed
+    cascades:
+      - target_subsystem: "aocs"
+        action: "enter_safe_mode"
+        description: "No commanding possible, AOCS enters autonomous safe mode"
+        delay_s: 2.0
+      - target_subsystem: "payload"
+        action: "power_off"
+        description: "Cannot command payload, power off for safety"
+        delay_s: 1.0
+      - target_subsystem: "eps"
+        action: "enter_safe_mode"
+        description: "EPS enters contingency power profile"
+        delay_s: 3.0
+      - target_subsystem: "ttc"
+        action: "standby"
+        description: "TTC in standby awaiting comms restoration"
+        delay_s: 1.0
+
+  - fault_id: "obdh_watchdog_reset"
+    description: "OBDH watchdog triggered, system rebooted"
+    primary_param: "obdh.reboot_count"
+    threshold: 1.0
+    cascades:
+      - target_subsystem: "aocs"
+        action: "enter_safe_mode"
+        description: "AOCS enters safe mode during OBC reboot"
+        delay_s: 2.0
+      - target_subsystem: "payload"
+        action: "power_off"
+        description: "Payload safed during OBC reboot"
+        delay_s: 1.0
+
+  # TTC Primary Failures → Cascading Effects
+
+  - fault_id: "ttc_pa_overheat"
+    description: "TTC power amplifier overheating"
+    primary_param: "ttc.pa_temp"
+    threshold: 80.0
+    cascades:
+      - target_subsystem: "ttc"
+        action: "reduce_tx_power"
+        description: "Reduce TX power to lower PA temperature"
+        delay_s: 1.0
+      - target_subsystem: "ttc"
+        action: "reduce_data_rate"
+        description: "Reduce data rate to reduce PA load if power reduction insufficient"
+        delay_s: 5.0
+
+# Load Shedding Stages - triggered by SoC thresholds
+load_shedding_stages:
+
+  stage_0:
+    name: "Normal Operations"
+    soc_threshold: 100.0  # Always active
+    description: "All loads operational"
+    power_lines: []  # None switched
+    subsystem_commands: []
+
+  stage_1:
+    name: "Power Conservation"
+    soc_threshold: 30.0
+    description: "Non-essential loads reduced"
+    power_lines:
+      - line: "non_essential_heaters"
+        action: "reduce_duty_cycle"
+        parameter: 0.5
+      - line: "payload_aux"
+        action: "power_off"
+    subsystem_commands:
+      - subsystem: "payload"
+        command: "mode"
+        value: 1  # standby
+      - subsystem: "tcs"
+        command: "heater_duty"
+        value: 0.5
+
+  stage_2:
+    name: "Payload Offline"
+    soc_threshold: 20.0
+    description: "Payload and AOCS reduced, non-essential heaters off"
+    power_lines:
+      - line: "payload_main"
+        action: "power_off"
+      - line: "non_essential_heaters"
+        action: "power_off"
+      - line: "aocs_secondary"
+        action: "power_off"
+    subsystem_commands:
+      - subsystem: "payload"
+        command: "mode"
+        value: 0  # off
+      - subsystem: "aocs"
+        command: "mode"
+        value: 2  # safe mode
+      - subsystem: "tcs"
+        command: "heater_duty"
+        value: 0.0
+
+  stage_3:
+    name: "Survival Mode"
+    soc_threshold: 10.0
+    description: "Only essential subsystems: OBC, TTC, battery heater, AOCS safe"
+    power_lines:
+      - line: "payload_main"
+        action: "power_off"
+      - line: "aocs_primary"
+        action: "power_off"
+      - line: "ttc_secondary"
+        action: "power_off"
+      - line: "all_non_essential"
+        action: "power_off"
+    subsystem_commands:
+      - subsystem: "payload"
+        command: "mode"
+        value: 0  # off
+      - subsystem: "aocs"
+        command: "mode"
+        value: 2  # safe mode
+      - subsystem: "ttc"
+        command: "power_level"
+        value: 1  # minimal
+      - subsystem: "tcs"
+        command: "heater_duty"
+        value: 0.1  # minimal battery heater only
+
+# Recovery Action Escalation
+recovery_escalation:
+  max_attempts: 3
+  initial_level: 1
+  escalation_delays:
+    level_1:
+      delay_s: 30.0
+      description: "Wait 30s after initial response before escalation"
+    level_2:
+      delay_s: 60.0
+      description: "Wait 60s after level 2 action before escalation to level 3"
+    level_3:
+      delay_s: 120.0
+      description: "Level 3 is final, no further escalation"
+
+  recovery_actions:
+    aocs_recovery:
+      level_1:
+        action: "safe_mode_entry"
+        procedure: "aocs_safe_mode_recovery.yaml"
+      level_2:
+        action: "reset_aocs"
+        procedure: "aocs_reset.yaml"
+      level_3:
+        action: "aocs_emergency_halt"
+        procedure: "emergency_power_down.yaml"
+
+    eps_recovery:
+      level_1:
+        action: "load_shed_stage_1"
+        procedure: "load_shed_stage1.yaml"
+      level_2:
+        action: "load_shed_stage_2"
+        procedure: "load_shed_stage2.yaml"
+      level_3:
+        action: "load_shed_stage_3"
+        procedure: "load_shed_stage3.yaml"
+
+    ttc_recovery:
+      level_1:
+        action: "reduce_tx_power"
+        procedure: "ttc_reduce_power.yaml"
+      level_2:
+        action: "switch_antenna"
+        procedure: "ttc_antenna_switch.yaml"
+      level_3:
+        action: "ttc_shutdown"
+        procedure: "ttc_emergency_shutdown.yaml"

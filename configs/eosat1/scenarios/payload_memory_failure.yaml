@@ -1,0 +1,20 @@
+name: "Payload Memory Segment Corruption"
+difficulty: INTERMEDIATE
+duration_s: 1800
+briefing: |
+  A payload memory segment fails at T+120s, reducing available storage.
+  The operator must detect the segment failure, mark it as bad, and
+  adjust imaging operations for reduced capacity.
+events:
+  - time_offset_s: 120
+    action: inject
+    params:
+      subsystem: payload
+      failure: memory_segment_fail
+      magnitude: 1.0
+      onset: step
+      segment: 5
+expected_responses:
+  - { category: detect, description: "Detect increased bad segment count in payload HK" }
+  - { category: isolate, description: "Identify failed memory segment" }
+  - { category: recover, description: "Mark bad segment, verify reduced capacity, adjust imaging plan" }

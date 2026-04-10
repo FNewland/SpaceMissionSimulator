@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "smo-simulator"
+version = "0.1.0"
+description = "SMO Spacecraft Simulator Platform"
+requires-python = ">=3.10"
+dependencies = [
+    "smo-common",
+    "aiohttp>=3.9",
+]
+
+[project.entry-points."smo.subsystem_models"]
+eps_basic = "smo_simulator.models.eps_basic:EPSBasicModel"
+aocs_basic = "smo_simulator.models.aocs_basic:AOCSBasicModel"
+tcs_basic = "smo_simulator.models.tcs_basic:TCSBasicModel"
+obdh_basic = "smo_simulator.models.obdh_basic:OBDHBasicModel"
+ttc_basic = "smo_simulator.models.ttc_basic:TTCBasicModel"
+payload_basic = "smo_simulator.models.payload_basic:PayloadBasicModel"
+
+[project.scripts]
+smo-simulator = "smo_simulator.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/smo_simulator"]

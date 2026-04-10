@@ -1,0 +1,38 @@
+# TTC Antenna Switch - Level 2 Recovery for TTC Link Failure
+# Switches to redundant transponder and adjusts TX power
+
+procedure_id: "ttc_antenna_switch"
+name: "TTC Antenna Switch"
+category: "fdir_response"
+description: "Level 2 recovery: Switch to redundant transponder"
+
+steps:
+  - step_id: 1
+    name: "Disable Primary TX"
+    description: "Disable primary transponder TX"
+    delay_s: 0.0
+    command: "s8_command"
+    params:
+      func_id: 67  # TTC_PA_DISABLE
+      data: []
+
+  - step_id: 2
+    name: "Switch to Redundant"
+    description: "Switch to redundant transponder"
+    delay_s: 1.0
+    command: "s8_command"
+    params:
+      func_id: 64  # TTC_SWITCH_REDUNDANT
+      data: []
+
+  - step_id: 3
+    name: "Reduce TX Power"
+    description: "Set TX power to reduced level"
+    delay_s: 2.0
+    command: "s8_command"
+    params:
+      func_id: 68  # TTC_SET_TX_POWER
+      data: [0x32]  # 50% power (0x32 hex = 50)
+
+timeout_s: 20.0
+max_retries: 1

@@ -1,0 +1,23 @@
+ground_stations:
+  - name: Iqaluit
+    lat_deg: 63.747
+    lon_deg: -68.518
+    alt_km: 0.034
+    min_elevation_deg: 5.0
+    antenna_diameter_m: 9.0
+    band: UHF
+    g_t_db: 20.0
+    tx_power_w: 200.0
+    tx_freq_mhz: 449.0
+    rx_freq_mhz: 401.5
+  - name: Troll
+    lat_deg: -72.012
+    lon_deg: 2.535
+    alt_km: 1.275
+    min_elevation_deg: 5.0
+    antenna_diameter_m: 7.3
+    band: UHF
+    g_t_db: 18.5
+    tx_power_w: 200.0
+    tx_freq_mhz: 449.0
+    rx_freq_mhz: 401.5

@@ -1,0 +1,29 @@
+name: "Ground Station Antenna Failure"
+difficulty: ADVANCED
+duration_s: 3600
+briefing: |
+  A nominal pass is in progress at Iqaluit ground station. At T+120s the
+  ground station antenna suffers a mechanical failure, causing the received
+  signal level to drop by approximately 30 dB — effectively simulating a
+  complete antenna loss. The spacecraft RF chain is healthy; the failure is
+  entirely on the ground side. The operator must recognise that the loss of
+  signal is a ground station issue (not spacecraft), coordinate with the
+  Flight Director to switch to an alternate station (Troll), and arrange
+  for mission replanning around the lost contact window.
+
+events:
+  - time_offset_s: 120
+    action: inject
+    params:
+      subsystem: ttc
+      failure: receiver_degrade
+      magnitude: 1.0
+      nf_db: 30.0
+
+expected_responses:
+  - { category: detect, description: "Detect sudden loss of link margin and RSSI drop" }
+  - { category: isolate, description: "Recognise that spacecraft TTC telemetry was nominal before drop — suspect ground issue" }
+  - { category: isolate, description: "Confirm antenna tracking anomaly or GS equipment status via ground network" }
+  - { category: command, description: "Attempt blind S17 connection test to verify spacecraft is still transmitting" }
+  - { category: recover, description: "Coordinate with FD to switch to Troll ground station for next pass" }
+  - { category: recover, description: "Replan contact schedule around GS outage" }

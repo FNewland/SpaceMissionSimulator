@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "space-mission-ops"
+version = "0.1.0"
+description = "Space Mission Operations Suite"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.hatch.envs.default]
+dependencies = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+]
+
+[tool.hatch.envs.default.scripts]
+test = "pytest tests/ -v"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

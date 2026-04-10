@@ -1,0 +1,20 @@
+name: "Image Corruption During Capture"
+difficulty: BEGINNER
+duration_s: 1200
+briefing: |
+  During an imaging session at T+180s, captured images begin showing
+  checksum errors. The operator must detect the quality degradation,
+  assess the cause, and decide whether to continue or abort imaging.
+events:
+  - time_offset_s: 180
+    action: inject
+    params:
+      subsystem: payload
+      failure: image_corrupt
+      magnitude: 1.0
+      onset: step
+      count: 3
+expected_responses:
+  - { category: detect, description: "Detect rising checksum error count and image quality drop" }
+  - { category: isolate, description: "Correlate with FPA temperature or memory status" }
+  - { category: recover, description: "Abort imaging if persistent, attempt re-capture if transient" }

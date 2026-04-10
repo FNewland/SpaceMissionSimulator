@@ -1,0 +1,87 @@
+# EOSAT-1 Imaging Targets — Ocean Current Monitoring Regions
+# Each target defines a lat/lon bounding box for ocean current observation.
+
+imaging_targets:
+  - id: OCM-001
+    name: Gulf Stream
+    description: "Western boundary current of the North Atlantic subtropical gyre"
+    region:
+      min_lat: 25.0
+      max_lat: 45.0
+      min_lon: -80.0
+      max_lon: -50.0
+    priority: high
+    revisit_days: 3
+    min_solar_elevation_deg: 10.0
+
+  - id: OCM-002
+    name: Kuroshio Current
+    description: "Western boundary current of the North Pacific subtropical gyre"
+    region:
+      min_lat: 25.0
+      max_lat: 40.0
+      min_lon: 125.0
+      max_lon: 155.0
+    priority: high
+    revisit_days: 3
+    min_solar_elevation_deg: 10.0
+
+  - id: OCM-003
+    name: Agulhas Current
+    description: "Western boundary current of the South Indian Ocean subtropical gyre"
+    region:
+      min_lat: -40.0
+      max_lat: -25.0
+      min_lon: 20.0
+      max_lon: 40.0
+    priority: high
+    revisit_days: 5
+    min_solar_elevation_deg: 10.0
+
+  - id: OCM-004
+    name: Brazil Current
+    description: "Western boundary current of the South Atlantic subtropical gyre"
+    region:
+      min_lat: -40.0
+      max_lat: -20.0
+      min_lon: -55.0
+      max_lon: -35.0
+    priority: medium
+    revisit_days: 5
+    min_solar_elevation_deg: 10.0
+
+  - id: OCM-005
+    name: East Australian Current
+    description: "Western boundary current of the South Pacific subtropical gyre"
+    region:
+      min_lat: -40.0
+      max_lat: -20.0
+      min_lon: 150.0
+      max_lon: 165.0
+    priority: medium
+    revisit_days: 5
+    min_solar_elevation_deg: 10.0
+
+  - id: OCM-006
+    name: Labrador Current
+    description: "Cold southward current along the western Atlantic continental shelf"
+    region:
+      min_lat: 42.0
+      max_lat: 60.0
+      min_lon: -60.0
+      max_lon: -45.0
+    priority: medium
+    revisit_days: 7
+    min_solar_elevation_deg: 10.0
+
+  - id: OCM-007
+    name: Antarctic Circumpolar Current
+    description: "Circumpolar current in the Southern Ocean (Drake Passage sector)"
+    region:
+      min_lat: -65.0
+      max_lat: -55.0
+      min_lon: -70.0
+      max_lon: -55.0
+    priority: low
+    revisit_days: 10
+    min_solar_elevation_deg: 10.0

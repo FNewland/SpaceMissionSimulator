@@ -1,0 +1,577 @@
+displays:
+  system_dashboard:
+    label: "System Dashboard"
+    pages:
+      - name: "Overview"
+        widgets:
+          - type: gauge
+            parameter: sat.mode
+            label: "Spacecraft Mode"
+          - type: status_indicator
+            parameter: obdh.storage_fill
+            label: "Storage Fill"
+
+  power_monitor:
+    label: "Power Monitor"
+    pages:
+      - name: "Power Budget"
+        widgets:
+          - type: gauge
+            parameter: eps.eclipse_active
+            label: "Eclipse Active"
+          - type: gauge
+            parameter: eps.power_margin
+            label: "Power Margin"
+            range: [-100, 500]
+            units: "W"
+      - name: "Subsystem Power"
+        widgets:
+          - type: value_table
+            parameters: [eps.subsys_power_eps, eps.subsys_power_aocs, eps.subsys_power_tcs, eps.subsys_power_ttc, eps.subsys_power_payload, eps.subsys_power_obdh]
+
+  fdir_panel:
+    label: "FDIR Panel"
+    pages:
+      - name: "Active Alarms"
+        widgets:
+          - type: status_indicator
+            parameter: fdir.level
+            label: "FDIR Alert Level"
+          - type: gauge
+            parameter: fdir.active_alarms
+            label: "Active Alarms"
+          - type: gauge
+            parameter: fdir.critical_alarms
+            label: "Critical Alarms"
+          - type: gauge
+            parameter: fdir.high_alarms
+            label: "High Alarms"
+
+  contact_schedule:
+    label: "Contact Schedule"
+    pages:
+      - name: "Next Passes"
+        widgets:
+          - type: status_indicator
+            parameter: contact.current_gs
+            label: "Current GS"
+          - type: gauge
+            parameter: contact.time_to_aos
+            label: "Time to AOS"
+            units: "s"
+          - type: status_indicator
+            parameter: contact.in_contact
+            label: "In Contact"
+
+  procedure_panel:
+    label: "Procedure Panel"
+    pages:
+      - name: "Execution"
+        widgets:
+          - type: gauge
+            parameter: proc.progress
+            label: "Progress"
+            range: [0, 100]
+            units: "%"
+          - type: value_table
+            parameters: [proc.current_step, proc.total_steps, proc.state]
+
+  eps_advanced:
+    label: "EPS Advanced"
+    pages:
+      - name: "Per-Panel Solar Currents"
+        widgets:
+          - type: value_table
+            parameters: [eps.sa_px_current, eps.sa_mx_current, eps.sa_py_current, eps.sa_my_current, eps.sa_pz_current, eps.sa_mz_current]
+            label: "Solar Panel Currents (A)"
+          - type: line_chart
+            parameters: [eps.sa_px_current, eps.sa_mx_current, eps.sa_py_current, eps.sa_my_current]
+            label: "Panel Current Trends (X/Y)"
+            duration_s: 600
+      - name: "Load Shedding"
+        widgets:
+          - type: gauge
+            parameter: eps.load_shed_stage
+            label: "Load Shed Stage"
+            range: [0, 3]
+          - type: gauge
+            parameter: eps.power_margin_w
+            label: "Power Margin"
+            range: [-200, 200]
+            units: "W"
+          - type: status_indicator
+            parameter: eps.eps_mode
+            label: "EPS Mode"
+      - name: "Battery Health"
+        widgets:
+          - type: gauge
+            parameter: eps.battery_health_pct
+            label: "Battery Health"
+            range: [0, 100]
+            units: "%"
+          - type: value_table
+            parameters: [eps.bat_dod, eps.bat_cycles, eps.charge_rate_a]
+            label: "Battery Status"
+
+  monitoring_panel:
+    label: "Monitoring & Events"
+    pages:
+      - name: "Parameter Monitoring (S12)"
+        widgets:
+          - type: value_table
+            parameters: [eps.bat_soc, aocs.att_error, tcs.temp_obc, payload.fpa_temp]
+            label: "Monitored Parameters"
+          - type: event_log
+            label: "Monitoring Events"
+      - name: "Event Reporting (S5)"
+        widgets:
+          - type: event_log
+            label: "Telemetry Events"
+      - name: "Event-Action (S19)"
+        widgets:
+          - type: value_table
+            parameters: [fdir.active_alarms, fdir.critical_alarms]
+            label: "Automated Actions Triggered"
+          - type: event_log
+            label: "Event-Action Log"
+
+  thermal_panel:
+    label: "Thermal Management"
+    pages:
+      - name: "Thermal Rebalance"
+        widgets:
+          - type: gauge
+            parameter: tcs.temp_regulation_margin
+            label: "Regulation Margin"
+            range: [-5, 10]
+            units: "°C"
+          - type: value_table
+            parameters: [tcs.htr_battery, tcs.htr_obc, tcs.cooler_fpa]
+            label: "Thermal Actuators"
+          - type: line_chart
+            parameters: [tcs.temp_panel_px, tcs.temp_panel_mx, tcs.temp_panel_py, tcs.temp_panel_my, tcs.temp_panel_pz, tcs.temp_panel_mz]
+            label: "Panel Temperature Distribution"
+            duration_s: 900
+
+positions:
+  flight_director:
+    label: "Flight Director"
+    pages:
+      - name: "Overview"
+        widgets:
+          - type: gauge
+            parameter: eps.bat_soc
+            label: "Battery SoC"
+            range: [0, 100]
+            units: "%"
+          - type: status_indicator
+            parameter: ttc.link_status
+            label: "Link"
+          - type: gauge
+            parameter: aocs.att_error
+            label: "Att Error"
+            range: [0, 10]
+            units: "deg"
+          - type: gauge
+            parameter: obdh.cpu_load
+            label: "CPU Load"
+            range: [0, 100]
+            units: "%"
+          - type: status_indicator
+            parameter: obdh.sw_image
+            label: "SW Image"
+          - type: value_table
+            parameters: [eps.bus_voltage, aocs.mode, obdh.mode, ttc.link_margin, payload.mode]
+
+  power_thermal:
+    label: "Power & Thermal"
+    pages:
+      - name: "EPS Overview"
+        widgets:
+          - type: gauge
+            parameter: eps.bat_soc
+            label: "Battery SoC"
+            range: [0, 100]
+            units: "%"
+          - type: gauge
+            parameter: eps.bus_voltage
+            label: "Bus Voltage"
+            range: [20, 30]
+            units: "V"
+          - type: value_table
+            parameters: [eps.bat_voltage, eps.bat_current, eps.bat_temp, eps.sa_a_current, eps.sa_b_current]
+          - type: value_table
+            parameters: [eps.sa_a_voltage, eps.sa_b_voltage]
+            label: "Solar Array Voltages"
+          - type: status_indicator
+            parameter: eps.uv_flag
+            label: "Undervoltage Flag"
+          - type: status_indicator
+            parameter: eps.ov_flag
+            label: "Overvoltage Flag"
+      - name: "Power Lines"
+        widgets:
+          - type: value_table
+            parameters: [eps.line_current_0, eps.line_current_1, eps.line_current_2, eps.line_current_3, eps.line_current_4, eps.line_current_5, eps.line_current_6, eps.line_current_7]
+            label: "Per-Line Current Draw"
+          - type: status_indicator
+            parameter: eps.oc_trip_flags
+            label: "Overcurrent Trip Flags"
+      - name: "Power Trends"
+        widgets:
+          - type: line_chart
+            parameters: [eps.power_gen, eps.power_cons]
+            label: "Power Balance"
+            duration_s: 600
+          - type: line_chart
+            parameters: [eps.bat_soc]
+            label: "Battery SoC Trend"
+            duration_s: 10800
+          - type: line_chart
+            parameters: [eps.line_current_0, eps.line_current_1, eps.line_current_2, eps.line_current_3]
+            label: "Line Currents (0-3)"
+            duration_s: 600
+      - name: "Thermal Overview"
+        widgets:
+          - type: value_table
+            parameters: [tcs.temp_panel_px, tcs.temp_panel_mx, tcs.temp_panel_py, tcs.temp_panel_my, tcs.temp_panel_pz, tcs.temp_panel_mz, tcs.temp_obc, tcs.temp_battery, tcs.temp_fpa]
+          - type: status_indicator
+            parameter: tcs.htr_battery
+            label: "Battery Heater"
+          - type: status_indicator
+            parameter: tcs.htr_obc
+            label: "OBC Heater"
+          - type: status_indicator
+            parameter: tcs.cooler_fpa
+            label: "FPA Cooler"
+      - name: "Temperature Trends"
+        widgets:
+          - type: line_chart
+            parameters: [tcs.temp_battery, tcs.temp_obc, tcs.temp_fpa]
+            label: "Component Temperatures"
+            duration_s: 1800
+          - type: line_chart
+            parameters: [tcs.temp_panel_px, tcs.temp_panel_mx, tcs.temp_panel_py, tcs.temp_panel_my]
+            label: "Panel Temperatures"
+            duration_s: 1800
+
+  flight_dynamics:
+    label: "Flight Dynamics"
+    pages:
+      - name: "Attitude"
+        widgets:
+          - type: gauge
+            parameter: aocs.att_error
+            label: "Attitude Error"
+            range: [0, 10]
+            units: "deg"
+          - type: value_table
+            parameters: [aocs.rate_roll, aocs.rate_pitch, aocs.rate_yaw, aocs.mode, aocs.submode, aocs.time_in_mode]
+          - type: value_table
+            parameters: [aocs.st1_status, aocs.st1_num_stars, aocs.st2_status, aocs.css_valid]
+            label: "Sensors"
+          - type: value_table
+            parameters: [aocs.mtq_x_duty, aocs.mtq_y_duty, aocs.mtq_z_duty, aocs.total_momentum]
+            label: "Actuators"
+      - name: "Reaction Wheels"
+        widgets:
+          - type: line_chart
+            parameters: [aocs.rw1_speed, aocs.rw2_speed, aocs.rw3_speed, aocs.rw4_speed]
+            label: "Wheel Speeds"
+            duration_s: 600
+          - type: value_table
+            parameters: [aocs.rw1_speed, aocs.rw2_speed, aocs.rw3_speed, aocs.rw4_speed]
+          - type: value_table
+            parameters: [aocs.rw1_current, aocs.rw2_current, aocs.rw3_current, aocs.rw4_current]
+            label: "Wheel Currents"
+          - type: value_table
+            parameters: [aocs.rw1_enabled, aocs.rw2_enabled, aocs.rw3_enabled, aocs.rw4_enabled]
+            label: "Wheel Enabled"
+      - name: "Attitude Trends"
+        widgets:
+          - type: line_chart
+            parameters: [aocs.att_error]
+            label: "Attitude Error"
+            duration_s: 600
+          - type: line_chart
+            parameters: [aocs.rate_roll, aocs.rate_pitch, aocs.rate_yaw]
+            label: "Body Rates"
+            duration_s: 300
+
+  ttc:
+    label: "TT&C"
+    pages:
+      - name: "Link Status"
+        widgets:
+          - type: status_indicator
+            parameter: ttc.link_status
+            label: "Link Active"
+          - type: status_indicator
+            parameter: ttc.carrier_lock
+            label: "Carrier Lock"
+          - type: status_indicator
+            parameter: ttc.bit_sync
+            label: "Bit Sync"
+          - type: status_indicator
+            parameter: ttc.frame_sync
+            label: "Frame Sync"
+          - type: gauge
+            parameter: ttc.rssi
+            label: "RSSI"
+            range: [-120, -60]
+            units: "dBm"
+          - type: gauge
+            parameter: ttc.link_margin
+            label: "Link Margin"
+            range: [-5, 20]
+            units: "dB"
+          - type: gauge
+            parameter: ttc.eb_n0
+            label: "Eb/N0"
+            range: [0, 30]
+            units: "dB"
+          - type: gauge
+            parameter: ttc.ber
+            label: "BER (log10)"
+            range: [-12, -1]
+            units: ""
+      - name: "PA & Hardware"
+        widgets:
+          - type: status_indicator
+            parameter: ttc.pa_on
+            label: "PA Status"
+          - type: gauge
+            parameter: ttc.pa_temp
+            label: "PA Temperature"
+            range: [20, 70]
+            units: "°C"
+            limits_ref: "pa_temp"
+          - type: gauge
+            parameter: ttc.tx_fwd_power
+            label: "TX Fwd Power"
+            range: [0, 5]
+            units: "W"
+          - type: value_table
+            parameters: [ttc.mode, ttc.xpdr_temp, ttc.tm_data_rate, ttc.cmd_rx_count, ttc.range_km, ttc.contact_elevation]
+      - name: "Link Trends"
+        widgets:
+          - type: line_chart
+            parameters: [ttc.rssi, ttc.link_margin]
+            label: "Signal Quality"
+            duration_s: 600
+          - type: line_chart
+            parameters: [ttc.ber]
+            label: "Bit Error Rate"
+            duration_s: 600
+          - type: line_chart
+            parameters: [ttc.pa_temp]
+            label: "PA Temperature"
+            duration_s: 600
+
+  payload_ops:
+    label: "Payload Operations"
+    pages:
+      - name: "Imager Status"
+        widgets:
+          - type: gauge
+            parameter: payload.fpa_temp
+            label: "FPA Temperature"
+            range: [-20, 20]
+            units: "°C"
+          - type: status_indicator
+            parameter: payload.fpa_ready
+            label: "FPA Ready"
+          - type: gauge
+            parameter: payload.store_used
+            label: "Storage Used"
+            range: [0, 100]
+            units: "%"
+          - type: value_table
+            parameters: [payload.mode, payload.cooler_pwr, payload.image_count, payload.checksum_errors, payload.duty_cycle_pct]
+      - name: "Memory & Catalog"
+        widgets:
+          - type: gauge
+            parameter: payload.mem_used_mb
+            label: "Memory Used"
+            range: [0, 20000]
+            units: "MB"
+          - type: gauge
+            parameter: payload.mem_total_mb
+            label: "Memory Total"
+            range: [0, 20000]
+            units: "MB"
+          - type: value_table
+            parameters: [payload.mem_segments_bad, payload.last_scene_id, payload.last_scene_quality]
+            label: "Image Catalog"
+
+  fdir_systems:
+    label: "FDIR / Systems"
+    pages:
+      - name: "OBC Status"
+        widgets:
+          - type: gauge
+            parameter: obdh.cpu_load
+            label: "CPU Load"
+            range: [0, 100]
+            units: "%"
+          - type: value_table
+            parameters: [obdh.mode, obdh.uptime, obdh.reboot_count, obdh.tc_rx_count, obdh.tc_acc_count, obdh.tc_rej_count]
+          - type: status_indicator
+            parameter: obdh.active_obc
+            label: "Active OBC"
+          - type: status_indicator
+            parameter: obdh.sw_image
+            label: "SW Image"
+      - name: "Bus & Buffers"
+        widgets:
+          - type: status_indicator
+            parameter: obdh.active_bus
+            label: "Active Bus"
+          - type: status_indicator
+            parameter: obdh.bus_a_status
+            label: "Bus A Status"
+          - type: status_indicator
+            parameter: obdh.bus_b_status
+            label: "Bus B Status"
+          - type: gauge
+            parameter: obdh.hktm_buf_fill
+            label: "HK TM Buffer"
+            range: [0, 1000]
+            units: "pkts"
+          - type: gauge
+            parameter: obdh.event_buf_fill
+            label: "Event Buffer"
+            range: [0, 500]
+            units: "pkts"
+          - type: gauge
+            parameter: obdh.alarm_buf_fill
+            label: "Alarm Buffer"
+            range: [0, 200]
+            units: "pkts"
+          - type: value_table
+            parameters: [obdh.obc_b_status, obdh.last_reboot_cause, obdh.boot_count_a, obdh.boot_count_b]
+      - name: "OBC Trends"
+        widgets:
+          - type: line_chart
+            parameters: [obdh.cpu_load]
+            label: "CPU Load Trend"
+            duration_s: 600
+          - type: line_chart
+            parameters: [obdh.hktm_buf_fill, obdh.event_buf_fill]
+            label: "Buffer Fill Trend"
+            duration_s: 600
+
+  # ── NEW DISPLAY PANELS (Features 1-6) ──
+
+  system_dashboard:
+    label: "System Dashboard"
+    pages:
+      - name: "Overview"
+        widgets:
+          - type: status_indicator
+            parameter: sat.mode
+            label: "Satellite Mode"
+          - type: gauge
+            parameter: eps.bat_soc
+            label: "Battery SoC"
+            range: [0, 100]
+            units: "%"
+          - type: gauge
+            parameter: aocs.att_error
+            label: "Attitude Error"
+            range: [0, 10]
+            units: "deg"
+          - type: gauge
+            parameter: payload.fpa_temp
+            label: "FPA Temperature"
+            range: [-20, 20]
+            units: "°C"
+          - type: gauge
+            parameter: ttc.link_margin
+            label: "Link Margin"
+            range: [-5, 20]
+            units: "dB"
+          - type: gauge
+            parameter: obdh.storage_fill
+            label: "Storage %"
+            range: [0, 100]
+            units: "%"
+
+  power_monitor:
+    label: "Power Monitor"
+    pages:
+      - name: "Power Budget"
+        widgets:
+          - type: gauge
+            parameter: eps.power_gen
+            label: "Power Generation"
+            range: [0, 300]
+            units: "W"
+          - type: gauge
+            parameter: eps.power_cons
+            label: "Power Consumption"
+            range: [0, 300]
+            units: "W"
+          - type: gauge
+            parameter: eps.bat_soc
+            label: "Battery SoC"
+            range: [0, 100]
+            units: "%"
+          - type: status_indicator
+            parameter: eps.eclipse_active
+            label: "In Eclipse"
+          - type: value_table
+            parameters: [eps.load_shed_stage, eps.bat_temp, eps.power_margin]
+      - name: "Subsystem Power"
+        widgets:
+          - type: value_table
+            parameters: [eps.subsys_power_eps, eps.subsys_power_aocs, eps.subsys_power_tcs, eps.subsys_power_ttc, eps.subsys_power_payload, eps.subsys_power_obdh]
+            label: "Per-Subsystem Power Draw"
+
+  fdir_panel:
+    label: "FDIR / Alarms"
+    pages:
+      - name: "Active Alarms"
+        widgets:
+          - type: status_indicator
+            parameter: fdir.level
+            label: "FDIR Level"
+          - type: value_table
+            parameters: [fdir.active_alarms, fdir.critical_alarms, fdir.high_alarms]
+            label: "Alarm Counts"
+      - name: "Event Log"
+        widgets:
+          - type: event_log
+            label: "Recent Events"
+
+  contact_schedule:
+    label: "Contact Schedule"
+    pages:
+      - name: "Next Passes"
+        widgets:
+          - type: value_table
+            parameters: [contact.current_gs, contact.time_to_aos, contact.in_contact]
+            label: "Current Contact Status"
+      - name: "Pass Calendar"
+        widgets:
+          - type: event_log
+            label: "Next 10 Passes"
+
+  procedure_panel:
+    label: "Procedures"
+    pages:
+      - name: "Execution"
+        widgets:
+          - type: gauge
+            parameter: proc.progress
+            label: "Procedure Progress"
+            range: [0, 100]
+            units: "%"
+          - type: value_table
+            parameters: [proc.current_step, proc.total_steps, proc.state]
+            label: "Procedure Status"
+      - name: "Log"
+        widgets:
+          - type: event_log
+            label: "Execution Log"
+

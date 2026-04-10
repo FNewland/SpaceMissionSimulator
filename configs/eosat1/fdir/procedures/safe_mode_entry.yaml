@@ -1,0 +1,49 @@
+# Safe Mode Entry Procedure - Automated Response to FDIR Level 2+ Events
+# Executed automatically when FDIR detects critical anomalies
+
+procedure_id: "safe_mode_entry"
+name: "Safe Mode Entry"
+category: "fdir_response"
+description: "Automated transition to spacecraft safe mode"
+
+# Procedure steps executed sequentially
+# Each step is an S8 command with optional delay
+steps:
+  - step_id: 1
+    name: "Payload Safe"
+    description: "Power off payload to reduce power draw"
+    delay_s: 0.0
+    command: "s8_command"
+    params:
+      func_id: 26  # PAYLOAD_SET_MODE
+      data: [0x00]  # mode = 0 (off)
+
+  - step_id: 2
+    name: "AOCS Safe Mode"
+    description: "Command AOCS to safe mode (attitude hold with reduced power)"
+    delay_s: 1.0
+    command: "s8_command"
+    params:
+      func_id: 0  # AOCS_SET_MODE
+      data: [0x02]  # mode = 2 (safe)
+
+  - step_id: 3
+    name: "Reduce TCS Heaters"
+    description: "Reduce TCS heater duty cycle to minimize power draw"
+    delay_s: 2.0
+    command: "s8_command"
+    params:
+      func_id: 46  # TCS_SET_HEATER_DUTY_LIMIT
+      data: [0x00, 0x32]  # circuit=0 (battery), duty=50%
+
+  - step_id: 4
+    name: "EPS Load Shedding"
+    description: "Activate EPS load shedding stage 1"
+    delay_s: 3.0
+    command: "s8_command"
+    params:
+      func_id: 25  # EPS_EMERGENCY_LOAD_SHED
+      data: [0x01]  # stage = 1
+
+timeout_s: 30.0
+max_retries: 3

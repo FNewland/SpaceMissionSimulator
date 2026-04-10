@@ -1,0 +1,1766 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=5760, initial-scale=1.0">
+<title>SMO Mission Planner — Wide Display (5760×1080)</title>
+<link rel="stylesheet" href="/static/vendor/css/fonts.css">
+<script src="/static/vendor/js/svg-world-map.js"></script>
+<script src="/static/vendor/js/chart.umd.min.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #080c14;
+  --panel: #111827;
+  --border: #1e293b;
+  --accent: #6366f1;
+  --accent-dim: #4f46e5;
+  --accent-glow: rgba(99, 102, 241, 0.15);
+  --text: #e2e8f0;
+  --text-dim: #94a3b8;
+  --text-muted: #64748b;
+  --green: #22c55e;
+  --green-dim: rgba(34, 197, 94, 0.2);
+  --blue: #3b82f6;
+  --blue-dim: rgba(59, 130, 246, 0.2);
+  --yellow: #eab308;
+  --yellow-dim: rgba(234, 179, 8, 0.15);
+  --red: #ef4444;
+  --red-dim: rgba(239, 68, 68, 0.15);
+  --gray: #475569;
+  --orange: #f97316;
+  --cyan: #06b6d4;
+  --surface: #0f172a;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'JetBrains Mono', Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--gray); }
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── Header ── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  height: 48px;
+  min-height: 48px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.header-title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 2px;
+}
+
+.header-title span { color: var(--accent); }
+
+.mission-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--accent-glow);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 1px;
+}
+
+.mission-badge::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.wide-badge {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  color: var(--orange);
+  background: rgba(249, 115, 22, 0.12);
+  border: 1px solid rgba(249, 115, 22, 0.3);
+  border-radius: 3px;
+  padding: 2px 8px;
+}
+
+.header-center {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.utc-clock {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 2px;
+}
+
+.utc-date {
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 1px;
+}
+
+.utc-label {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-glow);
+  padding: 1px 5px;
+  border-radius: 2px;
+  letter-spacing: 1px;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.orbit-param { text-align: right; }
+.orbit-param-label {
+  font-size: 9px;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.orbit-param-value {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.sc-state-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+}
+
+.sc-state-badge.sunlit {
+  color: var(--yellow);
+  background: var(--yellow-dim);
+  border: 1px solid rgba(234, 179, 8, 0.3);
+}
+
+.sc-state-badge.eclipse {
+  color: var(--blue);
+  background: var(--blue-dim);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+/* ── Main 5-Column Layout ── */
+.main {
+  flex: 1;
+  display: flex;
+  gap: 1px;
+  background: var(--border);
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Column widths for 5760px:
+   Map:       ~1920px (1/3)
+   Contacts:  ~1200px
+   Schedule:  ~860px
+   Budget:    ~860px
+   Imaging:   ~920px
+*/
+.col-map      { flex: 3 0 0; min-width: 0; }
+.col-contacts { flex: 2 0 0; min-width: 0; }
+.col-schedule { flex: 1.4 0 0; min-width: 0; }
+.col-budget   { flex: 1.4 0 0; min-width: 0; }
+.col-imaging  { flex: 1.5 0 0; min-width: 0; }
+
+.panel {
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  min-height: 36px;
+}
+
+.panel-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+
+.panel-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 10px;
+}
+
+.panel-body-flush {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.sim-badge, .live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  border-radius: 3px;
+  padding: 2px 7px;
+}
+
+.sim-badge {
+  color: var(--yellow);
+  background: var(--yellow-dim);
+  border: 1px solid rgba(234, 179, 8, 0.3);
+}
+
+.live-badge {
+  color: var(--green);
+  background: var(--green-dim);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+/* ── Map ── */
+#groundTrackMap {
+  width: 100%;
+  height: 100%;
+  background: #0a0f1a;
+}
+
+/* SVG map fills container */
+#groundTrackMap svg { display: block; }
+
+.map-info-overlay {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  z-index: 1000;
+  display: flex;
+  gap: 12px;
+  background: rgba(17, 24, 39, 0.9);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 10px;
+  pointer-events: none;
+}
+
+.map-info-item { display: flex; align-items: center; gap: 4px; }
+.map-info-label { color: var(--text-muted); }
+.map-info-value { color: var(--text); font-weight: 500; }
+
+.map-legend {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1000;
+  background: rgba(17, 24, 39, 0.9);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 9px;
+  color: var(--text-dim);
+}
+
+.map-legend-item { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.map-legend-item:last-child { margin-bottom: 0; }
+
+.legend-line { width: 16px; height: 3px; border-radius: 1px; }
+.legend-line.sunlit { background: #eab308; }
+.legend-line.eclipse { background: #3b82f6; }
+.legend-line.past { background: #94a3b8; opacity: 0.5; border-top: 1px dashed #94a3b8; }
+.legend-swatch { width: 14px; height: 10px; border-radius: 2px; border: 1px solid #334155; }
+.legend-swatch.night { background: rgba(0, 0, 17, 0.45); }
+.legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+.legend-dot.gs { background: #6366f1; }
+.legend-dot.sc { background: #22c55e; }
+
+.sc-marker-svg { filter: drop-shadow(0 0 6px rgba(34, 197, 94, 0.7)); }
+
+/* ── Tables ── */
+.data-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.data-table th {
+  text-align: left;
+  padding: 5px 6px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.data-table td {
+  padding: 5px 6px;
+  border-bottom: 1px solid rgba(30, 41, 59, 0.5);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.data-table tr:hover td { background: rgba(99, 102, 241, 0.04); }
+
+/* ── Timeline ── */
+.timeline-container {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.timeline-canvas-wrap { position: relative; width: 100%; }
+#timelineCanvas { display: block; width: 100%; }
+
+/* ── Activity items ── */
+.activity-item {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 6px;
+  transition: border-color 0.2s;
+}
+.activity-item:hover { border-color: var(--accent); }
+
+.activity-time-col { display: flex; flex-direction: column; align-items: center; min-width: 40px; }
+.activity-time-hour { font-size: 13px; font-weight: 700; }
+.activity-time-min { font-size: 10px; color: var(--text-muted); }
+.activity-divider { width: 2px; background: var(--border); flex: 1; margin: 3px 0; border-radius: 1px; }
+.activity-info { flex: 1; min-width: 0; }
+.activity-name { font-size: 11px; font-weight: 600; margin-bottom: 2px; }
+.activity-detail { font-size: 10px; color: var(--text-muted); display: flex; gap: 6px; flex-wrap: wrap; }
+
+.activity-priority {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  padding: 1px 5px;
+  border-radius: 2px;
+  text-transform: uppercase;
+}
+.priority-high { color: var(--red); background: var(--red-dim); }
+.priority-medium { color: var(--yellow); background: var(--yellow-dim); }
+.priority-low { color: var(--cyan); background: rgba(6, 182, 212, 0.15); }
+
+/* ── Buttons ── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border: 1px solid var(--accent);
+  background: var(--accent-glow);
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-transform: uppercase;
+}
+.btn:hover { background: var(--accent); color: #fff; }
+.btn-block { width: 100%; }
+
+/* ── Section labels ── */
+.section-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 6px;
+  margin-top: 12px;
+}
+.section-label:first-child { margin-top: 0; }
+
+/* ── Budget charts ── */
+.chart-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+
+.chart-wrap canvas { width: 100% !important; }
+
+.budget-stat {
+  display: flex;
+  justify-content: space-between;
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(30, 41, 59, 0.3);
+  font-size: 11px;
+}
+.budget-stat:last-child { border-bottom: none; }
+.budget-label { color: var(--text-muted); }
+.budget-value { color: var(--text); font-weight: 600; }
+.budget-value.good { color: var(--green); }
+.budget-value.warn { color: var(--yellow); }
+.budget-value.crit { color: var(--red); }
+
+/* ── Imaging targets ── */
+.target-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+}
+.target-card:hover { border-color: var(--accent); }
+
+.target-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+
+.target-coords {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.target-opp {
+  font-size: 10px;
+  margin-top: 3px;
+  display: flex;
+  gap: 8px;
+}
+
+.opp-badge {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 2px;
+  letter-spacing: 0.5px;
+}
+.opp-badge.available { color: var(--green); background: var(--green-dim); }
+.opp-badge.pending   { color: var(--yellow); background: var(--yellow-dim); }
+
+/* ── Bottom Bar ── */
+.bottom-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  height: 36px;
+  min-height: 36px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+}
+
+.bottom-group { display: flex; align-items: center; gap: 28px; }
+.bottom-item { display: flex; align-items: center; gap: 6px; }
+.bottom-label {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.bottom-value { font-weight: 500; color: var(--text-dim); }
+.bottom-value.highlight { color: var(--green); font-weight: 600; }
+
+.api-status { display: flex; align-items: center; gap: 5px; font-size: 10px; color: var(--text-muted); }
+.api-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--gray); }
+.api-dot.connected { background: var(--green); }
+.api-dot.error { background: var(--red); }
+
+/* ── Modal ── */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 2000;
+  align-items: center;
+  justify-content: center;
+}
+.modal-overlay.active { display: flex; }
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: 420px;
+  max-width: 90vw;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-title { font-size: 13px; font-weight: 700; letter-spacing: 1px; }
+.modal-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: inherit;
+  line-height: 1;
+}
+.modal-close:hover { color: var(--text); background: var(--border); }
+.modal-body { padding: 16px; }
+.form-group { margin-bottom: 12px; }
+.form-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.form-control {
+  width: 100%;
+  padding: 7px 9px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.form-control:focus { border-color: var(--accent); }
+.form-control option { background: var(--panel); color: var(--text); }
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-left">
+      <div class="header-title"><span>SMO</span> MISSION PLANNER</div>
+      <div class="mission-badge">EOSAT-1</div>
+      <span class="wide-badge">5760 × 1080 WIDE</span>
+    </div>
+    <div class="header-center">
+      <span class="utc-label">UTC</span>
+      <span class="utc-date" id="utcDate">---</span>
+      <span class="utc-clock" id="utcClock">--:--:--</span>
+      <span class="sc-state-badge sunlit" id="scStateBadge">SUNLIT</span>
+    </div>
+    <div class="header-right">
+      <div class="orbit-param">
+        <div class="orbit-param-label">Lat / Lon</div>
+        <div class="orbit-param-value" id="scLatLon">-- / --</div>
+      </div>
+      <div class="orbit-param">
+        <div class="orbit-param-label">Altitude</div>
+        <div class="orbit-param-value" id="scAlt">-- km</div>
+      </div>
+      <div class="orbit-param">
+        <div class="orbit-param-label">Period</div>
+        <div class="orbit-param-value">~94.7 min</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main 5-Column Layout -->
+  <div class="main">
+
+    <!-- Column 1: Ground Track Map -->
+    <div class="panel col-map">
+      <div class="panel-header">
+        <span class="panel-title">Ground Track — Orbit Visualization</span>
+        <span class="live-badge" id="mapDataBadge">LIVE</span>
+      </div>
+      <div class="panel-body-flush">
+        <div id="groundTrackMap"></div>
+        <div class="map-info-overlay" id="mapInfoOverlay">
+          <div class="map-info-item"><span class="map-info-label">LAT:</span><span class="map-info-value" id="mapLat">--</span></div>
+          <div class="map-info-item"><span class="map-info-label">LON:</span><span class="map-info-value" id="mapLon">--</span></div>
+          <div class="map-info-item"><span class="map-info-label">ALT:</span><span class="map-info-value" id="mapAlt">-- km</span></div>
+          <div class="map-info-item"><span class="map-info-label">BETA:</span><span class="map-info-value" id="mapBeta">--</span></div>
+        </div>
+        <div class="map-legend">
+          <div class="map-legend-item"><span class="legend-dot sc"></span> Spacecraft</div>
+          <div class="map-legend-item"><span class="legend-dot gs"></span> Ground Station</div>
+          <div class="map-legend-item"><span class="legend-line sunlit"></span> Sunlit Track</div>
+          <div class="map-legend-item"><span class="legend-line eclipse"></span> Eclipse Track</div>
+          <div class="map-legend-item"><span class="legend-line past"></span> Past Track (90 min)</div>
+          <div class="map-legend-item"><span class="legend-swatch night"></span> Night Side</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Column 2: Contact Windows -->
+    <div class="panel col-contacts">
+      <div class="panel-header">
+        <span class="panel-title">Contact Windows — 24h</span>
+        <span class="sim-badge" id="contactDataBadge">SIMULATED</span>
+      </div>
+      <div class="panel-body">
+        <div class="timeline-container">
+          <div class="timeline-canvas-wrap">
+            <canvas id="timelineCanvas" height="260"></canvas>
+          </div>
+        </div>
+        <div class="section-label">Upcoming Contacts</div>
+        <table class="data-table" id="contactsTable">
+          <thead>
+            <tr><th>Station</th><th>AOS</th><th>LOS</th><th>Dur</th><th>Max El</th><th>Status</th></tr>
+          </thead>
+          <tbody id="contactsBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Column 3: Activity Schedule -->
+    <div class="panel col-schedule">
+      <div class="panel-header">
+        <span class="panel-title">Activity Schedule</span>
+        <span class="sim-badge" id="activityDataBadge">SIMULATED</span>
+      </div>
+      <div class="panel-body">
+        <div id="activityList"></div>
+        <div style="margin-top:10px;display:flex;flex-direction:column;gap:5px;">
+          <button class="btn btn-block" onclick="openModal()">+ Add Activity</button>
+          <div style="display:flex;gap:5px;">
+            <button class="btn" onclick="validateSchedule()" style="flex:1;font-size:9px;">Validate</button>
+            <button class="btn" onclick="uploadToMCS()" style="flex:1;font-size:9px;">Upload</button>
+          </div>
+          <div id="scheduleValidation" style="display:none;font-size:10px;padding:5px;border-radius:4px;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Column 4: Power & Data Budget -->
+    <div class="panel col-budget">
+      <div class="panel-header">
+        <span class="panel-title">Power & Data Budget</span>
+        <span class="live-badge" id="budgetBadge">LIVE</span>
+      </div>
+      <div class="panel-body">
+        <div class="section-label">Battery State of Charge — 24h Forecast</div>
+        <div class="chart-wrap">
+          <canvas id="powerChart" height="200"></canvas>
+        </div>
+        <div id="powerStats"></div>
+
+        <div class="section-label" style="margin-top:16px;">Data Volume Budget</div>
+        <div class="chart-wrap">
+          <canvas id="dataChart" height="200"></canvas>
+        </div>
+        <div id="dataStats"></div>
+      </div>
+    </div>
+
+    <!-- Column 5: Imaging Targets -->
+    <div class="panel col-imaging">
+      <div class="panel-header">
+        <span class="panel-title">Imaging Targets</span>
+        <span class="live-badge" id="imagingBadge">LIVE</span>
+      </div>
+      <div class="panel-body">
+        <div class="section-label">Ocean Current Targets</div>
+        <div id="targetList"></div>
+
+        <div class="section-label" style="margin-top:14px;">Next Imaging Opportunities</div>
+        <table class="data-table" id="opportunitiesTable">
+          <thead>
+            <tr><th>Target</th><th>Window Open</th><th>Duration</th><th>GSD</th></tr>
+          </thead>
+          <tbody id="opportunitiesBody"></tbody>
+        </table>
+
+        <div style="margin-top:12px;">
+          <button class="btn btn-block" onclick="refreshImaging()">Refresh Opportunities</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Bottom Bar -->
+  <div class="bottom-bar">
+    <div class="bottom-group">
+      <div class="bottom-item"><span class="bottom-label">Period:</span><span class="bottom-value">94.7 min</span></div>
+      <div class="bottom-item"><span class="bottom-label">Incl:</span><span class="bottom-value">97.4&deg;</span></div>
+      <div class="bottom-item"><span class="bottom-label">Ecc:</span><span class="bottom-value">0.0012</span></div>
+      <div class="bottom-item"><span class="bottom-label">Rev/Day:</span><span class="bottom-value">15.15</span></div>
+    </div>
+    <div class="bottom-group">
+      <div class="bottom-item"><span class="bottom-label">Next AOS:</span><span class="bottom-value highlight" id="nextAos">--:--</span></div>
+      <div class="bottom-item"><span class="bottom-label">Next Eclipse:</span><span class="bottom-value" id="nextEclipse" style="color:var(--yellow);">--:--</span></div>
+      <div class="bottom-item"><span class="bottom-label">Display:</span><span class="bottom-value" style="color:var(--orange);">5760 × 1080</span></div>
+      <div class="bottom-item">
+        <div class="api-status">
+          <span class="api-dot" id="apiDot"></span>
+          <span id="apiStatusText">API: checking...</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Modal: Add Activity (identical to standard) -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">Add Activity</span>
+      <button class="modal-close" onclick="closeModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Activity Type</label>
+        <select class="form-control" id="actType" onchange="onActivityTypeChange()">
+          <option value="">Select activity type...</option>
+          <option value="Imaging Pass">Imaging Pass</option>
+          <option value="Data Dump">Data Dump</option>
+          <option value="Orbit Maintenance">Orbit Maintenance</option>
+          <option value="Calibration">Calibration</option>
+          <option value="Software Upload">Software Upload</option>
+          <option value="Housekeeping">Housekeeping</option>
+        </select>
+        <div id="actTypeInfo" style="display:none;font-size:10px;color:var(--text-dim);margin-top:4px;padding:4px 6px;background:var(--surface);border-radius:3px;"></div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Start Time (UTC)</label>
+        <input type="datetime-local" class="form-control" id="actStartTime">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Duration (minutes)</label>
+        <input type="number" class="form-control" id="actDuration" placeholder="e.g. 15" min="1" max="120">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Priority</label>
+        <select class="form-control" id="actPriority">
+          <option value="">Select priority...</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Ground Station Dependency</label>
+        <select class="form-control" id="actStation">
+          <option value="">None</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="submitActivity()">Submit</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ==================== Configuration ====================
+const ORBIT_PERIOD_MIN = 94.7;
+const ORBIT_PERIOD_MS = ORBIT_PERIOD_MIN * 60 * 1000;
+const ALTITUDE_KM = 705;
+const SWATH_HALF_ANGLE_DEG = 3.5;
+const POLL_INTERVAL_MS = 30000;
+const SC_REFRESH_MS = 5000;
+
+// ==================== State ====================
+let useSimulatedContacts = true;
+let useSimulatedSchedule = true;
+let apiContacts = [];
+let apiSchedule = [];
+let simulatedContacts = [];
+let simulatedActivities = [];
+let groundTrackData = [];
+let scState = null;
+let groundStations = [];
+
+// Budget & imaging state
+let powerChartInstance = null;
+let dataChartInstance = null;
+let imagingTargets = [];
+let imagingOpportunities = [];
+
+// ==================== SVG World Map ====================
+let map = null;
+let groundTrackLayers = [];
+let scMarker = null;
+let scFootprint = null;
+let gsMarkers = [];
+let gsCircles = [];
+let gsLabels = [];
+let nightOverlay = null;
+
+function initMap() {
+  map = new SvgWorldMap('groundTrackMap');
+
+  // Draw initial day/night terminator
+  updateTerminator();
+  setInterval(updateTerminator, 60000);
+
+  loadGroundStations();
+  loadGroundTrack();
+  loadSpacecraftState();
+  setInterval(loadSpacecraftState, SC_REFRESH_MS);
+  setInterval(loadGroundTrack, 120000);
+}
+
+// ==================== Day/Night Terminator ====================
+function computeSubsolarPoint(date) {
+  const JD = date.getTime() / 86400000 + 2440587.5;
+  const n = JD - 2451545.0;
+  const L0 = (280.460 + 0.9856474 * n) % 360;
+  const g = ((357.528 + 0.9856003 * n) % 360) * Math.PI / 180;
+  const lambda = (L0 + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * Math.PI / 180;
+  const epsilon = (23.439 - 0.0000004 * n) * Math.PI / 180;
+  const decl = Math.asin(Math.sin(epsilon) * Math.sin(lambda));
+  const RA = Math.atan2(Math.cos(epsilon) * Math.sin(lambda), Math.cos(lambda));
+  const eqTime = (L0 * Math.PI / 180 - RA) * 720 / Math.PI;
+  const utcHours = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
+  const solarNoonOffset = 12 - utcHours - eqTime / 60;
+  const subLon = solarNoonOffset * 15;
+  return { lat: decl * 180 / Math.PI, lon: ((subLon + 180) % 360 + 360) % 360 - 180 };
+}
+
+function computeTerminatorCoords(subsolar) {
+  const latR = subsolar.lat * Math.PI / 180;
+  const lonR = subsolar.lon * Math.PI / 180;
+  const coords = [];
+  for (let i = 0; i <= 360; i += 2) {
+    const bearing = i * Math.PI / 180;
+    const lat = Math.asin(
+      Math.sin(latR) * Math.cos(Math.PI / 2) +
+      Math.cos(latR) * Math.sin(Math.PI / 2) * Math.cos(bearing)
+    );
+    const lon = lonR + Math.atan2(
+      Math.sin(bearing) * Math.sin(Math.PI / 2) * Math.cos(latR),
+      Math.cos(Math.PI / 2) - Math.sin(latR) * Math.sin(lat)
+    );
+    coords.push([lat * 180 / Math.PI, ((lon * 180 / Math.PI) + 180) % 360 - 180]);
+  }
+  return coords;
+}
+
+function updateTerminator() {
+  if (!map) return;
+  const now = new Date();
+  const subsolar = computeSubsolarPoint(now);
+  const termCoords = computeTerminatorCoords(subsolar);
+  const nightPole = -subsolar.lat >= 0 ? 90 : -90;
+  const sorted = termCoords.slice().sort((a, b) => a[1] - b[1]);
+  const nightPoly = sorted.slice();
+  nightPoly.push([nightPole, 180]);
+  nightPoly.push([nightPole, -180]);
+
+  if (nightOverlay) map.removeLayer(nightOverlay);
+  nightOverlay = map.addPolygon(nightPoly, {
+    fillColor: '#000011', fillOpacity: 0.35, color: 'none'
+  });
+}
+
+async function loadGroundStations() {
+  try {
+    const res = await fetch('/api/ground-stations');
+    if (!res.ok) return;
+    const data = await res.json();
+    groundStations = data.ground_stations || [];
+    updateGroundStationMarkers();
+    updateStationDropdown();
+  } catch (e) {
+    groundStations = [
+      { name: 'Iqaluit', lat_deg: 63.747, lon_deg: -68.518, min_elevation_deg: 5 },
+      { name: 'Troll', lat_deg: -72.012, lon_deg: 2.535, min_elevation_deg: 5 },
+    ];
+    updateGroundStationMarkers();
+    updateStationDropdown();
+  }
+}
+
+function updateStationDropdown() {
+  const sel = document.getElementById('actStation');
+  while (sel.options.length > 1) sel.remove(1);
+  groundStations.forEach(gs => {
+    const opt = document.createElement('option');
+    opt.value = gs.name;
+    opt.textContent = gs.name;
+    sel.appendChild(opt);
+  });
+}
+
+function updateGroundStationMarkers() {
+  gsMarkers.forEach(m => map.removeLayer(m));
+  gsCircles.forEach(c => map.removeLayer(c));
+  gsLabels.forEach(l => map.removeLayer(l));
+  gsMarkers = [];
+  gsCircles = [];
+  gsLabels = [];
+
+  groundStations.forEach(gs => {
+    const marker = map.addMarker(gs.lat_deg, gs.lon_deg, {
+      color: '#6366f1', strokeColor: '#818cf8', radius: 4
+    });
+    gsMarkers.push(marker);
+
+    const label = map.addLabel(gs.lat_deg, gs.lon_deg, gs.name, {
+      color: '#818cf8', fontSize: '5.5'
+    });
+    gsLabels.push(label);
+
+    const visCircle = map.addCircle(gs.lat_deg, gs.lon_deg, 2200, {
+      color: '#6366f1', weight: 0.5, opacity: 0.25,
+      fillColor: '#6366f1', fillOpacity: 0.04, dashArray: '2 3'
+    });
+    gsCircles.push(visCircle);
+  });
+}
+
+async function loadGroundTrack() {
+  try {
+    let res = await fetch('/api/ground-track?offset_minutes=-90&duration_hours=3.0&step_s=30');
+    if (!res.ok) {
+      console.warn('Ground track offset fetch failed (' + res.status + '), trying cached...');
+      res = await fetch('/api/ground-track');
+    }
+    if (!res.ok) {
+      console.error('Ground track API failed:', res.status);
+      return;
+    }
+    const data = await res.json();
+    groundTrackData = data.ground_track || [];
+    console.log('Ground track loaded:', groundTrackData.length, 'points');
+    drawGroundTrack();
+  } catch (e) {
+    console.error('Ground track fetch error:', e);
+  }
+}
+
+function drawGroundTrack() {
+  groundTrackLayers.forEach(l => map.removeLayer(l));
+  groundTrackLayers = [];
+  if (groundTrackData.length < 2) return;
+
+  const nowMs = Date.now();
+  let currentSegment = [];
+  let currentEclipse = groundTrackData[0].in_eclipse;
+  let currentIsPast = new Date(groundTrackData[0].utc).getTime() < nowMs;
+
+  for (let i = 0; i < groundTrackData.length; i++) {
+    const pt = groundTrackData[i];
+    const isPast = new Date(pt.utc).getTime() < nowMs;
+    const prevPt = i > 0 ? groundTrackData[i - 1] : null;
+    const lonJump = prevPt ? Math.abs(pt.lon - prevPt.lon) : 0;
+    const eclipseChanged = pt.in_eclipse !== currentEclipse;
+    const pastFutureChanged = isPast !== currentIsPast;
+
+    if ((lonJump > 180 || eclipseChanged || pastFutureChanged) && currentSegment.length > 0) {
+      addTrackSegment(currentSegment, currentEclipse, currentIsPast);
+      currentSegment = [];
+      currentEclipse = pt.in_eclipse;
+      currentIsPast = isPast;
+    }
+    currentSegment.push([pt.lat, pt.lon]);
+    currentEclipse = pt.in_eclipse;
+    currentIsPast = isPast;
+  }
+  if (currentSegment.length > 1) addTrackSegment(currentSegment, currentEclipse, currentIsPast);
+}
+
+function addTrackSegment(coords, isEclipse, isPast) {
+  const baseColor = isEclipse ? '#3b82f6' : '#eab308';
+  const opacity = isPast ? 0.35 : (isEclipse ? 0.7 : 0.85);
+  const weight = isPast ? 1.5 : 2.5;
+  const dashArray = isPast ? '4 6' : (isEclipse ? '6 4' : null);
+  const line = map.addPolyline(coords, { color: baseColor, weight, opacity, dashArray });
+  groundTrackLayers.push(line);
+}
+
+async function loadSpacecraftState() {
+  try {
+    const res = await fetch('/api/spacecraft-state');
+    if (!res.ok) {
+      console.warn('Spacecraft state API returned', res.status);
+      return;
+    }
+    scState = await res.json();
+    updateSpacecraftMarker();
+    updateHeaderState();
+  } catch (e) {
+    console.error('Spacecraft state fetch error:', e);
+  }
+}
+
+function updateSpacecraftMarker() {
+  if (!scState) return;
+  const lat = scState.lat, lon = scState.lon;
+  const heading = scState.heading_deg || 0;
+
+  if (!scMarker) {
+    scMarker = map.addMarker(lat, lon, {
+      html: '<svg width="20" height="20" viewBox="0 0 24 24" style="transform:rotate(' + heading + 'deg)"><polygon points="12,2 18,20 12,16 6,20" fill="#22c55e" stroke="#4ade80" stroke-width="1" opacity="0.9"/></svg>',
+      size: 20
+    });
+  } else {
+    scMarker.setLatLng(lat, lon);
+    scMarker.setIcon({
+      html: '<svg width="20" height="20" viewBox="0 0 24 24" style="transform:rotate(' + heading + 'deg)"><polygon points="12,2 18,20 12,16 6,20" fill="#22c55e" stroke="#4ade80" stroke-width="1" opacity="0.9"/></svg>'
+    });
+  }
+
+  const swathRadiusKm = scState.alt_km * Math.tan(SWATH_HALF_ANGLE_DEG * Math.PI / 180);
+  if (!scFootprint) {
+    scFootprint = map.addCircle(lat, lon, swathRadiusKm, {
+      color: '#22c55e', weight: 0.8, opacity: 0.3,
+      fillColor: '#22c55e', fillOpacity: 0.06, dashArray: '2 3'
+    });
+  } else {
+    scFootprint.setLatLng(lat, lon);
+  }
+
+  const latDir = lat >= 0 ? 'N' : 'S';
+  const lonDir = lon >= 0 ? 'E' : 'W';
+  document.getElementById('mapLat').textContent = Math.abs(lat).toFixed(2) + '\u00B0 ' + latDir;
+  document.getElementById('mapLon').textContent = Math.abs(lon).toFixed(2) + '\u00B0 ' + lonDir;
+  document.getElementById('mapAlt').textContent = scState.alt_km + ' km';
+  document.getElementById('mapBeta').textContent = scState.solar_beta_deg + '\u00B0';
+}
+
+function updateHeaderState() {
+  if (!scState) return;
+  const lat = scState.lat, lon = scState.lon;
+  const latDir = lat >= 0 ? 'N' : 'S', lonDir = lon >= 0 ? 'E' : 'W';
+  document.getElementById('scLatLon').textContent =
+    Math.abs(lat).toFixed(2) + '\u00B0' + latDir + ' / ' + Math.abs(lon).toFixed(2) + '\u00B0' + lonDir;
+  document.getElementById('scAlt').textContent = scState.alt_km + ' km';
+
+  const badge = document.getElementById('scStateBadge');
+  if (scState.in_eclipse) {
+    badge.textContent = 'ECLIPSE';
+    badge.className = 'sc-state-badge eclipse';
+  } else {
+    badge.textContent = 'SUNLIT';
+    badge.className = 'sc-state-badge sunlit';
+  }
+}
+
+// ==================== Clock ====================
+function updateClock() {
+  const now = new Date();
+  document.getElementById('utcClock').textContent =
+    String(now.getUTCHours()).padStart(2,'0') + ':' +
+    String(now.getUTCMinutes()).padStart(2,'0') + ':' +
+    String(now.getUTCSeconds()).padStart(2,'0');
+  const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+  document.getElementById('utcDate').textContent =
+    String(now.getUTCDate()).padStart(2,'0') + ' ' + months[now.getUTCMonth()] + ' ' + now.getUTCFullYear();
+}
+
+// ==================== Simulated Fallback ====================
+const GS_FALLBACK = [
+  { id: 'iqaluit', name: 'Iqaluit',  lat: 63.747, lon: -68.518, minEl: 5, contactOffset: 0,  contactDur: 10, maxEl: 32 },
+  { id: 'troll',   name: 'Troll',    lat: -72.012, lon: 2.535,   minEl: 5, contactOffset: 50, contactDur: 8,  maxEl: 24 },
+];
+
+const SAMPLE_ACTIVITIES = [
+  { name: 'Imaging Pass',      durationMin: 12, station: 'Iqaluit', priority: 'high',   offsetMin: 15 },
+  { name: 'Data Dump',         durationMin: 18, station: 'Troll',   priority: 'high',   offsetMin: 45 },
+  { name: 'Orbit Maintenance', durationMin: 25, station: null,      priority: 'medium', offsetMin: 120 },
+  { name: 'Calibration',       durationMin: 8,  station: 'Troll',   priority: 'low',    offsetMin: 200 },
+  { name: 'Data Dump',         durationMin: 15, station: 'Iqaluit', priority: 'high',   offsetMin: 290 },
+  { name: 'Imaging Pass',      durationMin: 10, station: 'Troll',   priority: 'medium', offsetMin: 380 },
+  { name: 'Housekeeping',      durationMin: 5,  station: null,      priority: 'low',    offsetMin: 500 },
+  { name: 'Software Upload',   durationMin: 20, station: 'Iqaluit', priority: 'high',   offsetMin: 600 },
+];
+
+function generateSimulatedContacts() {
+  const now = Date.now();
+  const contacts = [];
+  GS_FALLBACK.forEach(gs => {
+    let t = now - ORBIT_PERIOD_MS + gs.contactOffset * 60000;
+    while (t < now + 86400000) {
+      contacts.push({
+        station: gs.name, stationId: gs.id,
+        aos: new Date(t), los: new Date(t + gs.contactDur * 60000),
+        durationMin: gs.contactDur,
+        maxEl: Math.max(gs.minEl+2, Math.min(85, gs.maxEl + Math.floor(Math.random()*20)-10)),
+        simulated: true
+      });
+      t += ORBIT_PERIOD_MS;
+    }
+  });
+  contacts.sort((a,b) => a.aos - b.aos);
+  return contacts;
+}
+
+function generateSimulatedActivities() {
+  const now = Date.now();
+  return SAMPLE_ACTIVITIES.map(a => ({
+    name: a.name, start: new Date(now + a.offsetMin * 60000),
+    durationMin: a.durationMin, station: a.station,
+    priority: a.priority, simulated: true
+  }));
+}
+
+// ==================== API Polling ====================
+async function pollAPIs() {
+  let contactsOk = false, scheduleOk = false;
+
+  try {
+    const res = await fetch('/api/contacts');
+    if (res.ok) {
+      const data = await res.json();
+      if (data.contacts && data.contacts.length > 0) {
+        apiContacts = data.contacts.map(c => ({
+          station: c.gs_name, aos: new Date(c.aos), los: new Date(c.los),
+          maxEl: c.max_elevation_deg, durationMin: Math.round((c.duration_s||0)/60),
+          simulated: false
+        }));
+        useSimulatedContacts = false;
+      } else useSimulatedContacts = true;
+      contactsOk = true;
+    }
+  } catch(e) { useSimulatedContacts = true; }
+
+  try {
+    const res = await fetch('/api/schedule');
+    if (res.ok) {
+      const data = await res.json();
+      if (data.schedule && data.schedule.length > 0) {
+        apiSchedule = data.schedule.map(s => ({
+          ...s, id: s.id, start: new Date(s.start_time),
+          durationMin: Math.round((s.duration_s||300)/60),
+          state_name: s.state_name || 'PLANNED', simulated: false
+        }));
+        useSimulatedSchedule = false;
+      } else useSimulatedSchedule = true;
+      scheduleOk = true;
+    }
+  } catch(e) { useSimulatedSchedule = true; }
+
+  const apiDot = document.getElementById('apiDot');
+  const apiText = document.getElementById('apiStatusText');
+  if (contactsOk && scheduleOk) {
+    apiDot.className = 'api-dot connected';
+    apiText.textContent = 'API: connected';
+  } else {
+    apiDot.className = 'api-dot error';
+    apiText.textContent = 'API: simulated';
+  }
+
+  document.getElementById('contactDataBadge').className = useSimulatedContacts ? 'sim-badge' : 'live-badge';
+  document.getElementById('contactDataBadge').textContent = useSimulatedContacts ? 'SIMULATED' : 'LIVE';
+  document.getElementById('activityDataBadge').className = useSimulatedSchedule ? 'sim-badge' : 'live-badge';
+  document.getElementById('activityDataBadge').textContent = useSimulatedSchedule ? 'SIMULATED' : 'LIVE';
+
+  updateTimeline();
+  updateContactsTable();
+  updateActivityList();
+}
+
+// ==================== Timeline Canvas ====================
+function drawTimeline() {
+  const canvas = document.getElementById('timelineCanvas');
+  const container = canvas.parentElement;
+  const dpr = window.devicePixelRatio || 1;
+
+  const displayWidth = container.clientWidth;
+  const displayHeight = 260;
+  canvas.style.width = displayWidth + 'px';
+  canvas.style.height = displayHeight + 'px';
+  canvas.width = displayWidth * dpr;
+  canvas.height = displayHeight * dpr;
+
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const w = displayWidth, h = displayHeight;
+  ctx.fillStyle = '#0a0f1a';
+  ctx.fillRect(0, 0, w, h);
+
+  const marginLeft = 70, marginRight = 12, marginTop = 24, marginBottom = 18;
+  const plotW = w - marginLeft - marginRight;
+  const plotH = h - marginTop - marginBottom;
+  const gsCount = GS_FALLBACK.length;
+  const rowH = plotH / gsCount;
+
+  const now = Date.now();
+  const windowMs = 86400000;
+
+  function timeToX(t) { return marginLeft + ((t - now) / windowMs) * plotW; }
+
+  ctx.strokeStyle = '#1e293b'; ctx.lineWidth = 0.5;
+  for (let hr = 0; hr <= 24; hr += 2) {
+    const x = marginLeft + (hr/24) * plotW;
+    ctx.beginPath(); ctx.moveTo(x, marginTop); ctx.lineTo(x, marginTop+plotH); ctx.stroke();
+  }
+  for (let i = 0; i <= gsCount; i++) {
+    const y = marginTop + i * rowH;
+    ctx.beginPath(); ctx.moveTo(marginLeft, y); ctx.lineTo(marginLeft+plotW, y); ctx.stroke();
+  }
+
+  // Contacts
+  const contacts = useSimulatedContacts ? simulatedContacts : apiContacts;
+  contacts.forEach(c => {
+    const stIdx = GS_FALLBACK.findIndex(gs => gs.id === c.stationId || gs.name === c.station);
+    if (stIdx === -1) return;
+    const aosMs = c.aos.getTime(), losMs = c.los.getTime();
+    if (losMs < now || aosMs > now + windowMs) return;
+
+    const x1 = Math.max(marginLeft, timeToX(aosMs));
+    const x2 = Math.min(marginLeft+plotW, timeToX(losMs));
+    const y = marginTop + stIdx * rowH + 4;
+    const bh = rowH - 8;
+
+    const active = aosMs <= now && losMs >= now;
+    ctx.fillStyle = active ? 'rgba(59,130,246,0.5)' : 'rgba(34,197,94,0.35)';
+    ctx.beginPath(); ctx.roundRect(x1, y, Math.max(x2-x1,2), bh, 2); ctx.fill();
+    ctx.strokeStyle = active ? '#3b82f6' : '#22c55e';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.roundRect(x1, y, Math.max(x2-x1,2), bh, 2); ctx.stroke();
+    if (x2-x1 > 30) {
+      ctx.fillStyle = '#e2e8f0'; ctx.font = '9px "JetBrains Mono"';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(c.durationMin+'m', (x1+x2)/2, y+bh/2);
+    }
+  });
+
+  ctx.fillStyle = '#94a3b8'; ctx.font = '10px "JetBrains Mono"';
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  GS_FALLBACK.forEach((gs, i) => {
+    ctx.fillText(gs.name, marginLeft-6, marginTop + i*rowH + rowH/2);
+  });
+
+  ctx.fillStyle = '#64748b'; ctx.font = '9px "JetBrains Mono"';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  for (let hr = 0; hr <= 24; hr += 4) {
+    ctx.fillText('+'+hr+'h', marginLeft + (hr/24)*plotW, marginTop+plotH+4);
+  }
+
+  ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 1.5; ctx.setLineDash([4,3]);
+  ctx.beginPath(); ctx.moveTo(marginLeft, marginTop); ctx.lineTo(marginLeft, marginTop+plotH); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#ef4444'; ctx.font = 'bold 9px "JetBrains Mono"'; ctx.textAlign = 'left';
+  ctx.fillText('NOW', marginLeft+3, marginTop-4);
+}
+
+function updateTimeline() { drawTimeline(); }
+
+// ==================== Contact Table ====================
+function updateContactsTable() {
+  const now = Date.now();
+  const contacts = useSimulatedContacts ? simulatedContacts : apiContacts;
+  const upcoming = contacts.filter(c => c.los.getTime() > now).sort((a,b) => a.aos-b.aos).slice(0, 8);
+
+  const tbody = document.getElementById('contactsBody');
+  tbody.innerHTML = '';
+  upcoming.forEach(c => {
+    const aosMs = c.aos.getTime(), losMs = c.los.getTime();
+    let status, style;
+    if (aosMs <= now && losMs >= now) { status = 'Active'; style = 'color:var(--blue);font-weight:600;'; }
+    else if (aosMs > now) { status = 'Upcoming'; style = 'color:var(--green);'; }
+    else { status = 'Done'; style = 'color:var(--gray);'; }
+
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td style="color:var(--text);font-weight:500;">' + c.station + '</td>' +
+      '<td>' + formatUTC(c.aos) + '</td>' +
+      '<td>' + formatUTC(c.los) + '</td>' +
+      '<td>' + c.durationMin + 'm</td>' +
+      '<td>' + (typeof c.maxEl==='number'?c.maxEl.toFixed(1):c.maxEl) + '&deg;</td>' +
+      '<td style="' + style + '">' + status + '</td>';
+    tbody.appendChild(tr);
+  });
+
+  const nextContact = contacts.find(c => c.aos.getTime() > now);
+  if (nextContact) {
+    const diff = nextContact.aos.getTime() - now;
+    const mins = Math.floor(diff/60000), secs = Math.floor((diff%60000)/1000);
+    document.getElementById('nextAos').textContent =
+      nextContact.station + ' ' + String(mins).padStart(2,'0') + ':' + String(secs).padStart(2,'0');
+  }
+}
+
+// ==================== Activity List ====================
+const STATE_COLORS = {
+  PLANNED:'var(--blue)', VALIDATED:'var(--cyan)', UPLOADED:'var(--accent)',
+  EXECUTING:'var(--green)', COMPLETED:'var(--green)', FAILED:'var(--red)', CANCELLED:'var(--gray)'
+};
+
+function updateActivityList() {
+  const activities = useSimulatedSchedule ? simulatedActivities : apiSchedule;
+  const container = document.getElementById('activityList');
+  container.innerHTML = '';
+
+  activities.forEach(a => {
+    const h = String(a.start.getUTCHours()).padStart(2,'0');
+    const m = String(a.start.getUTCMinutes()).padStart(2,'0');
+    const priorityClass = a.priority==='high'?'priority-high':a.priority==='medium'?'priority-medium':'priority-low';
+    const stateName = a.state_name || 'PLANNED';
+    const stateColor = STATE_COLORS[stateName] || 'var(--text-muted)';
+
+    const div = document.createElement('div');
+    div.className = 'activity-item';
+    div.innerHTML =
+      '<div class="activity-time-col">' +
+        '<span class="activity-time-hour">' + h + '</span>' +
+        '<span class="activity-time-min">:' + m + '</span>' +
+        '<div class="activity-divider"></div></div>' +
+      '<div class="activity-info">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+          '<div class="activity-name">' + a.name + '</div>' +
+          '<span style="font-size:9px;color:' + stateColor + ';font-weight:600;">' + stateName + '</span></div>' +
+        '<div class="activity-detail">' +
+          '<span>' + a.durationMin + 'm</span>' +
+          '<span class="activity-priority ' + priorityClass + '">' + (a.priority||'med') + '</span>' +
+          (a.id ? '<span style="cursor:pointer;color:var(--red);" onclick="deleteActivity('+a.id+')">&times;</span>' : '') +
+        '</div></div>';
+    container.appendChild(div);
+  });
+}
+
+async function deleteActivity(id) {
+  if (!confirm('Delete activity #'+id+'?')) return;
+  try { await fetch('/api/schedule/'+id, {method:'DELETE'}); pollAPIs(); } catch(e) {}
+}
+
+async function validateSchedule() {
+  const el = document.getElementById('scheduleValidation');
+  try {
+    const res = await fetch('/api/schedule/validate');
+    const data = await res.json();
+    el.style.display = 'block';
+    if (data.valid) {
+      el.style.background = 'var(--green-dim)'; el.style.color = 'var(--green)';
+      el.textContent = 'Valid (' + data.activity_count + ' activities)';
+    } else {
+      el.style.background = 'var(--yellow-dim)'; el.style.color = 'var(--yellow)';
+      el.innerHTML = data.issues.map(i => '<div>'+i.type+': '+i.message+'</div>').join('');
+    }
+    setTimeout(() => el.style.display='none', 8000);
+  } catch(e) {
+    el.style.display = 'block'; el.style.background = 'var(--red-dim)'; el.style.color = 'var(--red)';
+    el.textContent = 'Failed: ' + e;
+  }
+}
+
+async function uploadToMCS() {
+  const activities = apiSchedule.filter(a => a.state_name==='PLANNED'||!a.state_name);
+  if (!activities.length) { alert('No planned activities'); return; }
+  const act = activities[0];
+  if (!act.id) { alert('Activity has no ID'); return; }
+  try {
+    const res = await fetch('/api/schedule/upload', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({activity_id: act.id, step_by_step: false})
+    });
+    const data = await res.json();
+    if (data.error) alert('Upload failed: '+data.error);
+    else { alert('"'+act.name+'" uploaded to MCS.'); pollAPIs(); }
+  } catch(e) { alert('Upload failed: '+e); }
+}
+
+// ==================== Power & Data Budget ====================
+async function loadBudgets() {
+  try {
+    const [pRes, dRes] = await Promise.all([
+      fetch('/api/budget/power'),
+      fetch('/api/budget/data')
+    ]);
+    if (pRes.ok) {
+      const pd = await pRes.json();
+      renderPowerChart(pd);
+      document.getElementById('budgetBadge').className = 'live-badge';
+      document.getElementById('budgetBadge').textContent = 'LIVE';
+    }
+    if (dRes.ok) {
+      const dd = await dRes.json();
+      renderDataChart(dd);
+    }
+  } catch(e) {
+    document.getElementById('budgetBadge').className = 'sim-badge';
+    document.getElementById('budgetBadge').textContent = 'OFFLINE';
+    renderFallbackBudgets();
+  }
+}
+
+function renderPowerChart(data) {
+  const canvas = document.getElementById('powerChart');
+  if (powerChartInstance) powerChartInstance.destroy();
+
+  const passes = data.passes || data.power_passes || [];
+  const labels = passes.map((p, i) => 'P' + (i+1));
+  const socVals = passes.map(p => p.soc_end || p.soc_predicted || 80 - i*2);
+
+  powerChartInstance = new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'SoC %',
+        data: socVals,
+        borderColor: '#22c55e',
+        backgroundColor: 'rgba(34,197,94,0.1)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 3,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+      },
+      scales: {
+        y: { min: 0, max: 100, grid: { color: '#1e293b' }, ticks: { color: '#64748b', font: { size: 10 } } },
+        x: { grid: { color: '#1e293b' }, ticks: { color: '#64748b', font: { size: 9 } } }
+      }
+    }
+  });
+
+  const stats = document.getElementById('powerStats');
+  const minSoc = socVals.length ? Math.min(...socVals) : '--';
+  const avgSoc = socVals.length ? (socVals.reduce((a,b)=>a+b,0)/socVals.length).toFixed(1) : '--';
+  const cls = minSoc > 40 ? 'good' : minSoc > 20 ? 'warn' : 'crit';
+  stats.innerHTML =
+    '<div class="budget-stat"><span class="budget-label">Min SoC</span><span class="budget-value ' + cls + '">' + (typeof minSoc==='number'?minSoc.toFixed(1):minSoc) + '%</span></div>' +
+    '<div class="budget-stat"><span class="budget-label">Avg SoC</span><span class="budget-value">' + avgSoc + '%</span></div>' +
+    '<div class="budget-stat"><span class="budget-label">Passes</span><span class="budget-value">' + passes.length + '</span></div>';
+}
+
+function renderDataChart(data) {
+  const canvas = document.getElementById('dataChart');
+  if (dataChartInstance) dataChartInstance.destroy();
+
+  const entries = data.passes || data.data_passes || [];
+  const labels = entries.map((e, i) => 'P' + (i+1));
+  const dlVals = entries.map(e => e.downlink_mb || e.volume_mb || 50 + Math.random()*100);
+
+  dataChartInstance = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'DL (MB)',
+        data: dlVals,
+        backgroundColor: 'rgba(99,102,241,0.6)',
+        borderColor: '#6366f1',
+        borderWidth: 1,
+        borderRadius: 3,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { min: 0, grid: { color: '#1e293b' }, ticks: { color: '#64748b', font: { size: 10 } } },
+        x: { grid: { color: '#1e293b' }, ticks: { color: '#64748b', font: { size: 9 } } }
+      }
+    }
+  });
+
+  const stats = document.getElementById('dataStats');
+  const total = dlVals.reduce((a,b)=>a+b, 0).toFixed(0);
+  stats.innerHTML =
+    '<div class="budget-stat"><span class="budget-label">Total DL</span><span class="budget-value good">' + total + ' MB</span></div>' +
+    '<div class="budget-stat"><span class="budget-label">Passes</span><span class="budget-value">' + entries.length + '</span></div>';
+}
+
+function renderFallbackBudgets() {
+  // Render with placeholder data when API unavailable
+  const passes = [];
+  for (let i = 0; i < 8; i++) {
+    passes.push({ soc_end: 85 - i*3 + Math.random()*5, downlink_mb: 60 + Math.random()*80 });
+  }
+  renderPowerChart({ passes });
+  renderDataChart({ passes });
+}
+
+// ==================== Imaging Targets ====================
+async function loadImagingTargets() {
+  try {
+    const res = await fetch('/api/imaging/targets');
+    if (res.ok) {
+      const data = await res.json();
+      imagingTargets = data.targets || [];
+      renderTargetList();
+      document.getElementById('imagingBadge').className = 'live-badge';
+      document.getElementById('imagingBadge').textContent = 'LIVE';
+    }
+  } catch(e) {
+    // Fallback targets
+    imagingTargets = [
+      { name: 'Gulf Stream Front', lat: 38.5, lon: -70.0, priority: 'high' },
+      { name: 'Kuroshio Current', lat: 34.0, lon: 140.0, priority: 'high' },
+      { name: 'Agulhas Retroflection', lat: -38.0, lon: 20.0, priority: 'medium' },
+      { name: 'Benguela Upwelling', lat: -22.0, lon: 10.0, priority: 'medium' },
+      { name: 'California Current', lat: 35.0, lon: -125.0, priority: 'low' },
+      { name: 'Somali Current', lat: 5.0, lon: 50.0, priority: 'low' },
+      { name: 'East Australian Current', lat: -30.0, lon: 155.0, priority: 'medium' },
+    ];
+    renderTargetList();
+    document.getElementById('imagingBadge').className = 'sim-badge';
+    document.getElementById('imagingBadge').textContent = 'FALLBACK';
+  }
+  loadOpportunities();
+}
+
+function renderTargetList() {
+  const container = document.getElementById('targetList');
+  container.innerHTML = '';
+  imagingTargets.forEach(t => {
+    const latDir = (t.lat||0) >= 0 ? 'N' : 'S';
+    const lonDir = (t.lon||0) >= 0 ? 'E' : 'W';
+    const priorityClass = t.priority==='high'?'priority-high':t.priority==='medium'?'priority-medium':'priority-low';
+    const div = document.createElement('div');
+    div.className = 'target-card';
+    div.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+        '<div class="target-name">' + t.name + '</div>' +
+        '<span class="activity-priority ' + priorityClass + '">' + (t.priority||'med') + '</span>' +
+      '</div>' +
+      '<div class="target-coords">' +
+        Math.abs(t.lat||0).toFixed(1) + '&deg;' + latDir + ', ' +
+        Math.abs(t.lon||0).toFixed(1) + '&deg;' + lonDir +
+      '</div>';
+    container.appendChild(div);
+  });
+}
+
+async function loadOpportunities() {
+  try {
+    const res = await fetch('/api/imaging/opportunities');
+    if (res.ok) {
+      const data = await res.json();
+      imagingOpportunities = data.opportunities || [];
+      renderOpportunities();
+    }
+  } catch(e) {}
+}
+
+function renderOpportunities() {
+  const tbody = document.getElementById('opportunitiesBody');
+  tbody.innerHTML = '';
+  imagingOpportunities.slice(0, 10).forEach(o => {
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td style="color:var(--text);font-weight:500;">' + (o.target_name||o.target||'--') + '</td>' +
+      '<td>' + (o.window_open ? formatUTC(new Date(o.window_open)) : '--') + '</td>' +
+      '<td>' + (o.duration_s ? Math.round(o.duration_s/60)+'m' : '--') + '</td>' +
+      '<td>' + (o.gsd_m ? o.gsd_m.toFixed(1)+'m' : '--') + '</td>';
+    tbody.appendChild(tr);
+  });
+  if (!imagingOpportunities.length) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td colspan="4" style="text-align:center;color:var(--text-muted);">No opportunities computed yet</td>';
+    tbody.appendChild(tr);
+  }
+}
+
+async function refreshImaging() {
+  await loadImagingTargets();
+}
+
+// ==================== Utility ====================
+function formatUTC(date) {
+  return String(date.getUTCHours()).padStart(2,'0') + ':' +
+         String(date.getUTCMinutes()).padStart(2,'0') + ':' +
+         String(date.getUTCSeconds()).padStart(2,'0');
+}
+
+// ==================== Activity Types ====================
+let loadedActivityTypes = [];
+
+async function loadActivityTypes() {
+  try {
+    const res = await fetch('/api/activity-types');
+    const data = await res.json();
+    loadedActivityTypes = data.activity_types || [];
+    if (loadedActivityTypes.length > 0) {
+      const sel = document.getElementById('actType');
+      sel.innerHTML = '<option value="">Select activity type...</option>';
+      loadedActivityTypes.forEach(at => {
+        const opt = document.createElement('option');
+        opt.value = at.name;
+        opt.textContent = at.name.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
+        sel.appendChild(opt);
+      });
+    }
+  } catch(e) {}
+}
+
+function onActivityTypeChange() {
+  const name = document.getElementById('actType').value;
+  const infoEl = document.getElementById('actTypeInfo');
+  if (!name) { infoEl.style.display = 'none'; return; }
+  const at = loadedActivityTypes.find(a => a.name === name);
+  if (at) {
+    infoEl.style.display = 'block';
+    const dur = Math.round((at.duration_s||0)/60);
+    infoEl.innerHTML = at.description + '<br>Duration: '+dur+'m | Power: '+(at.power_w||0)+'W';
+    document.getElementById('actDuration').value = dur;
+    document.getElementById('actPriority').value = at.priority || 'medium';
+  } else infoEl.style.display = 'none';
+}
+
+// ==================== Modal ====================
+function openModal() {
+  document.getElementById('modalOverlay').classList.add('active');
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset()*60000);
+  document.getElementById('actStartTime').value = local.toISOString().slice(0,16);
+}
+
+function closeModal() { document.getElementById('modalOverlay').classList.remove('active'); }
+
+async function submitActivity() {
+  const name = document.getElementById('actType').value;
+  const startTime = document.getElementById('actStartTime').value;
+  const duration = parseInt(document.getElementById('actDuration').value) || 15;
+  const priority = document.getElementById('actPriority').value || 'medium';
+  const station = document.getElementById('actStation').value || null;
+  if (!name || !startTime) return;
+
+  try {
+    const res = await fetch('/api/schedule', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ name, start_time: new Date(startTime).toISOString(), duration_s: duration*60, priority, station })
+    });
+    if (res.ok) { closeModal(); pollAPIs(); }
+  } catch(e) {
+    simulatedActivities.push({
+      name, start: new Date(startTime), durationMin: duration,
+      station, priority, simulated: true
+    });
+    simulatedActivities.sort((a,b) => a.start-b.start);
+    closeModal(); updateActivityList();
+  }
+}
+
+document.getElementById('modalOverlay').addEventListener('click', function(e) { if (e.target===this) closeModal(); });
+document.addEventListener('keydown', function(e) { if (e.key==='Escape') closeModal(); });
+
+// ==================== Initialization ====================
+function init() {
+  simulatedContacts = generateSimulatedContacts();
+  simulatedActivities = generateSimulatedActivities();
+
+  updateClock();
+  setInterval(updateClock, 1000);
+
+  initMap();
+  drawTimeline();
+  updateContactsTable();
+  updateActivityList();
+
+  window.addEventListener('resize', function() {
+    drawTimeline();
+    if (map) map.invalidateSize();
+  });
+
+  loadActivityTypes();
+  pollAPIs();
+  setInterval(pollAPIs, POLL_INTERVAL_MS);
+
+  // Budget & imaging (wide-screen extras)
+  loadBudgets();
+  loadImagingTargets();
+  setInterval(loadBudgets, 120000);
+
+  setInterval(function() {
+    updateContactsTable();
+    drawTimeline();
+  }, 10000);
+}
+
+// roundRect polyfill
+if (!CanvasRenderingContext2D.prototype.roundRect) {
+  CanvasRenderingContext2D.prototype.roundRect = function(x,y,w,h,r) {
+    if (typeof r==='number') r=[r,r,r,r];
+    else if (typeof r==='undefined') r=[0,0,0,0];
+    this.moveTo(x+r[0],y); this.lineTo(x+w-r[1],y);
+    this.quadraticCurveTo(x+w,y,x+w,y+r[1]);
+    this.lineTo(x+w,y+h-r[2]);
+    this.quadraticCurveTo(x+w,y+h,x+w-r[2],y+h);
+    this.lineTo(x+r[3],y+h);
+    this.quadraticCurveTo(x,y+h,x,y+h-r[3]);
+    this.lineTo(x,y+r[0]);
+    this.quadraticCurveTo(x,y,x+r[0],y);
+    this.closePath(); return this;
+  };
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>

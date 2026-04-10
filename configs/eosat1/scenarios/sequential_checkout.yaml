@@ -1,0 +1,24 @@
+name: "Sequential Subsystem Checkout"
+difficulty: INTERMEDIATE
+duration_s: 2400
+briefing: |
+  Application software is running and antennas are deployed.
+  The spacecraft is in LEOP phase (phase 4). Operators must
+  perform the sequential power-on of all subsystems following
+  procedure LEOP-007, then transition to COMMISSIONING phase.
+
+initial_conditions:
+  spacecraft_phase: 4  # LEOP
+  override_passes: true  # Continuous contact for checkout
+
+events: []
+
+expected_responses:
+  - { category: command, description: "Enable battery heater (power_line_on htr_bat)" }
+  - { category: command, description: "Enable reaction wheels (power_line_on aocs_wheels)" }
+  - { category: command, description: "Command AOCS DETUMBLE mode" }
+  - { category: detect, description: "Verify body rates decreasing" }
+  - { category: command, description: "Enable payload in standby mode" }
+  - { category: command, description: "Enable and activate FPA cooler" }
+  - { category: detect, description: "GO/NO-GO all positions nominal" }
+  - { category: command, description: "Transition to COMMISSIONING phase" }

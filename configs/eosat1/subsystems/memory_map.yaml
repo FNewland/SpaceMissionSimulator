@@ -1,0 +1,56 @@
+memory_regions:
+  - name: "Boot ROM"
+    start: 0x00000000
+    size: 0x10000
+    type: readonly
+    description: "Primary bootloader, write-protected"
+  - name: "Boot Backup"
+    start: 0x00010000
+    size: 0x10000
+    type: readonly
+    description: "Backup bootloader copy"
+  - name: "Application A"
+    start: 0x00100000
+    size: 0x80000
+    type: flash
+    description: "Primary flight software image"
+  - name: "Application B"
+    start: 0x00180000
+    size: 0x80000
+    type: flash
+    description: "Backup flight software image"
+  - name: "Configuration"
+    start: 0x00200000
+    size: 0x20000
+    type: flash
+    description: "Onboard parameter tables and configuration"
+  - name: "HK Store"
+    start: 0x00300000
+    size: 0x100000
+    type: flash
+    description: "Housekeeping data store (S15 Store 1)"
+  - name: "Event Store"
+    start: 0x00400000
+    size: 0x80000
+    type: flash
+    description: "Event log store (S15 Store 2)"
+  - name: "Science Store"
+    start: 0x00500000
+    size: 0x800000
+    type: flash
+    description: "Science/payload data store (S15 Store 3)"
+  - name: "Alarm Store"
+    start: 0x00D00000
+    size: 0x40000
+    type: flash
+    description: "Alarm history store (S15 Store 4)"
+  - name: "Scratchpad RAM"
+    start: 0x20000000
+    size: 0x40000
+    type: ram
+    description: "General-purpose volatile working memory"
+  - name: "Stack/Heap"
+    start: 0x20040000
+    size: 0x20000
+    type: ram
+    description: "Application stack and heap allocation"

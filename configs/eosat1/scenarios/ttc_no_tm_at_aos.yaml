@@ -1,0 +1,37 @@
+name: "No Telemetry at AOS"
+difficulty: ADVANCED
+duration_s: 3600
+briefing: |
+  The spacecraft is in nominal mode and a ground station contact window is
+  active. At AOS (T+60s), no telemetry is received despite valid tracking
+  and uplink configuration. The operator must systematically diagnose the
+  RF chain — checking transponder power lines, PA status, and antenna
+  deployment — and step through recovery actions until telemetry is restored.
+  Multiple failure mechanisms may be in play: the TX power line may be off,
+  the PA may be disabled, or the antennas may not be deployed.
+
+events:
+  - time_offset_s: 0
+    action: inject
+    params:
+      subsystem: ttc
+      failure: primary_failure
+      magnitude: 1.0
+
+  - time_offset_s: 60
+    action: inject
+    params:
+      subsystem: ttc
+      failure: uplink_loss
+      magnitude: 1.0
+
+expected_responses:
+  - { category: detect, description: "Detect absence of telemetry at predicted AOS" }
+  - { category: isolate, description: "Confirm ground station is nominal — antenna tracking, uplink power, receiver OK" }
+  - { category: isolate, description: "Check TTC TX power line status via EPS HK" }
+  - { category: command, description: "Verify transponder is powered — EPS_POWER_ON(line_index=2) if ttc_tx off" }
+  - { category: command, description: "Command PA on — TTC_PA_ON (func_id 53)" }
+  - { category: command, description: "Check antenna deployment flag and deploy if stowed (func_id 56)" }
+  - { category: command, description: "Switch transponder if primary unresponsive — TTC_SWITCH_REDUNDANT (func_id 51)" }
+  - { category: detect, description: "Monitor link budget params (RSSI, BER, Eb/N0) after each step" }
+  - { category: recover, description: "Restore telemetry downlink and verify link quality" }

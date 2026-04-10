@@ -1,0 +1,1187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EOSAT-1 Mission Control</title>
+<link rel="stylesheet" href="../vendor/css/fonts.css">
+<style>
+/* ═══════════════════════════════════════════════════════════════════
+   EOSAT-1 MCS  —  Design: retro-futuristic mission control
+   Orbitron for titles / labels, Share Tech Mono for live values
+═══════════════════════════════════════════════════════════════════ */
+:root {
+  --bg:        #060b10;
+  --panel:     #0b1520;
+  --panel2:    #0e1a28;
+  --border:    #162535;
+  --border-hi: #1e3a55;
+  --glow:      #0a2540;
+  --dim:       #1e3045;
+
+  --green:   #00e887;
+  --amber:   #ffaa00;
+  --red:     #ff2d55;
+  --blue:    #00aaff;
+  --purple:  #9b59f5;
+  --cyan:    #00d8ff;
+
+  --text:        #6a9ab8;
+  --text-mid:    #8cbcd8;
+  --text-bright: #c0e0f4;
+  --text-dim:    #2a4a65;
+
+  --font-ui:  'Orbitron', sans-serif;
+  --font-val: 'Share Tech Mono', monospace;
+
+  --rad: 4px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ── Scanline overlay on header ─────────────────────────────── */
+@keyframes scan { 0%{transform:translateY(0)} 100%{transform:translateY(4px)} }
+
+/* ── Header ─────────────────────────────────────────────────── */
+#header {
+  display: flex; align-items: center; gap: 24px;
+  padding: 10px 20px;
+  background: linear-gradient(135deg, #0b1a28 0%, #0d2035 60%, #0b1a28 100%);
+  border-bottom: 1px solid var(--border-hi);
+  position: relative; overflow: hidden;
+}
+#header::before {
+  content:''; position:absolute; inset:0;
+  background: repeating-linear-gradient(
+    0deg, transparent, transparent 3px,
+    rgba(0,170,255,0.025) 3px, rgba(0,170,255,0.025) 4px);
+  pointer-events:none;
+}
+#craft-id {
+  font-size: 20px; font-weight: 900; letter-spacing: 4px;
+  color: var(--cyan);
+  text-shadow: 0 0 20px rgba(0,216,255,0.5);
+}
+#craft-id span { color: var(--text-dim); font-weight: 400; font-size: 11px; letter-spacing: 2px; display:block; }
+#sim-time {
+  font-family: var(--font-val); font-size: 14px;
+  color: var(--text-bright); letter-spacing: 2px;
+}
+#badges { display:flex; gap:8px; }
+.badge {
+  padding: 3px 10px; border-radius: 2px; font-size: 10px; letter-spacing: 1.5px;
+  border: 1px solid; font-weight: 600;
+}
+.badge.nominal  { color:var(--green);  border-color: rgba(0,232,135,0.4); background: rgba(0,232,135,0.08); }
+.badge.warning  { color:var(--amber);  border-color: rgba(255,170,0,0.4);  background: rgba(255,170,0,0.08); }
+.badge.alarm    { color:var(--red);    border-color: rgba(255,45,85,0.4);  background: rgba(255,45,85,0.1);  }
+.badge.info     { color:var(--blue);   border-color: rgba(0,170,255,0.4);  background: rgba(0,170,255,0.08); }
+.badge.off      { color:var(--text-dim);border-color:var(--dim);           background: transparent; }
+
+#ws-status { margin-left:auto; font-size:10px; letter-spacing:1px; color:var(--text-dim); }
+#ws-status.connected { color:var(--green); }
+#speed-ctrl { display:flex; align-items:center; gap:6px; }
+#speed-ctrl label { font-size:10px; letter-spacing:1px; color:var(--text-dim); }
+#speed-val  { font-family:var(--font-val); color:var(--cyan); width:30px; text-align:center; }
+
+/* ── Main grid ───────────────────────────────────────────────── */
+#main {
+  display: grid;
+  grid-template-columns: 280px 1fr 320px;
+  grid-template-rows: 1fr auto;
+  gap: 1px;
+  height: calc(100vh - 56px);
+  background: var(--border);
+}
+
+/* ── Panel base ─────────────────────────────────────────────── */
+.panel {
+  background: var(--panel);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.panel-title {
+  padding: 8px 12px;
+  font-size: 9px; font-weight: 700; letter-spacing: 3px;
+  color: var(--text-dim); text-transform: uppercase;
+  background: var(--panel2);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 8px;
+  flex-shrink: 0;
+}
+.panel-title .dot {
+  width:6px; height:6px; border-radius:50%;
+  background: var(--cyan); box-shadow: 0 0 8px var(--cyan);
+}
+.panel-body { flex:1; overflow-y:auto; padding: 8px; }
+
+/* ── Scrollbar ──────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 2px; }
+
+/* ── Subsystem block ─────────────────────────────────────────── */
+.subsys {
+  border: 1px solid var(--border);
+  border-radius: var(--rad);
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.subsys-hdr {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 8px;
+  background: var(--panel2);
+  border-bottom: 1px solid var(--border);
+  font-size: 9px; font-weight: 700; letter-spacing: 2px;
+  color: var(--text-mid); text-transform: uppercase;
+  cursor: pointer; user-select: none;
+}
+.subsys-hdr:hover { background: var(--glow); }
+.subsys-body { padding: 6px 8px; }
+.subsys.collapsed .subsys-body { display: none; }
+
+/* ── TM row ──────────────────────────────────────────────────── */
+.tm-row {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding: 2px 0; border-bottom: 1px solid var(--dim);
+}
+.tm-row:last-child { border: none; }
+.tm-label { font-size: 10px; color: var(--text); letter-spacing: 0.5px; }
+.tm-value {
+  font-family: var(--font-val); font-size: 12px; font-weight: 600;
+  color: var(--text-bright); letter-spacing: 1px;
+  transition: color 0.3s;
+}
+.tm-value.nominal { color: var(--green);  }
+.tm-value.warning { color: var(--amber);  }
+.tm-value.alarm   { color: var(--red); text-shadow: 0 0 10px rgba(255,45,85,0.6); }
+.tm-unit { font-size: 9px; color: var(--text-dim); margin-left: 2px; }
+
+/* ── SOC bar ─────────────────────────────────────────────────── */
+.soc-bar {
+  height: 6px; background: var(--dim); border-radius: 3px;
+  margin: 4px 0; overflow: hidden;
+}
+.soc-fill {
+  height: 100%; border-radius: 3px;
+  background: linear-gradient(90deg, var(--green) 0%, #00ffa0 100%);
+  transition: width 1s ease, background 0.5s;
+}
+.soc-fill.warn  { background: linear-gradient(90deg, var(--amber), #ffd000); }
+.soc-fill.alarm { background: linear-gradient(90deg, var(--red), #ff6080); }
+
+/* ── RW grid ─────────────────────────────────────────────────── */
+.rw-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 4px;
+}
+.rw-cell {
+  background: var(--dim); border-radius: var(--rad);
+  padding: 4px 6px; text-align: center;
+  border: 1px solid var(--border);
+}
+.rw-cell .rw-id  { font-size: 9px; color: var(--text-dim); letter-spacing: 1px; }
+.rw-cell .rw-rpm { font-family: var(--font-val); font-size: 13px; color: var(--cyan); }
+.rw-cell .rw-tmp { font-family: var(--font-val); font-size: 9px; color: var(--text); }
+
+/* ── Heater/cooler indicators ────────────────────────────────── */
+.flag-row { display:flex; gap:6px; flex-wrap:wrap; margin-top:4px; }
+.flag {
+  font-size: 9px; letter-spacing: 1px; padding: 2px 6px;
+  border-radius: 2px; border: 1px solid;
+}
+.flag.on  { color:var(--green); border-color:rgba(0,232,135,0.4); background:rgba(0,232,135,0.08); }
+.flag.off { color:var(--text-dim); border-color:var(--dim); }
+
+/* ═════════════════ CENTER COLUMN ════════════════════════════ */
+#col-center {
+  display: grid;
+  grid-template-rows: 1fr 240px;
+  background: var(--border);
+  gap: 1px;
+}
+
+/* ── TC Composer ─────────────────────────────────────────────── */
+#tc-panel { grid-column:1; }
+#tc-form  { padding: 10px; display:flex; flex-direction:column; gap:8px; }
+
+.form-row { display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; }
+.form-group { display:flex; flex-direction:column; gap:3px; flex:1; min-width:80px; }
+.form-group label { font-size: 9px; letter-spacing: 1px; color: var(--text-dim); text-transform:uppercase; }
+
+select, input[type=text], input[type=number] {
+  background: var(--panel2); border: 1px solid var(--border-hi);
+  color: var(--text-bright); font-family: var(--font-val); font-size: 12px;
+  padding: 5px 8px; border-radius: var(--rad); outline: none; width: 100%;
+}
+select:focus, input:focus { border-color: var(--cyan); box-shadow: 0 0 0 2px rgba(0,216,255,0.15); }
+select option { background: #0b1520; }
+
+#tc-fields { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+
+.btn {
+  padding: 7px 16px;
+  background: transparent; border: 1px solid var(--border-hi);
+  color: var(--text-mid); font-family: var(--font-ui); font-size: 10px;
+  font-weight: 700; letter-spacing: 2px; text-transform: uppercase;
+  border-radius: var(--rad); cursor: pointer;
+  transition: all 0.2s;
+}
+.btn:hover { border-color: var(--cyan); color: var(--cyan); background: var(--glow); }
+.btn.primary {
+  border-color: rgba(0,216,255,0.5); color: var(--cyan);
+  background: rgba(0,216,255,0.08);
+  box-shadow: 0 0 15px rgba(0,216,255,0.15);
+}
+.btn.primary:hover { background: rgba(0,216,255,0.2); }
+.btn.danger  { border-color:rgba(255,45,85,0.5); color:var(--red); }
+.btn.danger:hover  { background:rgba(255,45,85,0.1); }
+.btn.success { border-color:rgba(0,232,135,0.5); color:var(--green); }
+.btn.success:hover { background:rgba(0,232,135,0.1); }
+.btn.warn    { border-color:rgba(255,170,0,0.5); color:var(--amber); }
+.btn.warn:hover    { background:rgba(255,170,0,0.1); }
+
+#tc-history {
+  margin-top: 6px; padding: 6px;
+  background: var(--bg); border: 1px solid var(--dim);
+  border-radius: var(--rad); max-height: 100px; overflow-y: auto;
+  font-family: var(--font-val); font-size: 10px; color: var(--text-dim);
+}
+.tc-hist-item { padding: 2px 0; border-bottom: 1px solid var(--dim); display:flex; gap:8px; }
+.tc-hist-item:last-child { border:none; }
+.tc-hist-item .ts   { color: var(--text-dim); }
+.tc-hist-item .info { color: var(--cyan); }
+.tc-hist-item .err  { color: var(--red); }
+
+/* ── Active Failures ─────────────────────────────────────────── */
+#failures-panel { overflow:hidden; }
+#failures-list  { padding: 8px; display:flex; flex-direction:column; gap:4px; }
+.failure-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; border: 1px solid rgba(255,170,0,0.3);
+  border-radius: var(--rad); background: rgba(255,170,0,0.05);
+}
+.failure-item .f-id      { font-family:var(--font-val); font-size:11px; color:var(--amber); flex:1; }
+.failure-item .f-mag     { font-family:var(--font-val); font-size:11px; color:var(--text-bright); }
+.failure-item .f-elapsed { font-size:9px; color:var(--text-dim); }
+.no-failures { font-size:10px; color:var(--text-dim); padding:8px; letter-spacing:1px; }
+
+/* ═════════════════ RIGHT COLUMN: Event log ══════════════════ */
+#log-panel .panel-body { padding:0; }
+#event-log { padding:6px; font-family:var(--font-val); font-size:10px; }
+.log-entry {
+  padding: 3px 6px; border-bottom: 1px solid var(--dim);
+  display: grid; grid-template-columns: 60px 70px 1fr;
+  gap: 6px; line-height: 1.4;
+}
+.log-entry:last-child { border:none; }
+.log-ts   { color: var(--text-dim); }
+.log-tag  { font-weight:600; letter-spacing:1px; text-transform:uppercase; font-size:9px; }
+.log-msg  { color: var(--text-mid); }
+.log-entry.ev-tm    .log-tag { color: var(--blue); }
+.log-entry.ev-tc    .log-tag { color: var(--cyan); }
+.log-entry.ev-fail  .log-tag { color: var(--amber); }
+.log-entry.ev-alarm .log-tag { color: var(--red); }
+.log-entry.ev-scen  .log-tag { color: var(--purple); }
+.log-entry.ev-sys   .log-tag { color: var(--text-dim); }
+#log-filters {
+  padding: 6px 8px; background: var(--panel2); border-bottom: 1px solid var(--border);
+  display:flex; gap:8px; flex-wrap:wrap; flex-shrink:0;
+}
+.log-filter { display:flex; align-items:center; gap:4px; font-size:9px; letter-spacing:1px; cursor:pointer; }
+.log-filter input { accent-color: var(--cyan); }
+
+/* ═════════════════ BOTTOM: Instructor ══════════════════════ */
+#instructor {
+  grid-column: 1 / -1;
+  background: var(--panel);
+  border-top: 1px solid var(--border-hi);
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 1px;
+  background: var(--border);
+  max-height: 200px;
+}
+#instr-scenario, #instr-inject, #instr-active {
+  background: var(--panel); padding: 10px;
+}
+.instr-title {
+  font-size: 9px; font-weight: 700; letter-spacing: 3px; color: var(--text-dim);
+  text-transform: uppercase; margin-bottom: 8px;
+  display: flex; align-items: center; gap: 6px;
+}
+.instr-title::before {
+  content:''; width:8px; height:1px; background: var(--cyan);
+}
+
+/* Scenario */
+#scen-info {
+  display:flex; align-items:center; gap:8px; margin-bottom:8px;
+}
+#scen-elapsed {
+  font-family:var(--font-val); color:var(--cyan); font-size:13px;
+}
+#scen-name { font-size:10px; color:var(--text-mid); }
+
+/* Failure inject */
+.inject-row { display:flex; gap:6px; align-items:flex-end; flex-wrap:wrap; }
+.inject-row .form-group { min-width:70px; }
+#mag-val { font-family:var(--font-val); color:var(--amber); text-align:right; margin-left:4px; }
+input[type=range] {
+  -webkit-appearance:none; height:4px;
+  background: var(--border-hi); border-radius:2px; outline:none; width:100%;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance:none; width:14px; height:14px; border-radius:50%;
+  background: var(--amber); cursor:pointer;
+  box-shadow:0 0 6px rgba(255,170,0,0.5);
+}
+
+/* Active failures table */
+#active-fail-list { font-family:var(--font-val); font-size:10px; }
+.af-row {
+  display:grid; grid-template-columns:1fr 60px 50px auto;
+  gap:6px; padding:3px 0; border-bottom:1px solid var(--dim); align-items:center;
+}
+.af-row:last-child { border:none; }
+.af-row .af-id  { color:var(--amber); }
+.af-row .af-mag { color:var(--text-bright); text-align:right; }
+.af-row .af-t   { color:var(--text-dim); text-align:right; }
+.af-clr {
+  padding:1px 6px; font-size:9px; background:transparent;
+  border:1px solid rgba(255,45,85,0.4); color:var(--red);
+  border-radius:2px; cursor:pointer; font-family:var(--font-ui);
+  letter-spacing:1px;
+}
+.af-clr:hover { background:rgba(255,45,85,0.1); }
+
+/* Orbit map */
+#orbit-map {
+  position:relative; background: #050d18; border:1px solid var(--border);
+  border-radius:var(--rad); overflow:hidden; flex-shrink:0;
+  height: 80px;
+  margin: 0 8px 8px;
+}
+#orbit-canvas { width:100%; height:100%; }
+
+/* Mode label */
+.mode-badge {
+  display: inline-block;
+  padding: 1px 6px; border-radius: 2px; font-size: 9px; font-weight:700;
+  letter-spacing: 1px;
+}
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════ HEADER ════════════════════════════ -->
+<div id="header">
+  <div id="craft-id">EOSAT-1<span>EO MISSION SIMULATOR</span></div>
+  <div id="sim-time">--:--:--</div>
+  <div id="badges">
+    <span class="badge off" id="b-eclipse">ECLIPSE</span>
+    <span class="badge off" id="b-contact">CONTACT</span>
+    <span class="badge info" id="b-mode">BOOT</span>
+  </div>
+  <div id="speed-ctrl">
+    <label>SIM SPEED</label>
+    <input type="range" id="speed-slider" min="0.1" max="10" step="0.1" value="1.0" style="width:80px">
+    <span id="speed-val">1.0×</span>
+  </div>
+  <div id="ws-status">● CONNECTING</div>
+</div>
+
+<!-- ══════════════════════════ MAIN GRID ═════════════════════════ -->
+<div id="main">
+
+  <!-- ── LEFT: TM Subsystems ─────────────────────────────── -->
+  <div class="panel" id="tm-panel">
+    <div class="panel-title"><span class="dot"></span>TELEMETRY</div>
+    <div class="panel-body" id="tm-body">
+
+      <!-- Orbit mini-map -->
+      <div id="orbit-map">
+        <canvas id="orbit-canvas"></canvas>
+      </div>
+
+      <!-- EPS -->
+      <div class="subsys" id="ss-eps">
+        <div class="subsys-hdr" onclick="toggleSS(this)">
+          EPS — ELECTRICAL POWER <span id="eps-soc-pct">--</span>%
+        </div>
+        <div class="subsys-body">
+          <div class="soc-bar"><div class="soc-fill" id="soc-fill" style="width:0%"></div></div>
+          <div class="tm-row"><span class="tm-label">Bus Voltage</span>
+            <span><span class="tm-value" id="v-bus">--</span><span class="tm-unit">V</span></span></div>
+          <div class="tm-row"><span class="tm-label">Bat Voltage</span>
+            <span><span class="tm-value" id="v-bat">--</span><span class="tm-unit">V</span></span></div>
+          <div class="tm-row"><span class="tm-label">Bat Temp</span>
+            <span><span class="tm-value" id="bat-temp">--</span><span class="tm-unit">°C</span></span></div>
+          <div class="tm-row"><span class="tm-label">SA-A Current</span>
+            <span><span class="tm-value" id="sa-a">--</span><span class="tm-unit">A</span></span></div>
+          <div class="tm-row"><span class="tm-label">SA-B Current</span>
+            <span><span class="tm-value" id="sa-b">--</span><span class="tm-unit">A</span></span></div>
+          <div class="tm-row"><span class="tm-label">Power Gen / Cons</span>
+            <span><span class="tm-value" id="pwr-gen">--</span> / <span class="tm-value" id="pwr-cons">--</span><span class="tm-unit">W</span></span></div>
+        </div>
+      </div>
+
+      <!-- AOCS -->
+      <div class="subsys" id="ss-aocs">
+        <div class="subsys-hdr" onclick="toggleSS(this)">
+          AOCS — <span id="aocs-mode-lbl">--</span>
+        </div>
+        <div class="subsys-body">
+          <div class="tm-row"><span class="tm-label">Att Error</span>
+            <span><span class="tm-value" id="att-err">--</span><span class="tm-unit">°</span></span></div>
+          <div class="tm-row"><span class="tm-label">Body Rates (r/p/y)</span>
+            <span class="tm-value" id="rates" style="font-size:10px">-- / -- / --</span><span class="tm-unit">°/s</span></div>
+          <div class="rw-grid" id="rw-grid">
+            <div class="rw-cell"><div class="rw-id">RW-1</div><div class="rw-rpm" id="rw1-rpm">--</div><div class="rw-tmp" id="rw1-tmp">-- °C</div></div>
+            <div class="rw-cell"><div class="rw-id">RW-2</div><div class="rw-rpm" id="rw2-rpm">--</div><div class="rw-tmp" id="rw2-tmp">-- °C</div></div>
+            <div class="rw-cell"><div class="rw-id">RW-3</div><div class="rw-rpm" id="rw3-rpm">--</div><div class="rw-tmp" id="rw3-tmp">-- °C</div></div>
+            <div class="rw-cell"><div class="rw-id">RW-4</div><div class="rw-rpm" id="rw4-rpm">--</div><div class="rw-tmp" id="rw4-tmp">-- °C</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TCS -->
+      <div class="subsys" id="ss-tcs">
+        <div class="subsys-hdr" onclick="toggleSS(this)">TCS — THERMAL</div>
+        <div class="subsys-body">
+          <div class="tm-row"><span class="tm-label">OBC Temp</span>
+            <span><span class="tm-value" id="t-obc">--</span><span class="tm-unit">°C</span></span></div>
+          <div class="tm-row"><span class="tm-label">Battery Temp</span>
+            <span><span class="tm-value" id="t-bat">--</span><span class="tm-unit">°C</span></span></div>
+          <div class="tm-row"><span class="tm-label">FPA Temp</span>
+            <span><span class="tm-value" id="t-fpa">--</span><span class="tm-unit">°C</span></span></div>
+          <div class="tm-row"><span class="tm-label">Panel ±X</span>
+            <span><span class="tm-value" id="t-pan">--</span><span class="tm-unit">°C</span></span></div>
+          <div class="flag-row">
+            <span class="flag off" id="htr-bat">HTR-BAT</span>
+            <span class="flag off" id="htr-obc">HTR-OBC</span>
+            <span class="flag off" id="cool-fpa">COOL-FPA</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- OBDH -->
+      <div class="subsys" id="ss-obdh">
+        <div class="subsys-hdr" onclick="toggleSS(this)">
+          OBDH — <span id="obdh-mode-lbl">--</span>
+        </div>
+        <div class="subsys-body">
+          <div class="tm-row"><span class="tm-label">CPU Load</span>
+            <span><span class="tm-value" id="cpu">--</span><span class="tm-unit">%</span></span></div>
+          <div class="tm-row"><span class="tm-label">Mem Used</span>
+            <span><span class="tm-value" id="mem">--</span><span class="tm-unit">%</span></span></div>
+          <div class="tm-row"><span class="tm-label">TC Rx / Acc / Rej</span>
+            <span class="tm-value" id="tc-counts" style="font-size:10px">-- / -- / --</span></div>
+          <div class="tm-row"><span class="tm-label">Reboots</span>
+            <span class="tm-value" id="reboots">--</span></div>
+        </div>
+      </div>
+
+      <!-- TT&C -->
+      <div class="subsys collapsed" id="ss-ttc">
+        <div class="subsys-hdr" onclick="toggleSS(this)">TT&amp;C — COMMS</div>
+        <div class="subsys-body">
+          <div class="tm-row"><span class="tm-label">RSSI</span>
+            <span><span class="tm-value" id="rssi">--</span><span class="tm-unit">dBm</span></span></div>
+          <div class="tm-row"><span class="tm-label">Link Margin</span>
+            <span><span class="tm-value" id="link-margin">--</span><span class="tm-unit">dB</span></span></div>
+          <div class="tm-row"><span class="tm-label">Range</span>
+            <span><span class="tm-value" id="range">--</span><span class="tm-unit">km</span></span></div>
+          <div class="tm-row"><span class="tm-label">Elevation</span>
+            <span><span class="tm-value" id="elevation">--</span><span class="tm-unit">°</span></span></div>
+          <div class="tm-row"><span class="tm-label">XPDR Temp</span>
+            <span><span class="tm-value" id="xpdr-temp">--</span><span class="tm-unit">°C</span></span></div>
+        </div>
+      </div>
+
+      <!-- Payload -->
+      <div class="subsys collapsed" id="ss-pli">
+        <div class="subsys-hdr" onclick="toggleSS(this)">PAYLOAD — IMAGER</div>
+        <div class="subsys-body">
+          <div class="tm-row"><span class="tm-label">FPA Temp</span>
+            <span><span class="tm-value" id="pli-fpa">--</span><span class="tm-unit">°C</span></span></div>
+          <div class="tm-row"><span class="tm-label">Cooler Power</span>
+            <span><span class="tm-value" id="pli-cool">--</span><span class="tm-unit">W</span></span></div>
+          <div class="tm-row"><span class="tm-label">Storage Used</span>
+            <span><span class="tm-value" id="pli-store">--</span><span class="tm-unit">%</span></span></div>
+          <div class="tm-row"><span class="tm-label">Images</span>
+            <span class="tm-value" id="pli-imgs">--</span></div>
+          <div class="tm-row"><span class="tm-label">Checksum Errs</span>
+            <span class="tm-value" id="pli-errs">--</span></div>
+        </div>
+      </div>
+
+    </div><!-- panel-body -->
+  </div><!-- #tm-panel -->
+
+  <!-- ── CENTER COLUMN ────────────────────────────────────── -->
+  <div id="col-center">
+
+    <!-- TC Composer -->
+    <div class="panel" id="tc-panel">
+      <div class="panel-title"><span class="dot" style="background:var(--cyan);box-shadow:0 0 8px var(--cyan)"></span>TC UPLINK COMPOSER</div>
+      <div class="panel-body">
+        <div id="tc-form">
+          <div class="form-row">
+            <div class="form-group" style="max-width:80px">
+              <label>APID</label>
+              <input type="number" id="tc-apid" value="1" min="0" max="2047">
+            </div>
+            <div class="form-group" style="flex:2">
+              <label>Command</label>
+              <select id="tc-cmd-sel" onchange="onTCSelect()"></select>
+            </div>
+          </div>
+          <div id="tc-fields"></div>
+          <div style="display:flex;gap:8px;margin-top:4px">
+            <button class="btn primary" onclick="sendTC()" style="flex:1">▶ SEND TC</button>
+            <button class="btn" onclick="clearTCFields()">CLEAR</button>
+          </div>
+          <div id="tc-history"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Active Failures -->
+    <div class="panel" id="failures-panel">
+      <div class="panel-title"><span class="dot" style="background:var(--amber);box-shadow:0 0 8px var(--amber)"></span>ACTIVE FAILURES <span id="fail-count" style="margin-left:auto;color:var(--amber);font-family:var(--font-val)">0</span></div>
+      <div class="panel-body">
+        <div id="failures-list">
+          <div class="no-failures" id="no-fail-msg">NO ACTIVE FAILURES</div>
+        </div>
+        <div style="padding:0 8px 8px">
+          <button class="btn danger" onclick="clearAllFailures()" style="width:100%;font-size:9px">CLEAR ALL FAILURES</button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- #col-center -->
+
+  <!-- ── RIGHT: Event Log ─────────────────────────────────── -->
+  <div class="panel" id="log-panel">
+    <div class="panel-title"><span class="dot" style="background:var(--blue);box-shadow:0 0 8px var(--blue)"></span>EVENT LOG</div>
+    <div id="log-filters">
+      <label class="log-filter"><input type="checkbox" checked data-filter="ev-tm">TM</label>
+      <label class="log-filter"><input type="checkbox" checked data-filter="ev-tc">TC</label>
+      <label class="log-filter"><input type="checkbox" checked data-filter="ev-fail">FAIL</label>
+      <label class="log-filter"><input type="checkbox" checked data-filter="ev-alarm">ALARM</label>
+      <label class="log-filter"><input type="checkbox" checked data-filter="ev-scen">SCEN</label>
+      <label class="log-filter"><input type="checkbox" checked data-filter="ev-sys">SYS</label>
+      <button class="btn" onclick="clearLog()" style="margin-left:auto;padding:2px 8px;font-size:9px">CLR</button>
+    </div>
+    <div class="panel-body">
+      <div id="event-log"></div>
+    </div>
+  </div>
+
+  <!-- ── BOTTOM: Instructor ───────────────────────────────── -->
+  <div id="instructor">
+
+    <!-- Scenario control -->
+    <div id="instr-scenario">
+      <div class="instr-title">SCENARIO CONTROL</div>
+      <div class="form-row" style="margin-bottom:8px">
+        <div class="form-group" style="flex:2">
+          <label>Scenario</label>
+          <select id="scen-sel"></select>
+        </div>
+        <button class="btn success" onclick="startScenario()">START</button>
+        <button class="btn danger"  onclick="stopScenario()">STOP</button>
+      </div>
+      <div id="scen-info">
+        <span id="scen-name" style="flex:1;font-size:10px;color:var(--text-dim)">— no scenario active —</span>
+        <span id="scen-elapsed" style="font-family:var(--font-val);color:var(--cyan)"></span>
+      </div>
+      <div style="margin-top:6px">
+        <div class="form-row">
+          <div class="form-group" style="max-width:80px">
+            <label>Sim Speed</label>
+            <input type="number" id="speed-input" value="1.0" min="0.1" max="50" step="0.5">
+          </div>
+          <button class="btn" onclick="setSpeed()">SET</button>
+          <button class="btn warn" onclick="setSpeed(1)">1×</button>
+          <button class="btn warn" onclick="setSpeed(5)">5×</button>
+          <button class="btn warn" onclick="setSpeed(10)">10×</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Failure injection -->
+    <div id="instr-inject">
+      <div class="instr-title">FAILURE INJECTION</div>
+      <div class="inject-row">
+        <div class="form-group">
+          <label>Subsystem</label>
+          <select id="fi-subsys" onchange="onSubsysChange()"></select>
+        </div>
+        <div class="form-group">
+          <label>Failure Mode</label>
+          <select id="fi-failure"></select>
+        </div>
+        <div class="form-group">
+          <label>Onset</label>
+          <select id="fi-onset">
+            <option value="step">Step</option>
+            <option value="gradual">Gradual</option>
+            <option value="intermittent">Intermittent</option>
+          </select>
+        </div>
+      </div>
+      <div class="inject-row" style="margin-top:6px">
+        <div class="form-group" style="flex:2">
+          <label>Magnitude <span id="mag-val">1.00</span></label>
+          <input type="range" id="fi-mag" min="0.1" max="1.0" step="0.05" value="1.0"
+                 oninput="document.getElementById('mag-val').textContent=parseFloat(this.value).toFixed(2)">
+        </div>
+        <div class="form-group" style="max-width:80px">
+          <label>Duration (s)</label>
+          <input type="number" id="fi-dur" value="" placeholder="∞" min="0">
+        </div>
+        <div class="form-group" style="max-width:90px">
+          <label>Onset Dur (s)</label>
+          <input type="number" id="fi-onset-dur" value="90" min="1">
+        </div>
+        <button class="btn warn" onclick="injectFailure()" style="margin-bottom:0">INJECT</button>
+      </div>
+    </div>
+
+    <!-- Active failures compact -->
+    <div id="instr-active">
+      <div class="instr-title">ACTIVE FAILURES</div>
+      <div id="active-fail-list"></div>
+    </div>
+
+  </div><!-- #instructor -->
+
+</div><!-- #main -->
+
+<script>
+// ════════════════════════════════════════════════════════════════
+//  EOSAT-1 MCS — JavaScript
+// ════════════════════════════════════════════════════════════════
+
+const SC_MODES  = ['BOOT','SAFE','NOMINAL','MISSION','RECONFIG','EMERGENCY'];
+const AOCS_MODES= ['DETUMBLE','SUN_ACQ','NADIR','FINE_POINT','SLEW','SAFE'];
+const OBDH_MODES= ['BOOT','NORMAL','SAFE','DEGRADED','MAINTENANCE'];
+
+let ws = null;
+let catalog = {failures:{}, tc:[]};
+let lastState = null;
+let tcCatalog = [];
+let logCount = 0;
+const MAX_LOG = 500;
+
+// ── WebSocket ────────────────────────────────────────────────────
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
+
+  ws.onopen = () => {
+    setWsStatus(true);
+    logEvent('ev-sys', 'SYS', 'WebSocket connected');
+  };
+  ws.onclose = () => {
+    setWsStatus(false);
+    logEvent('ev-sys', 'SYS', 'WebSocket disconnected — reconnecting…');
+    setTimeout(connectWS, 3000);
+  };
+  ws.onerror = () => { setWsStatus(false); };
+  ws.onmessage = (ev) => {
+    try { handleMsg(JSON.parse(ev.data)); } catch(e) {}
+  };
+}
+
+function setWsStatus(ok) {
+  const el = document.getElementById('ws-status');
+  el.textContent = ok ? '● CONNECTED' : '● OFFLINE';
+  el.className = ok ? 'connected' : '';
+}
+
+function send(obj) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+}
+
+// ── Message dispatch ─────────────────────────────────────────────
+function handleMsg(msg) {
+  if      (msg.type === 'state')     updateDisplays(msg.data);
+  else if (msg.type === 'tm_packet') handleTMPacket(msg);
+  else if (msg.type === 'tc_ack')    handleTCAck(msg);
+  else if (msg.type === 'tc_err')    handleTCErr(msg);
+}
+
+// ── State update ─────────────────────────────────────────────────
+function updateDisplays(s) {
+  lastState = s;
+
+  // Header
+  document.getElementById('sim-time').textContent =
+    s.sim_time ? s.sim_time.replace('T',' ').substring(0,19)+'Z' : '--:--:--';
+
+  setBadge('b-eclipse', s.in_eclipse, 'ECLIPSE', 'warning', 'off');
+  setBadge('b-contact', s.in_contact, 'CONTACT', 'info',    'off');
+  const modeLabel = SC_MODES[s.sc_mode] || String(s.sc_mode);
+  const modeClass = s.sc_mode >= 4 ? 'alarm' : (s.sc_mode <= 1 ? 'warning' : 'nominal');
+  const bm = document.getElementById('b-mode');
+  bm.textContent = modeLabel; bm.className = `badge ${modeClass}`;
+
+  // Speed slider sync
+  const ss = document.getElementById('speed-slider');
+  if (!ss.matches(':active')) {
+    ss.value = s.speed;
+    document.getElementById('speed-val').textContent = parseFloat(s.speed).toFixed(1)+'×';
+  }
+
+  const eps = s.eps || {};
+  const aocs= s.aocs || {};
+  const tcs = s.tcs || {};
+  const obdh= s.obdh || {};
+  const ttc = s.ttc || {};
+  const pli = s.payload || {};
+
+  // EPS
+  const soc = eps.soc_pct ?? 0;
+  setVal('eps-soc-pct', soc.toFixed(1));
+  setValWithLimit('soc-fill', null, soc); // handled specially
+  const socFill = document.getElementById('soc-fill');
+  socFill.style.width = soc + '%';
+  socFill.className = 'soc-fill' + (soc < 15 ? ' alarm' : soc < 25 ? ' warn' : '');
+  setVal('v-bus',    (eps.bus_voltage_V ?? 0).toFixed(2),  limitClass(eps.bus_voltage_V, 27, 29));
+  setVal('v-bat',    (eps.bat_voltage_V ?? 0).toFixed(2),  limitClass(eps.bat_voltage_V, 23, 29));
+  setVal('bat-temp', (eps.bat_temp_C    ?? 0).toFixed(1),  limitClass(eps.bat_temp_C,    2,  40));
+  setVal('sa-a',     (eps.sa_a_A        ?? 0).toFixed(2),  limitClass(eps.sa_a_A,        0,   9));
+  setVal('sa-b',     (eps.sa_b_A        ?? 0).toFixed(2),  limitClass(eps.sa_b_A,        0,   9));
+  setVal('pwr-gen',  (eps.power_gen_W   ?? 0).toFixed(1));
+  setVal('pwr-cons', (eps.power_cons_W  ?? 0).toFixed(1));
+
+  // AOCS
+  document.getElementById('aocs-mode-lbl').textContent = AOCS_MODES[aocs.mode] || String(aocs.mode||0);
+  setVal('att-err', (aocs.att_error_deg ?? 0).toFixed(3),
+         limitClass(Math.abs(aocs.att_error_deg||0), -1, 1, false));
+  const r = n => (n??0).toFixed(3);
+  document.getElementById('rates').textContent =
+    `${r(aocs.rate_roll)} / ${r(aocs.rate_pitch)} / ${r(aocs.rate_yaw)}`;
+  for (let i = 1; i <= 4; i++) {
+    setVal(`rw${i}-rpm`, Math.round(aocs[`rw${i}_rpm`]??0).toString());
+    document.getElementById(`rw${i}-tmp`).textContent = (aocs[`rw${i}_temp_C`]??0).toFixed(1) + ' °C';
+  }
+
+  // TCS
+  setVal('t-obc', (tcs.temp_obc_C??0).toFixed(1), limitClass(tcs.temp_obc_C,  5, 60));
+  setVal('t-bat', (tcs.temp_bat_C??0).toFixed(1), limitClass(tcs.temp_bat_C,  2, 40));
+  setVal('t-fpa', (tcs.temp_fpa_C??0).toFixed(1), limitClass(tcs.temp_fpa_C,-18,  8));
+  setVal('t-pan', (tcs.temp_panel_px??0).toFixed(1));
+  setFlag('htr-bat',  tcs.htr_bat);
+  setFlag('htr-obc',  tcs.htr_obc);
+  setFlag('cool-fpa', tcs.cooler_fpa);
+
+  // OBDH
+  document.getElementById('obdh-mode-lbl').textContent = OBDH_MODES[obdh.mode]||String(obdh.mode||0);
+  setVal('cpu',    (obdh.cpu_load_pct??0).toFixed(1), limitClass(obdh.cpu_load_pct, 0, 85));
+  setVal('mem',    (obdh.mem_used_pct??0).toFixed(1), limitClass(obdh.mem_used_pct, 0, 90));
+  document.getElementById('tc-counts').textContent =
+    `${obdh.tc_rx??0} / ${obdh.tc_acc??0} / ${obdh.tc_rej??0}`;
+  setVal('reboots', String(obdh.reboot_count??0),
+         (obdh.reboot_count??0) > 2 ? 'warning' : 'nominal');
+
+  // TT&C
+  setVal('rssi',       (ttc.rssi_dBm??0).toFixed(1));
+  setVal('link-margin',(ttc.link_margin_dB??0).toFixed(1), limitClass(ttc.link_margin_dB, 3, 99));
+  setVal('range',      (ttc.range_km??0).toFixed(0));
+  setVal('elevation',  (ttc.elevation_deg??0).toFixed(1));
+  setVal('xpdr-temp',  (ttc.xpdr_temp_C??0).toFixed(1));
+
+  // Payload
+  setVal('pli-fpa',   (pli.fpa_temp_C??0).toFixed(1),   limitClass(pli.fpa_temp_C,-18,8));
+  setVal('pli-cool',  (pli.cooler_W??0).toFixed(1));
+  setVal('pli-store', (pli.store_used_pct??0).toFixed(1),limitClass(pli.store_used_pct,0,90));
+  setVal('pli-imgs',  String(pli.image_count??0));
+  setVal('pli-errs',  String(pli.checksum_errs??0), (pli.checksum_errs??0)>0?'warning':'nominal');
+
+  // Active failures
+  updateFailuresList(s.active_failures || []);
+
+  // Scenario
+  updateScenario(s);
+
+  // Orbit map
+  drawOrbit(s);
+}
+
+// ── DOM helpers ──────────────────────────────────────────────────
+function setVal(id, text, cls) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  if (cls) el.className = `tm-value ${cls}`;
+}
+
+function limitClass(val, lo, hi, invertAbove) {
+  if (val == null) return '';
+  const v = Number(val);
+  if (v < lo || v > hi) return 'alarm';
+  const margin = (hi - lo) * 0.1;
+  if (v < lo + margin || v > hi - margin) return 'warning';
+  return 'nominal';
+}
+
+function setBadge(id, active, label, activeClass, inactiveClass) {
+  const el = document.getElementById(id);
+  el.textContent = label;
+  el.className = `badge ${active ? activeClass : inactiveClass}`;
+}
+
+function setFlag(id, on) {
+  const el = document.getElementById(id);
+  el.className = `flag ${on ? 'on' : 'off'}`;
+}
+
+function toggleSS(hdr) {
+  hdr.closest('.subsys').classList.toggle('collapsed');
+}
+
+// ── Failures display ─────────────────────────────────────────────
+function updateFailuresList(failures) {
+  const list  = document.getElementById('failures-list');
+  const noMsg = document.getElementById('no-fail-msg');
+  const count = document.getElementById('fail-count');
+  const afList= document.getElementById('active-fail-list');
+  count.textContent = failures.length;
+
+  if (failures.length === 0) {
+    noMsg.style.display = '';
+    list.querySelectorAll('.failure-item').forEach(e=>e.remove());
+    afList.innerHTML = '<div style="color:var(--text-dim);font-size:10px;padding:4px 0">NONE</div>';
+    return;
+  }
+  noMsg.style.display = 'none';
+
+  // Sync failure items (simple full re-render, small list)
+  list.querySelectorAll('.failure-item').forEach(e=>e.remove());
+  afList.innerHTML = '';
+  for (const f of failures) {
+    const item = document.createElement('div');
+    item.className = 'failure-item';
+    item.innerHTML = `
+      <span class="f-id">${f.id}</span>
+      <span class="f-mag">${(f.magnitude*100).toFixed(0)}%</span>
+      <span class="f-elapsed">${f.elapsed_s.toFixed(0)}s</span>
+      <button class="af-clr" onclick="clearFailure('${f.id}')">CLR</button>`;
+    list.appendChild(item);
+
+    // Bottom row
+    const row = document.createElement('div');
+    row.className = 'af-row';
+    row.innerHTML = `<span class="af-id">${f.id}</span>
+      <span class="af-mag">${(f.magnitude*100).toFixed(0)}%</span>
+      <span class="af-t">${f.elapsed_s.toFixed(0)}s</span>
+      <button class="af-clr" onclick="clearFailure('${f.id}')">CLR</button>`;
+    afList.appendChild(row);
+  }
+}
+
+// ── Scenario ─────────────────────────────────────────────────────
+function updateScenario(s) {
+  const nameEl    = document.getElementById('scen-name');
+  const elapsedEl = document.getElementById('scen-elapsed');
+  if (s.scenario_active) {
+    nameEl.textContent    = s.scenario_name || '—';
+    nameEl.style.color    = 'var(--purple)';
+    const e = s.scenario_elapsed_s || 0;
+    const mm = String(Math.floor(e/60)).padStart(2,'0');
+    const ss2= String(Math.floor(e%60)).padStart(2,'0');
+    elapsedEl.textContent = `${mm}:${ss2}`;
+  } else {
+    nameEl.textContent   = '— no scenario active —';
+    nameEl.style.color   = 'var(--text-dim)';
+    elapsedEl.textContent= '';
+  }
+}
+
+// ── Orbit mini-map ───────────────────────────────────────────────
+let orbitTrack = [];
+function drawOrbit(s) {
+  const canvas = document.getElementById('orbit-canvas');
+  const W = canvas.parentElement.offsetWidth;
+  const H = canvas.parentElement.offsetHeight;
+  canvas.width  = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0,0,W,H);
+
+  // Simple equirect projection
+  const toX = lon => (lon + 180) / 360 * W;
+  const toY = lat => (90 - lat) / 180 * H;
+
+  // Background grid lines
+  ctx.strokeStyle = 'rgba(30,60,80,0.6)'; ctx.lineWidth = 0.5;
+  for (let lon = -180; lon <= 180; lon += 60) {
+    ctx.beginPath(); ctx.moveTo(toX(lon),0); ctx.lineTo(toX(lon),H); ctx.stroke();
+  }
+  for (let lat = -90; lat <= 90; lat += 30) {
+    ctx.beginPath(); ctx.moveTo(0,toY(lat)); ctx.lineTo(W,toY(lat)); ctx.stroke();
+  }
+
+  // Ground track
+  if (s.lat != null && s.lon != null) {
+    orbitTrack.push([s.lon, s.lat]);
+    if (orbitTrack.length > 200) orbitTrack.shift();
+    ctx.strokeStyle = 'rgba(0,170,255,0.3)'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i < orbitTrack.length; i++) {
+      const [ln,lt] = orbitTrack[i];
+      i === 0 ? ctx.moveTo(toX(ln),toY(lt)) : ctx.lineTo(toX(ln),toY(lt));
+    }
+    ctx.stroke();
+
+    // Spacecraft dot
+    const x = toX(s.lon), y = toY(s.lat);
+    ctx.fillStyle = s.in_eclipse ? 'rgba(155,89,245,0.9)' : '#00e887';
+    ctx.beginPath(); ctx.arc(x,y,4,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+}
+
+// ── TM packet log ────────────────────────────────────────────────
+let tmPktCount = 0;
+function handleTMPacket(p) {
+  tmPktCount++;
+  if (tmPktCount % 5 !== 0) return;  // Don't log every HK packet (1Hz * 5 SIDs)
+  logEvent('ev-tm', `S${p.service}/${p.subtype}`,
+           `APID=${p.apid.toString(16).padStart(3,'0').toUpperCase()} seq=${p.seq} len=${p.len}`);
+}
+
+// ── Event log ────────────────────────────────────────────────────
+const filters = {};
+document.querySelectorAll('[data-filter]').forEach(cb => {
+  filters[cb.dataset.filter] = cb.checked;
+  cb.addEventListener('change', () => {
+    filters[cb.dataset.filter] = cb.checked;
+    document.querySelectorAll(`#event-log .${cb.dataset.filter}`).forEach(el => {
+      el.style.display = cb.checked ? '' : 'none';
+    });
+  });
+});
+
+function logEvent(cls, tag, msg) {
+  const log = document.getElementById('event-log');
+  const now = new Date();
+  const ts  = now.toTimeString().substring(0,8);
+  const div = document.createElement('div');
+  div.className = `log-entry ${cls}`;
+  div.style.display = filters[cls] === false ? 'none' : '';
+  div.innerHTML = `<span class="log-ts">${ts}</span><span class="log-tag">${tag}</span><span class="log-msg">${msg}</span>`;
+  log.insertBefore(div, log.firstChild);
+  logCount++;
+  if (logCount > MAX_LOG) {
+    const old = log.querySelectorAll('.log-entry');
+    if (old.length > MAX_LOG) old[old.length-1].remove();
+  }
+}
+
+function clearLog() {
+  document.getElementById('event-log').innerHTML = '';
+  logCount = 0;
+}
+
+// ── TC Composer ──────────────────────────────────────────────────
+function populateTCDropdown() {
+  const sel = document.getElementById('tc-cmd-sel');
+  sel.innerHTML = '';
+  for (const cmd of catalog.tc) {
+    const opt = document.createElement('option');
+    opt.value = JSON.stringify({service:cmd.service, subtype:cmd.subtype});
+    opt.textContent = cmd.label;
+    sel.appendChild(opt);
+  }
+  onTCSelect();
+}
+
+function onTCSelect() {
+  const sel = document.getElementById('tc-cmd-sel');
+  if (!sel.value) return;
+  const {service, subtype} = JSON.parse(sel.value);
+  const def = catalog.tc.find(c => c.service===service && c.subtype===subtype);
+  if (!def) return;
+  const fields = document.getElementById('tc-fields');
+  fields.innerHTML = '';
+  for (const f of (def.fields||[])) {
+    const group = document.createElement('div');
+    group.className = 'form-group';
+    group.innerHTML = `<label>${f.label}</label>
+      <input type="${f.t==='float'?'number':'text'}" id="tcf-${f.n}"
+             value="${f.d}" ${f.t==='float'?'step="any"':''} placeholder="${f.d}">`;
+    fields.appendChild(group);
+  }
+}
+
+function clearTCFields() { onTCSelect(); }
+
+function sendTC() {
+  const sel = document.getElementById('tc-cmd-sel');
+  if (!sel.value) return;
+  const {service, subtype} = JSON.parse(sel.value);
+  const def = catalog.tc.find(c => c.service===service && c.subtype===subtype);
+  if (!def) return;
+  const params = {};
+  for (const f of (def.fields||[])) {
+    const el = document.getElementById(`tcf-${f.n}`);
+    if (el) params[f.n] = f.t==='float'?parseFloat(el.value):el.value;
+  }
+  const apid = parseInt(document.getElementById('tc-apid').value) || 1;
+  send({type:'tc', service, subtype, apid, params});
+}
+
+function handleTCAck(msg) {
+  const hist = document.getElementById('tc-history');
+  const ts   = new Date().toTimeString().substring(0,8);
+  const div  = document.createElement('div');
+  div.className = 'tc-hist-item';
+  div.innerHTML = `<span class="ts">${ts}</span><span class="info">✓ S${msg.service}/${msg.subtype} APID=${msg.apid} seq=${msg.seq} [${msg.len}B]</span>`;
+  hist.insertBefore(div, hist.firstChild);
+  if (hist.children.length > 10) hist.lastChild.remove();
+  logEvent('ev-tc', 'TC↑', `S${msg.service}/${msg.subtype} APID=${msg.apid} seq=${msg.seq}`);
+}
+
+function handleTCErr(msg) {
+  const hist = document.getElementById('tc-history');
+  const ts   = new Date().toTimeString().substring(0,8);
+  const div  = document.createElement('div');
+  div.className = 'tc-hist-item';
+  div.innerHTML = `<span class="ts">${ts}</span><span class="err">✗ ${msg.error}</span>`;
+  hist.insertBefore(div, hist.firstChild);
+  logEvent('ev-tc', 'TC✗', msg.error);
+}
+
+// ── Instructor commands ──────────────────────────────────────────
+function injectFailure() {
+  const sub  = document.getElementById('fi-subsys').value;
+  const fail = document.getElementById('fi-failure').value;
+  const mag  = parseFloat(document.getElementById('fi-mag').value);
+  const ons  = document.getElementById('fi-onset').value;
+  const dur  = document.getElementById('fi-dur').value;
+  const onsDur = parseFloat(document.getElementById('fi-onset-dur').value);
+  const cmd  = {type:'failure_inject', subsystem:sub, failure:fail,
+                magnitude:mag, onset:ons, onset_duration_s:onsDur};
+  if (dur) cmd.duration_s = parseFloat(dur);
+  send({type:'instr', cmd});
+  logEvent('ev-fail','INJECT',`${sub}/${fail} mag=${(mag*100).toFixed(0)}% onset=${ons}`);
+}
+
+function clearFailure(fid) {
+  send({type:'instr', cmd:{type:'failure_clear', failure_id:fid}});
+  logEvent('ev-fail','CLR',fid);
+}
+
+function clearAllFailures() {
+  send({type:'instr', cmd:{type:'failure_clear'}});
+  logEvent('ev-fail','CLR','ALL FAILURES CLEARED');
+}
+
+function startScenario() {
+  const name = document.getElementById('scen-sel').value;
+  if (!name) return;
+  send({type:'instr', cmd:{type:'scenario_start', name}});
+  logEvent('ev-scen','SCEN▶',name);
+}
+
+function stopScenario() {
+  send({type:'instr', cmd:{type:'scenario_stop'}});
+  logEvent('ev-scen','SCEN■','Scenario stopped');
+}
+
+function setSpeed(v) {
+  const val = v ?? parseFloat(document.getElementById('speed-input').value);
+  if (isNaN(val)) return;
+  send({type:'instr', cmd:{type:'set_speed', value:val}});
+  document.getElementById('speed-input').value = val;
+}
+
+// Speed slider in header
+document.getElementById('speed-slider').addEventListener('input', function() {
+  const v = parseFloat(this.value);
+  document.getElementById('speed-val').textContent = v.toFixed(1)+'×';
+  send({type:'instr', cmd:{type:'set_speed', value:v}});
+});
+
+// ── Failure injection dropdowns ──────────────────────────────────
+function populateFailureDropdowns() {
+  const subSel = document.getElementById('fi-subsys');
+  subSel.innerHTML = '';
+  for (const [sub] of Object.entries(catalog.failures)) {
+    const opt = document.createElement('option');
+    opt.value = sub; opt.textContent = sub.toUpperCase();
+    subSel.appendChild(opt);
+  }
+  onSubsysChange();
+}
+
+function onSubsysChange() {
+  const sub  = document.getElementById('fi-subsys').value;
+  const sel  = document.getElementById('fi-failure');
+  const modes= catalog.failures[sub] || [];
+  sel.innerHTML = '';
+  for (const m of modes) {
+    const opt = document.createElement('option');
+    opt.value = m; opt.textContent = m.replace(/_/g,' ');
+    sel.appendChild(opt);
+  }
+}
+
+// ── Scenario dropdown ────────────────────────────────────────────
+function populateScenarioDropdown(scenarios) {
+  const sel = document.getElementById('scen-sel');
+  sel.innerHTML = '';
+  for (const sc of (scenarios||[])) {
+    const opt = document.createElement('option');
+    opt.value = sc.name;
+    const diff = sc.difficulty ? ` [${sc.difficulty}]` : '';
+    opt.textContent = `${sc.name}${diff}`;
+    opt.title = sc.description || '';
+    sel.appendChild(opt);
+  }
+}
+
+// ── Init ─────────────────────────────────────────────────────────
+async function init() {
+  try {
+    const resp = await fetch('/catalog');
+    catalog = await resp.json();
+    populateTCDropdown();
+    populateFailureDropdowns();
+    logEvent('ev-sys','SYS','Catalog loaded');
+  } catch(e) {
+    logEvent('ev-sys','SYS','Catalog fetch failed — using defaults');
+    catalog = {failures:{eps:['solar_array_partial','bat_cell'],aocs:['rw_bearing']}, tc:[]};
+    populateFailureDropdowns();
+  }
+  connectWS();
+
+  // Populate scenarios once we get first state
+  let scenPopulated = false;
+  const origUpdate = updateDisplays;
+  window.updateDisplays = (s) => {
+    origUpdate(s);
+    if (!scenPopulated && s.available_scenarios) {
+      populateScenarioDropdown(s.available_scenarios);
+      scenPopulated = true;
+    }
+  };
+}
+
+init();
+</script>
+</body>
+</html>

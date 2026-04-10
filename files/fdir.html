@@ -1,0 +1,357 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>EOSAT-1 — Flight Director</title><link rel="stylesheet" href="../vendor/css/fonts.css"><style>*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg0: #060b10; --bg1: #0a1520; --bg2: #0d1e2d; --bg3: #112535;
+  --c0: #4a7090; --c1: #7ac0e0; --c2: #a0d8f8;
+  --grn: #39e05b; --yel: #f0c040; --red: #f04040; --cyn: #00e8ff; --mag: #e040ff;
+  --font: 'Share Tech Mono', monospace; --head: 'Orbitron', sans-serif;
+}
+body { background: var(--bg0); color: var(--c1); font-family: var(--font); font-size: 12px; overflow-x: hidden; }
+a { color: var(--cyn); text-decoration: none; }
+#nav { display: flex; align-items: center; gap: 2px; background: var(--bg1); border-bottom: 1px solid #1a3a50; padding: 4px 8px; position: sticky; top: 0; z-index: 100; }
+#nav a { padding: 4px 12px; border-radius: 3px; color: var(--c0); font-family: var(--head); font-size: 10px; letter-spacing: .1em; border: 1px solid transparent; }
+#nav a:hover, #nav a.active { color: var(--cyn); border-color: #1a4a60; background: var(--bg3); }
+#nav a.active { color: #0ff; border-color: var(--cyn); }
+#nav .spacer { flex: 1; }
+#nav .sc-id { font-family: var(--head); font-size: 11px; color: var(--cyn); letter-spacing: .15em; }
+#ws-status { font-size: 10px; padding: 2px 8px; border-radius: 3px; background: var(--bg3); }
+.ws-ok { color: #39e05b; } .ws-err { color: #f04040; }
+.main-grid { display: grid; gap: 6px; padding: 6px; height: calc(100vh - 38px); }
+.panel { background: var(--bg1); border: 1px solid #1a3a50; border-radius: 4px; padding: 8px; overflow: hidden; display: flex; flex-direction: column; }
+.panel-title { font-family: var(--head); font-size: 9px; letter-spacing: .15em; color: var(--c0); text-transform: uppercase; margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid #1a3a50; flex-shrink: 0; }
+.panel-body { flex: 1; overflow-y: auto; }
+.tm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
+.tm-row { display: flex; justify-content: space-between; align-items: center; padding: 2px 4px; border-radius: 2px; background: var(--bg2); }
+.tm-row:hover { background: var(--bg3); }
+.tm-lbl { color: var(--c0); font-size: 10px; white-space: nowrap; margin-right: 4px; }
+.tm-val { font-size: 12px; font-weight: bold; text-align: right; min-width: 70px; }
+.tm-unit { font-size: 9px; color: var(--c0); margin-left: 3px; }
+.green { color: #39e05b; } .yellow { color: #f0c040; } .red { color: #f04040; } .cyan { color: #00e8ff; } .white { color: #fff; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-family: var(--head); letter-spacing: .1em; }
+.badge-ok { background: #0a2e14; color: #39e05b; border: 1px solid #1a5a2a; }
+.badge-warn { background: #2e2200; color: #f0c040; border: 1px solid #5a4400; }
+.badge-alarm { background: #2e0808; color: #f04040; border: 1px solid #5a1010; }
+.badge-off { background: #141414; color: #444; border: 1px solid #333; }
+.badge-info { background: #0a1e30; color: #00e8ff; border: 1px solid #1a4060; }
+.pbar-wrap { background: var(--bg3); border-radius: 3px; height: 8px; overflow: hidden; margin: 2px 0; }
+.pbar-fill { height: 100%; border-radius: 3px; transition: width .5s; }
+.pbar-grn { background: #39e05b; } .pbar-yel { background: #f0c040; } .pbar-red { background: #f04040; }
+.tc-form { display: flex; flex-direction: column; gap: 4px; }
+.tc-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tc-label { color: var(--c0); font-size: 10px; min-width: 90px; flex-shrink: 0; }
+.tc-input { background: var(--bg3); border: 1px solid #1a3a50; color: var(--c2); padding: 3px 6px; border-radius: 3px; font-family: var(--font); font-size: 11px; width: 140px; }
+.tc-input:focus { border-color: #00e8ff; outline: none; }
+select.tc-input { cursor: pointer; }
+.btn { background: var(--bg3); border: 1px solid var(--c0); color: var(--c1); padding: 4px 12px; border-radius: 3px; cursor: pointer; font-family: var(--font); font-size: 11px; letter-spacing: .05em; transition: all .15s; }
+.btn:hover { border-color: #00e8ff; color: #00e8ff; }
+.btn-grn { border-color: #39e05b; color: #39e05b; } .btn-grn:hover { background: #0a2e14; }
+.btn-red { border-color: #f04040; color: #f04040; } .btn-red:hover { background: #2e0808; }
+.btn-yel { border-color: #f0c040; color: #f0c040; }
+.btn-mag { border-color: #e040ff; color: #e040ff; }
+#event-log { font-size: 10px; line-height: 1.6; }
+.le { padding: 1px 3px; border-radius: 2px; }
+.le:hover { background: var(--bg3); }
+.lt { color: #3a6080; margin-right: 5px; }
+.lc { margin-right: 5px; font-weight: bold; }
+.le.ok .lc { color: #39e05b; } .le.err .lc { color: #f04040; }
+.le.tm .lc { color: #5090b0; } .le.warn .lc { color: #f0c040; } .le.info .lc { color: #00e8ff; }
+canvas { background: #000; border-radius: 4px; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+.data-table th { color: var(--c0); text-align: left; padding: 2px 6px; border-bottom: 1px solid #1a3a50; font-family: var(--head); font-size: 8px; letter-spacing: .1em; }
+.data-table td { padding: 2px 6px; border-bottom: 1px solid #0e1e2c; }
+.data-table tr:hover td { background: var(--bg3); }
+.rw-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.rw-cell { background: var(--bg2); border-radius: 4px; padding: 6px; text-align: center; }
+.rw-id { font-family: var(--head); font-size: 8px; color: var(--c0); margin-bottom: 3px; }
+.rw-rpm { font-size: 14px; font-weight: bold; }
+.main-grid{grid-template-columns:1fr 1fr 1fr;grid-template-rows:auto 1fr 1fr}.p-hdr{grid-column:1/4;grid-row:1;display:grid;grid-template-columns:repeat(7,1fr);gap:6px;height:80px}.p-health{grid-column:1;grid-row:2/4}.p-timeline{grid-column:2/4;grid-row:2}.p-scen{grid-column:2;grid-row:3}.p-log{grid-column:3;grid-row:3}</style></head><body data-pos="fdir"><div id="nav"><span class="sc-id">EOSAT-1</span><div class="spacer"></div><a href="/fd">FD</a><a href="/eps">EPS</a><a href="/ttc">TTC</a><a href="/payload">PLD</a><a href="/sys">SYS</a><a href="/fdir"  class="active">FDIR</a><a href="/instr">INSTR</a><div class="spacer"></div><span id="sim-time" style="color:#7ac0e0;font-size:10px;margin-right:10px"></span><span id="ws-status" class="ws-err">NO LINK</span></div>
+<div class="main-grid">
+  <!-- Master header strip -->
+  <div class="p-hdr" style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;padding:6px 6px 0">
+    <div class="panel" style="padding:6px"><div class="panel-title" style="margin-bottom:3px">SC MODE</div><div class="tm-val cyan" id="sc-mode" style="font-size:14px">---</div></div>
+    <div class="panel" style="padding:6px"><div class="panel-title" style="margin-bottom:3px">SOC</div><div class="tm-val" id="hdr-soc">---</div><span class="tm-unit">%</span></div>
+    <div class="panel" style="padding:6px"><div class="panel-title" style="margin-bottom:3px">ATT ERR</div><div class="tm-val" id="hdr-att">---</div><span class="tm-unit">°</span></div>
+    <div class="panel" style="padding:6px"><div class="panel-title" style="margin-bottom:3px">LINK</div><div class="tm-val" id="hdr-link">---</div></div>
+    <div class="panel" style="padding:6px"><div class="panel-title" style="margin-bottom:3px">ECLIPSE</div><div class="tm-val" id="hdr-ecl">---</div></div>
+    <div class="panel" style="padding:6px"><div class="panel-title" style="margin-bottom:3px">ACTIVE FAIL</div><div class="tm-val red" id="hdr-fail">0</div></div>
+    <div class="panel" style="padding:6px"><div class="panel-title" style="margin-bottom:3px">SIM TIME</div><div id="sim-time" style="color:#7ac0e0;font-size:10px;padding-top:3px">---</div></div>
+  </div>
+
+  <!-- System health column -->
+  <div class="panel p-health">
+    <div class="panel-title">All-Systems Health</div>
+    <div class="panel-body">
+      <div style="font-family:var(--head);font-size:8px;color:var(--c0);margin-bottom:4px">EPS</div>
+      <div class="tm-grid">
+        <div class="tm-row"><span class="tm-lbl">SOC</span><span class="tm-val" id="h-soc">---</span><span class="tm-unit">%</span></div>
+        <div class="tm-row"><span class="tm-lbl">BUS V</span><span class="tm-val" id="h-busv">---</span><span class="tm-unit">V</span></div>
+        <div class="tm-row"><span class="tm-lbl">PWR GEN</span><span class="tm-val" id="h-pgen">---</span><span class="tm-unit">W</span></div>
+        <div class="tm-row"><span class="tm-lbl">PWR CON</span><span class="tm-val" id="h-pcon">---</span><span class="tm-unit">W</span></div>
+      </div>
+      <div style="font-family:var(--head);font-size:8px;color:var(--c0);margin:6px 0 4px">AOCS</div>
+      <div class="tm-grid">
+        <div class="tm-row"><span class="tm-lbl">MODE</span><span class="tm-val cyan" id="h-amode">---</span></div>
+        <div class="tm-row"><span class="tm-lbl">ATT ERR</span><span class="tm-val" id="h-att">---</span><span class="tm-unit">°</span></div>
+      </div>
+      <div style="font-family:var(--head);font-size:8px;color:var(--c0);margin:6px 0 4px">TCS</div>
+      <div class="tm-grid">
+        <div class="tm-row"><span class="tm-lbl">OBC T</span><span class="tm-val" id="h-tobc">---</span><span class="tm-unit">°C</span></div>
+        <div class="tm-row"><span class="tm-lbl">BAT T</span><span class="tm-val" id="h-tbat">---</span><span class="tm-unit">°C</span></div>
+        <div class="tm-row"><span class="tm-lbl">FPA T</span><span class="tm-val" id="h-tfpa">---</span><span class="tm-unit">°C</span></div>
+      </div>
+      <div style="font-family:var(--head);font-size:8px;color:var(--c0);margin:6px 0 4px">TT&amp;C</div>
+      <div class="tm-grid">
+        <div class="tm-row"><span class="tm-lbl">RSSI</span><span class="tm-val" id="h-rssi">---</span><span class="tm-unit">dBm</span></div>
+        <div class="tm-row"><span class="tm-lbl">MARGIN</span><span class="tm-val" id="h-marg">---</span><span class="tm-unit">dB</span></div>
+      </div>
+      <div style="font-family:var(--head);font-size:8px;color:var(--c0);margin:6px 0 4px">PAYLOAD</div>
+      <div class="tm-grid">
+        <div class="tm-row"><span class="tm-lbl">MODE</span><span class="tm-val cyan" id="h-pmode">---</span></div>
+        <div class="tm-row"><span class="tm-lbl">STORE</span><span class="tm-val" id="h-store">---</span><span class="tm-unit">%</span></div>
+      </div>
+      <div style="font-family:var(--head);font-size:8px;color:var(--c0);margin:6px 0 4px">ACTIVE FAILURES</div>
+      <div id="hlt-fails" style="font-size:10px"></div>
+      <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px">
+        <button class="btn btn-grn" onclick="sendTC(17,1,{})">AYA TEST</button>
+        <button class="btn btn-red"  onclick="sendTC(8,1,{function_id:0x0080})">SAFE MODE</button>
+        <button class="btn btn-yel"  onclick="sendTC(8,1,{function_id:0x0081})">NOMINAL MODE</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mission timeline canvas -->
+  <div class="panel p-timeline" style="padding:6px">
+    <div class="panel-title">Mission Timeline</div>
+    <canvas id="tl-canvas" width="700" height="160" style="width:100%;height:calc(100% - 26px)"></canvas>
+  </div>
+
+  <!-- Scenario control -->
+  <div class="panel p-scen">
+    <div class="panel-title">Scenario Control</div>
+    <div class="panel-body">
+      <div class="tc-row" style="margin-bottom:6px">
+        <span class="tc-label">Scenario</span>
+        <select id="scen-sel" class="tc-input" style="width:160px"></select>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">
+        <button class="btn btn-grn" onclick="startScen()">START</button>
+        <button class="btn btn-red"  onclick="stopScen()">STOP</button>
+        <button class="btn" onclick="sendInstr({type:'list_scenarios'})">REFRESH</button>
+      </div>
+      <div style="font-size:10px;color:var(--c0)">Active: <span id="scen-active" class="cyan">None</span></div>
+      <div style="font-size:10px;color:var(--c0);margin-top:3px">Elapsed: <span id="scen-elapsed">0s</span></div>
+      <div style="margin-top:8px">
+        <div style="font-family:var(--head);font-size:8px;color:var(--c0);margin-bottom:4px">SIM CONTROL</div>
+        <div class="tc-row">
+          <span class="tc-label">Speed</span>
+          <input id="spd-val" class="tc-input" value="1.0" style="width:60px">
+          <button class="btn" onclick="setSpeed()">SET</button>
+        </div>
+        <div class="tc-row" style="margin-top:4px">
+          <button class="btn" onclick="sendInstr({type:'set_speed',speed:1.0})">1×</button>
+          <button class="btn" onclick="sendInstr({type:'set_speed',speed:10.0})">10×</button>
+          <button class="btn" onclick="sendInstr({type:'set_speed',speed:60.0})">60×</button>
+          <button class="btn btn-red" onclick="sendInstr({type:'reset_sim'})">RESET</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Log -->
+<div class="panel p-log"><div class="panel-title">Event Log</div><div class="panel-body"><div id="event-log"></div></div></div>
+</div>
+<script>
+// ── COMMON JS (inlined into each position page) ──────────────────────────
+
+const WS_URL   = `ws://${location.host}/ws`;
+const CAT_URL  = `/catalog`;
+let ws, catalog = {tc:[], failures:{}};
+let state = {};
+let log = [];
+const MAX_LOG = 200;
+
+// ── WebSocket ────────────────────────────────────────────────────────────
+function connectWS() {
+  ws = new WebSocket(WS_URL);
+  ws.onopen  = () => { wsStatus('LINK', 'ok'); fetchCatalog(); };
+  ws.onclose = () => { wsStatus('NO LINK', 'err'); setTimeout(connectWS, 3000); };
+  ws.onerror = () => wsStatus('ERROR', 'err');
+  ws.onmessage = e => {
+    try {
+      const m = JSON.parse(e.data);
+      if (m.type === 'state')     { state = m.data; onState(m.data); }
+      if (m.type === 'tm_packet') onTmPacket(m);
+      if (m.type === 'tc_ack')    onTcAck(m);
+      if (m.type === 'tc_err')    onTcErr(m);
+    } catch(ex) {}
+  };
+}
+
+function wsStatus(txt, cls) {
+  const el = document.getElementById('ws-status');
+  if (!el) return;
+  el.textContent = txt;
+  el.className   = 'ws-' + cls;
+}
+
+async function fetchCatalog() {
+  try {
+    const pos = document.body.dataset.pos || '';
+    const r   = await fetch(CAT_URL + (pos ? `?pos=${pos}` : ''));
+    catalog   = await r.json();
+    if (typeof onCatalog === 'function') onCatalog(catalog);
+  } catch(ex) {}
+}
+
+// ── TC send ──────────────────────────────────────────────────────────────
+function sendTC(service, subtype, params, apid=1) {
+  if (!ws || ws.readyState !== 1) { addLog('SYS','WS not connected','err'); return; }
+  ws.send(JSON.stringify({type:'tc', service, subtype, params, apid}));
+}
+
+function sendInstr(cmd) {
+  if (!ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({type:'instr', cmd}));
+}
+
+// ── Event log ────────────────────────────────────────────────────────────
+function addLog(cat, msg, cls='info') {
+  const t  = new Date().toISOString().slice(11,23);
+  log.unshift({t, cat, msg, cls});
+  if (log.length > MAX_LOG) log.length = MAX_LOG;
+  renderLog();
+}
+
+function renderLog() {
+  const el = document.getElementById('event-log');
+  if (!el) return;
+  el.innerHTML = log.slice(0,60).map(e =>
+    `<div class="le ${e.cls}"><span class="lt">${e.t}</span>` +
+    `<span class="lc">[${e.cat}]</span> ${e.msg}</div>`
+  ).join('');
+}
+
+function onTcAck(m)  { addLog('TC',  `ACK S${m.service}/${m.subtype} seq=${m.seq}`, 'ok'); }
+function onTcErr(m)  { addLog('TC',  `ERR ${m.error}`, 'err'); }
+function onTmPacket(m) { addLog('TM', `APID=${m.apid} S${m.service}/${m.subtype} len=${m.len}`, 'tm'); }
+
+// ── Limit CSS ─────────────────────────────────────────────────────────────
+function limitCls(val, ylo, yhi, rlo, rhi) {
+  if (val <= rlo || val >= rhi)    return 'red';
+  if (val <= ylo || val >= yhi)    return 'yellow';
+  return 'green';
+}
+
+function fmtNum(v, dp=2) { return (v == null ? '---' : Number(v).toFixed(dp)); }
+function fmtBool(v, t='ON', f='OFF') { return v ? t : f; }
+
+// ── Navigation bar ────────────────────────────────────────────────────────
+function buildNav(active) {
+  const positions = {
+    fd:'FD', eps:'EPS', ttc:'TTC', payload:'PLD', sys:'SYS', fdir:'FDIR', instr:'INSTR'
+  };
+  return Object.entries(positions).map(([k,v]) =>
+    `<a href="/${k}" class="${k===active?'active':''}">${v}</a>`
+  ).join('');
+}
+
+// ── Sim time display ──────────────────────────────────────────────────────
+function fmtSimTime(s) {
+  if (!s) return '---';
+  const d = new Date(s * 1000);
+  return d.toISOString().slice(0,19).replace('T',' ') + 'Z';
+}
+
+const TL_BUF=[];const TL_MAX=120;
+
+function onState(s){
+  document.getElementById('sim-time').textContent=fmtSimTime(s.sim_time);
+  const e=s.eps||{},a=s.aocs||{},t=s.tcs||{},tc=s.ttc||{},p=s.payload||{};
+  const soc=parseFloat(e.soc_pct)||0;
+  setText('sc-mode',s.sc_mode||'---');
+  setV2('hdr-soc',soc,40,90,20,100);
+  setV2('hdr-att',a.att_error_deg,0,0.5,0,2);
+  setBadge('hdr-link',tc.link_status,'ACTIVE','NO LINK','badge-ok','badge-off');
+  setBadge('hdr-ecl',s.in_eclipse,'ECLIPSE','SUNLIT','badge-warn','badge-ok');
+  const fails=s.active_failures||[];
+  const fn=document.getElementById('hdr-fail');if(fn){fn.textContent=fails.length;fn.className='tm-val '+(fails.length?'red':'green');}
+  // Health col
+  setV2('h-soc',  soc,40,90,20,100);
+  setV2('h-busv', e.bus_voltage_V,22,30,20,32);
+  setV2('h-pgen', e.power_gen_W,10,80,0,120);
+  setV2('h-pcon', e.power_cons_W,5,70,0,100);
+  setText('h-amode',a.mode||'---');
+  setV2('h-att',  a.att_error_deg,0,0.5,0,2);
+  setV2('h-tobc', t.temp_obc_C,-5,60,-15,75);
+  setV2('h-tbat', t.temp_bat_C,-5,35,-15,50);
+  setV2('h-tfpa', t.temp_fpa_C,-200,-40,-220,-30);
+  setV2('h-rssi', tc.rssi_dBm,-110,-70,-120,-60);
+  setV2('h-marg', tc.link_margin_dB,3,20,0,30);
+  setText('h-pmode',p.mode||'---');
+  setV2('h-store',p.store_used_pct,0,80,0,95);
+  const fl=document.getElementById('hlt-fails');
+  if(fl)fl.innerHTML=fails.length===0?'<span style="color:#39e05b">None</span>':
+    fails.map(f=>`<div style="color:#f04040">${f.subsystem||f}: ${f.mode||''}</div>`).join('');
+  // Scenario
+  setText('scen-active',s.scenario_name||'None');
+  setText('scen-elapsed',(s.scenario_elapsed_s||0).toFixed(0)+'s');
+  if(s.available_scenarios){
+    const sel=document.getElementById('scen-sel');
+    if(sel.children.length===0)s.available_scenarios.forEach(sc=>{const o=document.createElement('option');o.value=sc;o.textContent=sc;sel.appendChild(o);});
+  }
+  // Timeline buf
+  TL_BUF.push({soc,att:parseFloat(a.att_error_deg)||0,eclipse:s.in_eclipse?1:0});
+  if(TL_BUF.length>TL_MAX)TL_BUF.shift();
+  drawTimeline();
+}
+function setV2(id,val,ylo,yhi,rlo,rhi){const e=document.getElementById(id);if(!e)return;e.textContent=fmtNum(val,1);e.className='tm-val '+limitCls(val||0,ylo,yhi,rlo,rhi);}
+function setText(id,v){const e=document.getElementById(id);if(e)e.textContent=v;}
+function setBadge(id,cond,t,f,ct,cf){const e=document.getElementById(id);if(!e)return;e.className='badge '+(cond?ct:cf);e.textContent=cond?t:f;}
+function startScen(){const s=document.getElementById('scen-sel').value;sendInstr({type:'start_scenario',name:s});}
+function stopScen(){sendInstr({type:'stop_scenario'});}
+function setSpeed(){const v=parseFloat(document.getElementById('spd-val').value)||1;sendInstr({type:'set_speed',speed:v});}
+function drawTimeline(){
+  const cv=document.getElementById('tl-canvas');if(!cv||TL_BUF.length<2)return;
+  const ctx=cv.getContext('2d'),W=cv.width,H=cv.height;
+  ctx.fillStyle='#050d14';ctx.fillRect(0,0,W,H);
+  const N=TL_BUF.length,maxN=TL_MAX;
+  // SOC track
+  ctx.strokeStyle='#00e8ff';ctx.lineWidth=1.5;ctx.beginPath();
+  TL_BUF.forEach((d,i)=>{const x=(i/maxN)*W,y=H*0.5-d.soc*H*0.004;i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});ctx.stroke();
+  // ATT error
+  ctx.strokeStyle='#f0c040';ctx.lineWidth=1;ctx.beginPath();
+  TL_BUF.forEach((d,i)=>{const x=(i/maxN)*W,y=H*0.85-d.att*20;i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});ctx.stroke();
+  // Eclipse shading
+  ctx.fillStyle='rgba(0,0,80,0.3)';
+  let s=-1;
+  TL_BUF.forEach((d,i)=>{if(d.eclipse&&s<0)s=i;if(!d.eclipse&&s>=0){ctx.fillRect((s/maxN)*W,0,((i-s)/maxN)*W,H);s=-1;}});
+  if(s>=0)ctx.fillRect((s/maxN)*W,0,((N-s)/maxN)*W,H);
+  // Labels
+  ctx.font='9px Share Tech Mono';
+  ctx.fillStyle='#00e8ff';ctx.fillText('SOC%',3,12);
+  ctx.fillStyle='#f0c040';ctx.fillText('ATT ERR',3,H*0.85+14);
+  ctx.fillStyle='rgba(100,100,200,0.5)';ctx.fillText('ECLIPSE',W-60,12);
+}
+function onCatalog(cat){
+  const fdirTCs=cat.tc.filter(t=>t.position==='fdir'||t.position==='instr');
+  const sel=document.getElementById('tc-sel');sel.innerHTML='';
+  fdirTCs.forEach((t,i)=>{const o=document.createElement('option');o.value=i;o.textContent=t.label;sel.appendChild(o);});
+  populateTcFields();
+  window._fdirTCs=fdirTCs;
+}
+function populateTcFields(){
+  const TCs=window._fdirTCs||[];
+  const i=parseInt(document.getElementById('tc-sel').value);
+  const tc=TCs[i];if(!tc)return;
+  const div=document.getElementById('tc-fields');div.innerHTML='';
+  (tc.fields||[]).forEach(f=>{if(f.n==='dummy')return;const row=document.createElement('div');row.className='tc-row';row.innerHTML=`<span class="tc-label">${f.label}</span><input class="tc-input" id="tcf-${f.n}" value="${f.d}">`;div.appendChild(row);});
+}
+function sendTCFromForm(){
+  const TCs=window._fdirTCs||[];
+  const i=parseInt(document.getElementById('tc-sel').value);
+  const tc=TCs[i];if(!tc)return;
+  const params={};(tc.fields||[]).forEach(f=>{const el=document.getElementById('tcf-'+f.n);if(el)params[f.n]=f.t==='float'?parseFloat(el.value):el.value;});
+  const apid=parseInt(document.getElementById('tc-apid').value)||1;
+  sendTC(tc.service,tc.subtype,params,apid);
+}
+connectWS();
+</script></body></html>

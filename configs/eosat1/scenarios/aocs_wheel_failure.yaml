@@ -1,0 +1,21 @@
+name: "Reaction Wheel Seizure"
+difficulty: ADVANCED
+duration_s: 2400
+briefing: |
+  Reaction wheel 3 experiences bearing seizure at T+200s. Speed drops to zero,
+  temperature rises. The operator must disable the failed wheel, reconfigure
+  to 3-wheel mode, and manage momentum with relaxed pointing.
+events:
+  - time_offset_s: 200
+    action: inject
+    params:
+      subsystem: aocs
+      failure: wheel_failure
+      magnitude: 1.0
+      onset: gradual
+      onset_duration_s: 60
+      wheel: 2
+expected_responses:
+  - { category: detect, description: "Detect RW3 speed anomaly and temperature rise" }
+  - { category: isolate, description: "Confirm bearing failure via speed/temp correlation" }
+  - { category: recover, description: "Disable RW3, switch to 3-wheel mode, verify pointing" }

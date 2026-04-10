@@ -1,0 +1,2380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SMO Instructor Interface</title>
+<link rel="stylesheet" href="/static/vendor/css/fonts.css">
+<style>
+/* ===== CSS VARIABLES ===== */
+:root {
+  --bg-void:    #070b12;
+  --bg-base:    #0a0f1a;
+  --bg-raise:   #0e1525;
+  --bg-float:   #121d30;
+  --bg-card:    #0f1929;
+  --border-dim: #162038;
+  --border-mid: #1e2f4a;
+  --border-hi:  #2a3f60;
+  --accent:     #00c8f0;
+  --accent-dim: rgba(0,200,240,0.12);
+  --accent-glo: rgba(0,200,240,0.25);
+  --green:      #00e07a;
+  --green-dim:  rgba(0,224,122,0.12);
+  --amber:      #ffc107;
+  --amber-dim:  rgba(255,193,7,0.12);
+  --red:        #ff3b3b;
+  --red-dim:    rgba(255,59,59,0.12);
+  --orange:     #ff9800;
+  --text-hi:    #dde8f5;
+  --text-mid:   #8ba0be;
+  --text-lo:    #3f5070;
+  --text-dim:   #2a3a55;
+  --panel-gap:  2px;
+  --r:          5px;
+}
+
+/* ===== RESET & BASE ===== */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { min-height: 100%; overflow-x: hidden; overflow-y: auto; }
+body {
+  font-family: 'JetBrains Mono', Consolas, 'Courier New', monospace;
+  background: var(--bg-void);
+  color: var(--text-hi);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+/* Subtle dot-grid background texture */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: radial-gradient(circle, rgba(30,47,74,0.55) 1px, transparent 1px);
+  background-size: 22px 22px;
+  pointer-events: none;
+  z-index: 0;
+}
+#app { position: relative; z-index: 1; }
+
+/* ===== SCROLLBAR ===== */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-hi); }
+
+/* ===== LAYOUT ===== */
+#app {
+  display: grid;
+  grid-template-rows: 50px minmax(560px, 1fr) 158px;
+  grid-template-columns: 280px 1fr 300px;
+  grid-template-areas:
+    "header header header"
+    "left center right"
+    "log log log";
+  min-height: 100vh;
+  gap: var(--panel-gap);
+  background: var(--bg-raise);
+}
+
+/* ===== HEADER ===== */
+#header {
+  grid-area: header;
+  background: linear-gradient(180deg, #0f1d33 0%, #0b1525 100%);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--border-mid);
+  box-shadow: 0 1px 0 rgba(0,200,240,0.07), 0 2px 12px rgba(0,0,0,0.4);
+  z-index: 100;
+}
+
+/* Thin top accent line on header */
+#header::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, var(--accent) 30%, var(--green) 70%, transparent 100%);
+  opacity: 0.6;
+}
+
+#header .title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 2.5px;
+  white-space: nowrap;
+  text-shadow: 0 0 16px rgba(0,200,240,0.35);
+}
+#header .title span {
+  color: var(--text-lo);
+  font-weight: 400;
+  letter-spacing: 1px;
+}
+.header-center {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.sim-time {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-hi);
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(221,232,245,0.15);
+}
+.speed-indicator {
+  background: var(--bg-void);
+  padding: 3px 10px;
+  border-radius: var(--r);
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 11px;
+  border: 1px solid var(--border-mid);
+  min-width: 42px;
+  text-align: center;
+}
+.sc-mode-badge {
+  padding: 4px 12px;
+  border-radius: var(--r);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  transition: all 0.3s ease;
+}
+.sc-mode-badge.nominal {
+  background: var(--green-dim);
+  color: var(--green);
+  border: 1px solid rgba(0,224,122,0.3);
+  box-shadow: 0 0 8px rgba(0,224,122,0.1);
+}
+.sc-mode-badge.safe {
+  background: var(--amber-dim);
+  color: var(--amber);
+  border: 1px solid rgba(255,193,7,0.3);
+}
+.sc-mode-badge.emergency {
+  background: var(--red-dim);
+  color: var(--red);
+  border: 1px solid rgba(255,59,59,0.4);
+  animation: pulse-red 1s infinite;
+}
+@keyframes pulse-red {
+  0%, 100% { box-shadow: 0 0 6px rgba(255,59,59,0.2); }
+  50%       { box-shadow: 0 0 16px rgba(255,59,59,0.55); }
+}
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.speed-btn {
+  background: var(--bg-card);
+  color: var(--text-mid);
+  border: 1px solid var(--border-dim);
+  padding: 4px 9px;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-weight: 500;
+}
+.speed-btn:hover {
+  background: var(--bg-float);
+  color: var(--text-hi);
+  border-color: var(--border-hi);
+}
+.speed-btn.active {
+  background: var(--accent);
+  color: var(--bg-void);
+  border-color: var(--accent);
+  font-weight: 700;
+  box-shadow: 0 0 8px var(--accent-glo);
+}
+.freeze-btn {
+  background: var(--bg-card);
+  color: var(--amber);
+  border: 1px solid rgba(255,193,7,0.4);
+  padding: 4px 13px;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  letter-spacing: 1px;
+  transition: all 0.15s ease;
+}
+.freeze-btn:hover { background: var(--amber-dim); }
+.freeze-btn.frozen {
+  background: var(--amber);
+  color: var(--bg-void);
+  animation: pulse-freeze 1.2s infinite;
+}
+@keyframes pulse-freeze {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.72; }
+}
+
+/* ===== PANELS ===== */
+.panel {
+  background: var(--bg-base);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border-dim);
+  background: linear-gradient(180deg, var(--bg-raise) 0%, var(--bg-base) 100%);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.panel-header h2 {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-lo);
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+}
+
+/* ===== LEFT PANEL ===== */
+#left-panel { grid-area: left; border-right: 1px solid var(--border-dim); }
+
+.refresh-btn {
+  background: none;
+  border: 1px solid var(--border-mid);
+  color: var(--text-mid);
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+.refresh-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 6px var(--accent-dim);
+}
+.refresh-btn.spinning svg { animation: spin 0.6s linear; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+.scenario-list { padding: 7px; }
+.scenario-item {
+  padding: 10px 11px;
+  border: 1px solid var(--border-dim);
+  border-radius: var(--r);
+  margin-bottom: 5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  background: var(--bg-card);
+  border-left: 3px solid transparent;
+}
+.scenario-item:hover {
+  border-color: var(--border-hi);
+  border-left-color: var(--border-hi);
+  background: var(--bg-float);
+}
+.scenario-item.selected {
+  border-color: var(--accent);
+  border-left-color: var(--accent);
+  background: var(--accent-dim);
+}
+.scenario-item.active {
+  border-color: var(--green);
+  border-left-color: var(--green);
+  background: var(--green-dim);
+}
+.scenario-name {
+  font-weight: 600;
+  color: var(--text-hi);
+  font-size: 11px;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.difficulty-badge {
+  font-size: 8px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+.difficulty-badge.BASIC        { background: var(--green-dim); color: var(--green); }
+.difficulty-badge.INTERMEDIATE { background: var(--accent-dim); color: var(--accent); }
+.difficulty-badge.ADVANCED     { background: var(--amber-dim); color: var(--amber); }
+.difficulty-badge.EXPERT       { background: var(--red-dim); color: var(--red); }
+
+.scenario-duration { font-size: 10px; color: var(--text-dim); }
+
+.scenario-detail {
+  padding: 10px 13px;
+  border-top: 1px solid var(--border-dim);
+  background: var(--bg-base);
+}
+.scenario-briefing {
+  font-size: 10px;
+  color: var(--text-mid);
+  line-height: 1.65;
+  margin-bottom: 10px;
+  max-height: 110px;
+  overflow-y: auto;
+}
+.scenario-actions { display: flex; gap: 6px; }
+
+.btn {
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+}
+.btn-start {
+  background: var(--green);
+  color: var(--bg-void);
+  border-color: var(--green);
+}
+.btn-start:hover {
+  background: #1af090;
+  box-shadow: 0 0 10px rgba(0,224,122,0.35);
+}
+.btn-stop {
+  background: var(--red);
+  color: #fff;
+  border-color: var(--red);
+}
+.btn-stop:hover {
+  background: #ff5555;
+  box-shadow: 0 0 10px rgba(255,59,59,0.35);
+}
+.btn-stop:disabled, .btn-start:disabled {
+  opacity: 0.28;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.scenario-progress {
+  padding: 8px 13px;
+  border-top: 1px solid var(--border-dim);
+  background: var(--bg-raise);
+}
+.progress-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: var(--text-lo);
+  margin-bottom: 5px;
+}
+.progress-bar-track {
+  height: 4px;
+  background: var(--border-dim);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent) 0%, var(--green) 100%);
+  border-radius: 2px;
+  transition: width 0.5s ease;
+  box-shadow: 0 0 6px var(--accent-glo);
+}
+
+/* ===== CENTER PANEL ===== */
+#center-panel { grid-area: center; padding: 8px; background: var(--bg-void); }
+.subsystem-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 7px;
+  height: calc(100% - 48px);
+}
+
+/* Per-subsystem top accent colors */
+#card-eps     { --card-accent: #f59e0b; }
+#card-aocs    { --card-accent: #00c8f0; }
+#card-tcs     { --card-accent: #ef4444; }
+#card-obdh    { --card-accent: #a78bfa; }
+#card-ttc     { --card-accent: #00e07a; }
+#card-payload { --card-accent: #818cf8; }
+
+.sub-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-top: 2px solid var(--card-accent, var(--accent));
+  border-radius: var(--r);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+.sub-card:hover {
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4), 0 0 0 1px var(--border-mid);
+}
+.sub-card.alert {
+  border-color: var(--red) !important;
+  border-top-color: var(--red) !important;
+  box-shadow: 0 0 12px rgba(255,59,59,0.18), inset 0 0 0 1px rgba(255,59,59,0.15);
+  animation: card-alert-pulse 1.5s infinite;
+}
+@keyframes card-alert-pulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(255,59,59,0.15); }
+  50%       { box-shadow: 0 0 20px rgba(255,59,59,0.32); }
+}
+
+.sub-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 11px;
+  background: linear-gradient(180deg, var(--bg-raise) 0%, var(--bg-base) 100%);
+  border-bottom: 1px solid var(--border-dim);
+}
+.sub-card-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--card-accent, var(--accent));
+  letter-spacing: 2px;
+  text-shadow: 0 0 10px color-mix(in srgb, var(--card-accent, var(--accent)) 40%, transparent);
+}
+.sub-card-mode {
+  font-size: 9px;
+  color: var(--text-lo);
+  padding: 2px 7px;
+  background: var(--bg-void);
+  border: 1px solid var(--border-dim);
+  border-radius: 3px;
+  letter-spacing: 0.5px;
+}
+.sub-card-body {
+  padding: 9px 11px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow: hidden;
+}
+.param-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10.5px;
+  min-height: 18px;
+  padding: 1px 0;
+  border-bottom: 1px solid rgba(22, 32, 56, 0.5);
+}
+.param-row:last-child { border-bottom: none; }
+.param-label {
+  color: var(--text-mid);
+  white-space: nowrap;
+  font-size: 10px;
+}
+.param-value {
+  color: var(--text-hi);
+  font-weight: 500;
+  text-align: right;
+  white-space: nowrap;
+  transition: color 0.3s ease;
+  font-size: 10.5px;
+}
+.param-value.warn { color: var(--amber); }
+.param-value.crit { color: var(--red); text-shadow: 0 0 6px rgba(255,59,59,0.4); }
+.param-value.good { color: var(--green); }
+
+.mini-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.mini-bar-track {
+  width: 58px;
+  height: 5px;
+  background: var(--border-dim);
+  border-radius: 3px;
+  overflow: hidden;
+  display: inline-block;
+  vertical-align: middle;
+}
+.mini-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.5s ease, background 0.3s ease;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  vertical-align: middle;
+  margin-right: 5px;
+  flex-shrink: 0;
+  transition: background 0.3s ease, box-shadow 0.3s ease;
+}
+.status-dot.on   { background: var(--green);  box-shadow: 0 0 5px rgba(0,224,122,0.6); }
+.status-dot.off  { background: var(--border-hi); }
+.status-dot.up   { background: var(--green);  box-shadow: 0 0 5px rgba(0,224,122,0.6); }
+.status-dot.down { background: var(--red);    box-shadow: 0 0 5px rgba(255,59,59,0.6); }
+
+/* ===== ORBIT BAR ===== */
+.orbit-bar {
+  margin-top: 7px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--r);
+  padding: 7px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-shrink: 0;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+}
+.orbit-param {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10.5px;
+}
+.orbit-param .label {
+  color: var(--text-lo);
+  font-size: 9px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.orbit-param .value { color: var(--text-hi); font-weight: 600; }
+.orbit-indicator {
+  padding: 3px 9px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+.orbit-indicator.sunlight  { background: var(--amber-dim);  color: var(--amber); border: 1px solid rgba(255,193,7,0.2); }
+.orbit-indicator.eclipse   { background: rgba(90,110,150,0.12); color: var(--text-mid); border: 1px solid var(--border-dim); }
+.orbit-indicator.contact   { background: var(--green-dim);  color: var(--green); border: 1px solid rgba(0,224,122,0.2); }
+.orbit-indicator.no-contact { background: var(--red-dim);   color: var(--red); border: 1px solid rgba(255,59,59,0.2); }
+
+/* Override button */
+.override-btn {
+  background: var(--bg-card);
+  color: var(--orange);
+  border: 1px solid rgba(255,152,0,0.4);
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.override-btn:hover { background: rgba(255,152,0,0.1); border-color: var(--orange); }
+.override-btn.active {
+  background: var(--orange);
+  color: var(--bg-void);
+  animation: pulse-override 1.5s infinite;
+}
+@keyframes pulse-override {
+  0%, 100% { box-shadow: 0 0 5px rgba(255,152,0,0.3); }
+  50%       { box-shadow: 0 0 14px rgba(255,152,0,0.65); }
+}
+
+/* ===== RIGHT PANEL ===== */
+#right-panel { grid-area: right; border-left: 1px solid var(--border-dim); }
+
+.section-divider {
+  padding: 6px 13px;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--text-dim);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  border-top: 1px solid var(--border-dim);
+  border-bottom: 1px solid var(--border-dim);
+  background: linear-gradient(180deg, var(--bg-raise) 0%, var(--bg-base) 100%);
+  margin-top: 4px;
+}
+
+.inject-form { padding: 10px 13px; }
+.form-group { margin-bottom: 9px; }
+.form-label {
+  display: block;
+  font-size: 9px;
+  color: var(--text-lo);
+  margin-bottom: 4px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.form-select, .form-input {
+  width: 100%;
+  background: var(--bg-void);
+  border: 1px solid var(--border-mid);
+  color: var(--text-hi);
+  padding: 6px 9px;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 10.5px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.form-select:focus, .form-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+.form-select option { background: var(--bg-raise); }
+
+.radio-group {
+  display: flex;
+  gap: 12px;
+  padding: 3px 0;
+}
+.radio-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: var(--text-mid);
+  cursor: pointer;
+}
+.radio-label input[type="radio"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--border-hi);
+  border-radius: 50%;
+  background: var(--bg-void);
+  cursor: pointer;
+  position: relative;
+  flex-shrink: 0;
+}
+.radio-label input[type="radio"]:checked { border-color: var(--accent); }
+.radio-label input[type="radio"]:checked::after {
+  content: '';
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 6px; height: 6px;
+  background: var(--accent);
+  border-radius: 50%;
+}
+.slider-group {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.form-range {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: var(--border-mid);
+  border-radius: 2px;
+  outline: none;
+}
+.form-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px; height: 14px;
+  background: var(--accent);
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid var(--bg-void);
+  box-shadow: 0 0 4px var(--accent-glo);
+}
+.form-range::-moz-range-thumb {
+  width: 14px; height: 14px;
+  background: var(--accent);
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid var(--bg-void);
+}
+.slider-value {
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 700;
+  min-width: 32px;
+  text-align: right;
+}
+
+.btn-inject {
+  width: 100%;
+  background: linear-gradient(180deg, #c40000 0%, #a00000 100%);
+  color: #fff;
+  border: 1px solid rgba(255,80,80,0.5);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 9px;
+  border-radius: 4px;
+  cursor: pointer;
+  letter-spacing: 2.5px;
+  transition: all 0.15s ease;
+  text-transform: uppercase;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+}
+.btn-inject:hover {
+  background: linear-gradient(180deg, #e50000 0%, #bb0000 100%);
+  box-shadow: 0 0 14px rgba(255,59,59,0.35);
+}
+.btn-inject:active { transform: scale(0.98); }
+
+/* Active failures */
+.failures-list { padding: 6px 7px; }
+.failure-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-left: 3px solid var(--red);
+  border-radius: 0 var(--r) var(--r) 0;
+  padding: 8px 10px;
+  margin-bottom: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  animation: fadeIn 0.3s ease;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.failure-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.failure-name {
+  font-size: 9px;
+  font-weight: 700;
+  color: #ff7070;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+.failure-clear-btn {
+  background: none;
+  border: 1px solid var(--border-mid);
+  color: var(--text-lo);
+  font-family: inherit;
+  font-size: 9px;
+  padding: 1px 7px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.failure-clear-btn:hover { color: var(--red); border-color: var(--red); }
+.failure-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 9px;
+  color: var(--text-dim);
+}
+.failure-mag-bar {
+  width: 50px;
+  height: 3px;
+  background: var(--border-dim);
+  border-radius: 2px;
+  overflow: hidden;
+  display: inline-block;
+  vertical-align: middle;
+}
+.failure-mag-fill {
+  height: 100%;
+  background: var(--red);
+  border-radius: 2px;
+}
+.clear-all-btn {
+  width: 100%;
+  background: var(--bg-card);
+  border: 1px solid var(--border-mid);
+  color: var(--text-mid);
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin: 6px 0;
+  letter-spacing: 1px;
+  transition: all 0.15s ease;
+}
+.clear-all-btn:hover { color: var(--red); border-color: rgba(255,59,59,0.4); }
+
+/* Breakpoints */
+.breakpoint-form {
+  padding: 9px 13px;
+  display: flex;
+  gap: 6px;
+}
+.breakpoint-form input { flex: 1; }
+.btn-breakpoint {
+  background: var(--bg-card);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+  letter-spacing: 0.5px;
+}
+.btn-breakpoint:hover {
+  background: var(--accent-dim);
+  box-shadow: 0 0 6px var(--accent-dim);
+}
+
+/* ===== LOG PANEL ===== */
+#log-panel {
+  grid-area: log;
+  background: var(--bg-void);
+  border-top: 1px solid var(--border-dim);
+  display: flex;
+  flex-direction: column;
+}
+#log-panel .panel-header { flex-shrink: 0; }
+
+.event-log {
+  flex: 1;
+  overflow-y: auto;
+  padding: 3px 8px 4px;
+  display: flex;
+  flex-direction: column;
+}
+.log-entry {
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: 3px;
+  display: flex;
+  gap: 12px;
+  animation: fadeIn 0.2s ease;
+  flex-shrink: 0;
+  border-left: 2px solid transparent;
+}
+.log-entry:nth-child(odd) { background: rgba(14,21,37,0.5); }
+
+.log-entry.severity-info   { border-left-color: var(--accent); }
+.log-entry.severity-low    { border-left-color: var(--amber); }
+.log-entry.severity-medium { border-left-color: var(--orange); }
+.log-entry.severity-high   { border-left-color: var(--red); }
+
+.log-time   { color: var(--text-dim); white-space: nowrap; min-width: 68px; }
+.log-source { color: var(--text-lo);  white-space: nowrap; min-width: 60px; font-weight: 700; letter-spacing: 0.5px; }
+.log-msg    { flex: 1; }
+.log-entry.severity-info   .log-msg { color: var(--accent); }
+.log-entry.severity-low    .log-msg { color: var(--amber); }
+.log-entry.severity-medium .log-msg { color: var(--orange); }
+.log-entry.severity-high   .log-msg { color: var(--red); }
+
+/* ===== UTILITY ===== */
+.no-data {
+  color: var(--text-dim);
+  font-size: 10px;
+  text-align: center;
+  padding: 20px;
+  letter-spacing: 0.5px;
+}
+.hidden { display: none !important; }
+
+/* ===== CONNECTION STATUS ===== */
+.conn-status {
+  position: fixed;
+  top: 56px;
+  right: 12px;
+  font-size: 8px;
+  padding: 2px 9px;
+  border-radius: 3px;
+  z-index: 200;
+  letter-spacing: 1px;
+  font-weight: 700;
+  transition: all 0.3s ease;
+  text-transform: uppercase;
+}
+.conn-status.connected    { background: var(--green-dim); color: var(--green); border: 1px solid rgba(0,224,122,0.2); }
+.conn-status.disconnected { background: var(--red-dim);   color: var(--red);   border: 1px solid rgba(255,59,59,0.2); }
+
+/* ===== TOAST ===== */
+.toast {
+  position: fixed;
+  bottom: 180px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  padding: 9px 22px;
+  border-radius: var(--r);
+  font-size: 11px;
+  font-weight: 700;
+  z-index: 1000;
+  opacity: 0;
+  transition: all 0.3s ease;
+  pointer-events: none;
+  letter-spacing: 0.5px;
+}
+.toast.show    { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.success { background: rgba(0,224,122,0.92); color: var(--bg-void); box-shadow: 0 4px 20px rgba(0,224,122,0.3); }
+.toast.error   { background: rgba(255,59,59,0.92);  color: #fff;          box-shadow: 0 4px 20px rgba(255,59,59,0.3); }
+
+/* ===== FULL SNAPSHOT (tabbed, stable-width) ===== */
+.snap-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid #1d2d4a;
+  padding-bottom: 4px;
+}
+.snap-tab {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  color: #7aa;
+  background: #0e1c33;
+  border: 1px solid #1f3050;
+  border-radius: 3px;
+  padding: 3px 8px;
+  cursor: pointer;
+  text-transform: uppercase;
+  user-select: none;
+}
+.snap-tab:hover { background: #15294a; color: #cfe; }
+.snap-tab.active {
+  background: #1a3a6a;
+  color: #cfe;
+  border-color: #2a5a8a;
+}
+.snap-tab .count {
+  margin-left: 6px;
+  color: #5a7a9a;
+  font-size: 9px;
+}
+.snap-body {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: #cfe;
+  max-height: 460px;
+  overflow-y: auto;
+}
+.param-cell {
+  display: grid;
+  /* fixed-width value column → no layout jump on every poll */
+  grid-template-columns: 1fr 110px;
+  align-items: baseline;
+  gap: 8px;
+  padding: 1px 6px;
+  border-bottom: 1px solid #16223a;
+  font-variant-numeric: tabular-nums;
+}
+.param-cell .pkey {
+  color: #9ab;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.param-cell .pval {
+  color: #cfe;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ===== SUBSYSTEM DEEP-DIVE LAUNCHER ===== */
+.launcher-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 4px;
+}
+.launcher-btn {
+  background: #112648;
+  color: #cfe;
+  border: 1px solid #2a4a7a;
+  border-radius: 3px;
+  padding: 6px 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  text-align: left;
+  text-transform: uppercase;
+  user-select: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.launcher-btn:hover { background: #1a3a6a; border-color: #3a6aaa; }
+.launcher-btn .ct { color: #5a7a9a; font-size: 9px; }
+
+/* ===== SUBPAGE MODE — ?sub=<id> in URL ===== */
+body.subpage #app {
+  display: block;
+  min-height: 100vh;
+  padding: 14px 18px;
+}
+body.subpage #header,
+body.subpage #left-panel,
+body.subpage #right-panel,
+body.subpage #log,
+body.subpage #log-panel,
+body.subpage .center-overview,
+body.subpage .subsystem-grid,
+body.subpage .orbit-bar,
+body.subpage #subsystem-launcher,
+body.subpage #raw-snapshot-container,
+body.subpage #btn-toggle-raw,
+body.subpage #param-search,
+body.subpage #btn-clear-search,
+body.subpage #param-search-results { display: none !important; }
+body.subpage .subpage-only { display: block !important; }
+body.subpage #full-snapshot-container { max-width: 1100px; margin: 0 auto; }
+body.subpage .snap-body { max-height: calc(100vh - 140px); }
+body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hide the strip */
+.subpage-back {
+  display: inline-block;
+  margin-bottom: 10px;
+  background: #1a3a6a;
+  color: #cfe;
+  border: 1px solid #2a5a8a;
+  border-radius: 3px;
+  padding: 5px 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  text-decoration: none;
+  cursor: pointer;
+}
+.subpage-back:hover { background: #2a5a8a; }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <!-- ===== HEADER ===== -->
+  <header id="header">
+    <div class="title">SMO INSTRUCTOR <span>// Mission Control</span></div>
+    <div class="header-center">
+      <div class="sim-time" id="sim-time">----/--/-- --:--:-- UTC</div>
+      <div class="speed-indicator" id="speed-indicator">1.0x</div>
+      <div class="sc-mode-badge nominal" id="sc-mode-badge">NOMINAL</div>
+      <div style="margin-left: 20px; padding: 0 10px; border-left: 1px solid var(--border-mid); font-size: 11px; color: var(--text-mid);">
+        <span id="param-completeness">Showing 0/318 parameters</span>
+      </div>
+    </div>
+    <div class="header-right">
+      <button class="speed-btn" data-speed="0.5">0.5x</button>
+      <button class="speed-btn active" data-speed="1">1x</button>
+      <button class="speed-btn" data-speed="2">2x</button>
+      <button class="speed-btn" data-speed="5">5x</button>
+      <button class="speed-btn" data-speed="10">10x</button>
+      <button class="override-btn" id="btn-override-hdr" title="Force ground contact (TM/TC available regardless of pass)">OVERRIDE PASSES</button>
+      <button class="freeze-btn" id="freeze-btn">FREEZE</button>
+    </div>
+  </header>
+
+  <!-- ===== LEFT PANEL ===== -->
+  <div id="left-panel" class="panel">
+    <div class="panel-header">
+      <h2>Scenarios</h2>
+      <button class="refresh-btn" id="refresh-scenarios" title="Refresh scenarios">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+      </button>
+    </div>
+    <div class="scenario-list" id="scenario-list">
+      <div class="no-data">Loading scenarios...</div>
+    </div>
+    <div id="scenario-detail" class="hidden">
+      <div class="scenario-detail">
+        <div class="scenario-briefing" id="scenario-briefing"></div>
+        <div class="scenario-actions">
+          <button class="btn btn-start" id="btn-start-scenario">START</button>
+          <button class="btn btn-stop" id="btn-stop-scenario" disabled>STOP</button>
+        </div>
+      </div>
+    </div>
+    <div id="scenario-progress" class="hidden">
+      <div class="scenario-progress">
+        <div class="progress-label">
+          <span id="progress-elapsed">00:00</span>
+          <span id="progress-remaining">--:--</span>
+        </div>
+        <div class="progress-bar-track">
+          <div class="progress-bar-fill" id="progress-fill" style="width:0%"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== CENTER PANEL ===== -->
+  <div id="center-panel">
+    <!-- Subsystem deep-dive launcher: kept at the top so it's always visible
+         without scrolling. populateSubsystemLauncher() fills it once the
+         first /api/instructor/snapshot succeeds. -->
+    <div id="subsystem-launcher" style="margin-bottom: 10px; padding: 6px 8px; border: 1px solid #2a4a7a; border-radius: 4px; background: #0a1226;">
+      <div style="font-size:11px; color:#7aa; margin-bottom:6px;">SUBSYSTEM DEEP-DIVE PAGES</div>
+      <div id="subsystem-launcher-buttons" class="launcher-grid">
+        <span style="color:#5a7a9a;font-size:10px;">Loading subsystem list…</span>
+      </div>
+    </div>
+    <div class="subsystem-grid">
+      <!-- EPS Card -->
+      <div class="sub-card" id="card-eps">
+        <div class="sub-card-header">
+          <div class="sub-card-title">EPS</div>
+          <div class="sub-card-mode" id="eps-mode">--</div>
+        </div>
+        <div class="sub-card-body">
+          <div class="param-row"><span class="param-label">Battery SoC</span><span class="param-value"><span class="mini-bar"><span class="mini-bar-track"><span class="mini-bar-fill" id="eps-soc-bar" style="width:0%;background:#00d26a"></span></span><span id="eps-soc">--</span>%</span></span></div>
+          <div class="param-row"><span class="param-label">Bus Voltage</span><span class="param-value" id="eps-bus-v">-- V</span></div>
+          <div class="param-row"><span class="param-label">Bat Voltage</span><span class="param-value" id="eps-bat-v">-- V</span></div>
+          <div class="param-row"><span class="param-label">Bat Temp</span><span class="param-value" id="eps-bat-temp">-- C</span></div>
+          <div class="param-row"><span class="param-label">Power Gen</span><span class="param-value good" id="eps-pgen">-- W</span></div>
+          <div class="param-row"><span class="param-label">Power Cons</span><span class="param-value" id="eps-pcons">-- W</span></div>
+          <div class="param-row"><span class="param-label">SA-A / SA-B</span><span class="param-value" id="eps-sa">-- / -- A</span></div>
+        </div>
+      </div>
+      <!-- AOCS Card -->
+      <div class="sub-card" id="card-aocs">
+        <div class="sub-card-header">
+          <div class="sub-card-title">AOCS</div>
+          <div class="sub-card-mode" id="aocs-mode">--</div>
+        </div>
+        <div class="sub-card-body">
+          <div class="param-row"><span class="param-label">Att Error</span><span class="param-value" id="aocs-atterr">-- deg</span></div>
+          <div class="param-row"><span class="param-label">Rate Roll</span><span class="param-value" id="aocs-rr">-- deg/s</span></div>
+          <div class="param-row"><span class="param-label">Rate Pitch</span><span class="param-value" id="aocs-rp">-- deg/s</span></div>
+          <div class="param-row"><span class="param-label">Rate Yaw</span><span class="param-value" id="aocs-ry">-- deg/s</span></div>
+          <div class="param-row"><span class="param-label">RW 1 / 2</span><span class="param-value" id="aocs-rw12">-- / -- rpm</span></div>
+          <div class="param-row"><span class="param-label">RW 3 / 4</span><span class="param-value" id="aocs-rw34">-- / -- rpm</span></div>
+        </div>
+      </div>
+      <!-- TCS Card -->
+      <div class="sub-card" id="card-tcs">
+        <div class="sub-card-header">
+          <div class="sub-card-title">TCS</div>
+          <div class="sub-card-mode" id="tcs-mode">THERMAL</div>
+        </div>
+        <div class="sub-card-body">
+          <div class="param-row"><span class="param-label">OBC Temp</span><span class="param-value" id="tcs-obc">-- C</span></div>
+          <div class="param-row"><span class="param-label">Bat Temp</span><span class="param-value" id="tcs-bat">-- C</span></div>
+          <div class="param-row"><span class="param-label">FPA Temp</span><span class="param-value" id="tcs-fpa">-- C</span></div>
+          <div class="param-row"><span class="param-label">Htr Bat</span><span class="param-value"><span class="status-dot off" id="tcs-htr-bat"></span><span id="tcs-htr-bat-txt">OFF</span></span></div>
+          <div class="param-row"><span class="param-label">Htr OBC</span><span class="param-value"><span class="status-dot off" id="tcs-htr-obc"></span><span id="tcs-htr-obc-txt">OFF</span></span></div>
+          <div class="param-row"><span class="param-label">Cooler FPA</span><span class="param-value"><span class="status-dot off" id="tcs-cooler"></span><span id="tcs-cooler-txt">OFF</span></span></div>
+        </div>
+      </div>
+      <!-- OBDH Card -->
+      <div class="sub-card" id="card-obdh">
+        <div class="sub-card-header">
+          <div class="sub-card-title">OBDH</div>
+          <div class="sub-card-mode" id="obdh-mode">--</div>
+        </div>
+        <div class="sub-card-body">
+          <div class="param-row"><span class="param-label">CPU Load</span><span class="param-value"><span class="mini-bar"><span class="mini-bar-track"><span class="mini-bar-fill" id="obdh-cpu-bar" style="width:0%;background:#00b4d8"></span></span><span id="obdh-cpu">--</span>%</span></span></div>
+          <div class="param-row"><span class="param-label">Memory</span><span class="param-value"><span class="mini-bar"><span class="mini-bar-track"><span class="mini-bar-fill" id="obdh-mem-bar" style="width:0%;background:#00b4d8"></span></span><span id="obdh-mem">--</span>%</span></span></div>
+          <div class="param-row"><span class="param-label">Reboots</span><span class="param-value" id="obdh-reboots">--</span></div>
+        </div>
+      </div>
+      <!-- TT&C Card -->
+      <div class="sub-card" id="card-ttc">
+        <div class="sub-card-header">
+          <div class="sub-card-title">TT&C</div>
+          <div class="sub-card-mode" id="ttc-mode">--</div>
+        </div>
+        <div class="sub-card-body">
+          <div class="param-row"><span class="param-label">Link</span><span class="param-value"><span class="status-dot off" id="ttc-link-dot"></span><span id="ttc-link-txt">--</span></span></div>
+          <div class="param-row"><span class="param-label">RSSI</span><span class="param-value" id="ttc-rssi">-- dBm</span></div>
+          <div class="param-row"><span class="param-label">Margin</span><span class="param-value" id="ttc-margin">-- dB</span></div>
+          <div class="param-row"><span class="param-label">Range</span><span class="param-value" id="ttc-range">-- km</span></div>
+          <div class="param-row"><span class="param-label">Elevation</span><span class="param-value" id="ttc-elev">-- deg</span></div>
+        </div>
+      </div>
+      <!-- Payload Card -->
+      <div class="sub-card" id="card-payload">
+        <div class="sub-card-header">
+          <div class="sub-card-title">PAYLOAD</div>
+          <div class="sub-card-mode" id="payload-mode">--</div>
+        </div>
+        <div class="sub-card-body">
+          <div class="param-row"><span class="param-label">FPA Temp</span><span class="param-value" id="pl-fpa">-- C</span></div>
+          <div class="param-row"><span class="param-label">Storage</span><span class="param-value"><span class="mini-bar"><span class="mini-bar-track"><span class="mini-bar-fill" id="pl-store-bar" style="width:0%;background:#00b4d8"></span></span><span id="pl-store">--</span>%</span></span></div>
+          <div class="param-row"><span class="param-label">Images</span><span class="param-value" id="pl-images">--</span></div>
+        </div>
+      </div>
+    </div>
+    <!-- Orbit Info Bar -->
+    <div class="orbit-bar">
+      <div class="orbit-param"><span class="label">LAT</span><span class="value" id="orb-lat">--</span></div>
+      <div class="orbit-param"><span class="label">LON</span><span class="value" id="orb-lon">--</span></div>
+      <div class="orbit-param"><span class="label">ALT</span><span class="value" id="orb-alt">-- km</span></div>
+      <div class="orbit-param"><span class="orbit-indicator sunlight" id="orb-eclipse">SUNLIGHT</span></div>
+      <div class="orbit-param"><span class="orbit-indicator contact" id="orb-contact">CONTACT</span></div>
+      <div class="orbit-param"><button class="override-btn" id="btn-override">OVERRIDE PASSES</button></div>
+    </div>
+
+    <!-- Advanced Parameter Search & Raw View -->
+    <div style="border-top: 1px solid #2a3a5a; margin-top: 12px; padding-top: 8px;">
+      <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
+        <input type="text" class="form-input" id="param-search" placeholder="Search parameters (name or hex ID 0x0143)..." style="flex: 1; padding: 6px; font-size: 12px;">
+        <button class="btn" id="btn-clear-search" style="padding: 4px 8px; font-size: 11px;" title="Clear search">Clear</button>
+      </div>
+      <div id="param-search-results" style="font-size: 11px; color: #4a9a6a; margin-bottom: 8px; display: none;"></div>
+      <button class="btn" id="btn-toggle-raw" style="width: 100%; padding: 6px; font-size: 11px; background: #1a4a7a;" title="Show/hide raw JSON snapshot">SHOW RAW SNAPSHOT</button>
+      <div id="raw-snapshot-container" style="display: none; margin-top: 8px; max-height: 300px; overflow-y: auto; background: #0a1a3a; border: 1px solid #2a4a7a; border-radius: 4px; padding: 6px; font-family: monospace; font-size: 10px; color: #4a9a7a;">
+        <pre id="raw-snapshot-json" style="margin: 0; white-space: pre-wrap; word-break: break-all;">Loading...</pre>
+      </div>
+      <!-- Full god-mode snapshot — only visible on subpages (?sub=...) -->
+      <div id="full-snapshot-container" class="subpage-only" style="margin-top: 10px; border: 1px solid #2a4a7a; border-radius: 4px; padding: 6px; background: #0a1226; display:none;">
+        <div style="font-size:11px; color:#7aa; margin-bottom:6px;" id="full-snapshot-title">FULL SIMULATOR STATE</div>
+        <div id="full-snapshot-tabs" class="snap-tabs"></div>
+        <div id="full-snapshot-body" class="snap-body"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== RIGHT PANEL ===== -->
+  <div id="right-panel" class="panel">
+    <div class="panel-header">
+      <h2>Failure Injection</h2>
+    </div>
+    <div class="inject-form">
+      <div class="form-group">
+        <label class="form-label">Subsystem</label>
+        <select class="form-select" id="fail-subsystem">
+          <option value="eps">EPS</option>
+          <option value="adcs">ADCS</option>
+          <option value="tcs">TCS</option>
+          <option value="obdh">OBDH</option>
+          <option value="ttc">TT&C</option>
+          <option value="payload">Payload</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Failure Type</label>
+        <select class="form-select" id="fail-type"></select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Onset</label>
+        <div class="radio-group">
+          <label class="radio-label"><input type="radio" name="fail-onset" value="step" checked> Step</label>
+          <label class="radio-label"><input type="radio" name="fail-onset" value="gradual"> Gradual</label>
+          <label class="radio-label"><input type="radio" name="fail-onset" value="intermittent"> Intermittent</label>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Magnitude</label>
+        <div class="slider-group">
+          <input type="range" class="form-range" id="fail-magnitude" min="0" max="1" step="0.01" value="0.5">
+          <span class="slider-value" id="fail-mag-value">0.50</span>
+        </div>
+      </div>
+      <div class="form-group" id="onset-duration-group">
+        <label class="form-label">Onset Duration (s)</label>
+        <input type="number" class="form-input" id="fail-onset-dur" value="30" min="1" max="3600">
+      </div>
+      <button class="btn-inject" id="btn-inject">INJECT FAILURE</button>
+    </div>
+
+    <div class="section-divider">Active Failures</div>
+    <div class="failures-list" id="failures-list">
+      <div class="no-data" id="no-failures">No active failures</div>
+    </div>
+    <div style="padding: 0 6px;">
+      <button class="clear-all-btn" id="btn-clear-all">CLEAR ALL FAILURES</button>
+    </div>
+
+    <div class="section-divider">Breakpoints</div>
+    <div class="breakpoint-form">
+      <input type="text" class="form-input" id="breakpoint-name" placeholder="Breakpoint name...">
+      <button class="btn-breakpoint" id="btn-save-bp">SAVE</button>
+    </div>
+    <div class="failures-list" id="breakpoints-list">
+      <div class="no-data">No breakpoints saved</div>
+    </div>
+  </div>
+
+  <!-- ===== LOG PANEL ===== -->
+  <div id="log-panel">
+    <div class="panel-header">
+      <h2>Event Log</h2>
+      <button class="refresh-btn" id="clear-log" title="Clear log">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+      </button>
+    </div>
+    <div class="event-log" id="event-log"></div>
+  </div>
+</div>
+
+<!-- Connection Status -->
+<div class="conn-status disconnected" id="conn-status">WS DISCONNECTED</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+(function() {
+  'use strict';
+
+  // ===== CONSTANTS =====
+  const POLL_INTERVAL = 1000;
+  const WS_RECONNECT_DELAY = 3000;
+  const MAX_LOG_ENTRIES = 200;
+
+  const AOCS_MODES = { 0: 'OFF', 1: 'DETUMBLE', 2: 'SAFE_POINT', 3: 'NADIR_POINT', 4: 'TARGET_TRACK' };
+  const OBDH_MODES = { 0: 'NOMINAL', 1: 'SAFE', 2: 'BOOTLOADER' };
+  const TTC_MODES  = { 0: 'NOMINAL', 1: 'REDUNDANT', 2: 'OFF' };
+  const PL_MODES   = { 0: 'OFF', 1: 'STANDBY', 2: 'IMAGING', 3: 'PLAYBACK' };
+  const LINK_STATUS = { 0: 'DOWN', 1: 'UP' };
+  const SC_MODES   = { 0: 'NOMINAL', 1: 'SAFE', 2: 'EMERGENCY' };
+  const SC_MODE_CLASS = { 0: 'nominal', 1: 'safe', 2: 'emergency' };
+
+  // EOSAT-1 has NO thrusters: ADCS uses 4 reaction wheels + 3 magnetorquers,
+  // sun sensors, magnetometers, star trackers and a GPS receiver. The list below
+  // mirrors the failure modes actually implemented in AOCSModelBasic.inject_failure
+  // and the contingency procedures under configs/eosat1/procedures/contingency/.
+  // EOSAT-1 has NO thrusters: ADCS uses 4 reaction wheels + 3 magnetorquers,
+  // sun sensors, magnetometers, star trackers and a GPS receiver. The lists
+  // below mirror the failure modes implemented in the *_basic.py models'
+  // inject_failure() and the contingency procedures under
+  // configs/eosat1/procedures/contingency/.
+  const FAILURE_TYPES = {
+    eps:     ['solar_array_partial', 'solar_panel_loss', 'solar_array_total_loss',
+              'bat_cell', 'bus_short', 'overcurrent',
+              'undervoltage', 'overvoltage'],
+    adcs:    ['rw_bearing', 'rw_seizure', 'multi_wheel_failure',
+              'gyro_bias', 'st_blind', 'st_failure',
+              'css_failure', 'css_head_fail',
+              'mag_failure', 'mag_a_fail', 'mag_b_fail',
+              'mtq_failure'],
+    tcs:     ['heater_failure', 'heater_stuck_on', 'heater_open_circuit',
+              'cooler_failure', 'sensor_drift', 'obc_thermal',
+              'temp_anomaly'],
+    obdh:    ['cpu_spike', 'watchdog_reset', 'memory_errors',
+              'memory_corruption', 'memory_segment_fail',
+              'bus_failure', 'obc_crash',
+              'boot_image_corrupt', 'stuck_in_bootloader'],
+    ttc:     ['primary_failure', 'redundant_failure',
+              'high_ber', 'pa_overheat',
+              'uplink_loss', 'receiver_degrade',
+              'antenna_deploy_failed'],
+    payload: ['cooler_failure', 'fpa_degraded',
+              'image_corrupt', 'memory_segment_fail',
+              'ccd_line_dropout']
+  };
+  // Backwards-compat shim: any old code paths that look up "aocs" still work.
+  FAILURE_TYPES.aocs = FAILURE_TYPES.adcs;
+
+  // ===== STATE =====
+  let state = null;
+  let scenarios = [];
+  let selectedScenario = null;
+  let activeScenarioName = null;
+  let scenarioStartTime = null;
+  let scenarioStartTick = null;
+  let ws = null;
+  let frozen = false;
+  let currentSpeed = 1;
+  let breakpoints = [];
+  let pollTimer = null;
+  let wsReconnectTimer = null;
+
+  // ===== DOM REFS =====
+  const $ = (id) => document.getElementById(id);
+  const $$ = (sel) => document.querySelectorAll(sel);
+
+  // ===== HELPERS =====
+  function fmt(v, d) { return v != null ? Number(v).toFixed(d) : '--'; }
+  function fmtInt(v) { return v != null ? Math.round(v).toString() : '--'; }
+
+  function formatSimTime(isoStr) {
+    if (!isoStr) return '----/--/-- --:--:-- UTC';
+    try {
+      const d = new Date(isoStr);
+      const y = d.getUTCFullYear();
+      const mo = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const da = String(d.getUTCDate()).padStart(2, '0');
+      const h = String(d.getUTCHours()).padStart(2, '0');
+      const mi = String(d.getUTCMinutes()).padStart(2, '0');
+      const s = String(d.getUTCSeconds()).padStart(2, '0');
+      return `${y}-${mo}-${da} ${h}:${mi}:${s} UTC`;
+    } catch { return '----/--/-- --:--:-- UTC'; }
+  }
+
+  function formatDuration(totalSec) {
+    const m = Math.floor(totalSec / 60);
+    const s = Math.floor(totalSec % 60);
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+
+  function barColor(pct) {
+    if (pct > 70) return '#00d26a';
+    if (pct > 30) return '#ffc107';
+    return '#ff3838';
+  }
+
+  function tempColor(val, low, high) {
+    if (val == null) return '';
+    if (val > high) return 'crit';
+    if (val < low) return 'warn';
+    return '';
+  }
+
+  function showToast(msg, type) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.className = 'toast ' + type + ' show';
+    setTimeout(() => t.classList.remove('show'), 2500);
+  }
+
+  // ===== API =====
+  const API_BASE = window.location.origin;
+
+  async function apiGet(path) {
+    try {
+      const r = await fetch(API_BASE + path);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return await r.json();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function apiPost(path, body) {
+    try {
+      const r = await fetch(API_BASE + path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return await r.json();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // ===== WEBSOCKET =====
+  function connectWS() {
+    if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return;
+
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${proto}//${window.location.host}/ws`;
+    ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      $('conn-status').textContent = 'WS CONNECTED';
+      $('conn-status').className = 'conn-status connected';
+      addLogEntry('info', 'SYSTEM', 'WebSocket connected');
+    };
+
+    ws.onclose = () => {
+      $('conn-status').textContent = 'WS DISCONNECTED';
+      $('conn-status').className = 'conn-status disconnected';
+      clearTimeout(wsReconnectTimer);
+      wsReconnectTimer = setTimeout(connectWS, WS_RECONNECT_DELAY);
+    };
+
+    ws.onerror = () => {
+      ws.close();
+    };
+
+    ws.onmessage = (evt) => {
+      try {
+        const msg = JSON.parse(evt.data);
+        handleWsMessage(msg);
+      } catch {}
+    };
+  }
+
+  function wsSend(obj) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(obj));
+    } else {
+      showToast('WebSocket not connected', 'error');
+    }
+  }
+
+  function handleWsMessage(msg) {
+    if (msg.type === 'event') {
+      const sev = msg.severity || 'info';
+      const source = msg.source || msg.subsystem || 'SIM';
+      addLogEntry(sev, source.toUpperCase(), msg.message || JSON.stringify(msg));
+    } else if (msg.type === 'state_update' && msg.state) {
+      state = msg.state;
+    } else if (msg.type === 'failure_injected') {
+      addLogEntry('high', 'FAIL', `Injected: ${msg.subsystem}/${msg.failure}`);
+    } else if (msg.type === 'failure_cleared') {
+      addLogEntry('info', 'FAIL', `Cleared: ${msg.failure_id}`);
+    }
+  }
+
+  // ===== EVENT LOG =====
+  function addLogEntry(severity, source, message) {
+    const log = $('event-log');
+    const now = new Date();
+    const ts = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+
+    const el = document.createElement('div');
+    el.className = `log-entry severity-${severity}`;
+    el.innerHTML = `<span class="log-time">${ts}</span><span class="log-source">${source}</span><span class="log-msg">${escapeHtml(message)}</span>`;
+    log.appendChild(el);
+
+    // Trim old entries
+    while (log.children.length > MAX_LOG_ENTRIES) {
+      log.removeChild(log.firstChild);
+    }
+
+    // Auto-scroll
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  // ===== POLLING =====
+  let snapshot = null;
+
+  async function pollState() {
+    const data = await apiGet('/api/state');
+    if (data) {
+      state = data;
+    }
+  }
+
+  async function pollFailures() {
+    const data = await apiGet('/api/failures');
+    if (data) {
+      renderFailures(Array.isArray(data) ? data : (data.failures || []));
+    }
+  }
+
+  // Snapshot tab state
+  let snapshotTabs = [];          // [{id, label, fields:[{key,getter}], cells:Map<key,HTMLElement>}]
+  let snapshotActiveTab = null;
+  let snapshotTabsBuilt = false;
+
+  async function pollSnapshot() {
+    const data = await apiGet('/api/instructor/snapshot');
+    if (data) {
+      snapshot = data;
+      updateRawSnapshot();
+      if (!snapshotTabsBuilt) {
+        buildSnapshotTabs();
+        snapshotTabsBuilt = true;
+      }
+      updateActiveSnapshotTab();
+      updateCompletenessCounter();
+      performParameterSearch();
+    }
+  }
+
+  function updateRawSnapshot() {
+    if (!snapshot) return;
+    // The raw JSON pre is hidden by default; only repaint if visible to save CPU
+    const container = $('raw-snapshot-container');
+    if (container && container.style.display !== 'none') {
+      $('raw-snapshot-json').textContent = JSON.stringify(snapshot, null, 2);
+    }
+  }
+
+  function formatParamValue(v) {
+    if (v == null) return '--';
+    if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
+    if (typeof v === 'number') {
+      if (!isFinite(v)) return String(v);
+      if (Number.isInteger(v)) return String(v);
+      // Stable precision: 3 decimals, no exponent jitter
+      const a = Math.abs(v);
+      if (a !== 0 && (a < 1e-3 || a >= 1e6)) return v.toExponential(3);
+      return v.toFixed(3);
+    }
+    if (typeof v === 'object') return JSON.stringify(v);
+    return String(v);
+  }
+
+  function buildSnapshotTabs() {
+    const tabsRoot = $('full-snapshot-tabs');
+    const body = $('full-snapshot-body');
+    if (!tabsRoot || !body || !snapshot) return;
+    tabsRoot.innerHTML = '';
+    body.innerHTML = '';
+    snapshotTabs = [];
+
+    // 1. One tab per subsystem from snapshot.subsystems
+    if (snapshot.subsystems && typeof snapshot.subsystems === 'object') {
+      const subs = Object.keys(snapshot.subsystems).sort();
+      for (const sub of subs) {
+        const st = snapshot.subsystems[sub];
+        if (st == null || typeof st !== 'object') continue;
+        const fields = Object.keys(st).sort().map(k => ({
+          key: k,
+          getter: () => snapshot.subsystems[sub] ? snapshot.subsystems[sub][k] : undefined,
+        }));
+        snapshotTabs.push({ id: 'sub:'+sub, label: sub.toUpperCase(), fields, cells: new Map() });
+      }
+    }
+
+    // 2. Raw parameter dict, grouped by hex high byte (subsystem region)
+    if (snapshot.parameters && typeof snapshot.parameters === 'object') {
+      const SUB_REGIONS = {
+        '01': 'EPS·raw', '02': 'AOCS·raw', '03': 'TCS·raw', '04': 'OBDH·raw',
+        '05': 'TTC·raw', '06': 'PAYLOAD·raw', '07': 'FDIR·raw', '08': 'ORBIT·raw'
+      };
+      const groups = {};
+      const ids = Object.keys(snapshot.parameters).sort();
+      for (const id of ids) {
+        const m = id.match(/^0x([0-9A-Fa-f]{2})/);
+        const region = m ? (SUB_REGIONS[m[1].toUpperCase()] || ('0x'+m[1]+'xx')) : 'OTHER·raw';
+        (groups[region] = groups[region] || []).push(id);
+      }
+      for (const region of Object.keys(groups).sort()) {
+        const ids2 = groups[region];
+        const fields = ids2.map(id => ({
+          key: id,
+          getter: () => snapshot.parameters ? snapshot.parameters[id] : undefined,
+        }));
+        snapshotTabs.push({ id: 'raw:'+region, label: region, fields, cells: new Map() });
+      }
+    }
+
+    // Build tab buttons
+    for (const tab of snapshotTabs) {
+      const btn = document.createElement('div');
+      btn.className = 'snap-tab';
+      btn.dataset.tabId = tab.id;
+      btn.innerHTML = `${escapeHtml(tab.label)}<span class="count">${tab.fields.length}</span>`;
+      btn.addEventListener('click', () => {
+        snapshotActiveTab = tab.id;
+        renderActiveSnapshotTab();
+      });
+      tabsRoot.appendChild(btn);
+    }
+
+    // Default active tab — honour ?sub=<id> when running as a subpage,
+    // otherwise we don't render anything from the front-page launcher.
+    const requested = (new URLSearchParams(location.search)).get('sub');
+    if (requested) {
+      const want = snapshotTabs.find(t => t.id === requested
+                                         || t.id === 'sub:'+requested
+                                         || t.id === 'raw:'+requested);
+      if (want) snapshotActiveTab = want.id;
+      else if (snapshotTabs.length) snapshotActiveTab = snapshotTabs[0].id;
+    } else if (snapshotTabs.length) {
+      snapshotActiveTab = snapshotTabs[0].id;
+    }
+    populateSubsystemLauncher();
+    renderActiveSnapshotTab();
+  }
+
+  function populateSubsystemLauncher() {
+    const root = $('subsystem-launcher-buttons');
+    if (!root) return;
+    root.innerHTML = '';
+    for (const tab of snapshotTabs) {
+      const a = document.createElement('a');
+      a.className = 'launcher-btn';
+      a.href = '?sub=' + encodeURIComponent(tab.id);
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.innerHTML = `<span>${escapeHtml(tab.label)}</span><span class="ct">${tab.fields.length}</span>`;
+      root.appendChild(a);
+    }
+  }
+
+  function renderActiveSnapshotTab() {
+    const body = $('full-snapshot-body');
+    if (!body) return;
+    body.innerHTML = '';
+    // Highlight active tab button
+    const btns = document.querySelectorAll('#full-snapshot-tabs .snap-tab');
+    btns.forEach(b => b.classList.toggle('active', b.dataset.tabId === snapshotActiveTab));
+
+    const tab = snapshotTabs.find(t => t.id === snapshotActiveTab);
+    if (!tab) return;
+    tab.cells = new Map();
+    const frag = document.createDocumentFragment();
+    for (const f of tab.fields) {
+      const row = document.createElement('div');
+      row.className = 'param-cell';
+      const k = document.createElement('span');
+      k.className = 'pkey';
+      k.textContent = f.key;
+      const v = document.createElement('span');
+      v.className = 'pval';
+      v.textContent = formatParamValue(f.getter());
+      row.appendChild(k);
+      row.appendChild(v);
+      frag.appendChild(row);
+      tab.cells.set(f.key, v);
+    }
+    body.appendChild(frag);
+  }
+
+  function updateActiveSnapshotTab() {
+    // In-place text update for the currently visible tab only — no innerHTML
+    // rebuild, no layout thrash, no width jumping.
+    const tab = snapshotTabs.find(t => t.id === snapshotActiveTab);
+    if (!tab) return;
+    for (const f of tab.fields) {
+      const cell = tab.cells.get(f.key);
+      if (!cell) continue;
+      const formatted = formatParamValue(f.getter());
+      if (cell.textContent !== formatted) cell.textContent = formatted;
+    }
+  }
+
+  function updateCompletenessCounter() {
+    if (!snapshot) return;
+    // Total fields available across all tabs
+    let total = 0;
+    for (const t of snapshotTabs) total += t.fields.length;
+    // How many of those have a non-null current value (i.e. are actually populated)
+    let populated = 0;
+    for (const t of snapshotTabs) {
+      for (const f of t.fields) {
+        const v = f.getter();
+        if (v !== undefined && v !== null) populated++;
+      }
+    }
+    const pct = total > 0 ? Math.round((populated / total) * 100) : 0;
+    const elem = $('param-completeness');
+    if (elem) {
+      elem.textContent = `${populated}/${total} fields populated (${pct}%)`;
+      if (pct >= 95) elem.style.color = 'var(--green)';
+      else if (pct >= 50) elem.style.color = 'var(--amber)';
+      else elem.style.color = 'var(--red)';
+    }
+  }
+
+  function performParameterSearch() {
+    const query = $('param-search').value.trim().toLowerCase();
+    const results = $('param-search-results');
+
+    if (!query) {
+      results.style.display = 'none';
+      return;
+    }
+
+    if (!snapshot) return;
+
+    // Flatten all parameters into searchable list
+    const allParams = [];
+
+    // Parameters by ID
+    if (snapshot.parameters) {
+      for (const [paramId, value] of Object.entries(snapshot.parameters)) {
+        allParams.push({ id: paramId, name: paramId, value, type: 'parameter' });
+      }
+    }
+
+    // Subsystem states
+    if (snapshot.subsystems) {
+      for (const [subName, subState] of Object.entries(snapshot.subsystems)) {
+        if (typeof subState === 'object') {
+          for (const [key, val] of Object.entries(subState)) {
+            allParams.push({ id: `${subName}.${key}`, name: `${subName}.${key}`, value: val, type: 'subsystem' });
+          }
+        }
+      }
+    }
+
+    // Filter by query (name match or hex ID match)
+    const isHexQuery = query.startsWith('0x');
+    const matches = allParams.filter(p => {
+      if (isHexQuery) {
+        return p.id.toLowerCase().includes(query);
+      }
+      return p.name.toLowerCase().includes(query) || String(p.value).toLowerCase().includes(query);
+    }).slice(0, 10);  // Limit to 10 results
+
+    if (matches.length === 0) {
+      results.innerHTML = '<span style="color: #f88;">No parameters found</span>';
+      results.style.display = 'block';
+      return;
+    }
+
+    const html = matches.map(m =>
+      `<div style="margin-bottom: 4px; padding: 4px; background: #1a3a5a; border-radius: 3px;">
+        <span style="color: #00e07a;">${escapeHtml(m.id)}</span> = <span>${escapeHtml(String(m.value))}</span>
+      </div>`
+    ).join('');
+
+    results.innerHTML = html;
+    results.style.display = 'block';
+  }
+
+  // ===== SCENARIOS =====
+  async function loadScenarios() {
+    const btn = $('refresh-scenarios');
+    btn.classList.add('spinning');
+    const data = await apiGet('/api/scenarios');
+    setTimeout(() => btn.classList.remove('spinning'), 600);
+
+    if (data) {
+      scenarios = Array.isArray(data) ? data : (data.scenarios || []);
+    } else {
+      scenarios = [];
+    }
+    renderScenarios();
+  }
+
+  function renderScenarios() {
+    const list = $('scenario-list');
+    if (scenarios.length === 0) {
+      list.innerHTML = '<div class="no-data">No scenarios available</div>';
+      return;
+    }
+    list.innerHTML = scenarios.map((sc, i) => `
+      <div class="scenario-item ${selectedScenario === i ? 'selected' : ''} ${activeScenarioName === sc.name ? 'active' : ''}"
+           data-index="${i}">
+        <div class="scenario-name">
+          ${escapeHtml(sc.name)}
+          <span class="difficulty-badge ${sc.difficulty || ''}">${sc.difficulty || '?'}</span>
+        </div>
+        <div class="scenario-duration">${formatDuration(sc.duration_s || 0)}</div>
+      </div>
+    `).join('');
+
+    list.querySelectorAll('.scenario-item').forEach(el => {
+      el.addEventListener('click', () => selectScenario(parseInt(el.dataset.index)));
+    });
+  }
+
+  function selectScenario(idx) {
+    selectedScenario = idx;
+    const sc = scenarios[idx];
+    if (!sc) return;
+
+    $('scenario-detail').classList.remove('hidden');
+    $('scenario-briefing').textContent = sc.briefing || 'No briefing available.';
+    $('btn-start-scenario').disabled = (activeScenarioName === sc.name);
+    $('btn-stop-scenario').disabled = (activeScenarioName !== sc.name);
+    renderScenarios();
+  }
+
+  function startScenario() {
+    if (selectedScenario == null) return;
+    const sc = scenarios[selectedScenario];
+    if (!sc) return;
+
+    apiPost('/api/command', { type: 'start_scenario', scenario: sc.name });
+    wsSend({ type: 'start_scenario', scenario: sc.name });
+    activeScenarioName = sc.name;
+    scenarioStartTime = Date.now();
+    scenarioStartTick = state ? state.tick : 0;
+    $('btn-start-scenario').disabled = true;
+    $('btn-stop-scenario').disabled = false;
+    $('scenario-progress').classList.remove('hidden');
+    addLogEntry('info', 'SCENARIO', `Started: ${sc.name}`);
+    showToast(`Scenario "${sc.name}" started`, 'success');
+    renderScenarios();
+  }
+
+  function stopScenario() {
+    if (!activeScenarioName) return;
+    apiPost('/api/command', { type: 'stop_scenario' });
+    wsSend({ type: 'stop_scenario' });
+    addLogEntry('info', 'SCENARIO', `Stopped: ${activeScenarioName}`);
+    activeScenarioName = null;
+    scenarioStartTime = null;
+    scenarioStartTick = null;
+    $('btn-start-scenario').disabled = false;
+    $('btn-stop-scenario').disabled = true;
+    $('scenario-progress').classList.add('hidden');
+    renderScenarios();
+  }
+
+  // ===== FAILURE INJECTION =====
+  function updateFailureTypes() {
+    const sub = $('fail-subsystem').value;
+    const types = FAILURE_TYPES[sub] || [];
+    $('fail-type').innerHTML = types.map(t => `<option value="${t}">${t.replace(/_/g, ' ')}</option>`).join('');
+  }
+
+  function updateOnsetDurationVisibility() {
+    const onset = document.querySelector('input[name="fail-onset"]:checked').value;
+    $('onset-duration-group').style.display = (onset === 'gradual') ? 'block' : 'none';
+  }
+
+  function injectFailure() {
+    let subsystem = $('fail-subsystem').value;
+    // The engine still keys this subsystem by its legacy "aocs" name even
+    // though the spacecraft has no thrusters and we now expose it as "ADCS"
+    // in the UI. Translate before sending so the backend resolves the model.
+    if (subsystem === 'adcs') subsystem = 'aocs';
+    const failure = $('fail-type').value;
+    const onset = document.querySelector('input[name="fail-onset"]:checked').value;
+    const magnitude = parseFloat($('fail-magnitude').value);
+    const onset_duration_s = parseInt($('fail-onset-dur').value) || 30;
+
+    const payload = {
+      type: 'failure_inject',
+      subsystem,
+      failure,
+      magnitude,
+      onset,
+      onset_duration_s
+    };
+
+    wsSend(payload);
+    apiPost('/api/command', payload);
+
+    addLogEntry('high', 'INJECT', `${subsystem}/${failure} mag=${magnitude.toFixed(2)} onset=${onset}`);
+    showToast(`Failure injected: ${subsystem}/${failure}`, 'error');
+  }
+
+  function renderFailures(failures) {
+    const list = $('failures-list');
+    const noFail = $('no-failures');
+
+    if (!failures || failures.length === 0) {
+      list.innerHTML = '';
+      list.appendChild(noFail);
+      noFail.classList.remove('hidden');
+      return;
+    }
+
+    noFail.classList.add('hidden');
+    const existing = new Set();
+
+    list.innerHTML = failures.map(f => {
+      const id = f.failure_id || f.id || `${f.subsystem}_${f.failure}`;
+      existing.add(id);
+      const magPct = ((f.magnitude || 0) * 100).toFixed(0);
+      const elapsed = f.elapsed_s ? formatDuration(f.elapsed_s) : '--:--';
+      return `
+        <div class="failure-item" data-id="${escapeHtml(id)}">
+          <div class="failure-header">
+            <span class="failure-name">${escapeHtml((f.subsystem || '').toUpperCase())} / ${escapeHtml(f.failure || f.type || '')}</span>
+            <button class="failure-clear-btn" onclick="window._clearFailure('${escapeHtml(id)}')">CLEAR</button>
+          </div>
+          <div class="failure-info">
+            <span>Mag: <span class="failure-mag-bar"><span class="failure-mag-fill" style="width:${magPct}%"></span></span> ${magPct}%</span>
+            <span>${elapsed}</span>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  window._clearFailure = function(id) {
+    wsSend({ type: 'failure_clear', failure_id: id });
+    apiPost('/api/command', { type: 'failure_clear', failure_id: id });
+    addLogEntry('info', 'FAIL', `Clearing failure: ${id}`);
+  };
+
+  function clearAllFailures() {
+    wsSend({ type: 'failure_clear_all' });
+    apiPost('/api/command', { type: 'failure_clear_all' });
+    addLogEntry('info', 'FAIL', 'Clearing all failures');
+    showToast('All failures cleared', 'success');
+  }
+
+  // ===== BREAKPOINTS =====
+  function saveBreakpoint() {
+    const name = $('breakpoint-name').value.trim();
+    if (!name) return;
+
+    const bp = {
+      name,
+      tick: state ? state.tick : 0,
+      time: state ? state.sim_time : null,
+      timestamp: new Date().toISOString()
+    };
+    breakpoints.push(bp);
+    $('breakpoint-name').value = '';
+
+    apiPost('/api/command', { type: 'save_breakpoint', name, tick: bp.tick });
+    addLogEntry('info', 'BRKPT', `Saved: "${name}" at tick ${bp.tick}`);
+    showToast(`Breakpoint "${name}" saved`, 'success');
+    renderBreakpoints();
+  }
+
+  function renderBreakpoints() {
+    const list = $('breakpoints-list');
+    if (breakpoints.length === 0) {
+      list.innerHTML = '<div class="no-data">No breakpoints saved</div>';
+      return;
+    }
+    list.innerHTML = breakpoints.map((bp, i) => `
+      <div class="failure-item" style="border-left-color: #00b4d8;">
+        <div class="failure-header">
+          <span class="failure-name" style="color: #00b4d8;">${escapeHtml(bp.name)}</span>
+          <span style="font-size: 10px; color: #4a5a7a;">Tick ${bp.tick}</span>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  // ===== SPEED CONTROLS =====
+  function setSpeed(speed) {
+    currentSpeed = speed;
+    wsSend({ type: 'set_speed', value: speed });
+    apiPost('/api/command', { type: 'set_speed', value: speed });
+
+    $$('.speed-btn').forEach(b => {
+      b.classList.toggle('active', parseFloat(b.dataset.speed) === speed);
+    });
+    $('speed-indicator').textContent = speed + 'x';
+  }
+
+  function toggleOverride() {
+    const btn = $('btn-override');
+    const isActive = btn.classList.contains('active');
+    const newState = !isActive;
+    wsSend({ type: 'override_passes', enabled: newState });
+    apiPost('/api/command', { type: 'override_passes', enabled: newState });
+    addLogEntry(newState ? 'low' : 'info', 'OVERRIDE', newState ? 'Pass override ENABLED' : 'Pass override DISABLED');
+  }
+
+  function toggleFreeze() {
+    frozen = !frozen;
+    const btn = $('freeze-btn');
+    if (frozen) {
+      wsSend({ type: 'freeze' });
+      apiPost('/api/command', { type: 'freeze' });
+      btn.textContent = 'RESUME';
+      btn.classList.add('frozen');
+      addLogEntry('low', 'SIM', 'Simulation FROZEN');
+    } else {
+      wsSend({ type: 'resume' });
+      apiPost('/api/command', { type: 'resume' });
+      btn.textContent = 'FREEZE';
+      btn.classList.remove('frozen');
+      addLogEntry('info', 'SIM', 'Simulation RESUMED');
+    }
+  }
+
+  // ===== UI UPDATE (called via requestAnimationFrame) =====
+  function updateUI() {
+    if (!state) {
+      requestAnimationFrame(updateUI);
+      return;
+    }
+
+    // Header
+    $('sim-time').textContent = formatSimTime(state.sim_time);
+    if (state.speed != null) {
+      $('speed-indicator').textContent = state.speed + 'x';
+      currentSpeed = state.speed;
+      $$('.speed-btn').forEach(b => {
+        b.classList.toggle('active', parseFloat(b.dataset.speed) === state.speed);
+      });
+    }
+
+    // SC Mode
+    const scMode = state.sc_mode != null ? state.sc_mode : 0;
+    const badge = $('sc-mode-badge');
+    badge.textContent = SC_MODES[scMode] || 'UNKNOWN';
+    badge.className = 'sc-mode-badge ' + (SC_MODE_CLASS[scMode] || 'nominal');
+
+    // === EPS ===
+    const eps = state.eps || {};
+    const socPct = eps.soc_pct;
+    $('eps-soc').textContent = fmt(socPct, 1);
+    const socBar = $('eps-soc-bar');
+    if (socPct != null) {
+      socBar.style.width = Math.min(100, Math.max(0, socPct)) + '%';
+      socBar.style.background = barColor(socPct);
+    }
+    $('eps-bus-v').textContent = fmt(eps.bus_voltage_V, 1) + ' V';
+    $('eps-bat-v').textContent = fmt(eps.bat_voltage_V, 1) + ' V';
+    const batTempEl = $('eps-bat-temp');
+    batTempEl.textContent = fmt(eps.bat_temp_C, 1) + ' C';
+    batTempEl.className = 'param-value ' + tempColor(eps.bat_temp_C, 5, 40);
+    $('eps-pgen').textContent = fmt(eps.power_gen_W, 1) + ' W';
+    $('eps-pcons').textContent = fmt(eps.power_cons_W, 1) + ' W';
+    $('eps-sa').textContent = fmt(eps.sa_a_A, 2) + ' / ' + fmt(eps.sa_b_A, 2) + ' A';
+
+    // === AOCS ===
+    const aocs = state.aocs || {};
+    $('aocs-mode').textContent = AOCS_MODES[aocs.mode] || '--';
+    const attErr = $('aocs-atterr');
+    attErr.textContent = fmt(aocs.att_error_deg, 3) + ' deg';
+    attErr.className = 'param-value ' + (aocs.att_error_deg > 1 ? 'crit' : aocs.att_error_deg > 0.5 ? 'warn' : '');
+    $('aocs-rr').textContent = fmt(aocs.rate_roll, 4) + ' deg/s';
+    $('aocs-rp').textContent = fmt(aocs.rate_pitch, 4) + ' deg/s';
+    $('aocs-ry').textContent = fmt(aocs.rate_yaw, 4) + ' deg/s';
+    $('aocs-rw12').textContent = fmtInt(aocs.rw1_rpm) + ' / ' + fmtInt(aocs.rw2_rpm) + ' rpm';
+    $('aocs-rw34').textContent = fmtInt(aocs.rw3_rpm) + ' / ' + fmtInt(aocs.rw4_rpm) + ' rpm';
+
+    // === TCS ===
+    const tcs = state.tcs || {};
+    const obcTemp = $('tcs-obc');
+    obcTemp.textContent = fmt(tcs.temp_obc_C, 1) + ' C';
+    obcTemp.className = 'param-value ' + tempColor(tcs.temp_obc_C, -10, 50);
+    const batTemp = $('tcs-bat');
+    batTemp.textContent = fmt(tcs.temp_bat_C, 1) + ' C';
+    batTemp.className = 'param-value ' + tempColor(tcs.temp_bat_C, 5, 40);
+    const fpaTemp = $('tcs-fpa');
+    fpaTemp.textContent = fmt(tcs.temp_fpa_C, 1) + ' C';
+    fpaTemp.className = 'param-value ' + tempColor(tcs.temp_fpa_C, -50, -10);
+
+    const htrBat = tcs.htr_bat;
+    $('tcs-htr-bat').className = 'status-dot ' + (htrBat ? 'on' : 'off');
+    $('tcs-htr-bat-txt').textContent = htrBat ? 'ON' : 'OFF';
+    const htrObc = tcs.htr_obc;
+    $('tcs-htr-obc').className = 'status-dot ' + (htrObc ? 'on' : 'off');
+    $('tcs-htr-obc-txt').textContent = htrObc ? 'ON' : 'OFF';
+    const cooler = tcs.cooler_fpa;
+    $('tcs-cooler').className = 'status-dot ' + (cooler ? 'on' : 'off');
+    $('tcs-cooler-txt').textContent = cooler ? 'ON' : 'OFF';
+
+    // === OBDH ===
+    const obdh = state.obdh || {};
+    $('obdh-mode').textContent = OBDH_MODES[obdh.mode] || '--';
+    const cpuPct = obdh.cpu_load_pct;
+    $('obdh-cpu').textContent = fmt(cpuPct, 1);
+    const cpuBar = $('obdh-cpu-bar');
+    if (cpuPct != null) {
+      cpuBar.style.width = Math.min(100, Math.max(0, cpuPct)) + '%';
+      cpuBar.style.background = cpuPct > 80 ? '#ff3838' : cpuPct > 60 ? '#ffc107' : '#00b4d8';
+    }
+    const memPct = obdh.mem_used_pct;
+    $('obdh-mem').textContent = fmt(memPct, 1);
+    const memBar = $('obdh-mem-bar');
+    if (memPct != null) {
+      memBar.style.width = Math.min(100, Math.max(0, memPct)) + '%';
+      memBar.style.background = memPct > 80 ? '#ff3838' : memPct > 60 ? '#ffc107' : '#00b4d8';
+    }
+    $('obdh-reboots').textContent = obdh.reboot_count != null ? obdh.reboot_count : '--';
+    if (obdh.reboot_count > 0) {
+      $('obdh-reboots').className = 'param-value warn';
+    } else {
+      $('obdh-reboots').className = 'param-value';
+    }
+
+    // === TTC ===
+    const ttc = state.ttc || {};
+    $('ttc-mode').textContent = TTC_MODES[ttc.mode] || '--';
+    const linkUp = ttc.link_status === 1;
+    $('ttc-link-dot').className = 'status-dot ' + (linkUp ? 'up' : 'down');
+    $('ttc-link-txt').textContent = LINK_STATUS[ttc.link_status] || '--';
+    $('ttc-rssi').textContent = fmt(ttc.rssi_dBm, 1) + ' dBm';
+    const marginEl = $('ttc-margin');
+    marginEl.textContent = fmt(ttc.link_margin_dB, 1) + ' dB';
+    marginEl.className = 'param-value ' + (ttc.link_margin_dB != null && ttc.link_margin_dB < 3 ? 'crit' : ttc.link_margin_dB < 6 ? 'warn' : '');
+    $('ttc-range').textContent = fmt(ttc.range_km, 1) + ' km';
+    $('ttc-elev').textContent = fmt(ttc.elevation_deg, 1) + ' deg';
+
+    // === Payload ===
+    const pl = state.payload || {};
+    $('payload-mode').textContent = PL_MODES[pl.mode] || '--';
+    const plFpa = $('pl-fpa');
+    plFpa.textContent = fmt(pl.fpa_temp_C, 1) + ' C';
+    plFpa.className = 'param-value ' + tempColor(pl.fpa_temp_C, -50, -10);
+    const storePct = pl.store_used_pct;
+    $('pl-store').textContent = fmt(storePct, 1);
+    const storeBar = $('pl-store-bar');
+    if (storePct != null) {
+      storeBar.style.width = Math.min(100, Math.max(0, storePct)) + '%';
+      storeBar.style.background = storePct > 80 ? '#ff3838' : storePct > 60 ? '#ffc107' : '#00b4d8';
+    }
+    $('pl-images').textContent = pl.image_count != null ? pl.image_count : '--';
+
+    // === Orbit Bar ===
+    $('orb-lat').textContent = fmt(state.lat, 4) + '\u00B0';
+    $('orb-lon').textContent = fmt(state.lon, 4) + '\u00B0';
+    $('orb-alt').textContent = fmt(state.alt_km, 2) + ' km';
+
+    const eclipseEl = $('orb-eclipse');
+    if (state.in_eclipse) {
+      eclipseEl.textContent = 'ECLIPSE';
+      eclipseEl.className = 'orbit-indicator eclipse';
+    } else {
+      eclipseEl.textContent = 'SUNLIGHT';
+      eclipseEl.className = 'orbit-indicator sunlight';
+    }
+
+    const contactEl = $('orb-contact');
+    if (state.in_contact) {
+      contactEl.textContent = 'CONTACT';
+      contactEl.className = 'orbit-indicator contact';
+    } else {
+      contactEl.textContent = 'NO CONTACT';
+      contactEl.className = 'orbit-indicator no-contact';
+    }
+
+    // Override button sync (both copies)
+    ['btn-override','btn-override-hdr'].forEach(id => {
+      const b = $(id); if (!b) return;
+      if (state.override_passes) { b.classList.add('active'); b.textContent = 'OVERRIDE ON'; }
+      else { b.classList.remove('active'); b.textContent = 'OVERRIDE PASSES'; }
+    });
+
+    // === Active failures from state ===
+    if (state.active_failures && Array.isArray(state.active_failures)) {
+      renderFailures(state.active_failures);
+
+      // Highlight cards with failures
+      const failedSubs = new Set(state.active_failures.map(f => f.subsystem));
+      ['eps', 'aocs', 'tcs', 'obdh', 'ttc', 'payload'].forEach(sub => {
+        const card = $('card-' + sub);
+        if (card) card.classList.toggle('alert', failedSubs.has(sub));
+      });
+    }
+
+    // === Scenario Progress ===
+    if (activeScenarioName && selectedScenario != null) {
+      const sc = scenarios[selectedScenario];
+      if (sc && scenarioStartTime) {
+        const elapsedMs = Date.now() - scenarioStartTime;
+        const elapsedS = elapsedMs / 1000 * currentSpeed;
+        const totalS = sc.duration_s || 1;
+        const pct = Math.min(100, (elapsedS / totalS) * 100);
+        const remainS = Math.max(0, totalS - elapsedS);
+
+        $('progress-elapsed').textContent = formatDuration(elapsedS);
+        $('progress-remaining').textContent = '-' + formatDuration(remainS);
+        $('progress-fill').style.width = pct + '%';
+
+        if (pct >= 100) {
+          stopScenario();
+          showToast('Scenario complete!', 'success');
+        }
+      }
+    }
+
+    requestAnimationFrame(updateUI);
+  }
+
+  // ===== INIT =====
+  function init() {
+    // Subpage mode: ?sub=<tabId> hides the dashboard chrome and renders only
+    // the requested subsystem deep-dive. Set the body class first so CSS
+    // hides everything before any layout work happens.
+    const requestedSub = (new URLSearchParams(location.search)).get('sub');
+    if (requestedSub) {
+      document.body.classList.add('subpage');
+      const cont = $('full-snapshot-container');
+      if (cont) {
+        cont.style.display = 'block';
+        // Inject a Back button + readable title
+        const back = document.createElement('a');
+        back.className = 'subpage-back';
+        back.href = '/';
+        back.textContent = '← Back to dashboard';
+        cont.parentNode.insertBefore(back, cont);
+        const title = $('full-snapshot-title');
+        if (title) title.textContent = 'SUBSYSTEM DEEP-DIVE — ' + requestedSub.toUpperCase();
+        document.title = 'SMO — ' + requestedSub.toUpperCase();
+      }
+    }
+
+    // Speed buttons
+    $$('.speed-btn').forEach(btn => {
+      btn.addEventListener('click', () => setSpeed(parseFloat(btn.dataset.speed)));
+    });
+
+    // Freeze button
+    $('freeze-btn').addEventListener('click', toggleFreeze);
+
+    // Override button
+    $('btn-override').addEventListener('click', toggleOverride);
+    const _ovh = $('btn-override-hdr'); if (_ovh) _ovh.addEventListener('click', toggleOverride);
+
+    // Scenario controls
+    $('refresh-scenarios').addEventListener('click', loadScenarios);
+    $('btn-start-scenario').addEventListener('click', startScenario);
+    $('btn-stop-scenario').addEventListener('click', stopScenario);
+
+    // Failure form
+    $('fail-subsystem').addEventListener('change', updateFailureTypes);
+    updateFailureTypes();
+
+    $('fail-magnitude').addEventListener('input', () => {
+      $('fail-mag-value').textContent = parseFloat($('fail-magnitude').value).toFixed(2);
+    });
+
+    document.querySelectorAll('input[name="fail-onset"]').forEach(r => {
+      r.addEventListener('change', updateOnsetDurationVisibility);
+    });
+    updateOnsetDurationVisibility();
+
+    $('btn-inject').addEventListener('click', injectFailure);
+    $('btn-clear-all').addEventListener('click', clearAllFailures);
+
+    // Breakpoints
+    $('btn-save-bp').addEventListener('click', saveBreakpoint);
+    $('breakpoint-name').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') saveBreakpoint();
+    });
+
+    // Clear log
+    $('clear-log').addEventListener('click', () => {
+      $('event-log').innerHTML = '';
+    });
+
+    // Parameter search
+    $('param-search').addEventListener('input', performParameterSearch);
+    $('btn-clear-search').addEventListener('click', () => {
+      $('param-search').value = '';
+      $('param-search-results').style.display = 'none';
+    });
+
+    // Raw snapshot toggle
+    $('btn-toggle-raw').addEventListener('click', () => {
+      const container = $('raw-snapshot-container');
+      const btn = $('btn-toggle-raw');
+      if (container.style.display === 'none') {
+        container.style.display = 'block';
+        btn.textContent = 'HIDE RAW SNAPSHOT';
+        updateRawSnapshot();
+      } else {
+        container.style.display = 'none';
+        btn.textContent = 'SHOW RAW SNAPSHOT';
+      }
+    });
+
+    // Load scenarios
+    loadScenarios();
+
+    // Connect WebSocket
+    connectWS();
+
+    // Start polling — split cadences so the heavy snapshot doesn't run every
+    // tick. State (light, drives the visible cards) stays at POLL_INTERVAL.
+    // Snapshot and failures run on their own slower timers.
+    let _snapTick = 0;
+    async function poll() {
+      _snapTick = (_snapTick + 1) % 2;
+      const tasks = [pollState()];
+      if (_snapTick === 0) tasks.push(pollSnapshot());   // every 2 ticks
+      await Promise.all(tasks);
+      pollTimer = setTimeout(poll, POLL_INTERVAL);
+    }
+    poll();
+    // Failures don't need 1 Hz updates
+    setInterval(pollFailures, 5000);
+    pollFailures();
+
+    // Start UI render loop
+    requestAnimationFrame(updateUI);
+
+    // Initial log entry
+    addLogEntry('info', 'SYSTEM', 'Instructor interface initialized');
+  }
+
+  // Start when DOM is ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
+</body>
+</html>

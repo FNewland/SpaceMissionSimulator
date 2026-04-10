@@ -1,0 +1,2216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SMO Mission Planner</title>
+<link rel="stylesheet" href="/static/vendor/css/fonts.css">
+<script src="/static/vendor/js/svg-world-map.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #080c14;
+  --panel: #111827;
+  --border: #1e293b;
+  --accent: #6366f1;
+  --accent-dim: #4f46e5;
+  --accent-glow: rgba(99, 102, 241, 0.15);
+  --text: #e2e8f0;
+  --text-dim: #94a3b8;
+  --text-muted: #64748b;
+  --green: #22c55e;
+  --green-dim: rgba(34, 197, 94, 0.2);
+  --blue: #3b82f6;
+  --blue-dim: rgba(59, 130, 246, 0.2);
+  --yellow: #eab308;
+  --yellow-dim: rgba(234, 179, 8, 0.15);
+  --red: #ef4444;
+  --red-dim: rgba(239, 68, 68, 0.15);
+  --gray: #475569;
+  --orange: #f97316;
+  --cyan: #06b6d4;
+  --surface: #0f172a;
+}
+
+html, body {
+  min-height: 100%;
+  /* Allow page-level vertical scroll if the layout is taller than the viewport
+     (small screens, zoom, extra panels) — previously fixed at 100vh + hidden,
+     which silently clipped content off the bottom. */
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'JetBrains Mono', Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--gray); }
+
+/* Layout */
+#app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* Header */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  height: 52px;
+  min-height: 52px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.header-title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--text);
+}
+
+.header-title span {
+  color: var(--accent);
+}
+
+.mission-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--accent-glow);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 1px;
+}
+
+.mission-badge::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.header-center {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.utc-clock {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  color: var(--text);
+}
+
+.utc-date {
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 1px;
+}
+
+.utc-label {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-glow);
+  padding: 1px 5px;
+  border-radius: 2px;
+  letter-spacing: 1px;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.orbit-param {
+  text-align: right;
+}
+
+.orbit-param-label {
+  font-size: 9px;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.orbit-param-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sc-state-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+}
+
+.sc-state-badge.sunlit {
+  color: var(--yellow);
+  background: var(--yellow-dim);
+  border: 1px solid rgba(234, 179, 8, 0.3);
+}
+
+.sc-state-badge.eclipse {
+  color: var(--blue);
+  background: var(--blue-dim);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+/* Main Content */
+.main {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--border);
+  /* No max-height / overflow-hidden — body scrolls when needed so the
+     wrapped lower panels (Power / Data / Imaging) are always reachable. */
+}
+
+.main-top {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 1px;
+  height: 56vh;       /* explicit height so the flex chain inside resolves */
+  min-height: 420px;
+}
+
+/* Bottom row uses a 5-column grid so every panel is visible without
+   wrapping off-screen (was: flex-wrap which silently hid wrapped panels
+   under .main's overflow:hidden). */
+.main-bottom {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: 2fr 1.4fr 1.2fr 1.2fr 1.2fr;
+  gap: 1px;
+  min-height: 280px;
+}
+@media (max-width: 1500px) {
+  .main-bottom {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+}
+@media (max-width: 1000px) {
+  .main-bottom {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* Panels */
+.panel {
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;   /* let inner flex:1 children resolve their height */
+  min-width: 0;
+}
+
+.panel-map { flex: 1; min-width: 0; }
+.panel-contacts { flex: 0 0 50%; }
+.panel-schedule { flex: 0 0 25%; }
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  min-height: 40px;
+}
+
+.panel-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+
+.panel-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 12px;
+}
+
+.panel-body-flush {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sim-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: var(--yellow);
+  background: var(--yellow-dim);
+  border: 1px solid rgba(234, 179, 8, 0.3);
+  border-radius: 3px;
+  padding: 2px 7px;
+}
+
+.live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: var(--green);
+  background: var(--green-dim);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  border-radius: 3px;
+  padding: 2px 7px;
+}
+
+/* Map */
+#groundTrackMap {
+  flex: 1;
+  width: 100%;
+  background: #0a0f1a;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* SVG map fills container */
+#groundTrackMap svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Map info overlay */
+.map-info-overlay {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  z-index: 1000;
+  display: flex;
+  gap: 12px;
+  background: rgba(17, 24, 39, 0.9);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 10px;
+  pointer-events: none;
+}
+
+.map-info-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.map-info-label { color: var(--text-muted); }
+.map-info-value { color: var(--text); font-weight: 500; }
+
+/* Map legend */
+.map-legend {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1000;
+  background: rgba(17, 24, 39, 0.9);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 9px;
+}
+
+.map-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+.map-legend-item:last-child { margin-bottom: 0; }
+
+.legend-line {
+  width: 16px;
+  height: 3px;
+  border-radius: 1px;
+}
+
+.legend-line.sunlit { background: #eab308; }
+.legend-line.eclipse { background: #3b82f6; }
+.legend-line.future { background: rgba(148, 163, 184, 0.4); border: 1px dashed #64748b; height: 1px; }
+
+.legend-swatch { width: 14px; height: 10px; border-radius: 2px; border: 1px solid #334155; }
+.legend-swatch.night { background: rgba(0, 0, 17, 0.45); }
+
+.legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.legend-dot.gs { background: #6366f1; }
+.legend-dot.sc { background: #22c55e; }
+
+/* Tables */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.data-table th {
+  text-align: left;
+  padding: 6px 8px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.data-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(30, 41, 59, 0.5);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.data-table tr:hover td {
+  background: rgba(99, 102, 241, 0.04);
+}
+
+/* Status indicators */
+.status-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 4px;
+}
+
+.status-dot.ready { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.status-dot.scheduled { background: var(--blue); box-shadow: 0 0 6px var(--blue); }
+.status-dot.idle { background: var(--gray); }
+
+.status-text {
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.status-text.ready { color: var(--green); }
+.status-text.scheduled { color: var(--blue); }
+.status-text.idle { color: var(--gray); }
+
+/* Timeline */
+.timeline-container {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.timeline-canvas-wrap {
+  position: relative;
+  width: 100%;
+}
+
+#timelineCanvas {
+  display: block;
+  width: 100%;
+}
+
+/* Activity list */
+.activity-item {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 8px;
+  transition: border-color 0.2s;
+}
+
+.activity-item:hover {
+  border-color: var(--accent);
+}
+
+.activity-time-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 46px;
+}
+
+.activity-time-hour {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.activity-time-min {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.activity-divider {
+  width: 2px;
+  background: var(--border);
+  flex: 1;
+  margin: 4px 0;
+  border-radius: 1px;
+}
+
+.activity-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.activity-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.activity-detail {
+  font-size: 10px;
+  color: var(--text-muted);
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.activity-priority {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  padding: 1px 5px;
+  border-radius: 2px;
+  text-transform: uppercase;
+}
+
+.priority-high { color: var(--red); background: var(--red-dim); }
+.priority-medium { color: var(--yellow); background: var(--yellow-dim); }
+.priority-low { color: var(--cyan); background: rgba(6, 182, 212, 0.15); }
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border: 1px solid var(--accent);
+  background: var(--accent-glow);
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-transform: uppercase;
+}
+
+.btn:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.btn-block {
+  width: 100%;
+}
+
+.btn-small {
+  padding: 4px 12px;
+  font-size: 9px;
+  border: 1px solid var(--accent);
+  background: var(--accent-glow);
+  color: var(--accent);
+}
+
+.btn-small:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* Bottom Bar */
+.bottom-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  height: 44px;
+  min-height: 44px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+}
+
+.bottom-group {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.bottom-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bottom-label {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.bottom-value {
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.bottom-value.highlight {
+  color: var(--green);
+  font-weight: 600;
+}
+
+/* Modal */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 2000;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-overlay.active {
+  display: flex;
+}
+
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: 420px;
+  max-width: 90vw;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.modal-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--text);
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: inherit;
+  line-height: 1;
+}
+
+.modal-close:hover {
+  color: var(--text);
+  background: var(--border);
+}
+
+.modal-body {
+  padding: 20px;
+}
+
+.form-group {
+  margin-bottom: 14px;
+}
+
+.form-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 5px;
+}
+
+.form-control {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.form-control:focus {
+  border-color: var(--accent);
+}
+
+.form-control option {
+  background: var(--panel);
+  color: var(--text);
+}
+
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+}
+
+/* Section headings inside panels */
+.section-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 8px;
+  margin-top: 14px;
+}
+
+.section-label:first-child {
+  margin-top: 0;
+}
+
+/* API status */
+.api-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.api-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--gray);
+}
+
+.api-dot.connected { background: var(--green); }
+.api-dot.error { background: var(--red); }
+
+.sc-marker-svg {
+  filter: drop-shadow(0 0 6px rgba(34, 197, 94, 0.7));
+}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-left">
+      <div class="header-title"><span>SMO</span> MISSION PLANNER</div>
+      <div class="mission-badge">EOSAT-1</div>
+    </div>
+    <div class="header-center">
+      <span class="utc-label">UTC</span>
+      <span class="utc-date" id="utcDate">---</span>
+      <span class="utc-clock" id="utcClock">--:--:--</span>
+      <span class="sc-state-badge sunlit" id="scStateBadge">SUNLIT</span>
+    </div>
+    <div class="header-right">
+      <div class="orbit-param">
+        <div class="orbit-param-label">Lat / Lon</div>
+        <div class="orbit-param-value" id="scLatLon">-- / --</div>
+      </div>
+      <div class="orbit-param">
+        <div class="orbit-param-label">Altitude</div>
+        <div class="orbit-param-value" id="scAlt">-- km</div>
+      </div>
+      <div class="orbit-param">
+        <div class="orbit-param-label">Period</div>
+        <div class="orbit-param-value">~94.7 min</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <div class="main">
+    <!-- Top: Interactive Map -->
+    <div class="main-top">
+      <div class="panel panel-map">
+        <div class="panel-header">
+          <span class="panel-title">Ground Track &mdash; Orbit Visualization</span>
+          <span class="live-badge" id="mapDataBadge">LIVE</span>
+        </div>
+        <div class="panel-body-flush">
+          <div id="groundTrackMap"></div>
+          <div class="map-info-overlay" id="mapInfoOverlay">
+            <div class="map-info-item">
+              <span class="map-info-label">LAT:</span>
+              <span class="map-info-value" id="mapLat">--</span>
+            </div>
+            <div class="map-info-item">
+              <span class="map-info-label">LON:</span>
+              <span class="map-info-value" id="mapLon">--</span>
+            </div>
+            <div class="map-info-item">
+              <span class="map-info-label">ALT:</span>
+              <span class="map-info-value" id="mapAlt">-- km</span>
+            </div>
+            <div class="map-info-item">
+              <span class="map-info-label">BETA:</span>
+              <span class="map-info-value" id="mapBeta">--</span>
+            </div>
+          </div>
+          <div class="map-legend">
+            <div class="map-legend-item"><span class="legend-dot sc"></span> Spacecraft</div>
+            <div class="map-legend-item"><span class="legend-dot gs"></span> Ground Station</div>
+            <div class="map-legend-item"><span class="legend-line sunlit"></span> Sunlit Track</div>
+            <div class="map-legend-item"><span class="legend-line eclipse"></span> Eclipse Track</div>
+            <div class="map-legend-item"><span class="legend-line future"></span> Past Track (90 min)</div>
+            <div class="map-legend-item"><span class="legend-swatch night"></span> Night Side</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom: Contact Timeline + Activity Schedule -->
+    <div class="main-bottom">
+      <!-- Contact Timeline -->
+      <div class="panel panel-contacts">
+        <div class="panel-header">
+          <span class="panel-title">Contact Windows &mdash; Next 24 Hours</span>
+          <span class="sim-badge" id="contactDataBadge">SIMULATED</span>
+        </div>
+        <div class="panel-body">
+          <div class="timeline-container">
+            <div class="timeline-canvas-wrap">
+              <canvas id="timelineCanvas" height="180"></canvas>
+            </div>
+          </div>
+
+          <div class="section-label">Next 5 Contacts</div>
+          <table class="data-table" id="contactsTable">
+            <thead>
+              <tr>
+                <th>Station</th>
+                <th>AOS (UTC)</th>
+                <th>LOS (UTC)</th>
+                <th>Duration</th>
+                <th>Max El</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="contactsBody">
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Activity Schedule -->
+      <div class="panel panel-schedule">
+        <div class="panel-header">
+          <span class="panel-title">Activity Schedule</span>
+          <span class="sim-badge" id="activityDataBadge">SIMULATED</span>
+        </div>
+        <div class="panel-body">
+          <div id="activityList"></div>
+          <div style="margin-top:12px;display:flex;flex-direction:column;gap:6px;">
+            <button class="btn btn-block" onclick="openModal()">
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><line x1="6" y1="1" x2="6" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="1" y1="6" x2="11" y2="6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              Add Activity
+            </button>
+            <div style="display:flex;gap:6px;">
+              <button class="btn" onclick="validateSchedule()" style="flex:1;font-size:10px;">Validate</button>
+              <button class="btn" onclick="uploadToMCS()" style="flex:1;font-size:10px;">Upload to MCS</button>
+            </div>
+            <div id="scheduleValidation" style="display:none;font-size:10px;padding:6px;border-radius:4px;"></div>
+            <button class="btn btn-block" onclick="validateConstraints()" style="margin-top: 6px; font-size: 10px;">Validate Constraints</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Power Budget Panel -->
+      <div class="panel" style="min-width: 0;">
+        <div class="panel-header">
+          <span class="panel-title">Power Budget</span>
+          <span class="live-badge" id="powerDataBadge" style="font-size: 8px;">LIVE</span>
+        </div>
+        <div class="panel-body" id="powerBudgetPanel">
+          <div style="color: var(--text-muted); padding: 8px;">Loading...</div>
+        </div>
+      </div>
+
+      <!-- Data Budget Panel -->
+      <div class="panel" style="min-width: 0;">
+        <div class="panel-header">
+          <span class="panel-title">Data Budget</span>
+          <span class="live-badge" id="dataDataBadge" style="font-size: 8px;">LIVE</span>
+        </div>
+        <div class="panel-body" id="dataBudgetPanel">
+          <div style="color: var(--text-muted); padding: 8px;">Loading...</div>
+        </div>
+      </div>
+
+      <!-- Imaging Opportunities Panel -->
+      <div class="panel" style="min-width: 0;">
+        <div class="panel-header">
+          <span class="panel-title">Imaging Opportunities</span>
+          <span class="live-badge" id="imagingDataBadge" style="font-size: 8px;">LIVE</span>
+        </div>
+        <div class="panel-body" id="imagingOpportunitiesPanel">
+          <div style="color: var(--text-muted); padding: 8px;">Loading...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom Bar -->
+  <div class="bottom-bar">
+    <div class="bottom-group">
+      <div class="bottom-item">
+        <span class="bottom-label">Period:</span>
+        <span class="bottom-value">94.7 min</span>
+      </div>
+      <div class="bottom-item">
+        <span class="bottom-label">Inclination:</span>
+        <span class="bottom-value">97.4&deg;</span>
+      </div>
+      <div class="bottom-item">
+        <span class="bottom-label">Eccentricity:</span>
+        <span class="bottom-value">0.0012</span>
+      </div>
+      <div class="bottom-item">
+        <span class="bottom-label">Rev/Day:</span>
+        <span class="bottom-value">15.15</span>
+      </div>
+    </div>
+    <div class="bottom-group">
+      <div class="bottom-item">
+        <span class="bottom-label">Next AOS:</span>
+        <span class="bottom-value highlight" id="nextAos">--:--</span>
+      </div>
+      <div class="bottom-item">
+        <span class="bottom-label">Next Eclipse:</span>
+        <span class="bottom-value" id="nextEclipse" style="color:var(--yellow);">--:--</span>
+      </div>
+      <div class="bottom-item">
+        <div class="api-status">
+          <span class="api-dot" id="apiDot"></span>
+          <span id="apiStatusText">API: checking...</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Modal: Add Activity -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">Add Activity</span>
+      <button class="modal-close" onclick="closeModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Activity Type</label>
+        <select class="form-control" id="actType" onchange="onActivityTypeChange()">
+          <option value="">Select activity type...</option>
+          <option value="Imaging Pass">Imaging Pass</option>
+          <option value="Data Dump">Data Dump</option>
+          <option value="Orbit Maintenance">Orbit Maintenance</option>
+          <option value="Calibration">Calibration</option>
+          <option value="Software Upload">Software Upload</option>
+          <option value="Housekeeping">Housekeeping</option>
+        </select>
+        <div id="actTypeInfo" style="display:none;font-size:10px;color:var(--text-dim);margin-top:4px;padding:4px 6px;background:var(--surface);border-radius:3px;"></div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Start Time (UTC)</label>
+        <input type="datetime-local" class="form-control" id="actStartTime">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Duration (minutes)</label>
+        <input type="number" class="form-control" id="actDuration" placeholder="e.g. 15" min="1" max="120">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Priority</label>
+        <select class="form-control" id="actPriority">
+          <option value="">Select priority...</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Ground Station Dependency</label>
+        <select class="form-control" id="actStation">
+          <option value="">None</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="submitActivity()">Submit</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ==================== Configuration ====================
+const ORBIT_PERIOD_MIN = 94.7;
+const ORBIT_PERIOD_MS = ORBIT_PERIOD_MIN * 60 * 1000;
+const ALTITUDE_KM = 705;
+const SWATH_HALF_ANGLE_DEG = 3.5; // Payload swath half angle
+const POLL_INTERVAL_MS = 30000;
+const SC_REFRESH_MS = 5000;
+
+// ==================== State ====================
+let useSimulatedContacts = true;
+let useSimulatedSchedule = true;
+let apiContacts = [];
+let apiSchedule = [];
+let simulatedContacts = [];
+let simulatedActivities = [];
+let groundTrackData = [];
+let scState = null;
+let groundStations = [];
+
+// ==================== SVG World Map ====================
+let map = null;
+let groundTrackLayers = [];
+let scMarker = null;
+let scFootprint = null;
+let gsMarkers = [];
+let gsCircles = [];
+let gsLabels = [];
+let nightOverlay = null;
+
+function initMap() {
+  const container = document.getElementById('groundTrackMap');
+  if (!container) {
+    console.error('Map container #groundTrackMap not found');
+    return;
+  }
+
+  map = new SvgWorldMap('groundTrackMap');
+  if (!map) {
+    console.error('Failed to initialize SvgWorldMap');
+    return;
+  }
+
+  console.log('Map initialized successfully', map);
+
+  // Draw initial day/night terminator
+  updateTerminator();
+  setInterval(updateTerminator, 60000);
+
+  // Load ground stations from API
+  loadGroundStations();
+
+  // Load initial ground track
+  loadGroundTrack();
+
+  // Start spacecraft state polling
+  loadSpacecraftState();
+  setInterval(loadSpacecraftState, SC_REFRESH_MS);
+
+  // Refresh ground track every 2 minutes
+  setInterval(loadGroundTrack, 120000);
+}
+
+// ==================== Day/Night Terminator ====================
+function computeSubsolarPoint(date) {
+  const JD = date.getTime() / 86400000 + 2440587.5;
+  const n = JD - 2451545.0;
+  const L0 = (280.460 + 0.9856474 * n) % 360;
+  const g = ((357.528 + 0.9856003 * n) % 360) * Math.PI / 180;
+  const lambda = (L0 + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * Math.PI / 180;
+  const epsilon = (23.439 - 0.0000004 * n) * Math.PI / 180;
+  const decl = Math.asin(Math.sin(epsilon) * Math.sin(lambda));
+  const RA = Math.atan2(Math.cos(epsilon) * Math.sin(lambda), Math.cos(lambda));
+  const eqTime = (L0 * Math.PI / 180 - RA) * 720 / Math.PI;
+  const utcHours = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
+  const solarNoonOffset = 12 - utcHours - eqTime / 60;
+  const subLon = solarNoonOffset * 15;
+  return { lat: decl * 180 / Math.PI, lon: ((subLon + 180) % 360 + 360) % 360 - 180 };
+}
+
+// Compute the terminator latitude (degrees) at a given longitude for the
+// current solar declination and subsolar longitude. Solves
+//   sin(elev)=0  ⇒  tan(lat) = -cos(H)/tan(decl)
+// where H = lon - subLon. Returns null at the singular ±90° declination edge.
+function terminatorLatAtLon(lonDeg, subsolar) {
+  const declR = subsolar.lat * Math.PI / 180;
+  if (Math.abs(declR) < 1e-6) return 0; // equinox: terminator is at the equator
+  const H = ((lonDeg - subsolar.lon) * Math.PI / 180);
+  const tanLat = -Math.cos(H) / Math.tan(declR);
+  return Math.atan(tanLat) * 180 / Math.PI;
+}
+
+function updateTerminator() {
+  if (!map) return;
+  const now = new Date();
+  const subsolar = computeSubsolarPoint(now);
+  // Sample terminator latitude at each longitude across the whole map.
+  const samples = [];
+  for (let lon = -180; lon <= 180; lon += 1) {
+    samples.push([terminatorLatAtLon(lon, subsolar), lon]);
+  }
+  // Decide which side is night: at the subsolar longitude, the sun is
+  // directly above subsolar.lat, so the night pole is the pole opposite the
+  // declination's sign.
+  const nightPoleLat = subsolar.lat >= 0 ? -90 : 90;
+  // Build a closed polygon along the terminator and around the dark pole.
+  const nightPoly = samples.slice();
+  nightPoly.push([nightPoleLat, 180]);
+  nightPoly.push([nightPoleLat, -180]);
+
+  if (nightOverlay) map.removeLayer(nightOverlay);
+  nightOverlay = map.addPolygon(nightPoly, {
+    fillColor: '#000011', fillOpacity: 0.45, color: 'none'
+  });
+}
+
+async function loadGroundStations() {
+  try {
+    const res = await fetch('/api/ground-stations');
+    if (!res.ok) return;
+    const data = await res.json();
+    groundStations = data.ground_stations || [];
+    updateGroundStationMarkers();
+    updateStationDropdown();
+  } catch (e) {
+    // Use fallback stations
+    groundStations = [
+      { name: 'Iqaluit', lat_deg: 63.747, lon_deg: -68.518, min_elevation_deg: 5 },
+      { name: 'Troll', lat_deg: -72.012, lon_deg: 2.535, min_elevation_deg: 5 },
+    ];
+    updateGroundStationMarkers();
+    updateStationDropdown();
+  }
+}
+
+function updateStationDropdown() {
+  const sel = document.getElementById('actStation');
+  // Keep the "None" option, clear the rest
+  while (sel.options.length > 1) sel.remove(1);
+  groundStations.forEach(gs => {
+    const opt = document.createElement('option');
+    opt.value = gs.name;
+    opt.textContent = gs.name;
+    sel.appendChild(opt);
+  });
+}
+
+function updateGroundStationMarkers() {
+  gsMarkers.forEach(m => map.removeLayer(m));
+  gsCircles.forEach(c => map.removeLayer(c));
+  gsLabels.forEach(l => map.removeLayer(l));
+  gsMarkers = [];
+  gsCircles = [];
+  gsLabels = [];
+
+  groundStations.forEach(gs => {
+    const marker = map.addMarker(gs.lat_deg, gs.lon_deg, {
+      color: '#6366f1', strokeColor: '#818cf8', radius: 4
+    });
+    gsMarkers.push(marker);
+
+    const label = map.addLabel(gs.lat_deg, gs.lon_deg, gs.name, {
+      color: '#818cf8', fontSize: '5.5'
+    });
+    gsLabels.push(label);
+
+    const visCircle = map.addCircle(gs.lat_deg, gs.lon_deg, 2200, {
+      color: '#6366f1', weight: 0.5, opacity: 0.25,
+      fillColor: '#6366f1', fillOpacity: 0.04, dashArray: '2 3'
+    });
+    gsCircles.push(visCircle);
+  });
+}
+
+async function loadGroundTrack() {
+  try {
+    let res = await fetch('/api/ground-track?offset_minutes=-90&duration_hours=3.0&step_s=30');
+    if (!res.ok) {
+      console.warn('Ground track offset fetch failed (' + res.status + '), trying cached...');
+      res = await fetch('/api/ground-track');
+    }
+    if (!res.ok) {
+      console.error('Ground track API failed:', res.status);
+      return;
+    }
+    const data = await res.json();
+    groundTrackData = data.ground_track || [];
+    drawGroundTrack();
+  } catch (e) {
+    console.error('Ground track fetch error:', e);
+  }
+}
+
+function drawGroundTrack() {
+  if (!map) {
+    console.warn('drawGroundTrack: map not initialized yet');
+    return;
+  }
+  groundTrackLayers.forEach(l => map.removeLayer(l));
+  groundTrackLayers = [];
+  if (groundTrackData.length < 2) {
+    console.warn('drawGroundTrack: insufficient data points', groundTrackData.length);
+    return;
+  }
+
+  console.log('drawGroundTrack: processing', groundTrackData.length, 'points');
+  const nowMs = Date.now();
+  let currentSegment = [];
+  let currentEclipse = groundTrackData[0].in_eclipse;
+  let currentIsPast = new Date(groundTrackData[0].utc).getTime() < nowMs;
+
+  for (let i = 0; i < groundTrackData.length; i++) {
+    const pt = groundTrackData[i];
+    const isPast = new Date(pt.utc).getTime() < nowMs;
+    const prevPt = i > 0 ? groundTrackData[i - 1] : null;
+    const lonJump = prevPt ? Math.abs(pt.lon - prevPt.lon) : 0;
+    const eclipseChanged = pt.in_eclipse !== currentEclipse;
+    const pastFutureChanged = isPast !== currentIsPast;
+
+    if ((lonJump > 180 || eclipseChanged || pastFutureChanged) && currentSegment.length > 0) {
+      addTrackSegment(currentSegment, currentEclipse, currentIsPast);
+      currentSegment = [];
+      currentEclipse = pt.in_eclipse;
+      currentIsPast = isPast;
+    }
+    currentSegment.push([pt.lat, pt.lon]);
+    currentEclipse = pt.in_eclipse;
+    currentIsPast = isPast;
+  }
+  if (currentSegment.length > 1) addTrackSegment(currentSegment, currentEclipse, currentIsPast);
+  console.log('drawGroundTrack: created', groundTrackLayers.length, 'polyline layers');
+}
+
+function addTrackSegment(coords, isEclipse, isPast) {
+  if (!coords || coords.length < 2) {
+    console.warn('addTrackSegment: invalid coords', coords);
+    return;
+  }
+  const baseColor = isEclipse ? '#3b82f6' : '#eab308';
+  const opacity = isPast ? 0.35 : (isEclipse ? 0.7 : 0.85);
+  const weight = isPast ? 1.5 : 2.5;
+  const dashArray = isPast ? '4 6' : (isEclipse ? '6 4' : null);
+  console.log('addTrackSegment:', {
+    points: coords.length,
+    color: baseColor,
+    eclipse: isEclipse,
+    past: isPast,
+    opacity,
+    weight
+  });
+  const line = map.addPolyline(coords, { color: baseColor, weight, opacity, dashArray });
+  groundTrackLayers.push(line);
+  console.log('addTrackSegment: line added, total layers:', groundTrackLayers.length);
+}
+
+async function loadSpacecraftState() {
+  try {
+    const res = await fetch('/api/spacecraft-state');
+    if (!res.ok) return;
+    scState = await res.json();
+    updateSpacecraftMarker();
+    updateHeaderState();
+  } catch (e) {
+    // Spacecraft state unavailable
+  }
+}
+
+function updateSpacecraftMarker() {
+  if (!scState) return;
+  const lat = scState.lat, lon = scState.lon;
+  const heading = scState.heading_deg || 0;
+
+  if (!scMarker) {
+    scMarker = map.addMarker(lat, lon, {
+      html: '<svg width="20" height="20" viewBox="0 0 24 24" style="transform:rotate(' + heading + 'deg)"><polygon points="12,2 18,20 12,16 6,20" fill="#22c55e" stroke="#4ade80" stroke-width="1" opacity="0.9"/></svg>',
+      size: 20
+    });
+  } else {
+    scMarker.setLatLng(lat, lon);
+    scMarker.setIcon({
+      html: '<svg width="20" height="20" viewBox="0 0 24 24" style="transform:rotate(' + heading + 'deg)"><polygon points="12,2 18,20 12,16 6,20" fill="#22c55e" stroke="#4ade80" stroke-width="1" opacity="0.9"/></svg>'
+    });
+  }
+
+  const swathRadiusKm = scState.alt_km * Math.tan(SWATH_HALF_ANGLE_DEG * Math.PI / 180);
+  if (!scFootprint) {
+    scFootprint = map.addCircle(lat, lon, swathRadiusKm, {
+      color: '#22c55e', weight: 0.8, opacity: 0.3,
+      fillColor: '#22c55e', fillOpacity: 0.06, dashArray: '2 3'
+    });
+  } else {
+    scFootprint.setLatLng(lat, lon);
+  }
+
+  const latDir = lat >= 0 ? 'N' : 'S';
+  const lonDir = lon >= 0 ? 'E' : 'W';
+  document.getElementById('mapLat').textContent = Math.abs(lat).toFixed(2) + '\u00B0 ' + latDir;
+  document.getElementById('mapLon').textContent = Math.abs(lon).toFixed(2) + '\u00B0 ' + lonDir;
+  document.getElementById('mapAlt').textContent = scState.alt_km + ' km';
+  document.getElementById('mapBeta').textContent = scState.solar_beta_deg + '\u00B0';
+}
+
+function updateHeaderState() {
+  if (!scState) return;
+
+  const lat = scState.lat;
+  const lon = scState.lon;
+  const latDir = lat >= 0 ? 'N' : 'S';
+  const lonDir = lon >= 0 ? 'E' : 'W';
+
+  document.getElementById('scLatLon').textContent =
+    Math.abs(lat).toFixed(2) + '\u00B0' + latDir + ' / ' + Math.abs(lon).toFixed(2) + '\u00B0' + lonDir;
+  document.getElementById('scAlt').textContent = scState.alt_km + ' km';
+
+  const badge = document.getElementById('scStateBadge');
+  if (scState.in_eclipse) {
+    badge.textContent = 'ECLIPSE';
+    badge.className = 'sc-state-badge eclipse';
+  } else {
+    badge.textContent = 'SUNLIT';
+    badge.className = 'sc-state-badge sunlit';
+  }
+}
+
+// ==================== Clock ====================
+function updateClock() {
+  const now = new Date();
+  const h = String(now.getUTCHours()).padStart(2, '0');
+  const m = String(now.getUTCMinutes()).padStart(2, '0');
+  const s = String(now.getUTCSeconds()).padStart(2, '0');
+  document.getElementById('utcClock').textContent = h + ':' + m + ':' + s;
+
+  const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+  const day = String(now.getUTCDate()).padStart(2, '0');
+  const mon = months[now.getUTCMonth()];
+  const yr = now.getUTCFullYear();
+  document.getElementById('utcDate').textContent = day + ' ' + mon + ' ' + yr;
+}
+
+// ==================== Simulated Fallback Data ====================
+const GROUND_STATIONS_FALLBACK = [
+  { id: 'svalbard',  name: 'Svalbard',   lat: 78.229,  lon: 15.407,   minEl: 5, contactOffset: 0,  contactDur: 10, maxEl: 32 },
+  { id: 'troll',     name: 'Troll',      lat: -72.012, lon: 2.532,    minEl: 5, contactOffset: 50, contactDur: 8,  maxEl: 24 },
+  { id: 'inuvik',    name: 'Inuvik',     lat: 68.318,  lon: -133.549, minEl: 5, contactOffset: 30, contactDur: 12, maxEl: 45 },
+  { id: 'ohiggins',  name: "O'Higgins",  lat: -63.321, lon: -57.902,  minEl: 5, contactOffset: 70, contactDur: 7,  maxEl: 18 }
+];
+
+const SAMPLE_ACTIVITIES = [
+  { name: 'Imaging Pass',      durationMin: 12, station: 'Svalbard',  priority: 'high',   offsetMin: 15 },
+  { name: 'Data Dump',         durationMin: 18, station: 'Inuvik',    priority: 'high',   offsetMin: 45 },
+  { name: 'Orbit Maintenance', durationMin: 25, station: null,         priority: 'medium', offsetMin: 120 },
+  { name: 'Calibration',       durationMin: 8,  station: 'Troll',     priority: 'low',    offsetMin: 200 },
+  { name: 'Data Dump',         durationMin: 15, station: 'Svalbard',  priority: 'high',   offsetMin: 290 },
+  { name: 'Imaging Pass',      durationMin: 10, station: "O'Higgins", priority: 'medium', offsetMin: 380 },
+  { name: 'Housekeeping',      durationMin: 5,  station: null,         priority: 'low',    offsetMin: 500 },
+  { name: 'Software Upload',   durationMin: 20, station: 'Svalbard',  priority: 'high',   offsetMin: 600 },
+  { name: 'Calibration',       durationMin: 10, station: 'Inuvik',    priority: 'medium', offsetMin: 750 },
+];
+
+function generateSimulatedContacts() {
+  const now = Date.now();
+  const contacts = [];
+  const windowMs = 24 * 60 * 60 * 1000;
+
+  GROUND_STATIONS_FALLBACK.forEach(gs => {
+    const offsetMs = gs.contactOffset * 60 * 1000;
+    const durMs = gs.contactDur * 60 * 1000;
+    let t = now - ORBIT_PERIOD_MS + offsetMs;
+    while (t < now + windowMs) {
+      const aos = new Date(t);
+      const los = new Date(t + durMs);
+      const elVar = Math.floor(Math.random() * 20) + gs.maxEl - 10;
+      const maxEl = Math.max(gs.minEl + 2, Math.min(85, elVar));
+      contacts.push({
+        station: gs.name,
+        stationId: gs.id,
+        aos: aos,
+        los: los,
+        durationMin: gs.contactDur,
+        maxEl: maxEl,
+        simulated: true
+      });
+      t += ORBIT_PERIOD_MS;
+    }
+  });
+
+  contacts.sort((a, b) => a.aos - b.aos);
+  return contacts;
+}
+
+function generateSimulatedActivities() {
+  const now = Date.now();
+  return SAMPLE_ACTIVITIES.map(a => ({
+    name: a.name,
+    start: new Date(now + a.offsetMin * 60 * 1000),
+    durationMin: a.durationMin,
+    station: a.station,
+    priority: a.priority,
+    simulated: true
+  }));
+}
+
+// ==================== API Polling ====================
+async function pollAPIs() {
+  let contactsOk = false;
+  let scheduleOk = false;
+
+  try {
+    const res = await fetch('/api/contacts');
+    if (res.ok) {
+      const data = await res.json();
+      if (data.contacts && data.contacts.length > 0) {
+        apiContacts = data.contacts.map(c => ({
+          station: c.gs_name,
+          aos: new Date(c.aos),
+          los: new Date(c.los),
+          maxEl: c.max_elevation_deg,
+          durationMin: Math.round((c.duration_s || 0) / 60),
+          simulated: false
+        }));
+        useSimulatedContacts = false;
+      } else {
+        useSimulatedContacts = true;
+      }
+      contactsOk = true;
+    }
+  } catch (e) {
+    useSimulatedContacts = true;
+  }
+
+  try {
+    const res = await fetch('/api/schedule');
+    if (res.ok) {
+      const data = await res.json();
+      if (data.schedule && data.schedule.length > 0) {
+        apiSchedule = data.schedule.map(s => ({
+          ...s,
+          id: s.id,
+          start: new Date(s.start_time),
+          durationMin: Math.round((s.duration_s || 300) / 60),
+          state_name: s.state_name || 'PLANNED',
+          simulated: false
+        }));
+        useSimulatedSchedule = false;
+      } else {
+        useSimulatedSchedule = true;
+      }
+      scheduleOk = true;
+    }
+  } catch (e) {
+    useSimulatedSchedule = true;
+  }
+
+  // Update API status
+  const apiDot = document.getElementById('apiDot');
+  const apiText = document.getElementById('apiStatusText');
+  if (contactsOk && scheduleOk) {
+    apiDot.className = 'api-dot connected';
+    apiText.textContent = 'API: connected';
+  } else {
+    apiDot.className = 'api-dot error';
+    apiText.textContent = 'API: simulated data';
+  }
+
+  // Update badges
+  document.getElementById('contactDataBadge').className = useSimulatedContacts ? 'sim-badge' : 'live-badge';
+  document.getElementById('contactDataBadge').textContent = useSimulatedContacts ? 'SIMULATED' : 'LIVE DATA';
+  document.getElementById('activityDataBadge').className = useSimulatedSchedule ? 'sim-badge' : 'live-badge';
+  document.getElementById('activityDataBadge').textContent = useSimulatedSchedule ? 'SIMULATED' : 'LIVE DATA';
+
+  updateTimeline();
+
+  // Load budget and imaging data
+  loadPowerBudget();
+  loadDataBudget();
+  loadImagingOpportunities();
+  updateContactsTable();
+  updateActivityList();
+}
+
+// ==================== Timeline Canvas ====================
+function drawTimeline() {
+  const canvas = document.getElementById('timelineCanvas');
+  const container = canvas.parentElement;
+  const dpr = window.devicePixelRatio || 1;
+
+  const displayWidth = container.clientWidth;
+  const displayHeight = 180;
+  canvas.style.width = displayWidth + 'px';
+  canvas.style.height = displayHeight + 'px';
+  canvas.width = displayWidth * dpr;
+  canvas.height = displayHeight * dpr;
+
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const w = displayWidth;
+  const h = displayHeight;
+
+  ctx.fillStyle = '#0a0f1a';
+  ctx.fillRect(0, 0, w, h);
+
+  const marginLeft = 80;
+  const marginRight = 16;
+  const marginTop = 24;
+  const marginBottom = 18;
+  const plotW = w - marginLeft - marginRight;
+  const plotH = h - marginTop - marginBottom;
+  const gsCount = GROUND_STATIONS_FALLBACK.length;
+  const rowH = plotH / gsCount;
+
+  const now = Date.now();
+  const windowMs = 24 * 60 * 60 * 1000;
+
+  function timeToX(t) {
+    return marginLeft + ((t - now) / windowMs) * plotW;
+  }
+
+  // Grid
+  ctx.strokeStyle = '#1e293b';
+  ctx.lineWidth = 0.5;
+  for (let hr = 0; hr <= 24; hr += 2) {
+    const x = marginLeft + (hr / 24) * plotW;
+    ctx.beginPath();
+    ctx.moveTo(x, marginTop);
+    ctx.lineTo(x, marginTop + plotH);
+    ctx.stroke();
+  }
+
+  for (let i = 0; i <= gsCount; i++) {
+    const y = marginTop + i * rowH;
+    ctx.beginPath();
+    ctx.moveTo(marginLeft, y);
+    ctx.lineTo(marginLeft + plotW, y);
+    ctx.stroke();
+  }
+
+  // Eclipse shading
+  const eclipseDur = 35 * 60 * 1000;
+  const eclipseOffset = 40 * 60 * 1000;
+  let eclipseT = now - ORBIT_PERIOD_MS + eclipseOffset;
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.6)';
+  while (eclipseT < now + windowMs) {
+    const x1 = Math.max(marginLeft, timeToX(eclipseT));
+    const x2 = Math.min(marginLeft + plotW, timeToX(eclipseT + eclipseDur));
+    if (x2 > marginLeft && x1 < marginLeft + plotW) {
+      ctx.fillRect(x1, marginTop, x2 - x1, plotH);
+      if (x2 - x1 > 20) {
+        ctx.fillStyle = 'rgba(100, 116, 139, 0.5)';
+        ctx.font = '8px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('ECL', (x1 + x2) / 2, marginTop + 10);
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.6)';
+      }
+    }
+    eclipseT += ORBIT_PERIOD_MS;
+  }
+
+  // Contact windows
+  const contacts = useSimulatedContacts ? simulatedContacts : apiContacts;
+  contacts.forEach(c => {
+    const stIdx = GROUND_STATIONS_FALLBACK.findIndex(gs => gs.id === c.stationId || gs.name === c.station);
+    if (stIdx === -1) return;
+
+    const aosMs = c.aos.getTime();
+    const losMs = c.los.getTime();
+    if (losMs < now || aosMs > now + windowMs) return;
+
+    const x1 = Math.max(marginLeft, timeToX(aosMs));
+    const x2 = Math.min(marginLeft + plotW, timeToX(losMs));
+    const y = marginTop + stIdx * rowH + 4;
+    const bh = rowH - 8;
+
+    let color, borderColor;
+    if (aosMs <= now && losMs >= now) {
+      color = 'rgba(59, 130, 246, 0.5)';
+      borderColor = '#3b82f6';
+    } else {
+      color = 'rgba(34, 197, 94, 0.35)';
+      borderColor = '#22c55e';
+    }
+
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.roundRect(x1, y, Math.max(x2 - x1, 2), bh, 2);
+    ctx.fill();
+
+    ctx.strokeStyle = borderColor;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(x1, y, Math.max(x2 - x1, 2), bh, 2);
+    ctx.stroke();
+
+    if (x2 - x1 > 30) {
+      ctx.fillStyle = '#e2e8f0';
+      ctx.font = '9px "JetBrains Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(c.durationMin + 'm', (x1 + x2) / 2, y + bh / 2);
+    }
+  });
+
+  // Y labels
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = '10px "JetBrains Mono", monospace';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  GROUND_STATIONS_FALLBACK.forEach((gs, i) => {
+    ctx.fillText(gs.name, marginLeft - 8, marginTop + i * rowH + rowH / 2);
+  });
+
+  // X labels
+  ctx.fillStyle = '#64748b';
+  ctx.font = '9px "JetBrains Mono", monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  for (let hr = 0; hr <= 24; hr += 4) {
+    const x = marginLeft + (hr / 24) * plotW;
+    ctx.fillText('+' + hr + 'h', x, marginTop + plotH + 4);
+  }
+
+  // NOW marker
+  ctx.strokeStyle = '#ef4444';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([4, 3]);
+  ctx.beginPath();
+  ctx.moveTo(marginLeft, marginTop);
+  ctx.lineTo(marginLeft, marginTop + plotH);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.fillStyle = '#ef4444';
+  ctx.font = 'bold 9px "JetBrains Mono", monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('NOW', marginLeft + 3, marginTop - 4);
+}
+
+function updateTimeline() {
+  drawTimeline();
+}
+
+// ==================== Contact Table ====================
+function updateContactsTable() {
+  const now = Date.now();
+  const contacts = useSimulatedContacts ? simulatedContacts : apiContacts;
+
+  const upcoming = contacts
+    .filter(c => c.los.getTime() > now)
+    .sort((a, b) => a.aos - b.aos)
+    .slice(0, 5);
+
+  const tbody = document.getElementById('contactsBody');
+  tbody.innerHTML = '';
+
+  upcoming.forEach(c => {
+    const aosMs = c.aos.getTime();
+    const losMs = c.los.getTime();
+    let status, statusClass;
+    if (aosMs <= now && losMs >= now) {
+      status = 'In Progress';
+      statusClass = 'color:var(--blue);font-weight:600;';
+    } else if (aosMs > now) {
+      status = 'Upcoming';
+      statusClass = 'color:var(--green);';
+    } else {
+      status = 'Completed';
+      statusClass = 'color:var(--gray);';
+    }
+
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td style="color:var(--text);font-weight:500;">' + c.station + '</td>' +
+      '<td>' + formatUTC(c.aos) + '</td>' +
+      '<td>' + formatUTC(c.los) + '</td>' +
+      '<td>' + c.durationMin + ' min</td>' +
+      '<td>' + (typeof c.maxEl === 'number' ? c.maxEl.toFixed(1) : c.maxEl) + '&deg;</td>' +
+      '<td style="' + statusClass + '">' + status + '</td>';
+    tbody.appendChild(tr);
+  });
+
+  // Update next AOS
+  const nextContact = contacts.find(c => c.aos.getTime() > now);
+  if (nextContact) {
+    const diff = nextContact.aos.getTime() - now;
+    const mins = Math.floor(diff / 60000);
+    const secs = Math.floor((diff % 60000) / 1000);
+    document.getElementById('nextAos').textContent =
+      nextContact.station + ' in ' + String(mins).padStart(2, '0') + ':' + String(secs).padStart(2, '0');
+  }
+
+  // Next eclipse
+  const eclipseOffset = 40 * 60 * 1000;
+  let eclipseT = now - ORBIT_PERIOD_MS + eclipseOffset;
+  while (eclipseT < now) eclipseT += ORBIT_PERIOD_MS;
+  const eclDiff = eclipseT - now;
+  const eclMins = Math.floor(eclDiff / 60000);
+  const eclSecs = Math.floor((eclDiff % 60000) / 1000);
+  document.getElementById('nextEclipse').textContent =
+    'in ' + String(eclMins).padStart(2, '0') + ':' + String(eclSecs).padStart(2, '0');
+}
+
+// ==================== Activity List ====================
+const STATE_COLORS = {
+  PLANNED: 'var(--blue)', VALIDATED: 'var(--cyan)', UPLOADED: 'var(--accent)',
+  EXECUTING: 'var(--green)', COMPLETED: 'var(--green)', FAILED: 'var(--red)', CANCELLED: 'var(--gray)'
+};
+
+function updateActivityList() {
+  const activities = useSimulatedSchedule ? simulatedActivities : apiSchedule;
+  const container = document.getElementById('activityList');
+  container.innerHTML = '';
+
+  activities.forEach(a => {
+    const h = String(a.start.getUTCHours()).padStart(2, '0');
+    const m = String(a.start.getUTCMinutes()).padStart(2, '0');
+
+    const priorityClass = a.priority === 'high' ? 'priority-high' :
+                          a.priority === 'medium' ? 'priority-medium' : 'priority-low';
+
+    const stationText = a.station ? a.station : 'No dependency';
+    const stateName = a.state_name || 'PLANNED';
+    const stateColor = STATE_COLORS[stateName] || 'var(--text-muted)';
+
+    const div = document.createElement('div');
+    div.className = 'activity-item';
+    div.innerHTML =
+      '<div class="activity-time-col">' +
+        '<span class="activity-time-hour">' + h + '</span>' +
+        '<span class="activity-time-min">:' + m + '</span>' +
+        '<div class="activity-divider"></div>' +
+      '</div>' +
+      '<div class="activity-info" style="flex:1;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+          '<div class="activity-name">' + a.name + '</div>' +
+          '<span style="font-size:9px;color:' + stateColor + ';font-weight:600;">' + stateName + '</span>' +
+        '</div>' +
+        '<div class="activity-detail">' +
+          '<span>' + a.durationMin + ' min</span>' +
+          '<span style="color:var(--text-muted);">&middot;</span>' +
+          '<span>' + stationText + '</span>' +
+          '<span style="color:var(--text-muted);">&middot;</span>' +
+          '<span class="activity-priority ' + priorityClass + '">' + (a.priority || 'medium') + '</span>' +
+          (a.id ? '<span style="color:var(--text-muted);">&middot;</span><span style="cursor:pointer;color:var(--red);" title="Delete" onclick="deleteActivity(' + a.id + ')">&times;</span>' : '') +
+        '</div>' +
+      '</div>';
+    container.appendChild(div);
+  });
+}
+
+async function deleteActivity(id) {
+  if (!confirm('Delete activity #' + id + '?')) return;
+  try {
+    await fetch('/api/schedule/' + id, { method: 'DELETE' });
+    pollAPIs();
+  } catch(e) {}
+}
+
+async function validateSchedule() {
+  const el = document.getElementById('scheduleValidation');
+  try {
+    const res = await fetch('/api/schedule/validate');
+    const data = await res.json();
+    el.style.display = 'block';
+    if (data.valid) {
+      el.style.background = 'var(--green-dim)';
+      el.style.color = 'var(--green)';
+      el.textContent = 'Schedule valid (' + data.activity_count + ' activities, no conflicts)';
+    } else {
+      el.style.background = 'var(--yellow-dim)';
+      el.style.color = 'var(--yellow)';
+      el.innerHTML = data.issues.map(i =>
+        '<div>' + i.type + ': ' + i.message + ' (activity #' + i.activity_id + ')</div>'
+      ).join('');
+    }
+    setTimeout(() => { el.style.display = 'none'; }, 8000);
+  } catch(e) {
+    el.style.display = 'block';
+    el.style.background = 'var(--red-dim)';
+    el.style.color = 'var(--red)';
+    el.textContent = 'Validation failed: ' + e;
+  }
+}
+
+async function uploadToMCS() {
+  // Upload the first PLANNED activity to MCS for execution
+  const activities = apiSchedule.filter(a => a.state_name === 'PLANNED' || !a.state_name);
+  if (activities.length === 0) {
+    alert('No planned activities to upload');
+    return;
+  }
+  const act = activities[0];
+  if (!act.id) {
+    alert('Activity has no ID (simulated?)');
+    return;
+  }
+  const stepMode = confirm('Use step-by-step mode?');
+  try {
+    const res = await fetch('/api/schedule/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activity_id: act.id, step_by_step: stepMode })
+    });
+    const data = await res.json();
+    if (data.error) {
+      alert('Upload failed: ' + data.error);
+    } else {
+      alert('Activity "' + act.name + '" uploaded to MCS. Switch to MCS Procedures tab to execute.');
+      pollAPIs();
+    }
+  } catch(e) {
+    alert('Upload failed: ' + e);
+  }
+}
+
+// ==================== Utility ====================
+function formatUTC(date) {
+  const h = String(date.getUTCHours()).padStart(2, '0');
+  const m = String(date.getUTCMinutes()).padStart(2, '0');
+  const s = String(date.getUTCSeconds()).padStart(2, '0');
+  return h + ':' + m + ':' + s;
+}
+
+// ==================== Activity Types from API ====================
+let loadedActivityTypes = [];
+
+async function loadActivityTypes() {
+  try {
+    const res = await fetch('/api/activity-types');
+    const data = await res.json();
+    loadedActivityTypes = data.activity_types || [];
+    // Populate the select if API types are available
+    if (loadedActivityTypes.length > 0) {
+      const sel = document.getElementById('actType');
+      sel.innerHTML = '<option value="">Select activity type...</option>';
+      loadedActivityTypes.forEach(at => {
+        const opt = document.createElement('option');
+        opt.value = at.name;
+        opt.textContent = at.name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        sel.appendChild(opt);
+      });
+    }
+  } catch(e) { /* keep static options */ }
+}
+
+function onActivityTypeChange() {
+  const name = document.getElementById('actType').value;
+  const infoEl = document.getElementById('actTypeInfo');
+  if (!name) { infoEl.style.display = 'none'; return; }
+  const at = loadedActivityTypes.find(a => a.name === name);
+  if (at) {
+    infoEl.style.display = 'block';
+    const dur = Math.round((at.duration_s || 0) / 60);
+    infoEl.innerHTML = at.description + '<br>' +
+      'Duration: ' + dur + ' min | Power: ' + (at.power_w || 0) + 'W | Procedure: ' + (at.procedure_ref || 'N/A') +
+      (at.pre_conditions && at.pre_conditions.length ? '<br>Pre-conditions: ' + at.pre_conditions.join(', ') : '');
+    document.getElementById('actDuration').value = dur;
+    document.getElementById('actPriority').value = at.priority || 'medium';
+  } else {
+    infoEl.style.display = 'none';
+  }
+}
+
+// ==================== Modal ====================
+function openModal() {
+  document.getElementById('modalOverlay').classList.add('active');
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+  document.getElementById('actStartTime').value = local.toISOString().slice(0, 16);
+}
+
+function closeModal() {
+  document.getElementById('modalOverlay').classList.remove('active');
+}
+
+async function submitActivity() {
+  const name = document.getElementById('actType').value;
+  const startTime = document.getElementById('actStartTime').value;
+  const duration = parseInt(document.getElementById('actDuration').value) || 15;
+  const priority = document.getElementById('actPriority').value || 'medium';
+  const station = document.getElementById('actStation').value || null;
+
+  if (!name || !startTime) return;
+
+  try {
+    const res = await fetch('/api/schedule', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: name,
+        start_time: new Date(startTime).toISOString(),
+        duration_s: duration * 60,
+        priority: priority,
+        station: station
+      })
+    });
+    if (res.ok) {
+      closeModal();
+      pollAPIs();
+    }
+  } catch (e) {
+    // Fallback: add to simulated list
+    simulatedActivities.push({
+      name: name,
+      start: new Date(startTime),
+      durationMin: duration,
+      station: station,
+      priority: priority,
+      simulated: true
+    });
+    simulatedActivities.sort((a, b) => a.start - b.start);
+    closeModal();
+    updateActivityList();
+  }
+}
+
+document.getElementById('modalOverlay').addEventListener('click', function(e) {
+  if (e.target === this) closeModal();
+});
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeModal();
+});
+
+// ==================== Imaging Opportunities ====================
+let imagingOpportunities = [];
+
+async function loadImagingOpportunities() {
+  try {
+    const res = await fetch('/api/imaging/opportunities');
+    if (!res.ok) return;
+    const data = await res.json();
+    imagingOpportunities = data.opportunities || [];
+    updateImagingOpportunitiesPanel();
+  } catch (e) {
+    console.warn('Imaging opportunities fetch failed:', e);
+  }
+}
+
+function updateImagingOpportunitiesPanel() {
+  const panel = document.getElementById('imagingOpportunitiesPanel');
+  if (!panel) return;
+
+  if (imagingOpportunities.length === 0) {
+    panel.innerHTML = '<div style="color: var(--text-muted); padding: 8px;">No opportunities in next 24h</div>';
+    return;
+  }
+
+  let html = '<div style="font-size: 11px;">';
+  imagingOpportunities.slice(0, 8).forEach((opp, idx) => {
+    const startTime = new Date(opp.start_utc).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    const duration = Math.round(opp.duration_s / 60);
+    const priorityColor = opp.priority === 'high' ? '#ef4444' : '#eab308';
+    html += `<div style="margin: 6px 0; padding: 6px; background: var(--panel); border-left: 3px solid ${priorityColor}; border-radius: 2px;">
+      <div style="color: var(--accent); font-weight: 600; font-size: 10px;">${opp.target_name}</div>
+      <div style="color: var(--text-muted); font-size: 9px;">${startTime} | ${duration} min</div>
+      <button class="btn btn-small" onclick="scheduleImagingActivity('${opp.target_id}', '${opp.start_utc}')" style="margin-top: 4px; font-size: 9px; padding: 3px 8px;">Schedule</button>
+    </div>`;
+  });
+  html += '</div>';
+  panel.innerHTML = html;
+}
+
+async function scheduleImagingActivity(targetId, startTime) {
+  try {
+    const res = await fetch('/api/imaging/schedule', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        target_id: targetId,
+        start_time: startTime
+      })
+    });
+    if (res.ok) {
+      alert('Imaging activity scheduled successfully');
+      pollAPIs();
+    } else {
+      alert('Failed to schedule imaging activity');
+    }
+  } catch (e) {
+    console.error('Imaging schedule error:', e);
+    alert('Error scheduling imaging activity');
+  }
+}
+
+// ==================== Power Budget ====================
+let powerBudgetData = {};
+
+async function loadPowerBudget() {
+  try {
+    const res = await fetch('/api/budget/power');
+    if (!res.ok) return;
+    powerBudgetData = await res.json();
+    updatePowerBudgetPanel();
+  } catch (e) {
+    console.warn('Power budget fetch failed:', e);
+  }
+}
+
+function updatePowerBudgetPanel() {
+  const panel = document.getElementById('powerBudgetPanel');
+  if (!panel || !powerBudgetData.initial_soc) return;
+
+  const initialSoC = powerBudgetData.initial_soc || 0;
+  const finalSoC = powerBudgetData.final_soc || 0;
+  const warnings = powerBudgetData.warnings || [];
+
+  let html = '<div style="font-size: 10px;">';
+
+  // SoC indicators
+  html += `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+    <div style="background: var(--panel); padding: 8px; border-radius: 3px;">
+      <div style="color: var(--text-muted); font-size: 9px;">Initial SoC</div>
+      <div style="color: var(--accent); font-size: 13px; font-weight: 600;">${initialSoC.toFixed(1)}%</div>
+    </div>
+    <div style="background: var(--panel); padding: 8px; border-radius: 3px;">
+      <div style="color: var(--text-muted); font-size: 9px;">Final SoC (24h)</div>
+      <div style="color: ${finalSoC > 30 ? '#22c55e' : finalSoC > 20 ? '#eab308' : '#ef4444'}; font-size: 13px; font-weight: 600;">${finalSoC.toFixed(1)}%</div>
+    </div>
+  </div>`;
+
+  // Pass predictions
+  const passes = powerBudgetData.pass_predictions || [];
+  if (passes.length > 0) {
+    html += '<div style="color: var(--text-muted); font-size: 9px; margin-bottom: 6px;">Pass SoC Timeline:</div>';
+    passes.slice(0, 5).forEach(p => {
+      const sosColor = p.soc_at_los > 30 ? '#22c55e' : p.soc_at_los > 20 ? '#eab308' : '#ef4444';
+      html += `<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; padding: 4px 0; border-bottom: 1px solid var(--border);">
+        <div style="color: var(--text-dim);">${p.gs_name}</div>
+        <div style="color: var(--text-muted);">${p.soc_at_aos.toFixed(1)}%</div>
+        <div style="color: ${sosColor}; font-weight: 600;">${p.soc_at_los.toFixed(1)}%</div>
+      </div>`;
+    });
+  }
+
+  // Warnings
+  if (warnings.length > 0) {
+    html += '<div style="margin-top: 8px; color: #ef4444; font-size: 9px;">';
+    warnings.slice(0, 3).forEach(w => {
+      html += `<div style="margin: 4px 0;">⚠ ${w.substring(0, 80)}</div>`;
+    });
+    html += '</div>';
+  }
+
+  html += '</div>';
+  panel.innerHTML = html;
+}
+
+// ==================== Data Budget ====================
+let dataBudgetData = {};
+
+async function loadDataBudget() {
+  try {
+    const res = await fetch('/api/budget/data');
+    if (!res.ok) return;
+    dataBudgetData = await res.json();
+    updateDataBudgetPanel();
+  } catch (e) {
+    console.warn('Data budget fetch failed:', e);
+  }
+}
+
+function updateDataBudgetPanel() {
+  const panel = document.getElementById('dataBudgetPanel');
+  if (!panel || !dataBudgetData.utilization_percent) return;
+
+  const util = dataBudgetData.utilization_percent || 0;
+  const onboard = dataBudgetData.onboard_data_mb || 0;
+  const capacity = dataBudgetData.storage_capacity_mb || 1024;
+  const downlink = dataBudgetData.planned_downlink_mb || 0;
+
+  let html = '<div style="font-size: 10px;">';
+
+  // Storage bars
+  html += `<div style="background: var(--panel); padding: 8px; border-radius: 3px; margin-bottom: 10px;">
+    <div style="color: var(--text-muted); font-size: 9px; margin-bottom: 4px;">Storage Utilization</div>
+    <div style="width: 100%; height: 12px; background: var(--bg); border-radius: 2px; overflow: hidden; margin-bottom: 4px;">
+      <div style="width: ${Math.min(100, util)}%; height: 100%; background: ${util > 90 ? '#ef4444' : util > 70 ? '#eab308' : '#22c55e'};"></div>
+    </div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 9px; color: var(--text-dim);">
+      <div>${onboard.toFixed(0)} / ${capacity.toFixed(0)} MB</div>
+      <div>${util.toFixed(1)}%</div>
+    </div>
+  </div>`;
+
+  // Data flow
+  html += `<div style="background: var(--panel); padding: 8px; border-radius: 3px; margin-bottom: 10px;">
+    <div style="color: var(--text-muted); font-size: 9px; margin-bottom: 4px;">Data Flow (24h)</div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 9px;">
+      <div><span style="color: var(--text-muted);">Generate:</span> <span style="color: var(--accent);">${dataBudgetData.planned_generation_mb?.toFixed(0) || 0} MB</span></div>
+      <div><span style="color: var(--text-muted);">Downlink:</span> <span style="color: var(--green);">${downlink.toFixed(0)} MB</span></div>
+    </div>
+  </div>`;
+
+  // Warnings
+  const warnings = dataBudgetData.warnings || [];
+  if (warnings.length > 0) {
+    html += '<div style="color: #ef4444; font-size: 9px;">';
+    warnings.forEach(w => {
+      html += `<div style="margin: 4px 0;">⚠ ${w.substring(0, 80)}</div>`;
+    });
+    html += '</div>';
+  }
+
+  html += '</div>';
+  panel.innerHTML = html;
+}
+
+// ==================== Constraint Validation ====================
+async function validateConstraints() {
+  try {
+    const res = await fetch('/api/constraints/validate?battery_soc=80.0');
+    if (!res.ok) return;
+    const data = await res.json();
+
+    let msg = `Constraint Validation:\n\n`;
+    msg += `Valid: ${data.valid ? 'YES ✓' : 'NO ✗'}\n`;
+    msg += `Errors: ${data.error_count}, Warnings: ${data.warning_count}\n\n`;
+
+    if (data.violations && data.violations.length > 0) {
+      msg += 'Violations:\n';
+      data.violations.slice(0, 10).forEach(v => {
+        msg += `[${v.severity.toUpperCase()}] ${v.activity_name || 'System'}: ${v.message}\n`;
+      });
+    }
+
+    alert(msg);
+  } catch (e) {
+    console.error('Constraint validation error:', e);
+    alert('Error validating constraints');
+  }
+}
+
+// ==================== Initialization ====================
+function init() {
+  simulatedContacts = generateSimulatedContacts();
+  simulatedActivities = generateSimulatedActivities();
+
+  updateClock();
+  setInterval(updateClock, 1000);
+
+  initMap();
+
+  drawTimeline();
+  updateContactsTable();
+  updateActivityList();
+
+  window.addEventListener('resize', function() {
+    drawTimeline();
+  });
+
+  loadActivityTypes();
+  pollAPIs();
+  setInterval(pollAPIs, POLL_INTERVAL_MS);
+
+  setInterval(function() {
+    updateContactsTable();
+    drawTimeline();
+  }, 10000);
+}
+
+// roundRect polyfill
+if (!CanvasRenderingContext2D.prototype.roundRect) {
+  CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
+    if (typeof r === 'number') r = [r, r, r, r];
+    else if (typeof r === 'undefined') r = [0, 0, 0, 0];
+    this.moveTo(x + r[0], y);
+    this.lineTo(x + w - r[1], y);
+    this.quadraticCurveTo(x + w, y, x + w, y + r[1]);
+    this.lineTo(x + w, y + h - r[2]);
+    this.quadraticCurveTo(x + w, y + h, x + w - r[2], y + h);
+    this.lineTo(x + r[3], y + h);
+    this.quadraticCurveTo(x, y + h, x, y + h - r[3]);
+    this.lineTo(x, y + r[0]);
+    this.quadraticCurveTo(x, y, x + r[0], y);
+    this.closePath();
+    return this;
+  };
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+name: "OBC Watchdog Reset"
+difficulty: INTERMEDIATE
+duration_s: 1800
+briefing: |
+  A CPU spike at T+120s will cause the OBC watchdog to fire,
+  triggering a reboot into safe mode. The operator must verify
+  spacecraft safe mode entry and recover to nominal.
+events:
+  - time_offset_s: 120
+    action: inject
+    params:
+      subsystem: obdh
+      failure: cpu_spike
+      load: 98.0
+  - time_offset_s: 155
+    action: inject
+    params:
+      subsystem: obdh
+      failure: watchdog_reset
+expected_responses:
+  - { category: detect, description: "Detect CPU spike and reboot" }
+  - { category: isolate, description: "Confirm watchdog-triggered reboot" }
+  - { category: recover, description: "Transition back to nominal mode" }

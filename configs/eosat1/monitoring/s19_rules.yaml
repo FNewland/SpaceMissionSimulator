@@ -1,0 +1,170 @@
+# S19 Event-Action Rules
+# Format: ea_id, event_type (severity or specific event ID), action_func_id, description
+#
+# Automatically triggers S8 function commands when specified events occur.
+# Loaded at engine startup and registered with the S19 framework.
+
+s19_rules:
+  # ===== EPS Power Management =====
+  - ea_id: 1001
+    event_type: 0x0102  # BUS_UNDERVOLTAGE
+    action_func_id: 10   # S8 func 10: payload mode OFF (load shedding)
+    description: "EPS Bus Undervoltage -> Payload Off (Load Shed)"
+    enabled: true
+
+  - ea_id: 1002
+    event_type: 0x0100  # SOC_CRITICAL (battery <20%)
+    action_func_id: 11   # S8 func 11: FPA cooler OFF
+    description: "EPS Battery SoC Critical -> FPA Cooler Off"
+    enabled: true
+
+  - ea_id: 1003
+    event_type: 0x0100  # SOC_CRITICAL
+    action_func_id: 14   # S8 func 14: power line OFF (dynamic load shedding)
+    description: "EPS Battery SoC Critical -> Payload Power Off"
+    enabled: true
+
+  # ===== AOCS Momentum Management =====
+  - ea_id: 2001
+    event_type: 0x025B  # AOCS total_momentum saturation (custom event from S12)
+    action_func_id: 1    # S8 func 1: desaturate wheels
+    description: "AOCS Momentum Saturated -> Trigger Desaturation"
+    enabled: true
+
+  - ea_id: 2002
+    event_type: 0x0240  # AOCS star tracker 1 blind/failed (custom from S12)
+    action_func_id: 6    # S8 func 6: ST select (switch to redundant)
+    description: "AOCS Star Tracker 1 Blind -> Switch to ST2"
+    enabled: true
+
+  - ea_id: 2003
+    event_type: 0x0243  # AOCS star tracker 2 blind/failed
+    action_func_id: 6    # S8 func 6: ST select (will select default or available)
+    description: "AOCS Star Tracker 2 Blind -> ST Fallback"
+    enabled: true
+
+  - ea_id: 2004
+    event_type: 0x0202  # ATT_WARNING (attitude error high, from S12)
+    action_func_id: 0    # S8 func 0: AOCS set_mode SAFE
+    description: "AOCS Attitude Error High -> Safe Mode"
+    enabled: true
+
+  # ===== TCS Thermal Management =====
+  - ea_id: 3001
+    event_type: 0x0408  # TCS FPA temperature (from S12)
+    action_func_id: 20   # S8 func 20: Payload mode OFF
+    description: "TCS FPA Overtemp -> Payload Off"
+    enabled: true
+
+  - ea_id: 3002
+    event_type: 0x0407  # TCS Battery temperature (from S12)
+    action_func_id: 12   # S8 func 12: Transponder TX OFF (reduce power)
+    description: "TCS Battery Overtemp -> Transponder TX Off"
+    enabled: true
+
+  - ea_id: 3003
+    event_type: 0x0406  # TCS OBC temperature (from S12)
+    action_func_id: 40   # S8 func 40: OBDH set_mode SAFE
+    description: "TCS OBC Overtemp -> OBC Safe Mode"
+    enabled: true
+
+  # ===== TTC Link Management =====
+  - ea_id: 4001
+    event_type: 0x0503  # TTC link_margin critical (from S12)
+    action_func_id: 55   # S8 func 55: Set TX power (increase)
+    description: "TTC Link Margin Critical -> Increase TX Power"
+    enabled: true
+
+  - ea_id: 4002
+    event_type: 0x050F  # TTC PA temperature (from S12)
+    action_func_id: 54   # S8 func 54: PA OFF
+    description: "TTC PA Overheat -> PA Off"
+    enabled: true
+
+  - ea_id: 4003
+    event_type: 0x050C  # TTC bit error rate high (from S12)
+    action_func_id: 55   # S8 func 55: Set TX power (increase)
+    description: "TTC High BER -> Increase TX Power"
+    enabled: true
+
+  # ===== OBDH System Management =====
+  - ea_id: 5001
+    event_type: 0x0301  # OBC_REBOOT
+    action_func_id: 42   # S8 func 42: OBC reboot
+    description: "OBC Reboot Event -> Acknowledge"
+    enabled: true
+
+  - ea_id: 5002
+    event_type: 0x030A  # OBDH reboot_count (from S12)
+    action_func_id: 44   # S8 func 44: OBC select bus (switch CAN bus)
+    description: "OBDH Excessive Reboots -> Switch CAN Bus"
+    enabled: true
+
+  - ea_id: 5003
+    event_type: 0x031E  # OBDH memory errors (from S12)
+    action_func_id: 41   # S8 func 41: memory scrub
+    description: "OBDH Memory Errors -> Memory Scrub"
+    enabled: true
+
+  - ea_id: 5004
+    event_type: 0x0302  # OBDH CPU_load (from S12)
+    action_func_id: 40   # S8 func 40: set_mode SAFE
+    description: "OBDH CPU Overload -> Safe Mode"
+    enabled: true
+
+  # ===== Payload Imaging Management =====
+  - ea_id: 6001
+    event_type: 0x0604  # Payload storage_used (from S12)
+    action_func_id: 20   # S8 func 20: Payload mode OFF
+    description: "Payload Storage Full -> Stop Imaging"
+    enabled: true
+
+  - ea_id: 6002
+    event_type: 0x0601  # Payload FPA temperature (from S12)
+    action_func_id: 21   # S8 func 21: set_scene (standby mode)
+    description: "Payload FPA Overtemp -> Payload Standby"
+    enabled: true
+
+  - ea_id: 6003
+    event_type: 0x0609  # Payload checksum_errors (from S12)
+    action_func_id: 26   # S8 func 26: get_image_catalog (diagnostics)
+    description: "Payload Checksum Errors -> Verify Data"
+    enabled: true
+
+  # ===== Reaction Wheel Monitoring =====
+  - ea_id: 2005
+    event_type: 0x0207  # AOCS RW1 speed (from S12)
+    action_func_id: 2    # S8 func 2: disable_wheel 0
+    description: "AOCS Wheel 1 Overspeed -> Disable Wheel 1"
+    enabled: true
+
+  - ea_id: 2006
+    event_type: 0x0208  # AOCS RW2 speed (from S12)
+    action_func_id: 2    # S8 func 2: disable_wheel 1
+    description: "AOCS Wheel 2 Overspeed -> Disable Wheel 2"
+    enabled: true
+
+  - ea_id: 2007
+    event_type: 0x0209  # AOCS RW3 speed (from S12)
+    action_func_id: 2    # S8 func 2: disable_wheel 2
+    description: "AOCS Wheel 3 Overspeed -> Disable Wheel 3"
+    enabled: true
+
+  - ea_id: 2008
+    event_type: 0x020A  # AOCS RW4 speed (from S12)
+    action_func_id: 2    # S8 func 2: disable_wheel 3
+    description: "AOCS Wheel 4 Overspeed -> Disable Wheel 4"
+    enabled: true
+
+  # ===== Solar Array Degradation =====
+  - ea_id: 1004
+    event_type: 0x0103  # EPS SA_A_current low (from S12)
+    action_func_id: 10   # S8 func 10: set_payload_mode OFF
+    description: "EPS Solar Array A Degraded -> Load Shedding"
+    enabled: true
+
+  - ea_id: 1005
+    event_type: 0x0104  # EPS SA_B_current low (from S12)
+    action_func_id: 10   # S8 func 10: set_payload_mode OFF
+    description: "EPS Solar Array B Degraded -> Load Shedding"
+    enabled: true
