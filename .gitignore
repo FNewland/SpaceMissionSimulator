@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# SMO workspace (runtime data)
+workspace/dumps/
+workspace/logs/
+workspace/*.json
+
+# Offline wheel cache (build locally, don't commit)
+wheels/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
