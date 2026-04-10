@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "smo-gateway"
+version = "0.1.0"
+description = "SMO Network Gateway — TM/TC relay for distributed deployment"
+requires-python = ">=3.11"
+dependencies = [
+    "smo-common",
+]
+
+[project.scripts]
+smo-gateway = "smo_gateway.gateway:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/smo_gateway"]

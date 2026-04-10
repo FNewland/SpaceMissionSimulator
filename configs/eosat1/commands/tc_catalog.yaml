@@ -1,0 +1,1259 @@
+commands:
+  # ===== S2 Device Access =====
+  # EPS devices (0x0100-0x010F)
+  - name: S2_EPS_BATTERY_HEATER
+    service: 2
+    subtype: 1
+    description: "Control battery heater (device 0x0100)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0100)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_EPS_SOLAR_ARRAY_DRIVE
+    service: 2
+    subtype: 1
+    description: "Control solar array drive (device 0x0101)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0101)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_EPS_PDU_BUS1
+    service: 2
+    subtype: 1
+    description: "Control PDU power distribution bus 1 (device 0x0102)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0102)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_EPS_PDU_BUS2
+    service: 2
+    subtype: 1
+    description: "Control PDU power distribution bus 2 (device 0x0103)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0103)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_EPS_PDU_BUS3
+    service: 2
+    subtype: 1
+    description: "Control PDU power distribution bus 3 (device 0x0104)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0104)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_EPS_CHARGE_REGULATOR
+    service: 2
+    subtype: 1
+    description: "Control battery charge regulator (device 0x010F)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x010F)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+
+  # AOCS devices (0x0200-0x021F)
+  - name: S2_AOCS_REACTION_WHEEL_0
+    service: 2
+    subtype: 1
+    description: "Control reaction wheel 0 (device 0x0200)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0200)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_AOCS_REACTION_WHEEL_1
+    service: 2
+    subtype: 1
+    description: "Control reaction wheel 1 (device 0x0201)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0201)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_AOCS_REACTION_WHEEL_2
+    service: 2
+    subtype: 1
+    description: "Control reaction wheel 2 (device 0x0202)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0202)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_AOCS_REACTION_WHEEL_3
+    service: 2
+    subtype: 1
+    description: "Control reaction wheel 3 (device 0x0203)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0203)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_AOCS_STAR_TRACKER_1
+    service: 2
+    subtype: 1
+    description: "Control star tracker 1 (device 0x0204)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0204)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_AOCS_STAR_TRACKER_2
+    service: 2
+    subtype: 1
+    description: "Control star tracker 2 (device 0x0205)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0205)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_AOCS_GYROSCOPE_0
+    service: 2
+    subtype: 1
+    description: "Control gyroscope 0 (device 0x0206)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0206)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_AOCS_GYROSCOPE_1
+    service: 2
+    subtype: 1
+    description: "Control gyroscope 1 (device 0x0207)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0207)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_AOCS_GYROSCOPE_2
+    service: 2
+    subtype: 1
+    description: "Control gyroscope 2 (device 0x0208)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0208)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_AOCS_MAGNETOMETER_A
+    service: 2
+    subtype: 1
+    description: "Control magnetometer A (device 0x0209)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0209)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_AOCS_MAGNETOMETER_B
+    service: 2
+    subtype: 1
+    description: "Control magnetometer B (device 0x020A)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x020A)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_AOCS_MAGNETORQUER_X
+    service: 2
+    subtype: 1
+    description: "Control magnetorquer X (device 0x020B)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x020B)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_AOCS_MAGNETORQUER_Y
+    service: 2
+    subtype: 1
+    description: "Control magnetorquer Y (device 0x020C)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x020C)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_AOCS_MAGNETORQUER_Z
+    service: 2
+    subtype: 1
+    description: "Control magnetorquer Z (device 0x020D)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x020D)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_AOCS_SUN_SENSOR_ARRAY
+    service: 2
+    subtype: 1
+    description: "Control sun sensor array (device 0x020E)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x020E)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_AOCS_GPS_RECEIVER
+    service: 2
+    subtype: 1
+    description: "Control GPS receiver (device 0x020F)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x020F)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+
+  # TCS devices (0x0300-0x030F)
+  - name: S2_TCS_HEATER_ZONE_1
+    service: 2
+    subtype: 1
+    description: "Control heater zone 1 (device 0x0300)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0300)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_TCS_HEATER_ZONE_2
+    service: 2
+    subtype: 1
+    description: "Control heater zone 2 (device 0x0301)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0301)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_TCS_HEATER_ZONE_3
+    service: 2
+    subtype: 1
+    description: "Control heater zone 3 (device 0x0302)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0302)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_TCS_HEATER_ZONE_4
+    service: 2
+    subtype: 1
+    description: "Control heater zone 4 (device 0x0303)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0303)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_TCS_HEATER_ZONE_5
+    service: 2
+    subtype: 1
+    description: "Control heater zone 5 (device 0x0304)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0304)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_TCS_HEATER_ZONE_6
+    service: 2
+    subtype: 1
+    description: "Control heater zone 6 (device 0x0305)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0305)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_TCS_HEATER_ZONE_7
+    service: 2
+    subtype: 1
+    description: "Control heater zone 7 (device 0x0306)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0306)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_TCS_HEATER_ZONE_8
+    service: 2
+    subtype: 1
+    description: "Control heater zone 8 (device 0x0307)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0307)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_TCS_HEATER_ZONE_9
+    service: 2
+    subtype: 1
+    description: "Control heater zone 9 (device 0x0308)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0308)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_TCS_HEATER_ZONE_10
+    service: 2
+    subtype: 1
+    description: "Control heater zone 10 (device 0x0309)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0309)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_TCS_THERMISTOR_ARRAY
+    service: 2
+    subtype: 1
+    description: "Control thermistor array (device 0x030A)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x030A)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_TCS_DECONTAM_HEATER
+    service: 2
+    subtype: 1
+    description: "Control decontamination heater (device 0x030B)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x030B)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+
+  # TT&C devices (0x0400-0x040F)
+  - name: S2_TTC_TRANSPONDER_A
+    service: 2
+    subtype: 1
+    description: "Control transponder A (device 0x0400)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0400)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_TTC_TRANSPONDER_B
+    service: 2
+    subtype: 1
+    description: "Control transponder B (device 0x0401)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0401)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_TTC_POWER_AMPLIFIER
+    service: 2
+    subtype: 1
+    description: "Control power amplifier (device 0x0402)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0402)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_TTC_LNA
+    service: 2
+    subtype: 1
+    description: "Control low-noise amplifier (device 0x0403)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0403)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_TTC_ANTENNA_DRIVE
+    service: 2
+    subtype: 1
+    description: "Control antenna drive (device 0x0404)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0404)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+
+  # OBDH devices (0x0500-0x050F)
+  - name: S2_OBDH_OBC_A
+    service: 2
+    subtype: 1
+    description: "Control OBC-A (device 0x0500)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0500)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_OBDH_OBC_B
+    service: 2
+    subtype: 1
+    description: "Control OBC-B (device 0x0501)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0501)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_OBDH_MASS_MEMORY
+    service: 2
+    subtype: 1
+    description: "Control mass memory unit (device 0x0502)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0502)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_OBDH_WATCHDOG_TIMER
+    service: 2
+    subtype: 1
+    description: "Control watchdog timer (device 0x0503)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0503)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_OBDH_CAN_BUS
+    service: 2
+    subtype: 1
+    description: "Control CAN bus interface (device 0x0504)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0504)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+
+  # Payload devices (0x0600-0x060F)
+  - name: S2_PAYLOAD_FPA
+    service: 2
+    subtype: 1
+    description: "Control focal plane array (device 0x0600)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0600)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_PAYLOAD_COOLER
+    service: 2
+    subtype: 1
+    description: "Control FPA cooler (device 0x0601)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0601)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_PAYLOAD_CALIBRATION_LAMP
+    service: 2
+    subtype: 1
+    description: "Control calibration lamp (device 0x0602)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0602)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_PAYLOAD_SHUTTER
+    service: 2
+    subtype: 1
+    description: "Control shutter mechanism (device 0x0603)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0603)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+  - name: S2_PAYLOAD_COMPRESSION
+    service: 2
+    subtype: 1
+    description: "Control compression unit (device 0x0604)"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID (0x0604)" }
+      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
+
+  # Generic S2 commands for reporting and verification
+  - name: S2_REPORT_STATUS
+    service: 2
+    subtype: 6
+    description: "Report device on/off status"
+    fields:
+      - { name: device_id, type: uint16, description: "Device ID to query" }
+
+  # ===== S3 Housekeeping =====
+  - name: HK_REQUEST
+    service: 3
+    subtype: 27
+    description: "Request one-shot HK report"
+    fields:
+      - { name: sid, type: uint16, description: "Structure ID (1-6, 10)" }
+  - name: HK_ENABLE
+    aliases: [HK_REPORT_CONFIG]
+    service: 3
+    subtype: 5
+    description: "Enable periodic HK generation"
+    fields:
+      - { name: sid, type: uint16 }
+  - name: HK_DISABLE
+    service: 3
+    subtype: 6
+    description: "Disable periodic HK generation"
+    fields:
+      - { name: sid, type: uint16 }
+  - name: HK_SET_INTERVAL
+    service: 3
+    subtype: 31
+    description: "Modify HK reporting interval"
+    fields:
+      - { name: sid, type: uint16 }
+      - { name: interval_s, type: float32 }
+
+  # ===== S5 Event Reporting Control =====
+  - name: EVENT_ENABLE
+    service: 5
+    subtype: 5
+    description: "Enable event report generation for specified event IDs"
+    fields:
+      - { name: event_id, type: uint16, description: "Event definition ID" }
+  - name: EVENT_DISABLE
+    service: 5
+    subtype: 6
+    description: "Disable event report generation for specified event IDs"
+    fields:
+      - { name: event_id, type: uint16, description: "Event definition ID" }
+
+  # ===== S6 Memory Management =====
+  - name: MEM_LOAD
+    aliases: [MEM_LOAD_START, MEM_LOAD_DATA, MEM_LOAD_ABORT]
+    service: 6
+    subtype: 2
+    description: "Load data to on-board memory (simplified)"
+    fields:
+      - { name: memory_id, type: uint8, description: "0=SRAM, 1=EEPROM" }
+      - { name: address, type: uint32, description: "Start address" }
+      - { name: data, type: bytes, description: "Data to load" }
+  - name: MEM_DUMP
+    service: 6
+    subtype: 5
+    description: "Dump on-board memory contents"
+    fields:
+      - { name: memory_id, type: uint8 }
+      - { name: address, type: uint32 }
+      - { name: length, type: uint16 }
+  - name: MEM_CHECK
+    service: 6
+    subtype: 9
+    description: "Check on-board memory CRC"
+    fields:
+      - { name: memory_id, type: uint8 }
+      - { name: address, type: uint32 }
+      - { name: length, type: uint16 }
+
+  # ===== S8 Function Management =====
+  # AOCS commands (func_id 0-9)
+  - name: AOCS_SET_MODE
+    aliases: [SET_AOCS_MODE]
+    service: 8
+    subtype: 1
+    func_id: 0
+    description: "Set AOCS mode"
+    fields:
+      - { name: mode, type: uint8, description: "0=off,1=safe_boot,2=detumble,3=coarse_sun,4=nominal_nadir,5=fine_point,6=slew,7=desaturation,8=eclipse_propagate" }
+  - name: AOCS_DESATURATE
+    service: 8
+    subtype: 1
+    func_id: 1
+    description: "Start wheel desaturation"
+    fields: []
+  - name: AOCS_DISABLE_WHEEL
+    service: 8
+    subtype: 1
+    func_id: 2
+    description: "Disable specific reaction wheel"
+    fields:
+      - { name: wheel_idx, type: uint8, description: "Wheel index (0-3)" }
+  - name: AOCS_ENABLE_WHEEL
+    service: 8
+    subtype: 1
+    func_id: 3
+    description: "Enable specific reaction wheel"
+    fields:
+      - { name: wheel_idx, type: uint8, description: "Wheel index (0-3)" }
+  - name: ST1_POWER
+    service: 8
+    subtype: 1
+    func_id: 4
+    description: "Star tracker 1 power on/off"
+    fields:
+      - { name: on, type: uint8, description: "0=off, 1=on" }
+  - name: ST2_POWER
+    service: 8
+    subtype: 1
+    func_id: 5
+    description: "Star tracker 2 power on/off"
+    fields:
+      - { name: on, type: uint8, description: "0=off, 1=on" }
+  - name: ST_SELECT
+    service: 8
+    subtype: 1
+    func_id: 6
+    description: "Select primary star tracker"
+    fields:
+      - { name: unit, type: uint8, description: "0=ST1, 1=ST2" }
+  - name: MAG_SELECT
+    aliases: [SET_MAG_SELECT]
+    service: 8
+    subtype: 1
+    func_id: 7
+    description: "Select magnetometer source"
+    fields:
+      - { name: unit, type: uint8, description: "0=primary, 1=redundant" }
+  - name: RW_SET_SPEED_BIAS
+    service: 8
+    subtype: 1
+    func_id: 8
+    description: "Set reaction wheel speed bias"
+    fields:
+      - { name: wheel_idx, type: uint8 }
+      - { name: bias_rpm, type: int16, description: "Speed bias in RPM" }
+  - name: MTQ_ENABLE
+    service: 8
+    subtype: 1
+    func_id: 9
+    description: "Enable/disable magnetorquers"
+    fields:
+      - { name: enable, type: uint8, description: "0=disable, 1=enable" }
+
+  # New AOCS commands (func_id 10-15)
+  - name: AOCS_SLEW_TO
+    service: 8
+    subtype: 1
+    func_id: 10
+    description: "Execute slew maneuver to target quaternion"
+    fields:
+      - { name: q_x, type: float32, description: "Target quaternion X component" }
+      - { name: q_y, type: float32, description: "Target quaternion Y component" }
+      - { name: q_z, type: float32, description: "Target quaternion Z component" }
+      - { name: q_w, type: float32, description: "Target quaternion W component (scalar)" }
+      - { name: rate_dps, type: float32, description: "Slew rate in deg/s (0.1-10.0)" }
+
+  - name: AOCS_CHECK_MOMENTUM
+    service: 8
+    subtype: 1
+    func_id: 11
+    description: "Query reaction wheel momentum status"
+    fields: []
+
+  - name: AOCS_BEGIN_ACQUISITION
+    service: 8
+    subtype: 1
+    func_id: 12
+    description: "Start automated attitude acquisition sequence"
+    fields: []
+
+  - name: AOCS_GYRO_CALIBRATION
+    service: 8
+    subtype: 1
+    func_id: 13
+    description: "Reset gyro bias estimate"
+    fields: []
+
+  - name: AOCS_RW_RAMP_DOWN
+    service: 8
+    subtype: 1
+    func_id: 14
+    description: "Gracefully reduce reaction wheel speed"
+    fields:
+      - { name: wheel_idx, type: uint8, description: "Wheel index (0-3) or 255 for all" }
+      - { name: target_rpm, type: float32, description: "Target wheel speed (RPM)" }
+
+  - name: AOCS_SET_DEADBAND
+    service: 8
+    subtype: 1
+    func_id: 15
+    description: "Set attitude error deadband threshold"
+    fields:
+      - { name: deadband_deg, type: float32, description: "Attitude error threshold (0-1 deg)" }
+
+  # EPS commands (func_id 16-25)
+  - name: EPS_PAYLOAD_MODE
+    aliases: [SET_PAYLOAD_MODE]
+    service: 8
+    subtype: 1
+    func_id: 16
+    description: "Set payload power mode"
+    fields:
+      - { name: mode, type: uint8, description: "0=off, 1=standby, 2=imaging" }
+  - name: EPS_FPA_COOLER
+    aliases: [SET_FPA_COOLER]
+    service: 8
+    subtype: 1
+    func_id: 17
+    description: "Enable/disable FPA cooler"
+    fields:
+      - { name: on, type: uint8, description: "0=off, 1=on" }
+  - name: EPS_TRANSPONDER_TX
+    service: 8
+    subtype: 1
+    func_id: 18
+    description: "Enable/disable transponder TX"
+    fields:
+      - { name: on, type: uint8, description: "0=off, 1=on" }
+  - name: EPS_POWER_ON
+    aliases: [POWER_LINE_ON]
+    service: 8
+    subtype: 1
+    func_id: 19
+    description: "Switch power line ON"
+    fields:
+      - { name: line_index, type: uint8, description: "Power line index (0-7)" }
+  - name: EPS_POWER_OFF
+    aliases: [POWER_LINE_OFF]
+    service: 8
+    subtype: 1
+    func_id: 20
+    description: "Switch power line OFF"
+    fields:
+      - { name: line_index, type: uint8, description: "Power line index (0-7)" }
+  - name: EPS_RESET_OC_FLAG
+    service: 8
+    subtype: 1
+    func_id: 21
+    description: "Reset overcurrent trip flag and re-enable line"
+    fields:
+      - { name: line_index, type: uint8, description: "Power line index (0-7)" }
+  - name: EPS_SWITCH_LOAD
+    service: 8
+    subtype: 1
+    func_id: 22
+    description: "Switch individual power load on/off"
+    fields:
+      - { name: load_id, type: uint8, description: "Load ID (0-7)" }
+      - { name: state, type: uint8, description: "0=off, 1=on" }
+  - name: EPS_SET_CHARGE_RATE
+    service: 8
+    subtype: 1
+    func_id: 23
+    description: "Override battery charge rate"
+    fields:
+      - { name: rate_a, type: float32, description: "Charge rate in Amps (0=auto)" }
+  - name: EPS_SOLAR_ARRAY_DRIVE
+    service: 8
+    subtype: 1
+    func_id: 24
+    description: "Control solar array drive angle"
+    fields:
+      - { name: angle_deg, type: int16, description: "Drive angle in degrees (-90 to +90)" }
+  - name: EPS_EMERGENCY_LOAD_SHED
+    service: 8
+    subtype: 1
+    func_id: 25
+    description: "Immediate load shedding to specified stage"
+    fields:
+      - { name: stage, type: uint8, description: "Shed stage (0-3)" }
+
+  # Payload commands (func_id 26-39)
+  - name: PAYLOAD_SET_MODE
+    service: 8
+    subtype: 1
+    func_id: 26
+    description: "Set payload mode"
+    fields:
+      - { name: mode, type: uint8, description: "0=off, 1=standby, 2=imaging" }
+  - name: PAYLOAD_SET_SCENE
+    service: 8
+    subtype: 1
+    func_id: 27
+    description: "Set scene ID for imaging"
+    fields:
+      - { name: scene_id, type: uint16 }
+  - name: PAYLOAD_CAPTURE
+    service: 8
+    subtype: 1
+    func_id: 28
+    description: "Trigger image capture with scene metadata"
+    fields:
+      - { name: scene_id, type: uint16, description: "Scene identifier" }
+      - { name: lines, type: uint16, description: "Number of CCD lines to capture" }
+  - name: PAYLOAD_DOWNLOAD_IMAGE
+    service: 8
+    subtype: 1
+    func_id: 29
+    description: "Queue image for downlink"
+    fields:
+      - { name: scene_id, type: uint16, description: "Scene ID to download" }
+  - name: PAYLOAD_DELETE_IMAGE
+    service: 8
+    subtype: 1
+    func_id: 30
+    description: "Delete specific image from payload memory"
+    fields:
+      - { name: scene_id, type: uint16, description: "Scene ID to delete" }
+  - name: PAYLOAD_MARK_BAD_SEGMENT
+    service: 8
+    subtype: 1
+    func_id: 31
+    description: "Mark memory segment as unusable"
+    fields:
+      - { name: segment_id, type: uint8, description: "Segment index (0-79)" }
+  - name: PAYLOAD_GET_IMAGE_CATALOG
+    service: 8
+    subtype: 1
+    func_id: 32
+    description: "Request stored image catalog"
+    fields: []
+  - name: PAYLOAD_SET_BAND_CONFIG
+    service: 8
+    subtype: 1
+    func_id: 33
+    description: "Set spectral band enable mask"
+    fields:
+      - { name: mask, type: uint8, description: "Band mask (bits 0-3: blue/green/red/nir)" }
+  - name: PAYLOAD_SET_INTEGRATION_TIME
+    service: 8
+    subtype: 1
+    func_id: 34
+    description: "Set per-band detector integration times (4 floats)"
+    fields:
+      - { name: blue_ms, type: float32, description: "Blue band integration time (ms)" }
+      - { name: green_ms, type: float32, description: "Green band integration time (ms)" }
+      - { name: red_ms, type: float32, description: "Red band integration time (ms)" }
+      - { name: nir_ms, type: float32, description: "NIR band integration time (ms)" }
+  - name: PAYLOAD_SET_GAIN
+    service: 8
+    subtype: 1
+    func_id: 35
+    description: "Set detector gain/offset"
+    fields:
+      - { name: gain, type: float32, description: "Detector gain (0.1-10.0)" }
+  - name: PAYLOAD_COOLER_SETPOINT
+    service: 8
+    subtype: 1
+    func_id: 36
+    description: "Adjust cooler target temperature"
+    fields:
+      - { name: setpoint_c, type: float32, description: "Target temperature (-20C to 0C)" }
+  - name: PAYLOAD_START_CALIBRATION
+    service: 8
+    subtype: 1
+    func_id: 37
+    description: "Begin calibration sequence (dark frame + flat field)"
+    fields: []
+  - name: PAYLOAD_STOP_CALIBRATION
+    service: 8
+    subtype: 1
+    func_id: 38
+    description: "Abort calibration sequence"
+    fields: []
+  - name: PAYLOAD_SET_COMPRESSION
+    service: 8
+    subtype: 1
+    func_id: 39
+    description: "Override compression ratio"
+    fields:
+      - { name: ratio, type: float32, description: "Compression ratio (0=auto, else manual)" }
+
+  # TCS commands (func_id 40-51)
+  - name: HEATER_BATTERY
+    aliases: [HEATER_CONTROL]
+    service: 8
+    subtype: 1
+    func_id: 40
+    description: "Battery heater on/off"
+    fields:
+      - { name: on, type: uint8, description: "0=off, 1=on" }
+  - name: HEATER_OBC
+    service: 8
+    subtype: 1
+    func_id: 41
+    description: "OBC heater on/off"
+    fields:
+      - { name: on, type: uint8, description: "0=off, 1=on" }
+  - name: HEATER_THRUSTER
+    service: 8
+    subtype: 1
+    func_id: 42
+    description: "Thruster heater on/off"
+    fields:
+      - { name: on, type: uint8, description: "0=off, 1=on" }
+  - name: FPA_COOLER
+    service: 8
+    subtype: 1
+    func_id: 43
+    description: "FPA cooler on/off"
+    fields:
+      - { name: on, type: uint8, description: "0=off, 1=on" }
+  - name: HEATER_SET_SETPOINT
+    service: 8
+    subtype: 1
+    func_id: 44
+    description: "Modify heater thermostat setpoints"
+    fields:
+      - { name: circuit, type: uint8, description: "0=battery, 1=obc, 2=thruster" }
+      - { name: on_temp, type: float32, description: "Thermostat ON temperature (C)" }
+      - { name: off_temp, type: float32, description: "Thermostat OFF temperature (C)" }
+  - name: HEATER_AUTO_MODE
+    service: 8
+    subtype: 1
+    func_id: 45
+    description: "Return heater to autonomous thermostat control"
+    fields:
+      - { name: circuit, type: uint8, description: "0=battery, 1=obc, 2=thruster" }
+  - name: TCS_SET_HEATER_DUTY_LIMIT
+    service: 8
+    subtype: 1
+    func_id: 46
+    description: "Limit heater duty cycle to prevent excessive thermal cycling"
+    fields:
+      - { name: circuit, type: uint8, description: "0=battery, 1=obc, 2=thruster" }
+      - { name: max_duty_pct, type: uint8, description: "Maximum duty cycle percentage (0-100)" }
+  - name: TCS_DECONTAMINATION_START
+    service: 8
+    subtype: 1
+    func_id: 47
+    description: "Begin decontamination heating sequence for payload"
+    fields:
+      - { name: target_temp_c, type: float32, description: "Target FPA temperature for decontamination (typically +50C)" }
+  - name: TCS_DECONTAMINATION_STOP
+    service: 8
+    subtype: 1
+    func_id: 48
+    description: "Abort decontamination heating sequence"
+    fields: []
+  - name: TCS_GET_THERMAL_MAP
+    service: 8
+    subtype: 1
+    func_id: 49
+    description: "Request current thermal status of all zones"
+    fields: []
+
+  # OBDH commands (func_id 50-65)
+  - name: OBC_SET_MODE
+    service: 8
+    subtype: 1
+    func_id: 50
+    description: "Set OBC mode"
+    fields:
+      - { name: mode, type: uint8, description: "0=nominal, 1=safe, 2=emergency" }
+  - name: OBC_MEMORY_SCRUB
+    service: 8
+    subtype: 1
+    func_id: 51
+    description: "Trigger manual memory scrub"
+    fields: []
+  - name: OBC_REBOOT
+    service: 8
+    subtype: 1
+    func_id: 52
+    description: "Force OBC reboot (drops to boot loader)"
+    fields: []
+    criticality: critical
+  - name: OBC_SWITCH_UNIT
+    service: 8
+    subtype: 1
+    func_id: 53
+    description: "Switch to redundant OBC (A->B or B->A)"
+    fields: []
+    criticality: critical
+  - name: OBC_SELECT_BUS
+    service: 8
+    subtype: 1
+    func_id: 54
+    description: "Select active CAN bus"
+    fields:
+      - { name: bus, type: uint8, description: "0=Bus A, 1=Bus B" }
+    criticality: caution
+  - name: OBC_BOOT_APP
+    aliases: [SET_PHASE]
+    service: 8
+    subtype: 1
+    func_id: 55
+    description: "Boot application software from boot loader"
+    fields: []
+    criticality: caution
+  - name: OBC_BOOT_INHIBIT
+    service: 8
+    subtype: 1
+    func_id: 56
+    description: "Inhibit auto-boot (stay in boot loader)"
+    fields:
+      - { name: inhibit, type: uint8, description: "0=allow auto-boot, 1=inhibit" }
+  - name: OBC_CLEAR_REBOOT_CNT
+    service: 8
+    subtype: 1
+    func_id: 57
+    description: "Reset reboot counter to zero"
+    fields: []
+  - name: OBC_SET_WATCHDOG_PERIOD
+    service: 8
+    subtype: 1
+    func_id: 58
+    description: "Configure watchdog timeout period"
+    fields:
+      - { name: period_ticks, type: uint16, description: "Watchdog period in ticks (1-1000)" }
+  - name: OBC_WATCHDOG_ENABLE
+    service: 8
+    subtype: 1
+    func_id: 59
+    description: "Enable watchdog monitoring"
+    fields: []
+  - name: OBC_WATCHDOG_DISABLE
+    service: 8
+    subtype: 1
+    func_id: 60
+    description: "Disable watchdog monitoring"
+    fields: []
+  - name: OBC_DIAGNOSTIC
+    service: 8
+    subtype: 1
+    func_id: 61
+    description: "Request OBC health diagnostic report"
+    fields: []
+  - name: OBC_ERROR_LOG
+    service: 8
+    subtype: 1
+    func_id: 62
+    description: "Request recent error log entries"
+    fields: []
+
+  # GPS/time synchronisation (func_id 80)
+  - name: OBC_GPS_TIME_SYNC
+    service: 8
+    subtype: 1
+    func_id: 80
+    description: "Synchronise onboard clock with GPS time. Requires GPS 3D fix. WARNING: a time jump may invalidate AOCS attitude solution — AOCS may transition to SAFE_BOOT."
+    fields: []
+    criticality: caution
+
+  # TTC commands (func_id 63-78)
+  - name: TTC_SWITCH_PRIMARY
+    service: 8
+    subtype: 1
+    func_id: 63
+    description: "Switch to primary transponder"
+  - name: TTC_SWITCH_REDUNDANT
+    service: 8
+    subtype: 1
+    func_id: 64
+    description: "Switch to redundant transponder"
+  - name: TTC_SET_DATA_RATE
+    service: 8
+    subtype: 1
+    func_id: 65
+    description: "Set TM data rate"
+    fields:
+      - { name: rate, type: uint8, description: "0=low(1kbps), 1=high(64kbps)" }
+  - name: TTC_PA_ON
+    service: 8
+    subtype: 1
+    func_id: 66
+    description: "Enable power amplifier"
+    fields: []
+  - name: TTC_PA_OFF
+    service: 8
+    subtype: 1
+    func_id: 67
+    description: "Disable power amplifier"
+    fields: []
+  - name: TTC_SET_TX_POWER
+    service: 8
+    subtype: 1
+    func_id: 68
+    description: "Set transmit power level"
+    fields:
+      - { name: level, type: uint8, description: "0=low(1W), 1=nominal(5W), 2=high(8W)" }
+  - name: TTC_DEPLOY_ANTENNA
+    service: 8
+    subtype: 1
+    func_id: 69
+    description: "Deploy spacecraft antenna (burn-wire command)"
+    fields: []
+  - name: TTC_SET_BEACON_MODE
+    service: 8
+    subtype: 1
+    func_id: 70
+    description: "Enable/disable beacon mode (low-rate telemetry)"
+    fields:
+      - { name: on, type: uint8, description: "0=off, 1=on" }
+  - name: TTC_CMD_CHANNEL_START
+    service: 8
+    subtype: 1
+    func_id: 71
+    description: "Start dedicated command channel (15-min timer)"
+    fields: []
+  - name: TTC_SET_UL_FREQ
+    service: 8
+    subtype: 1
+    func_id: 72
+    description: "Set uplink frequency"
+    fields:
+      - { name: freq_mhz, type: float32, description: "Uplink frequency in MHz (2000-2100)" }
+  - name: TTC_SET_DL_FREQ
+    service: 8
+    subtype: 1
+    func_id: 73
+    description: "Set downlink frequency"
+    fields:
+      - { name: freq_mhz, type: float32, description: "Downlink frequency in MHz (8400-8500)" }
+  - name: TTC_SET_MODULATION
+    service: 8
+    subtype: 1
+    func_id: 74
+    description: "Set modulation mode"
+    fields:
+      - { name: mode, type: uint8, description: "0=BPSK, 1=QPSK" }
+  - name: TTC_SET_RX_GAIN
+    service: 8
+    subtype: 1
+    func_id: 75
+    description: "Set receiver AGC target level"
+    fields:
+      - { name: agc_db, type: float32, description: "AGC target in dB (-100 to 0)" }
+  - name: TTC_RANGING_START
+    service: 8
+    subtype: 1
+    func_id: 76
+    description: "Begin ranging sequence (requires frame sync)"
+    fields: []
+  - name: TTC_RANGING_STOP
+    service: 8
+    subtype: 1
+    func_id: 77
+    description: "Stop ranging sequence"
+    fields: []
+  - name: TTC_SET_COHERENT_MODE
+    service: 8
+    subtype: 1
+    func_id: 78
+    description: "Enable/disable coherent transponder mode"
+    fields:
+      - { name: on, type: uint8, description: "0=off (non-coherent), 1=on (coherent)" }
+
+  # ===== S9 Time Management =====
+  - name: SET_TIME
+    service: 9
+    subtype: 1
+    description: "Set spacecraft time"
+    fields:
+      - { name: cuc_seconds, type: uint32 }
+  - name: REQUEST_TIME
+    aliases: [TIME_REPORT_REQUEST]
+    service: 9
+    subtype: 2
+    description: "Request time report"
+    fields: []
+
+  # ===== S11 Scheduling =====
+  - name: SCHEDULE_TC
+    aliases: [TIME_SCHEDULE]
+    service: 11
+    subtype: 4
+    description: "Insert time-tagged TC into schedule"
+    fields:
+      - { name: exec_time_cuc, type: uint32, description: "Execution time (CUC seconds)" }
+      - { name: tc_data, type: bytes, description: "Embedded TC packet" }
+  - name: DELETE_SCHEDULED
+    service: 11
+    subtype: 7
+    description: "Delete scheduled command by ID"
+    fields:
+      - { name: cmd_id, type: uint16 }
+  - name: DISABLE_SCHEDULE
+    service: 11
+    subtype: 9
+    description: "Disable TC schedule execution"
+    fields: []
+  - name: DELETE_ALL_SCHEDULED
+    service: 11
+    subtype: 11
+    description: "Delete all scheduled commands"
+    fields: []
+    criticality: caution
+  - name: ENABLE_SCHEDULE
+    service: 11
+    subtype: 13
+    description: "Enable TC schedule execution"
+    fields: []
+  - name: LIST_SCHEDULE
+    service: 11
+    subtype: 17
+    description: "Request schedule summary report"
+    fields: []
+
+  # ===== S12 On-Board Monitoring =====
+  - name: MON_ENABLE
+    service: 12
+    subtype: 1
+    description: "Enable on-board parameter monitoring"
+    fields: []
+  - name: MON_DISABLE
+    service: 12
+    subtype: 2
+    description: "Disable on-board parameter monitoring"
+    fields: []
+  - name: MON_ADD_DEF
+    service: 12
+    subtype: 6
+    description: "Add parameter monitoring definition"
+    fields:
+      - { name: param_id, type: uint16, description: "Parameter to monitor" }
+      - { name: low_limit, type: float32, description: "Low limit threshold" }
+      - { name: high_limit, type: float32, description: "High limit threshold" }
+  - name: MON_DELETE_DEF
+    service: 12
+    subtype: 7
+    description: "Delete parameter monitoring definition"
+    fields:
+      - { name: param_id, type: uint16, description: "Parameter ID to stop monitoring" }
+
+  # ===== S13 Large Data Transfer =====
+  - name: S13_CREATE_TRANSFER
+    service: 13
+    subtype: 1
+    description: "Create download transfer session for image"
+    fields:
+      - { name: scene_id, type: uint16, description: "Scene ID to download" }
+      - { name: size_mb, type: uint16, description: "Image size in MB (0=default 800MB)" }
+  - name: S13_DOWNLOAD_SEGMENT
+    service: 13
+    subtype: 3
+    description: "Request segment of image data (1024 bytes per block)"
+    fields:
+      - { name: transfer_id, type: uint16, description: "Transfer session ID" }
+      - { name: segment_num, type: uint16, description: "Segment block number" }
+  - name: S13_END_TRANSFER
+    service: 13
+    subtype: 5
+    description: "Complete transfer session and free resources"
+    fields:
+      - { name: transfer_id, type: uint16, description: "Transfer session ID" }
+  - name: S13_REPORT_STATUS
+    service: 13
+    subtype: 9
+    description: "Get transfer progress status"
+    fields:
+      - { name: transfer_id, type: uint16, description: "Transfer session ID" }
+
+  # ===== S15 Onboard Storage =====
+  - name: ENABLE_STORE
+    service: 15
+    subtype: 1
+    description: "Enable onboard TM store"
+    fields:
+      - { name: store_id, type: uint8, description: "1=HK, 2=Event, 3=Science, 4=Alarm" }
+  - name: DISABLE_STORE
+    service: 15
+    subtype: 2
+    description: "Disable onboard TM store"
+    fields:
+      - { name: store_id, type: uint8 }
+  - name: DUMP_STORE
+    service: 15
+    subtype: 9
+    description: "Dump contents of onboard TM store"
+    fields:
+      - { name: store_id, type: uint8 }
+  - name: DELETE_STORE
+    service: 15
+    subtype: 11
+    description: "Delete contents of onboard TM store"
+    fields:
+      - { name: store_id, type: uint8 }
+    criticality: caution
+  - name: STORE_STATUS
+    service: 15
+    subtype: 13
+    description: "Request onboard TM store status"
+    fields: []
+
+  # ===== S17 Connection Test =====
+  - name: CONNECTION_TEST
+    service: 17
+    subtype: 1
+    description: "Send connection test, expect S17.2 response"
+    fields: []
+
+  # ===== S19 Event-Action =====
+  - name: EA_ADD
+    service: 19
+    subtype: 1
+    description: "Add event-action definition"
+    fields:
+      - { name: event_id, type: uint16, description: "Triggering event ID" }
+      - { name: action_tc, type: bytes, description: "TC packet to execute on event" }
+  - name: EA_DELETE
+    service: 19
+    subtype: 2
+    description: "Delete event-action definition"
+    fields:
+      - { name: ea_id, type: uint16, description: "Event-action definition ID" }
+  - name: EA_ENABLE
+    service: 19
+    subtype: 4
+    description: "Enable event-action definition"
+    fields:
+      - { name: ea_id, type: uint16 }
+  - name: EA_DISABLE
+    service: 19
+    subtype: 5
+    description: "Disable event-action definition"
+    fields:
+      - { name: ea_id, type: uint16 }
+
+  # ===== S20 Parameter Management =====
+  - name: SET_PARAM
+    service: 20
+    subtype: 1
+    description: "Set parameter value"
+    fields:
+      - { name: param_id, type: uint16 }
+      - { name: value, type: float32 }
+  - name: GET_PARAM
+    service: 20
+    subtype: 3
+    description: "Request parameter value"
+    fields:
+      - { name: param_id, type: uint16 }
+
+  # ===== S8 Function Management — Legacy Quick-Action Commands (func_id 100+) =====
+  # These are convenience commands for the EPS/TCS MCS display quick-buttons.
+  # Each maps directly to an action in the simulator's command handler.
+  - name: EPS_SA_A_ON_LEGACY
+    service: 8
+    subtype: 1
+    func_id: 100
+    description: "Solar array A ON (legacy quick-action)"
+    fields: []
+    position: eps
+  - name: EPS_SA_A_OFF_LEGACY
+    service: 8
+    subtype: 1
+    func_id: 101
+    description: "Solar array A OFF (legacy quick-action)"
+    fields: []
+    position: eps
+  - name: EPS_SA_B_ON_LEGACY
+    service: 8
+    subtype: 1
+    func_id: 102
+    description: "Solar array B ON (legacy quick-action)"
+    fields: []
+    position: eps
+  - name: EPS_SA_B_OFF_LEGACY
+    service: 8
+    subtype: 1
+    func_id: 103
+    description: "Solar array B OFF (legacy quick-action)"
+    fields: []
+    position: eps
+  - name: TCS_HEATER_BAT_ON_LEGACY
+    service: 8
+    subtype: 1
+    func_id: 104
+    description: "Battery heater ON (legacy quick-action)"
+    fields: []
+    position: eps
+  - name: TCS_HEATER_BAT_OFF_LEGACY
+    service: 8
+    subtype: 1
+    func_id: 105
+    description: "Battery heater OFF (legacy quick-action)"
+    fields: []
+    position: eps
+  - name: TCS_HEATER_OBC_ON_LEGACY
+    service: 8
+    subtype: 1
+    func_id: 106
+    description: "OBC heater ON (legacy quick-action)"
+    fields: []
+    position: eps
+  - name: TCS_HEATER_OBC_OFF_LEGACY
+    service: 8
+    subtype: 1
+    func_id: 107
+    description: "OBC heater OFF (legacy quick-action)"
+    fields: []
+    position: eps

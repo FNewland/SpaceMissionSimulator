@@ -1,0 +1,56 @@
+# Emergency Power Down - Last Resort for Thermal Runaway or Cascading Failures
+# Shuts down all non-essential and even some essential systems
+
+procedure_id: "emergency_power_down"
+name: "Emergency Power Down"
+category: "fdir_response"
+description: "Emergency shutdown to prevent catastrophic failures"
+
+steps:
+  - step_id: 1
+    name: "Payload Emergency Off"
+    description: "Force payload off immediately"
+    delay_s: 0.0
+    command: "s8_command"
+    params:
+      func_id: 26  # PAYLOAD_SET_MODE
+      data: [0x00]  # mode = 0 (off)
+
+  - step_id: 2
+    name: "TCS Emergency Shutdown"
+    description: "Disable all heaters immediately"
+    delay_s: 0.5
+    command: "s8_command"
+    params:
+      func_id: 48  # TCS_DECONTAMINATION_STOP (turns off heating)
+      data: []
+
+  - step_id: 3
+    name: "AOCS Safe Mode"
+    description: "AOCS to safe mode with minimal power"
+    delay_s: 1.0
+    command: "s8_command"
+    params:
+      func_id: 0  # AOCS_SET_MODE
+      data: [0x02]  # mode = 2 (safe)
+
+  - step_id: 4
+    name: "TTC Reduce to RX Only"
+    description: "Disable TTC TX, keep RX for commands"
+    delay_s: 1.5
+    command: "s8_command"
+    params:
+      func_id: 67  # TTC_PA_OFF
+      data: []
+
+  - step_id: 5
+    name: "EPS Emergency Load Shed"
+    description: "Activate load shedding stage 3"
+    delay_s: 2.0
+    command: "s8_command"
+    params:
+      func_id: 25  # EPS_EMERGENCY_LOAD_SHED
+      data: [0x03]  # stage = 3 (survival)
+
+timeout_s: 15.0
+max_retries: 0

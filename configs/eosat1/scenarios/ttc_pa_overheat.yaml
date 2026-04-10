@@ -1,0 +1,21 @@
+name: "PA Overheat and Auto-Shutdown"
+difficulty: INTERMEDIATE
+duration_s: 2400
+briefing: |
+  The power amplifier temperature begins rising at T+120s due to a thermal
+  control anomaly. If not addressed, the PA will auto-shutdown at 70C,
+  causing loss of downlink. The operator must monitor, reduce TX power or
+  duty cycle, and manage the thermal situation.
+events:
+  - time_offset_s: 120
+    action: inject
+    params:
+      subsystem: ttc
+      failure: pa_overheat
+      magnitude: 1.0
+      onset: gradual
+      onset_duration_s: 300
+expected_responses:
+  - { category: detect, description: "Detect PA temperature rising above 55C" }
+  - { category: isolate, description: "Identify thermal control anomaly on PA" }
+  - { category: recover, description: "Reduce TX power or cycle PA off to cool, switch to redundant if needed" }

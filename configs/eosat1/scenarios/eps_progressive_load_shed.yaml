@@ -1,0 +1,49 @@
+name: "Progressive Load Shedding During Extended Eclipse"
+difficulty: ADVANCED
+duration_s: 3600
+briefing: |
+  The spacecraft enters an extended eclipse with battery at 70% SoC. As eclipse
+  continues, battery depletes through successive thresholds (50%, 35%, 25%, 15%).
+  At each threshold the operator must shed loads in priority order — payload first,
+  then FPA cooler, then TTC transmitter, then AOCS reaction wheels — to arrest the
+  decline before FDIR triggers emergency safe mode. Once the spacecraft exits eclipse,
+  the operator must monitor battery recovery and restore loads in reverse priority
+  order, verifying power budget stability at each step.
+events:
+  - time_offset_s: 0
+    action: inject
+    params:
+      subsystem: eps
+      failure: undervoltage
+      magnitude: 2.0
+      onset: step
+  - time_offset_s: 60
+    action: inject
+    params:
+      subsystem: eps
+      failure: undervoltage
+      magnitude: 1.5
+      onset: gradual
+      onset_duration_s: 300
+  - time_offset_s: 600
+    action: inject
+    params:
+      subsystem: eps
+      failure: undervoltage
+      magnitude: 1.0
+      onset: gradual
+      onset_duration_s: 300
+  - time_offset_s: 1200
+    action: inject
+    params:
+      subsystem: eps
+      failure: undervoltage
+      magnitude: 1.0
+      onset: gradual
+      onset_duration_s: 300
+expected_responses:
+  - { category: detect, description: "Detect battery SoC dropping below 50% and bus voltage declining" }
+  - { category: isolate, description: "Correlate depletion with extended eclipse and negative power balance" }
+  - { category: recover, description: "Shed payload at SoC < 50%, FPA cooler at SoC < 35%, TX at SoC < 25%" }
+  - { category: recover, description: "Shed AOCS wheels at SoC < 15% — EMERGENCY level" }
+  - { category: recover, description: "Monitor recovery after eclipse exit and restore loads in reverse order" }

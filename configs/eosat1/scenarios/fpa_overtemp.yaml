@@ -1,0 +1,25 @@
+name: "FPA Cooler Failure"
+difficulty: INTERMEDIATE
+duration_s: 1500
+briefing: |
+  The FPA cooler will fail at T+120s while in imaging mode.
+  The operator must detect the rising FPA temperature and transition
+  the payload to standby before data quality degrades.
+events:
+  - time_offset_s: 60
+    action: inject
+    params:
+      subsystem: eps
+      failure: solar_array_partial
+      magnitude: 0.0
+      array: A
+  - time_offset_s: 120
+    action: inject
+    params:
+      subsystem: payload
+      failure: cooler_failure
+      magnitude: 1.0
+expected_responses:
+  - { category: detect, description: "Detect rising FPA temperature" }
+  - { category: isolate, description: "Identify cooler failure" }
+  - { category: recover, description: "Transition payload to standby or off" }

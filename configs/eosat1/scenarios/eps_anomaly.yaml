@@ -1,0 +1,21 @@
+name: "Solar Array Degradation"
+difficulty: INTERMEDIATE
+duration_s: 2400
+briefing: |
+  Solar Array A will gradually degrade over 10 minutes starting at T+300s.
+  The operator must detect the power imbalance, identify the affected array,
+  and take appropriate action to maintain power budget.
+events:
+  - time_offset_s: 300
+    action: inject
+    params:
+      subsystem: eps
+      failure: solar_array_partial
+      magnitude: 0.7
+      onset: gradual
+      onset_duration_s: 600
+      array: A
+expected_responses:
+  - { category: detect, description: "Detect power generation drop on SA-A" }
+  - { category: isolate, description: "Identify SA-A as the degraded array" }
+  - { category: recover, description: "Shed non-essential loads or switch to safe mode" }

@@ -1,0 +1,20 @@
+name: "CAN Bus A Failure"
+difficulty: ADVANCED
+duration_s: 2400
+briefing: |
+  CAN Bus A experiences a failure at T+180s. Equipment on the failed bus
+  becomes unreachable until bus switchover is commanded. The operator must
+  detect missing HK from affected subsystems and command bus switchover.
+events:
+  - time_offset_s: 180
+    action: inject
+    params:
+      subsystem: obdh
+      failure: bus_failure
+      magnitude: 1.0
+      onset: step
+      bus: A
+expected_responses:
+  - { category: detect, description: "Detect missing or stale HK from subsystems on Bus A" }
+  - { category: isolate, description: "Identify Bus A failure from bus status telemetry" }
+  - { category: recover, description: "Command OBC_SELECT_BUS to switch to Bus B, verify all HK resumes" }

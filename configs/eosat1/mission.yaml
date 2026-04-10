@@ -1,0 +1,30 @@
+# EOSAT-1 Mission Configuration — Ocean Current Monitoring
+name: EOSAT-1
+description: "6U multispectral imaging cubesat for ocean current monitoring"
+spacecraft_apid: 1        # OBC application-software APID
+bootloader_apid: 2        # OBC bootloader APID (distinct source for beacon TM)
+start_in_bootloader: true # Power up in beacon mode (phase 3, SID 11 only, bootloader APID)
+pus_version: 2
+time_epoch: "2000-01-01T12:00:00"
+
+orbit:
+  type: sun_synchronous
+  altitude_km: 450.0
+  inclination_deg: 98.0
+
+payload:
+  type: multispectral_imager
+  bands: [443, 560, 665, 865]  # nm — ocean color
+  target: ocean_current_monitoring
+
+ground_segment:
+  stations: [Iqaluit, Troll]
+  band: S
+
+network:
+  tc_port: 8001
+  tm_port: 8002
+  instr_port: 8003
+  http_port: 8080
+  sim_tick_hz: 1.0
+  tm_max_clients: 8

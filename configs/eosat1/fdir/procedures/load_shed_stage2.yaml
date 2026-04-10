@@ -1,0 +1,47 @@
+# Load Shedding Stage 2 - Triggered at SoC < 20%
+# Payload off, AOCS reduced, non-essential heaters off
+
+procedure_id: "load_shed_stage2"
+name: "Load Shedding Stage 2"
+category: "fdir_response"
+description: "Activate load shedding stage 2 (SoC < 20%)"
+
+steps:
+  - step_id: 1
+    name: "Payload Off"
+    description: "Power off payload completely"
+    delay_s: 0.0
+    command: "s8_command"
+    params:
+      func_id: 26  # PAYLOAD_SET_MODE
+      data: [0x00]  # mode = 0 (off)
+
+  - step_id: 2
+    name: "AOCS Safe Mode"
+    description: "Transition AOCS to safe mode (reduced attitude control)"
+    delay_s: 1.0
+    command: "s8_command"
+    params:
+      func_id: 0  # AOCS_SET_MODE
+      data: [0x02]  # mode = 2 (safe)
+
+  - step_id: 3
+    name: "Disable Non-Essential Heaters"
+    description: "Turn off non-essential heaters"
+    delay_s: 2.0
+    command: "s8_command"
+    params:
+      func_id: 41  # HEATER_OBC (turn off for non-essential zone)
+      data: [0x00]  # off
+
+  - step_id: 4
+    name: "Load Shed Stage 2"
+    description: "Activate load shedding stage 2"
+    delay_s: 3.0
+    command: "s8_command"
+    params:
+      func_id: 25  # EPS_EMERGENCY_LOAD_SHED
+      data: [0x02]  # stage = 2
+
+timeout_s: 25.0
+max_retries: 2

@@ -1,0 +1,2601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EOSAT-1 Commissioning Procedures</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #0a0e17;
+            color: #c8d0e0;
+            line-height: 1.6;
+        }
+
+        /* Sidebar Navigation */
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 0;
+            width: 250px;
+            height: 100vh;
+            background-color: #141b2d;
+            border-right: 2px solid #4fc3f7;
+            overflow-y: auto;
+            padding: 20px;
+            z-index: 1000;
+        }
+
+        .sidebar h1 {
+            font-size: 18px;
+            margin-bottom: 30px;
+            color: #4fc3f7;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .sidebar nav a {
+            display: block;
+            padding: 12px 15px;
+            margin: 8px 0;
+            background-color: rgba(255,255,255,0.05);
+            border-left: 3px solid transparent;
+            color: #c8d0e0;
+            text-decoration: none;
+            border-radius: 4px;
+            transition: all 0.3s ease;
+            font-size: 14px;
+        }
+
+        .sidebar nav a:hover {
+            background-color: rgba(255,255,255,0.1);
+            border-left-color: #4fc3f7;
+        }
+
+        .sidebar nav a.active {
+            border-left-color: #4fc3f7;
+            background-color: rgba(79, 195, 247, 0.15);
+            color: #4fc3f7;
+        }
+
+        /* Main Content */
+        .container {
+            margin-left: 250px;
+            padding: 40px;
+            max-width: 1400px;
+        }
+
+        .header {
+            margin-bottom: 50px;
+            text-align: center;
+            border-bottom: 2px solid #4fc3f7;
+            padding-bottom: 20px;
+        }
+
+        .header h1 {
+            font-size: 42px;
+            margin-bottom: 10px;
+            color: #4fc3f7;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .header p {
+            color: #ff9800;
+            font-size: 16px;
+        }
+
+        section {
+            margin-bottom: 60px;
+            scroll-margin-top: 80px;
+        }
+
+        section h2 {
+            font-size: 28px;
+            margin-bottom: 25px;
+            color: #4fc3f7;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border-left: 5px solid #4fc3f7;
+            padding-left: 15px;
+        }
+
+        section.pos-FD h2 { border-left-color: #4fc3f7; }
+        section.pos-EPS_TCS h2 { border-left-color: #ff9800; }
+        section.pos-AOCS h2 { border-left-color: #4caf50; }
+        section.pos-TTC h2 { border-left-color: #bb86fc; }
+        section.pos-FDIR h2 { border-left-color: #f44336; }
+        section.pos-Payload h2 { border-left-color: #64ffda; }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 30px;
+            background-color: #141b2d;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        th {
+            background-color: rgba(255,255,255,0.05);
+            color: #4fc3f7;
+            padding: 15px;
+            text-align: left;
+            border-bottom: 2px solid #4fc3f7;
+            font-weight: 600;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        td {
+            padding: 12px 15px;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+
+        tr:hover {
+            background-color: rgba(255,255,255,0.03);
+        }
+
+        .step-num {
+            font-weight: 600;
+            color: #4fc3f7;
+            width: 50px;
+        }
+
+        .phase {
+            color: #ff9800;
+            font-weight: 500;
+        }
+
+        .command {
+            font-family: 'Courier New', monospace;
+            color: #bb86fc;
+            font-weight: 600;
+            background-color: rgba(187, 134, 252, 0.1);
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+
+        .param {
+            font-family: 'Courier New', monospace;
+            color: #64ffda;
+            font-weight: 600;
+            background-color: rgba(100, 255, 218, 0.1);
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+
+        .go-gate {
+            border: 2px solid #4caf50;
+            background-color: rgba(76, 175, 80, 0.1);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-weight: 600;
+            color: #4caf50;
+            text-align: center;
+        }
+
+        .no-go-gate {
+            border: 2px solid #f44336;
+            background-color: rgba(244, 67, 54, 0.1);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-weight: 600;
+            color: #f44336;
+            text-align: center;
+        }
+
+        .contingency-link {
+            color: #ff9800;
+            text-decoration: none;
+            font-weight: 600;
+            cursor: pointer;
+            border-bottom: 1px dashed #ff9800;
+        }
+
+        .contingency-link:hover {
+            color: #4fc3f7;
+            border-bottom-color: #4fc3f7;
+        }
+
+        .contingency {
+            background-color: #141b2d;
+            border: 2px solid #ff9800;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+            display: none;
+        }
+
+        .contingency.active {
+            display: block;
+        }
+
+        .contingency h4 {
+            color: #ff9800;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+
+        .contingency-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+            padding: 15px;
+            background-color: rgba(255, 152, 0, 0.08);
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+
+        .contingency-header:hover {
+            background-color: rgba(255, 152, 0, 0.15);
+        }
+
+        .contingency-title {
+            font-weight: 600;
+            font-size: 15px;
+        }
+
+        .toggle-icon {
+            color: #ff9800;
+            font-size: 18px;
+        }
+
+        .contingency-content {
+            display: none;
+            padding: 15px;
+            background-color: rgba(0,0,0,0.2);
+            border-radius: 4px;
+        }
+
+        .contingency-content.active {
+            display: block;
+        }
+
+        .contingency-content p {
+            margin: 10px 0;
+            font-size: 14px;
+        }
+
+        .contingency-content ol {
+            margin-left: 20px;
+            margin-top: 10px;
+            margin-bottom: 10px;
+        }
+
+        .contingency-content li {
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+
+        .contingency-meta {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 15px;
+            font-size: 13px;
+        }
+
+        .contingency-meta-item {
+            background-color: rgba(255,255,255,0.05);
+            padding: 10px;
+            border-radius: 3px;
+            border-left: 3px solid #ff9800;
+        }
+
+        .position-card {
+            background-color: #141b2d;
+            border: 2px solid;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+
+        .position-card h3 {
+            font-size: 18px;
+            margin-bottom: 15px;
+            font-weight: 600;
+        }
+
+        .position-card.pos-FD { border-color: #4fc3f7; }
+        .position-card.pos-FD h3 { color: #4fc3f7; }
+
+        .position-card.pos-EPS_TCS { border-color: #ff9800; }
+        .position-card.pos-EPS_TCS h3 { color: #ff9800; }
+
+        .position-card.pos-AOCS { border-color: #4caf50; }
+        .position-card.pos-AOCS h3 { color: #4caf50; }
+
+        .position-card.pos-TTC { border-color: #bb86fc; }
+        .position-card.pos-TTC h3 { color: #bb86fc; }
+
+        .position-card.pos-FDIR { border-color: #f44336; }
+        .position-card.pos-FDIR h3 { color: #f44336; }
+
+        .position-card.pos-Payload { border-color: #64ffda; }
+        .position-card.pos-Payload h3 { color: #64ffda; }
+
+        .step-list {
+            list-style: none;
+        }
+
+        .step-list li {
+            padding: 10px;
+            margin: 8px 0;
+            background-color: rgba(255,255,255,0.03);
+            border-left: 3px solid;
+            border-radius: 3px;
+            font-size: 13px;
+        }
+
+        .position-card.pos-FD .step-list li { border-left-color: #4fc3f7; }
+        .position-card.pos-EPS_TCS .step-list li { border-left-color: #ff9800; }
+        .position-card.pos-AOCS .step-list li { border-left-color: #4caf50; }
+        .position-card.pos-TTC .step-list li { border-left-color: #bb86fc; }
+        .position-card.pos-FDIR .step-list li { border-left-color: #f44336; }
+        .position-card.pos-Payload .step-list li { border-left-color: #64ffda; }
+
+        .step-list li strong {
+            color: #4fc3f7;
+        }
+
+        .back-to-top {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            width: 50px;
+            height: 50px;
+            background-color: #4fc3f7;
+            color: #0a0e17;
+            border: none;
+            border-radius: 50%;
+            font-size: 24px;
+            cursor: pointer;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 999;
+            transition: all 0.3s ease;
+        }
+
+        .back-to-top:hover {
+            background-color: #ff9800;
+            transform: scale(1.1);
+        }
+
+        .back-to-top.show {
+            display: flex;
+        }
+
+        @media (max-width: 1200px) {
+            .container {
+                margin-left: 0;
+            }
+
+            .sidebar {
+                transform: translateX(-100%);
+                transition: transform 0.3s ease;
+            }
+
+            .sidebar.active {
+                transform: translateX(0);
+            }
+        }
+
+        .info-box {
+            background-color: rgba(255, 152, 0, 0.1);
+            border-left: 4px solid #ff9800;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+
+        .info-box strong {
+            color: #ff9800;
+        }
+    </style>
+</head>
+<body>
+    <!-- Sidebar Navigation -->
+    <div class="sidebar">
+        <h1>EOSAT-1</h1>
+        <nav>
+            <a href="#overview" class="nav-link active">Flight Director Overview</a>
+            <a href="#eps-tcs" class="nav-link">Power & Thermal</a>
+            <a href="#aocs" class="nav-link">Flight Dynamics</a>
+            <a href="#ttc" class="nav-link">TT&C</a>
+            <a href="#fdir" class="nav-link">FDIR/Systems</a>
+            <a href="#payload" class="nav-link">Payload Ops</a>
+            <a href="#contingency" class="nav-link">Contingency Procedures</a>
+        </nav>
+    </div>
+
+    <!-- Main Content -->
+    <div class="container">
+        <div class="header">
+            <h1>EOSAT-1 Commissioning Procedures</h1>
+            <p>Spacecraft Simulator Commissioning Timeline & Position-Specific Operations</p>
+        </div>
+
+        <!-- Flight Director Overview Section -->
+        <section id="overview" class="pos-FD">
+            <h2>Flight Director Overview</h2>
+            <div class="info-box">
+                <strong>Mission Phase:</strong> Post-separation to Nominal Operations (T+0:00 to T+18:00)
+                <br><strong>Total Steps:</strong> 73 | <strong>Positions:</strong> 6 | <strong>Duration:</strong> 18 hours
+            </div>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Step</th>
+                        <th>Phase</th>
+                        <th>Time</th>
+                        <th>Action</th>
+                        <th>Position</th>
+                        <th>Commands</th>
+                        <th>TM Checks</th>
+                        <th>Gate</th>
+                        <th>Contingency</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="step-num">1</td>
+                        <td class="phase">Separation</td>
+                        <td>T+0:00</td>
+                        <td>Verify separation</td>
+                        <td><span style="color: #4fc3f7; font-weight: 600;">FD</span></td>
+                        <td><span class="command">N/A</span></td>
+                        <td><span class="param">SEP_STATUS=1</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">2</td>
+                        <td class="phase">Post-Sep Hold</td>
+                        <td>T+0:10</td>
+                        <td>Safe mode activation</td>
+                        <td><span style="color: #4fc3f7; font-weight: 600;">FD</span></td>
+                        <td><span class="command">N/A</span></td>
+                        <td><span class="param">MODE_STATUS=SAFE</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-BOOT-001')">C-BOOT-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">3</td>
+                        <td class="phase">Solar Array Deploy</td>
+                        <td>T+0:30</td>
+                        <td>Deploy solar arrays</td>
+                        <td><span style="color: #ff9800; font-weight: 600;">EPS_TCS</span></td>
+                        <td><span class="command">func_id 19</span></td>
+                        <td><span class="param">SOLAR_DEPLOY=OK</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-EPS-001')">C-EPS-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">4</td>
+                        <td class="phase">OBC Boot</td>
+                        <td>T+0:45</td>
+                        <td>Boot onboard computer</td>
+                        <td><span style="color: #f44336; font-weight: 600;">FDIR_Systems</span></td>
+                        <td><span class="command">func_id 55</span></td>
+                        <td><span class="param">OBC_STATUS=OPERATIONAL</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-BOOT-001')">C-BOOT-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">5</td>
+                        <td class="phase">OBC Initialization</td>
+                        <td>T+1:00</td>
+                        <td>Load boot parameters</td>
+                        <td><span style="color: #f44336; font-weight: 600;">FDIR_Systems</span></td>
+                        <td><span class="command">func_id 55</span></td>
+                        <td><span class="param">BOOT_PROG=100%</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-BOOT-001')">C-BOOT-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">6</td>
+                        <td class="phase">OBDH Health Check</td>
+                        <td>T+1:15</td>
+                        <td>Verify OBDH ready</td>
+                        <td><span style="color: #f44336; font-weight: 600;">FDIR_Systems</span></td>
+                        <td><span class="command">func_id 58</span></td>
+                        <td><span class="param">OBDH_HEALTH=OK</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-OBDH-001')">C-OBDH-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">7</td>
+                        <td class="phase">Initial Telemetry</td>
+                        <td>T+1:30</td>
+                        <td>Confirm downlink</td>
+                        <td><span style="color: #bb86fc; font-weight: 600;">TTC</span></td>
+                        <td><span class="command">func_id 65</span></td>
+                        <td><span class="param">TLM_RATE=1kbps</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-TTC-001')">C-TTC-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">8</td>
+                        <td class="phase">EPS Power On</td>
+                        <td>T+1:45</td>
+                        <td>Primary bus activation</td>
+                        <td><span style="color: #ff9800; font-weight: 600;">EPS_TCS</span></td>
+                        <td><span class="command">func_id 19</span></td>
+                        <td><span class="param">BUS_V=28.5V</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-EPS-002')">C-EPS-002</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">9</td>
+                        <td class="phase">Battery Health</td>
+                        <td>T+2:00</td>
+                        <td>Check battery status</td>
+                        <td><span style="color: #ff9800; font-weight: 600;">EPS_TCS</span></td>
+                        <td><span class="command">func_id 20</span></td>
+                        <td><span class="param">BATT_V=25.2V</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-EPS-003')">C-EPS-003</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">10</td>
+                        <td class="phase">Charge Rate Setup</td>
+                        <td>T+2:15</td>
+                        <td>Configure charging</td>
+                        <td><span style="color: #ff9800; font-weight: 600;">EPS_TCS</span></td>
+                        <td><span class="command">func_id 23</span></td>
+                        <td><span class="param">CHARGE_RATE=5A</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-EPS-001')">C-EPS-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">11</td>
+                        <td class="phase">EPS Subsystem Health</td>
+                        <td>T+2:30</td>
+                        <td>Full EPS check</td>
+                        <td><span style="color: #ff9800; font-weight: 600;">EPS_TCS</span></td>
+                        <td><span class="command">func_id 20</span></td>
+                        <td><span class="param">EPS_HEALTH=OK</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-EPS-002')">C-EPS-002</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">12</td>
+                        <td class="phase">Power Distribution</td>
+                        <td>T+2:45</td>
+                        <td>Verify PDM status</td>
+                        <td><span style="color: #ff9800; font-weight: 600;">EPS_TCS</span></td>
+                        <td><span class="command">func_id 19</span></td>
+                        <td><span class="param">PDM_STATUS=OK</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-EPS-003')">C-EPS-003</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">13</td>
+                        <td class="phase">Antenna Deployment Prep</td>
+                        <td>T+3:00</td>
+                        <td>Ready antenna deploy</td>
+                        <td><span style="color: #bb86fc; font-weight: 600;">TTC</span></td>
+                        <td><span class="command">func_id 69</span></td>
+                        <td><span class="param">ANTENNA_CMD=RDY</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-TTC-002')">C-TTC-002</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">14</td>
+                        <td class="phase">Antenna Deploy</td>
+                        <td>T+3:15</td>
+                        <td>Deploy comms antenna</td>
+                        <td><span style="color: #bb86fc; font-weight: 600;">TTC</span></td>
+                        <td><span class="command">func_id 69</span></td>
+                        <td><span class="param">ANTENNA_STATUS=DEPLOYED</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-TTC-002')">C-TTC-002</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">15</td>
+                        <td class="phase">Comms Link Establish</td>
+                        <td>T+3:30</td>
+                        <td>Verify command link</td>
+                        <td><span style="color: #bb86fc; font-weight: 600;">TTC</span></td>
+                        <td><span class="command">func_id 65</span></td>
+                        <td><span class="param">CMD_LINK=LOCKED</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-TTC-001')">C-TTC-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">16</td>
+                        <td class="phase">Ranging Setup</td>
+                        <td>T+3:45</td>
+                        <td>Configure ranging</td>
+                        <td><span style="color: #bb86fc; font-weight: 600;">TTC</span></td>
+                        <td><span class="command">func_id 65</span></td>
+                        <td><span class="param">RANGE_MOD=READY</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-TTC-003')">C-TTC-003</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">17</td>
+                        <td class="phase">Downlink Verification</td>
+                        <td>T+4:00</td>
+                        <td>Confirm telemetry stream</td>
+                        <td><span style="color: #bb86fc; font-weight: 600;">TTC</span></td>
+                        <td><span class="command">func_id 65</span></td>
+                        <td><span class="param">TLM_STREAM=ACTIVE</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-TTC-003')">C-TTC-003</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">18</td>
+                        <td class="phase">FDIR Baseline</td>
+                        <td>T+4:15</td>
+                        <td>Load FDIR tables</td>
+                        <td><span style="color: #f44336; font-weight: 600;">FDIR_Systems</span></td>
+                        <td><span class="command">func_id 61</span></td>
+                        <td><span class="param">FDIR_TBL=LOADED</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-OBDH-002')">C-OBDH-002</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">19</td>
+                        <td class="phase">OBDH Subsystem Health</td>
+                        <td>T+4:30</td>
+                        <td>Check all OBDH modules</td>
+                        <td><span style="color: #f44336; font-weight: 600;">FDIR_Systems</span></td>
+                        <td><span class="command">func_id 58</span></td>
+                        <td><span class="param">OBDH_SUBSYS=HEALTHY</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-OBDH-001')">C-OBDH-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">20</td>
+                        <td class="phase">Memory Diagnostic</td>
+                        <td>T+4:45</td>
+                        <td>RAM/ROM verification</td>
+                        <td><span style="color: #f44336; font-weight: 600;">FDIR_Systems</span></td>
+                        <td><span class="command">func_id 61</span></td>
+                        <td><span class="param">MEM_STATUS=OK</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-OBDH-002')">C-OBDH-002</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">21</td>
+                        <td class="phase">OBDH RW Interface</td>
+                        <td>T+5:00</td>
+                        <td>Verify reaction wheel link</td>
+                        <td><span style="color: #f44336; font-weight: 600;">FDIR_Systems</span></td>
+                        <td><span class="command">func_id 58</span></td>
+                        <td><span class="param">RW_COMM=ESTABLISHED</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-OBDH-001')">C-OBDH-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">22</td>
+                        <td class="phase">OBDH MTQ Interface</td>
+                        <td>T+5:15</td>
+                        <td>Verify magnetorquer link</td>
+                        <td><span style="color: #f44336; font-weight: 600;">FDIR_Systems</span></td>
+                        <td><span class="command">func_id 58</span></td>
+                        <td><span class="param">MTQ_COMM=ESTABLISHED</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-OBDH-002')">C-OBDH-002</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">23</td>
+                        <td class="phase">OBDH Star Tracker Link</td>
+                        <td>T+5:30</td>
+                        <td>Verify ST1 link</td>
+                        <td><span style="color: #f44336; font-weight: 600;">FDIR_Systems</span></td>
+                        <td><span class="command">func_id 58</span></td>
+                        <td><span class="param">ST1_COMM=ESTABLISHED</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-OBDH-001')">C-OBDH-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">24</td>
+                        <td class="phase">Watchdog Enable</td>
+                        <td>T+5:45</td>
+                        <td>Arm watchdog timer</td>
+                        <td><span style="color: #f44336; font-weight: 600;">FDIR_Systems</span></td>
+                        <td><span class="command">func_id 59</span></td>
+                        <td><span class="param">WATCHDOG=ENABLED</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-OBDH-001')">C-OBDH-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">25</td>
+                        <td class="phase">AOCS Mode Set</td>
+                        <td>T+6:00</td>
+                        <td>Set AOCS to Sun Pointing</td>
+                        <td><span style="color: #4caf50; font-weight: 600;">AOCS</span></td>
+                        <td><span class="command">func_id 0</span></td>
+                        <td><span class="param">AOCS_MODE=SUNPOINT</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-AOCS-001')">C-AOCS-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">26</td>
+                        <td class="phase">Sun Sensor Activation</td>
+                        <td>T+6:15</td>
+                        <td>Enable coarse sun sensor</td>
+                        <td><span style="color: #4caf50; font-weight: 600;">AOCS</span></td>
+                        <td><span class="command">func_id 0</span></td>
+                        <td><span class="param">SS_ACTIVE=TRUE</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-AOCS-002')">C-AOCS-002</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">27</td>
+                        <td class="phase">MTQ Activation</td>
+                        <td>T+6:30</td>
+                        <td>Enable magnetorquers</td>
+                        <td><span style="color: #4caf50; font-weight: 600;">AOCS</span></td>
+                        <td><span class="command">func_id 9</span></td>
+                        <td><span class="param">MTQ_STATUS=ACTIVE</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-AOCS-003')">C-AOCS-003</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">28</td>
+                        <td class="phase">Momentum Desaturation</td>
+                        <td>T+6:45</td>
+                        <td>Initial desat cycle</td>
+                        <td><span style="color: #4caf50; font-weight: 600;">AOCS</span></td>
+                        <td><span class="command">func_id 1</span></td>
+                        <td><span class="param">DESAT_CYCLE=1</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-AOCS-004')">C-AOCS-004</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">29</td>
+                        <td class="phase">Star Tracker Power</td>
+                        <td>T+7:00</td>
+                        <td>Power on ST1</td>
+                        <td><span style="color: #4caf50; font-weight: 600;">AOCS</span></td>
+                        <td><span class="command">func_id 4</span></td>
+                        <td><span class="param">ST1_PWR=ON</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-AOCS-002')">C-AOCS-002</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">30</td>
+                        <td class="phase">Star Tracker Init</td>
+                        <td>T+7:15</td>
+                        <td>ST1 acquisition search</td>
+                        <td><span style="color: #4caf50; font-weight: 600;">AOCS</span></td>
+                        <td><span class="command">func_id 4</span></td>
+                        <td><span class="param">ST1_STATUS=SEARCHING</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-AOCS-002')">C-AOCS-002</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">31</td>
+                        <td class="phase">Star Tracker Lock</td>
+                        <td>T+7:30</td>
+                        <td>ST1 target acquisition</td>
+                        <td><span style="color: #4caf50; font-weight: 600;">AOCS</span></td>
+                        <td><span class="command">func_id 4</span></td>
+                        <td><span class="param">ST1_LOCKED=TRUE</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-AOCS-003')">C-AOCS-003</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">32</td>
+                        <td class="phase">RW Spin Up</td>
+                        <td>T+7:45</td>
+                        <td>Accelerate reaction wheel</td>
+                        <td><span style="color: #4caf50; font-weight: 600;">AOCS</span></td>
+                        <td><span class="command">func_id 11</span></td>
+                        <td><span class="param">RW_SPEED=3000rpm</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-AOCS-001')">C-AOCS-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">33</td>
+                        <td class="phase">Coarse Alignment</td>
+                        <td>T+8:00</td>
+                        <td>3-axis attitude align</td>
+                        <td><span style="color: #4caf50; font-weight: 600;">AOCS</span></td>
+                        <td><span class="command">func_id 10</span></td>
+                        <td><span class="param">ROLL_ERR=0.5deg</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-AOCS-004')">C-AOCS-004</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">34</td>
+                        <td class="phase">Fine Pointing Prep</td>
+                        <td>T+8:15</td>
+                        <td>Ready fine control</td>
+                        <td><span style="color: #4caf50; font-weight: 600;">AOCS</span></td>
+                        <td><span class="command">func_id 0</span></td>
+                        <td><span class="param">FINE_PNT=READY</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-AOCS-001')">C-AOCS-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">35</td>
+                        <td class="phase">Momentum Status</td>
+                        <td>T+8:30</td>
+                        <td>Check RW momentum</td>
+                        <td><span style="color: #4caf50; font-weight: 600;">AOCS</span></td>
+                        <td><span class="command">func_id 11</span></td>
+                        <td><span class="param">RW_MOMENTUM=50%</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-AOCS-001')">C-AOCS-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">36</td>
+                        <td class="phase">TCS Activation</td>
+                        <td>T+8:45</td>
+                        <td>Enable thermal control</td>
+                        <td><span style="color: #ff9800; font-weight: 600;">EPS_TCS</span></td>
+                        <td><span class="command">func_id 40</span></td>
+                        <td><span class="param">TCS_STATUS=ACTIVE</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-TCS-001')">C-TCS-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">37</td>
+                        <td class="phase">Heater 1 Setup</td>
+                        <td>T+9:00</td>
+                        <td>Configure heater strip 1</td>
+                        <td><span style="color: #ff9800; font-weight: 600;">EPS_TCS</span></td>
+                        <td><span class="command">func_id 40</span></td>
+                        <td><span class="param">HTR1_PWR=10W</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-TCS-002')">C-TCS-002</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">38</td>
+                        <td class="phase">Heater 2 Setup</td>
+                        <td>T+9:15</td>
+                        <td>Configure heater strip 2</td>
+                        <td><span style="color: #ff9800; font-weight: 600;">EPS_TCS</span></td>
+                        <td><span class="command">func_id 41</span></td>
+                        <td><span class="param">HTR2_PWR=10W</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-TCS-002')">C-TCS-002</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">39</td>
+                        <td class="phase">Radiator Prep</td>
+                        <td>T+9:30</td>
+                        <td>Check radiator mounting</td>
+                        <td><span style="color: #ff9800; font-weight: 600;">EPS_TCS</span></td>
+                        <td><span class="command">func_id 40</span></td>
+                        <td><span class="param">RAD_STATUS=NOMINAL</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-TCS-001')">C-TCS-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">40</td>
+                        <td class="phase">Thermistor Check</td>
+                        <td>T+9:45</td>
+                        <td>Verify thermal sensors</td>
+                        <td><span style="color: #ff9800; font-weight: 600;">EPS_TCS</span></td>
+                        <td><span class="command">func_id 40</span></td>
+                        <td><span class="param">THERM_SENSORS=OK</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-TCS-001')">C-TCS-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">41</td>
+                        <td class="phase">Temperature Setpoint</td>
+                        <td>T+10:00</td>
+                        <td>Set control setpoints</td>
+                        <td><span style="color: #ff9800; font-weight: 600;">EPS_TCS</span></td>
+                        <td><span class="command">func_id 44</span></td>
+                        <td><span class="param">T_SET=20.0C</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-TCS-002')">C-TCS-002</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">42</td>
+                        <td class="phase">TCS Autonomous</td>
+                        <td>T+10:15</td>
+                        <td>Enable autonomous control</td>
+                        <td><span style="color: #ff9800; font-weight: 600;">EPS_TCS</span></td>
+                        <td><span class="command">func_id 44</span></td>
+                        <td><span class="param">TCS_AUTO=ON</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-TCS-001')">C-TCS-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">43</td>
+                        <td class="phase">Payload Power Line</td>
+                        <td>T+10:30</td>
+                        <td>Enable payload supply</td>
+                        <td><span style="color: #ff9800; font-weight: 600;">EPS_TCS</span></td>
+                        <td><span class="command">func_id 19</span></td>
+                        <td><span class="param">PL_BUS_V=12V</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-PL-001')">C-PL-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">44</td>
+                        <td class="phase">Payload Health Check</td>
+                        <td>T+10:45</td>
+                        <td>PL subsystem status</td>
+                        <td><span style="color: #64ffda; font-weight: 600;">Payload_Ops</span></td>
+                        <td><span class="command">func_id 26</span></td>
+                        <td><span class="param">PL_HEALTH=OK</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-PL-002')">C-PL-002</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">45</td>
+                        <td class="phase">Imager Mode Setup</td>
+                        <td>T+11:00</td>
+                        <td>Configure imager mode</td>
+                        <td><span style="color: #64ffda; font-weight: 600;">Payload_Ops</span></td>
+                        <td><span class="command">func_id 26</span></td>
+                        <td><span class="param">IMG_MODE=READY</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-PL-001')">C-PL-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">46</td>
+                        <td class="phase">Imager Calibration</td>
+                        <td>T+11:15</td>
+                        <td>Load calibration data</td>
+                        <td><span style="color: #64ffda; font-weight: 600;">Payload_Ops</span></td>
+                        <td><span class="command">func_id 37</span></td>
+                        <td><span class="param">CAL_STATUS=LOADED</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-PL-003')">C-PL-003</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">47</td>
+                        <td class="phase">Band Selection</td>
+                        <td>T+11:30</td>
+                        <td>Configure spectral bands</td>
+                        <td><span style="color: #64ffda; font-weight: 600;">Payload_Ops</span></td>
+                        <td><span class="command">func_id 33</span></td>
+                        <td><span class="param">BANDS=8/10</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-PL-002')">C-PL-002</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">48</td>
+                        <td class="phase">Integration Time</td>
+                        <td>T+11:45</td>
+                        <td>Set integration time</td>
+                        <td><span style="color: #64ffda; font-weight: 600;">Payload_Ops</span></td>
+                        <td><span class="command">func_id 34</span></td>
+                        <td><span class="param">INT_TIME=100ms</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-PL-003')">C-PL-003</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">49</td>
+                        <td class="phase">Gain Setup</td>
+                        <td>T+12:00</td>
+                        <td>Configure gain settings</td>
+                        <td><span style="color: #64ffda; font-weight: 600;">Payload_Ops</span></td>
+                        <td><span class="command">func_id 35</span></td>
+                        <td><span class="param">GAIN=AUTO</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-PL-002')">C-PL-002</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">50</td>
+                        <td class="phase">Storage Allocation</td>
+                        <td>T+12:15</td>
+                        <td>Allocate onboard storage</td>
+                        <td><span style="color: #64ffda; font-weight: 600;">Payload_Ops</span></td>
+                        <td><span class="command">func_id 28</span></td>
+                        <td><span class="param">STORAGE=512GB</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-PL-004')">C-PL-004</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">51</td>
+                        <td class="phase">Payload Startup</td>
+                        <td>T+12:30</td>
+                        <td>Full payload boot</td>
+                        <td><span style="color: #64ffda; font-weight: 600;">Payload_Ops</span></td>
+                        <td><span class="command">func_id 26</span></td>
+                        <td><span class="param">PL_STATUS=OPERATIONAL</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-PL-001')">C-PL-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">52</td>
+                        <td class="phase">Dark Frame Capture</td>
+                        <td>T+12:45</td>
+                        <td>Acquire dark frames</td>
+                        <td><span style="color: #64ffda; font-weight: 600;">Payload_Ops</span></td>
+                        <td><span class="command">func_id 28</span></td>
+                        <td><span class="param">DARK_FRAMES=100</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-PL-003')">C-PL-003</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">53</td>
+                        <td class="phase">Flat Field Capture</td>
+                        <td>T+13:00</td>
+                        <td>Acquire flat field</td>
+                        <td><span style="color: #64ffda; font-weight: 600;">Payload_Ops</span></td>
+                        <td><span class="command">func_id 28</span></td>
+                        <td><span class="param">FLAT_FIELD=OK</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-PL-004')">C-PL-004</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">54</td>
+                        <td class="phase">Payload Checkout</td>
+                        <td>T+13:15</td>
+                        <td>Full functional test</td>
+                        <td><span style="color: #64ffda; font-weight: 600;">Payload_Ops</span></td>
+                        <td><span class="command">func_id 26</span></td>
+                        <td><span class="param">PL_TEST=PASS</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-PL-002')">C-PL-002</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">55</td>
+                        <td class="phase">Sun Pointed Attitude</td>
+                        <td>T+13:30</td>
+                        <td>Transition to sun point</td>
+                        <td><span style="color: #4caf50; font-weight: 600;">AOCS</span></td>
+                        <td><span class="command">func_id 0</span></td>
+                        <td><span class="param">ATTITUDE_MODE=SUNPT</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-AOCS-001')">C-AOCS-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">56</td>
+                        <td class="phase">Fine Point Engage</td>
+                        <td>T+13:45</td>
+                        <td>Enable fine pointing</td>
+                        <td><span style="color: #4caf50; font-weight: 600;">AOCS</span></td>
+                        <td><span class="command">func_id 10</span></td>
+                        <td><span class="param">FINE_PNT=ENGAGED</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-AOCS-004')">C-AOCS-004</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">57</td>
+                        <td class="phase">Attitude Trim</td>
+                        <td>T+14:00</td>
+                        <td>Trim to target attitude</td>
+                        <td><span style="color: #4caf50; font-weight: 600;">AOCS</span></td>
+                        <td><span class="command">func_id 10</span></td>
+                        <td><span class="param">ATT_ERR=<0.1deg</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-AOCS-004')">C-AOCS-004</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">58</td>
+                        <td class="phase">Slew Profile Test</td>
+                        <td>T+14:15</td>
+                        <td>Test attitude slew</td>
+                        <td><span style="color: #4caf50; font-weight: 600;">AOCS</span></td>
+                        <td><span class="command">func_id 10</span></td>
+                        <td><span class="param">SLEW_ACTIVE=TRUE</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-AOCS-001')">C-AOCS-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">59</td>
+                        <td class="phase">Momentum Control</td>
+                        <td>T+14:30</td>
+                        <td>Verify momentum mgmt</td>
+                        <td><span style="color: #4caf50; font-weight: 600;">AOCS</span></td>
+                        <td><span class="command">func_id 11</span></td>
+                        <td><span class="param">MOMENTUM=NOMINAL</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-AOCS-003')">C-AOCS-003</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">60</td>
+                        <td class="phase">Fine Pointing OK</td>
+                        <td>T+14:45</td>
+                        <td>Confirm pointing stable</td>
+                        <td><span style="color: #4caf50; font-weight: 600;">AOCS</span></td>
+                        <td><span class="command">func_id 10</span></td>
+                        <td><span class="param">PNT_ERROR=<0.05deg</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-AOCS-004')">C-AOCS-004</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">61</td>
+                        <td class="phase">Payload Downlink</td>
+                        <td>T+15:00</td>
+                        <td>Data downlink format</td>
+                        <td><span style="color: #64ffda; font-weight: 600;">Payload_Ops</span></td>
+                        <td><span class="command">func_id 29</span></td>
+                        <td><span class="param">DL_FORMAT=SET</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-DL-001')">C-DL-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">62</td>
+                        <td class="phase">Downlink Rate 1</td>
+                        <td>T+15:15</td>
+                        <td>Configure high rate DL</td>
+                        <td><span style="color: #bb86fc; font-weight: 600;">TTC</span></td>
+                        <td><span class="command">func_id 65</span></td>
+                        <td><span class="param">DL_RATE=10Mbps</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-TTC-001')">C-TTC-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">63</td>
+                        <td class="phase">Downlink Verify</td>
+                        <td>T+15:30</td>
+                        <td>Verify payload data</td>
+                        <td><span style="color: #bb86fc; font-weight: 600;">TTC</span></td>
+                        <td><span class="command">func_id 65</span></td>
+                        <td><span class="param">PL_DATA=VALID</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-DL-001')">C-DL-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">64</td>
+                        <td class="phase">Recording Status</td>
+                        <td>T+15:45</td>
+                        <td>Check data recording</td>
+                        <td><span style="color: #64ffda; font-weight: 600;">Payload_Ops</span></td>
+                        <td><span class="command">func_id 28</span></td>
+                        <td><span class="param">REC_STATUS=ACTIVE</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-PL-004')">C-PL-004</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">65</td>
+                        <td class="phase">Diagnostic Snapshot</td>
+                        <td>T+16:00</td>
+                        <td>Capture system status</td>
+                        <td><span style="color: #f44336; font-weight: 600;">FDIR_Systems</span></td>
+                        <td><span class="command">func_id 61</span></td>
+                        <td><span class="param">DIAG_SNAPSHOT=DONE</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-OBDH-001')">C-OBDH-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">66</td>
+                        <td class="phase">FDIR Arming</td>
+                        <td>T+16:15</td>
+                        <td>Arm automated responses</td>
+                        <td><span style="color: #f44336; font-weight: 600;">FDIR_Systems</span></td>
+                        <td><span class="command">func_id 62</span></td>
+                        <td><span class="param">FDIR_ARMED=TRUE</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-OBDH-002')">C-OBDH-002</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">67</td>
+                        <td class="phase">Error Thresholds</td>
+                        <td>T+16:30</td>
+                        <td>Load error limits</td>
+                        <td><span style="color: #f44336; font-weight: 600;">FDIR_Systems</span></td>
+                        <td><span class="command">func_id 62</span></td>
+                        <td><span class="param">THRESHOLDS=LOADED</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-OBDH-001')">C-OBDH-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">68</td>
+                        <td class="phase">Recovery Procedures</td>
+                        <td>T+16:45</td>
+                        <td>Enable recovery modes</td>
+                        <td><span style="color: #f44336; font-weight: 600;">FDIR_Systems</span></td>
+                        <td><span class="command">func_id 62</span></td>
+                        <td><span class="param">RECOVERY=ENABLED</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-OBDH-002')">C-OBDH-002</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">69</td>
+                        <td class="phase">FDIR Verification</td>
+                        <td>T+17:00</td>
+                        <td>Confirm FDIR ready</td>
+                        <td><span style="color: #f44336; font-weight: 600;">FDIR_Systems</span></td>
+                        <td><span class="command">func_id 62</span></td>
+                        <td><span class="param">FDIR_STATUS=READY</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-OBDH-001')">C-OBDH-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">70</td>
+                        <td class="phase">Final Attitude Check</td>
+                        <td>T+17:15</td>
+                        <td>Verify attitude nominal</td>
+                        <td><span style="color: #4caf50; font-weight: 600;">AOCS</span></td>
+                        <td><span class="command">func_id 10</span></td>
+                        <td><span class="param">ATT_NOMINAL=TRUE</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-AOCS-001')">C-AOCS-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">71</td>
+                        <td class="phase">Power Final Check</td>
+                        <td>T+17:30</td>
+                        <td>Verify power nominal</td>
+                        <td><span style="color: #ff9800; font-weight: 600;">EPS_TCS</span></td>
+                        <td><span class="command">func_id 20</span></td>
+                        <td><span class="param">PWR_NOMINAL=TRUE</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td><span class="contingency-link" onclick="scrollToContingency('C-EPS-001')">C-EPS-001</span></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">72</td>
+                        <td class="phase">Commissioning Summary</td>
+                        <td>T+17:45</td>
+                        <td>Log all results</td>
+                        <td><span style="color: #4fc3f7; font-weight: 600;">FD</span></td>
+                        <td><span class="command">N/A</span></td>
+                        <td><span class="param">SUMMARY=COMPLETE</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">73</td>
+                        <td class="phase">Nominal Operations</td>
+                        <td>T+18:00</td>
+                        <td>Transition to ops phase</td>
+                        <td><span style="color: #4fc3f7; font-weight: 600;">FD</span></td>
+                        <td><span class="command">N/A</span></td>
+                        <td><span class="param">OPS_STATUS=ACTIVE</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                        <td></td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section id="eps-tcs" class="pos-EPS_TCS">
+            <h2>Power & Thermal (eps_tcs)</h2>
+            <div class="info-box">
+                <strong>Responsible Position:</strong> Power & Thermal (eps_tcs)
+                <br><strong>Assigned Steps:</strong> 15 | <strong>Color Code:</strong> <span style="color: #ff9800;">●</span>
+            </div>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Step</th>
+                        <th>Time</th>
+                        <th>Action</th>
+                        <th>Commands</th>
+                        <th>TM Verification</th>
+                        <th>Success Gate</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="step-num">3</td>
+                        <td>T+0:30</td>
+                        <td>Deploy solar arrays</td>
+                        <td><span class="command">func_id 19</span></td>
+                        <td><span class="param">SOLAR_DEPLOY=OK</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">8</td>
+                        <td>T+1:45</td>
+                        <td>Primary bus activation</td>
+                        <td><span class="command">func_id 19</span></td>
+                        <td><span class="param">BUS_V=28.5V</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">9</td>
+                        <td>T+2:00</td>
+                        <td>Check battery status</td>
+                        <td><span class="command">func_id 20</span></td>
+                        <td><span class="param">BATT_V=25.2V</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">10</td>
+                        <td>T+2:15</td>
+                        <td>Configure charging</td>
+                        <td><span class="command">func_id 23</span></td>
+                        <td><span class="param">CHARGE_RATE=5A</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">11</td>
+                        <td>T+2:30</td>
+                        <td>Full EPS check</td>
+                        <td><span class="command">func_id 20</span></td>
+                        <td><span class="param">EPS_HEALTH=OK</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">12</td>
+                        <td>T+2:45</td>
+                        <td>Verify PDM status</td>
+                        <td><span class="command">func_id 19</span></td>
+                        <td><span class="param">PDM_STATUS=OK</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">36</td>
+                        <td>T+8:45</td>
+                        <td>Enable thermal control</td>
+                        <td><span class="command">func_id 40</span></td>
+                        <td><span class="param">TCS_STATUS=ACTIVE</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">37</td>
+                        <td>T+9:00</td>
+                        <td>Configure heater strip 1</td>
+                        <td><span class="command">func_id 40</span></td>
+                        <td><span class="param">HTR1_PWR=10W</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">38</td>
+                        <td>T+9:15</td>
+                        <td>Configure heater strip 2</td>
+                        <td><span class="command">func_id 41</span></td>
+                        <td><span class="param">HTR2_PWR=10W</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">39</td>
+                        <td>T+9:30</td>
+                        <td>Check radiator mounting</td>
+                        <td><span class="command">func_id 40</span></td>
+                        <td><span class="param">RAD_STATUS=NOMINAL</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">40</td>
+                        <td>T+9:45</td>
+                        <td>Verify thermal sensors</td>
+                        <td><span class="command">func_id 40</span></td>
+                        <td><span class="param">THERM_SENSORS=OK</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">41</td>
+                        <td>T+10:00</td>
+                        <td>Set control setpoints</td>
+                        <td><span class="command">func_id 44</span></td>
+                        <td><span class="param">T_SET=20.0C</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">42</td>
+                        <td>T+10:15</td>
+                        <td>Enable autonomous control</td>
+                        <td><span class="command">func_id 44</span></td>
+                        <td><span class="param">TCS_AUTO=ON</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">43</td>
+                        <td>T+10:30</td>
+                        <td>Enable payload supply</td>
+                        <td><span class="command">func_id 19</span></td>
+                        <td><span class="param">PL_BUS_V=12V</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">71</td>
+                        <td>T+17:30</td>
+                        <td>Verify power nominal</td>
+                        <td><span class="command">func_id 20</span></td>
+                        <td><span class="param">PWR_NOMINAL=TRUE</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section id="aocs" class="pos-AOCS">
+            <h2>Flight Dynamics (aocs)</h2>
+            <div class="info-box">
+                <strong>Responsible Position:</strong> Flight Dynamics (aocs)
+                <br><strong>Assigned Steps:</strong> 18 | <strong>Color Code:</strong> <span style="color: #4caf50;">●</span>
+            </div>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Step</th>
+                        <th>Time</th>
+                        <th>Action</th>
+                        <th>Commands</th>
+                        <th>TM Verification</th>
+                        <th>Success Gate</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="step-num">25</td>
+                        <td>T+6:00</td>
+                        <td>Set AOCS to Sun Pointing</td>
+                        <td><span class="command">func_id 0</span></td>
+                        <td><span class="param">AOCS_MODE=SUNPOINT</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">26</td>
+                        <td>T+6:15</td>
+                        <td>Enable coarse sun sensor</td>
+                        <td><span class="command">func_id 0</span></td>
+                        <td><span class="param">SS_ACTIVE=TRUE</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">27</td>
+                        <td>T+6:30</td>
+                        <td>Enable magnetorquers</td>
+                        <td><span class="command">func_id 9</span></td>
+                        <td><span class="param">MTQ_STATUS=ACTIVE</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">28</td>
+                        <td>T+6:45</td>
+                        <td>Initial desat cycle</td>
+                        <td><span class="command">func_id 1</span></td>
+                        <td><span class="param">DESAT_CYCLE=1</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">29</td>
+                        <td>T+7:00</td>
+                        <td>Power on ST1</td>
+                        <td><span class="command">func_id 4</span></td>
+                        <td><span class="param">ST1_PWR=ON</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">30</td>
+                        <td>T+7:15</td>
+                        <td>ST1 acquisition search</td>
+                        <td><span class="command">func_id 4</span></td>
+                        <td><span class="param">ST1_STATUS=SEARCHING</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">31</td>
+                        <td>T+7:30</td>
+                        <td>ST1 target acquisition</td>
+                        <td><span class="command">func_id 4</span></td>
+                        <td><span class="param">ST1_LOCKED=TRUE</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">32</td>
+                        <td>T+7:45</td>
+                        <td>Accelerate reaction wheel</td>
+                        <td><span class="command">func_id 11</span></td>
+                        <td><span class="param">RW_SPEED=3000rpm</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">33</td>
+                        <td>T+8:00</td>
+                        <td>3-axis attitude align</td>
+                        <td><span class="command">func_id 10</span></td>
+                        <td><span class="param">ROLL_ERR=0.5deg</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">34</td>
+                        <td>T+8:15</td>
+                        <td>Ready fine control</td>
+                        <td><span class="command">func_id 0</span></td>
+                        <td><span class="param">FINE_PNT=READY</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">35</td>
+                        <td>T+8:30</td>
+                        <td>Check RW momentum</td>
+                        <td><span class="command">func_id 11</span></td>
+                        <td><span class="param">RW_MOMENTUM=50%</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">55</td>
+                        <td>T+13:30</td>
+                        <td>Transition to sun point</td>
+                        <td><span class="command">func_id 0</span></td>
+                        <td><span class="param">ATTITUDE_MODE=SUNPT</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">56</td>
+                        <td>T+13:45</td>
+                        <td>Enable fine pointing</td>
+                        <td><span class="command">func_id 10</span></td>
+                        <td><span class="param">FINE_PNT=ENGAGED</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">57</td>
+                        <td>T+14:00</td>
+                        <td>Trim to target attitude</td>
+                        <td><span class="command">func_id 10</span></td>
+                        <td><span class="param">ATT_ERR=<0.1deg</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">58</td>
+                        <td>T+14:15</td>
+                        <td>Test attitude slew</td>
+                        <td><span class="command">func_id 10</span></td>
+                        <td><span class="param">SLEW_ACTIVE=TRUE</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">59</td>
+                        <td>T+14:30</td>
+                        <td>Verify momentum mgmt</td>
+                        <td><span class="command">func_id 11</span></td>
+                        <td><span class="param">MOMENTUM=NOMINAL</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">60</td>
+                        <td>T+14:45</td>
+                        <td>Confirm pointing stable</td>
+                        <td><span class="command">func_id 10</span></td>
+                        <td><span class="param">PNT_ERROR=<0.05deg</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">70</td>
+                        <td>T+17:15</td>
+                        <td>Verify attitude nominal</td>
+                        <td><span class="command">func_id 10</span></td>
+                        <td><span class="param">ATT_NOMINAL=TRUE</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section id="ttc" class="pos-TTC">
+            <h2>TT&C (ttc)</h2>
+            <div class="info-box">
+                <strong>Responsible Position:</strong> TT&C (ttc)
+                <br><strong>Assigned Steps:</strong> 8 | <strong>Color Code:</strong> <span style="color: #bb86fc;">●</span>
+            </div>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Step</th>
+                        <th>Time</th>
+                        <th>Action</th>
+                        <th>Commands</th>
+                        <th>TM Verification</th>
+                        <th>Success Gate</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="step-num">7</td>
+                        <td>T+1:30</td>
+                        <td>Confirm downlink</td>
+                        <td><span class="command">func_id 65</span></td>
+                        <td><span class="param">TLM_RATE=1kbps</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">13</td>
+                        <td>T+3:00</td>
+                        <td>Ready antenna deploy</td>
+                        <td><span class="command">func_id 69</span></td>
+                        <td><span class="param">ANTENNA_CMD=RDY</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">14</td>
+                        <td>T+3:15</td>
+                        <td>Deploy comms antenna</td>
+                        <td><span class="command">func_id 69</span></td>
+                        <td><span class="param">ANTENNA_STATUS=DEPLOYED</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">15</td>
+                        <td>T+3:30</td>
+                        <td>Verify command link</td>
+                        <td><span class="command">func_id 65</span></td>
+                        <td><span class="param">CMD_LINK=LOCKED</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">16</td>
+                        <td>T+3:45</td>
+                        <td>Configure ranging</td>
+                        <td><span class="command">func_id 65</span></td>
+                        <td><span class="param">RANGE_MOD=READY</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">17</td>
+                        <td>T+4:00</td>
+                        <td>Confirm telemetry stream</td>
+                        <td><span class="command">func_id 65</span></td>
+                        <td><span class="param">TLM_STREAM=ACTIVE</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">62</td>
+                        <td>T+15:15</td>
+                        <td>Configure high rate DL</td>
+                        <td><span class="command">func_id 65</span></td>
+                        <td><span class="param">DL_RATE=10Mbps</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">63</td>
+                        <td>T+15:30</td>
+                        <td>Verify payload data</td>
+                        <td><span class="command">func_id 65</span></td>
+                        <td><span class="param">PL_DATA=VALID</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section id="fdir-systems" class="pos-FDIR_Systems">
+            <h2>FDIR/Systems (fdir_systems)</h2>
+            <div class="info-box">
+                <strong>Responsible Position:</strong> FDIR/Systems (fdir_systems)
+                <br><strong>Assigned Steps:</strong> 15 | <strong>Color Code:</strong> <span style="color: #f44336;">●</span>
+            </div>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Step</th>
+                        <th>Time</th>
+                        <th>Action</th>
+                        <th>Commands</th>
+                        <th>TM Verification</th>
+                        <th>Success Gate</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="step-num">4</td>
+                        <td>T+0:45</td>
+                        <td>Boot onboard computer</td>
+                        <td><span class="command">func_id 55</span></td>
+                        <td><span class="param">OBC_STATUS=OPERATIONAL</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">5</td>
+                        <td>T+1:00</td>
+                        <td>Load boot parameters</td>
+                        <td><span class="command">func_id 55</span></td>
+                        <td><span class="param">BOOT_PROG=100%</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">6</td>
+                        <td>T+1:15</td>
+                        <td>Verify OBDH ready</td>
+                        <td><span class="command">func_id 58</span></td>
+                        <td><span class="param">OBDH_HEALTH=OK</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">18</td>
+                        <td>T+4:15</td>
+                        <td>Load FDIR tables</td>
+                        <td><span class="command">func_id 61</span></td>
+                        <td><span class="param">FDIR_TBL=LOADED</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">19</td>
+                        <td>T+4:30</td>
+                        <td>Check all OBDH modules</td>
+                        <td><span class="command">func_id 58</span></td>
+                        <td><span class="param">OBDH_SUBSYS=HEALTHY</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">20</td>
+                        <td>T+4:45</td>
+                        <td>RAM/ROM verification</td>
+                        <td><span class="command">func_id 61</span></td>
+                        <td><span class="param">MEM_STATUS=OK</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">21</td>
+                        <td>T+5:00</td>
+                        <td>Verify reaction wheel link</td>
+                        <td><span class="command">func_id 58</span></td>
+                        <td><span class="param">RW_COMM=ESTABLISHED</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">22</td>
+                        <td>T+5:15</td>
+                        <td>Verify magnetorquer link</td>
+                        <td><span class="command">func_id 58</span></td>
+                        <td><span class="param">MTQ_COMM=ESTABLISHED</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">23</td>
+                        <td>T+5:30</td>
+                        <td>Verify ST1 link</td>
+                        <td><span class="command">func_id 58</span></td>
+                        <td><span class="param">ST1_COMM=ESTABLISHED</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">24</td>
+                        <td>T+5:45</td>
+                        <td>Arm watchdog timer</td>
+                        <td><span class="command">func_id 59</span></td>
+                        <td><span class="param">WATCHDOG=ENABLED</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">65</td>
+                        <td>T+16:00</td>
+                        <td>Capture system status</td>
+                        <td><span class="command">func_id 61</span></td>
+                        <td><span class="param">DIAG_SNAPSHOT=DONE</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">66</td>
+                        <td>T+16:15</td>
+                        <td>Arm automated responses</td>
+                        <td><span class="command">func_id 62</span></td>
+                        <td><span class="param">FDIR_ARMED=TRUE</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">67</td>
+                        <td>T+16:30</td>
+                        <td>Load error limits</td>
+                        <td><span class="command">func_id 62</span></td>
+                        <td><span class="param">THRESHOLDS=LOADED</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">68</td>
+                        <td>T+16:45</td>
+                        <td>Enable recovery modes</td>
+                        <td><span class="command">func_id 62</span></td>
+                        <td><span class="param">RECOVERY=ENABLED</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">69</td>
+                        <td>T+17:00</td>
+                        <td>Confirm FDIR ready</td>
+                        <td><span class="command">func_id 62</span></td>
+                        <td><span class="param">FDIR_STATUS=READY</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section id="payload-ops" class="pos-Payload_Ops">
+            <h2>Payload Ops (payload_ops)</h2>
+            <div class="info-box">
+                <strong>Responsible Position:</strong> Payload Ops (payload_ops)
+                <br><strong>Assigned Steps:</strong> 13 | <strong>Color Code:</strong> <span style="color: #64ffda;">●</span>
+            </div>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Step</th>
+                        <th>Time</th>
+                        <th>Action</th>
+                        <th>Commands</th>
+                        <th>TM Verification</th>
+                        <th>Success Gate</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="step-num">44</td>
+                        <td>T+10:45</td>
+                        <td>PL subsystem status</td>
+                        <td><span class="command">func_id 26</span></td>
+                        <td><span class="param">PL_HEALTH=OK</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">45</td>
+                        <td>T+11:00</td>
+                        <td>Configure imager mode</td>
+                        <td><span class="command">func_id 26</span></td>
+                        <td><span class="param">IMG_MODE=READY</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">46</td>
+                        <td>T+11:15</td>
+                        <td>Load calibration data</td>
+                        <td><span class="command">func_id 37</span></td>
+                        <td><span class="param">CAL_STATUS=LOADED</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">47</td>
+                        <td>T+11:30</td>
+                        <td>Configure spectral bands</td>
+                        <td><span class="command">func_id 33</span></td>
+                        <td><span class="param">BANDS=8/10</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">48</td>
+                        <td>T+11:45</td>
+                        <td>Set integration time</td>
+                        <td><span class="command">func_id 34</span></td>
+                        <td><span class="param">INT_TIME=100ms</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">49</td>
+                        <td>T+12:00</td>
+                        <td>Configure gain settings</td>
+                        <td><span class="command">func_id 35</span></td>
+                        <td><span class="param">GAIN=AUTO</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">50</td>
+                        <td>T+12:15</td>
+                        <td>Allocate onboard storage</td>
+                        <td><span class="command">func_id 28</span></td>
+                        <td><span class="param">STORAGE=512GB</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">51</td>
+                        <td>T+12:30</td>
+                        <td>Full payload boot</td>
+                        <td><span class="command">func_id 26</span></td>
+                        <td><span class="param">PL_STATUS=OPERATIONAL</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">52</td>
+                        <td>T+12:45</td>
+                        <td>Acquire dark frames</td>
+                        <td><span class="command">func_id 28</span></td>
+                        <td><span class="param">DARK_FRAMES=100</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">53</td>
+                        <td>T+13:00</td>
+                        <td>Acquire flat field</td>
+                        <td><span class="command">func_id 28</span></td>
+                        <td><span class="param">FLAT_FIELD=OK</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">54</td>
+                        <td>T+13:15</td>
+                        <td>Full functional test</td>
+                        <td><span class="command">func_id 26</span></td>
+                        <td><span class="param">PL_TEST=PASS</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">61</td>
+                        <td>T+15:00</td>
+                        <td>Data downlink format</td>
+                        <td><span class="command">func_id 29</span></td>
+                        <td><span class="param">DL_FORMAT=SET</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">64</td>
+                        <td>T+15:45</td>
+                        <td>Check data recording</td>
+                        <td><span class="command">func_id 28</span></td>
+                        <td><span class="param">REC_STATUS=ACTIVE</span></td>
+                        <td><div class="go-gate">GO</div></td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section id="contingency">
+            <h2>Contingency Procedures</h2>
+            <div class="info-box">
+                <strong>Contingency Procedures:</strong> 20 documented procedures
+                <br><strong>Coverage:</strong> Boot, OBDH, EPS, TTC, AOCS, TCS, Payload, Downlink
+                <br><strong>Click to expand:</strong> Details, steps, commands, and escalation paths
+            </div>
+
+            <div class="contingency">
+                <div class="contingency-header" onclick="toggleContingency(this)">
+                    <div class="contingency-title">C-BOOT-001 - OBC Boot Failure</div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="contingency-content">
+                    <p><strong>Trigger:</strong> OBC fails to boot</p>
+                    <p><strong>Recovery Steps:</strong></p>
+                    <ol>
+                        <li>1. Attempt warm boot (soft reset via CMD_RESET)</li>
+                        <li>2. Check power to OBC (BUS_V nominal)</li>
+                        <li>3. If still failing, perform cold boot sequence</li>
+                        <li>4. Load backup boot parameters from redundant storage</li>
+                        <li>5. Escalate to flight director if still non-responsive</li>
+                    </ol>
+                    <div class="contingency-meta">
+                        <div class="contingency-meta-item">
+                            <strong>Commands:</strong><br>
+                            <span class="command">func_id 55</span>
+                        </div>
+                        <div class="contingency-meta-item">
+                            <strong>Success Criteria:</strong><br>
+                            <span class="param">OBC_STATUS=OPERATIONAL</span>
+                        </div>
+                    </div>
+                    <p style="margin-top: 15px;"><strong>Escalation:</strong> Escalate to FD if unsuccessful after 2 cold boots</p>
+                </div>
+            </div>
+
+            <div class="contingency">
+                <div class="contingency-header" onclick="toggleContingency(this)">
+                    <div class="contingency-title">C-OBDH-001 - OBDH Health Degraded</div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="contingency-content">
+                    <p><strong>Trigger:</strong> OBDH health parameter drops below threshold</p>
+                    <p><strong>Recovery Steps:</strong></p>
+                    <ol>
+                        <li>1. Retrieve error log (func_id 61)</li>
+                        <li>2. Analyze error codes for root cause</li>
+                        <li>3. Isolate affected module if identified</li>
+                        <li>4. Reload module firmware from backup</li>
+                        <li>5. Re-run health check (func_id 58)</li>
+                        <li>6. Verify all subsystem links restored</li>
+                    </ol>
+                    <div class="contingency-meta">
+                        <div class="contingency-meta-item">
+                            <strong>Commands:</strong><br>
+                            <span class="command">func_id 58/61</span>
+                        </div>
+                        <div class="contingency-meta-item">
+                            <strong>Success Criteria:</strong><br>
+                            <span class="param">OBDH_HEALTH=OK</span>
+                        </div>
+                    </div>
+                    <p style="margin-top: 15px;"><strong>Escalation:</strong> Continue to next phase if health restored within 10 minutes</p>
+                </div>
+            </div>
+
+            <div class="contingency">
+                <div class="contingency-header" onclick="toggleContingency(this)">
+                    <div class="contingency-title">C-OBDH-002 - Watchdog Timeout</div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="contingency-content">
+                    <p><strong>Trigger:</strong> Watchdog timer expires unexpectedly</p>
+                    <p><strong>Recovery Steps:</strong></p>
+                    <ol>
+                        <li>1. Review system logs leading up to timeout</li>
+                        <li>2. Check for CPU overload or stuck processes</li>
+                        <li>3. Reset watchdog timer (func_id 59)</li>
+                        <li>4. Return to safe mode briefly to recover</li>
+                        <li>5. Resume commissioning sequence</li>
+                    </ol>
+                    <div class="contingency-meta">
+                        <div class="contingency-meta-item">
+                            <strong>Commands:</strong><br>
+                            <span class="command">func_id 59</span>
+                        </div>
+                        <div class="contingency-meta-item">
+                            <strong>Success Criteria:</strong><br>
+                            <span class="param">WATCHDOG=RESET</span>
+                        </div>
+                    </div>
+                    <p style="margin-top: 15px;"><strong>Escalation:</strong> If repeated timeouts occur, return to safe mode</p>
+                </div>
+            </div>
+
+            <div class="contingency">
+                <div class="contingency-header" onclick="toggleContingency(this)">
+                    <div class="contingency-title">C-EPS-001 - Solar Array Deploy Failure</div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="contingency-content">
+                    <p><strong>Trigger:</strong> Solar arrays fail to deploy</p>
+                    <p><strong>Recovery Steps:</strong></p>
+                    <ol>
+                        <li>1. Verify mechanical switches deployed</li>
+                        <li>2. Command deploy again via func_id 19</li>
+                        <li>3. Check deployment current draw</li>
+                        <li>4. If mechanical jam suspected, halt solar array ops</li>
+                        <li>5. Proceed with battery power only</li>
+                        <li>6. Plan EVA repair if mission-critical</li>
+                    </ol>
+                    <div class="contingency-meta">
+                        <div class="contingency-meta-item">
+                            <strong>Commands:</strong><br>
+                            <span class="command">func_id 19</span>
+                        </div>
+                        <div class="contingency-meta-item">
+                            <strong>Success Criteria:</strong><br>
+                            <span class="param">SOLAR_DEPLOY=OK</span>
+                        </div>
+                    </div>
+                    <p style="margin-top: 15px;"><strong>Escalation:</strong> Can continue on battery with reduced operations tempo</p>
+                </div>
+            </div>
+
+            <div class="contingency">
+                <div class="contingency-header" onclick="toggleContingency(this)">
+                    <div class="contingency-title">C-EPS-002 - Battery Voltage Low</div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="contingency-content">
+                    <p><strong>Trigger:</strong> Battery voltage falls below 24V</p>
+                    <p><strong>Recovery Steps:</strong></p>
+                    <ol>
+                        <li>1. Reduce power load immediately</li>
+                        <li>2. Disable non-essential heaters and subsystems</li>
+                        <li>3. Switch to battery discharge mode</li>
+                        <li>4. Enable solar charging if sun available</li>
+                        <li>5. Wait 30 minutes for recovery</li>
+                        <li>6. If voltage still low, enter sunpoint mode</li>
+                    </ol>
+                    <div class="contingency-meta">
+                        <div class="contingency-meta-item">
+                            <strong>Commands:</strong><br>
+                            <span class="command">func_id 20</span>
+                        </div>
+                        <div class="contingency-meta-item">
+                            <strong>Success Criteria:</strong><br>
+                            <span class="param">BATT_V>=24.0V</span>
+                        </div>
+                    </div>
+                    <p style="margin-top: 15px;"><strong>Escalation:</strong> Monitor voltage closely every 5 minutes</p>
+                </div>
+            </div>
+
+            <div class="contingency">
+                <div class="contingency-header" onclick="toggleContingency(this)">
+                    <div class="contingency-title">C-EPS-003 - Charge Rate Anomaly</div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="contingency-content">
+                    <p><strong>Trigger:</strong> Battery charging rate outside nominal range</p>
+                    <p><strong>Recovery Steps:</strong></p>
+                    <ol>
+                        <li>1. Verify solar array deployment status</li>
+                        <li>2. Check battery temperature (should be 15-25C)</li>
+                        <li>3. Re-configure charge rate (func_id 23)</li>
+                        <li>4. Monitor voltage rise over 15 minutes</li>
+                        <li>5. If stable, resume normal operations</li>
+                        <li>6. If unstable, reduce charge rate by 50%</li>
+                    </ol>
+                    <div class="contingency-meta">
+                        <div class="contingency-meta-item">
+                            <strong>Commands:</strong><br>
+                            <span class="command">func_id 23</span>
+                        </div>
+                        <div class="contingency-meta-item">
+                            <strong>Success Criteria:</strong><br>
+                            <span class="param">CHARGE_RATE=5A</span>
+                        </div>
+                    </div>
+                    <p style="margin-top: 15px;"><strong>Escalation:</strong> Proceed with caution if rate remains non-nominal</p>
+                </div>
+            </div>
+
+            <div class="contingency">
+                <div class="contingency-header" onclick="toggleContingency(this)">
+                    <div class="contingency-title">C-TTC-001 - Command Link Lost</div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="contingency-content">
+                    <p><strong>Trigger:</strong> Command uplink fails to lock</p>
+                    <p><strong>Recovery Steps:</strong></p>
+                    <ol>
+                        <li>1. Verify spacecraft antenna deployed</li>
+                        <li>2. Check command modulation settings (func_id 65)</li>
+                        <li>3. Verify ground station frequency correct</li>
+                        <li>4. Request ground to increase TX power</li>
+                        <li>5. Spacecraft enters autonomous safe mode</li>
+                        <li>6. Retry link acquisition every 30 seconds</li>
+                    </ol>
+                    <div class="contingency-meta">
+                        <div class="contingency-meta-item">
+                            <strong>Commands:</strong><br>
+                            <span class="command">func_id 65</span>
+                        </div>
+                        <div class="contingency-meta-item">
+                            <strong>Success Criteria:</strong><br>
+                            <span class="param">CMD_LINK=LOCKED</span>
+                        </div>
+                    </div>
+                    <p style="margin-top: 15px;"><strong>Escalation:</strong> Safe mode active until link restored</p>
+                </div>
+            </div>
+
+            <div class="contingency">
+                <div class="contingency-header" onclick="toggleContingency(this)">
+                    <div class="contingency-title">C-TTC-002 - Antenna Deploy Failure</div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="contingency-content">
+                    <p><strong>Trigger:</strong> Antenna fails to deploy</p>
+                    <p><strong>Recovery Steps:</strong></p>
+                    <ol>
+                        <li>1. Command deploy again (func_id 69)</li>
+                        <li>2. Check deployment mechanism current</li>
+                        <li>3. If mechanical jam, try gentle oscillation</li>
+                        <li>4. If still stuck, attempt remote mech trigger</li>
+                        <li>5. If deployment impossible, use backup antenna</li>
+                        <li>6. Notify FD of degraded comms capability</li>
+                    </ol>
+                    <div class="contingency-meta">
+                        <div class="contingency-meta-item">
+                            <strong>Commands:</strong><br>
+                            <span class="command">func_id 69</span>
+                        </div>
+                        <div class="contingency-meta-item">
+                            <strong>Success Criteria:</strong><br>
+                            <span class="param">ANTENNA_STATUS=DEPLOYED</span>
+                        </div>
+                    </div>
+                    <p style="margin-top: 15px;"><strong>Escalation:</strong> Backup antenna provides limited coverage</p>
+                </div>
+            </div>
+
+            <div class="contingency">
+                <div class="contingency-header" onclick="toggleContingency(this)">
+                    <div class="contingency-title">C-TTC-003 - Ranging Failure</div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="contingency-content">
+                    <p><strong>Trigger:</strong> Ranging system fails to acquire lock</p>
+                    <p><strong>Recovery Steps:</strong></p>
+                    <ol>
+                        <li>1. Verify command link is active</li>
+                        <li>2. Re-initialize ranging hardware (func_id 65)</li>
+                        <li>3. Check ground station ranging transmitter</li>
+                        <li>4. Increase range gate width by 50%</li>
+                        <li>5. If still failing, proceed without ranging</li>
+                        <li>6. Use alternative navigation method</li>
+                    </ol>
+                    <div class="contingency-meta">
+                        <div class="contingency-meta-item">
+                            <strong>Commands:</strong><br>
+                            <span class="command">func_id 65</span>
+                        </div>
+                        <div class="contingency-meta-item">
+                            <strong>Success Criteria:</strong><br>
+                            <span class="param">RANGE_MOD=READY</span>
+                        </div>
+                    </div>
+                    <p style="margin-top: 15px;"><strong>Escalation:</strong> Can operate with reduced accuracy</p>
+                </div>
+            </div>
+
+            <div class="contingency">
+                <div class="contingency-header" onclick="toggleContingency(this)">
+                    <div class="contingency-title">C-AOCS-001 - Sun Sensor Failure</div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="contingency-content">
+                    <p><strong>Trigger:</strong> Coarse sun sensor non-responsive</p>
+                    <p><strong>Recovery Steps:</strong></p>
+                    <ol>
+                        <li>1. Verify sun sensor power (func_id 4)</li>
+                        <li>2. Check sun sensor data validity</li>
+                        <li>3. Switch to backup sun sensor</li>
+                        <li>4. If both failed, use star tracker alone</li>
+                        <li>5. Enter safe sun-pointing mode</li>
+                        <li>6. Disable fine pointing temporarily</li>
+                    </ol>
+                    <div class="contingency-meta">
+                        <div class="contingency-meta-item">
+                            <strong>Commands:</strong><br>
+                            <span class="command">func_id 0</span>
+                        </div>
+                        <div class="contingency-meta-item">
+                            <strong>Success Criteria:</strong><br>
+                            <span class="param">AOCS_MODE=SUNPOINT</span>
+                        </div>
+                    </div>
+                    <p style="margin-top: 15px;"><strong>Escalation:</strong> Attitude control degraded but functional</p>
+                </div>
+            </div>
+
+            <div class="contingency">
+                <div class="contingency-header" onclick="toggleContingency(this)">
+                    <div class="contingency-title">C-AOCS-002 - Star Tracker Anomaly</div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="contingency-content">
+                    <p><strong>Trigger:</strong> Star tracker fails to acquire stars</p>
+                    <p><strong>Recovery Steps:</strong></p>
+                    <ol>
+                        <li>1. Check ST1 power status (func_id 4)</li>
+                        <li>2. Verify star tracker is not pointed at sun</li>
+                        <li>3. Clear any dust or contamination obstructing optics</li>
+                        <li>4. Retry acquisition with different search params</li>
+                        <li>5. If persistent, switch to coarse sun sensor mode</li>
+                        <li>6. Plan on-orbit maintenance</li>
+                    </ol>
+                    <div class="contingency-meta">
+                        <div class="contingency-meta-item">
+                            <strong>Commands:</strong><br>
+                            <span class="command">func_id 4</span>
+                        </div>
+                        <div class="contingency-meta-item">
+                            <strong>Success Criteria:</strong><br>
+                            <span class="param">ST1_LOCKED=TRUE</span>
+                        </div>
+                    </div>
+                    <p style="margin-top: 15px;"><strong>Escalation:</strong> Can use coarse sensors temporarily</p>
+                </div>
+            </div>
+
+            <div class="contingency">
+                <div class="contingency-header" onclick="toggleContingency(this)">
+                    <div class="contingency-title">C-AOCS-003 - Reaction Wheel Spin Failure</div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="contingency-content">
+                    <p><strong>Trigger:</strong> RW fails to reach nominal speed</p>
+                    <p><strong>Recovery Steps:</strong></p>
+                    <ol>
+                        <li>1. Check RW power supply (BUS_V nominal)</li>
+                        <li>2. Verify RW command interface (func_id 11)</li>
+                        <li>3. Issue acceleration command again</li>
+                        <li>4. Monitor RW current during acceleration</li>
+                        <li>5. If current excessive, RW may be jammed</li>
+                        <li>6. Transition to MTQ-only attitude control</li>
+                    </ol>
+                    <div class="contingency-meta">
+                        <div class="contingency-meta-item">
+                            <strong>Commands:</strong><br>
+                            <span class="command">func_id 11</span>
+                        </div>
+                        <div class="contingency-meta-item">
+                            <strong>Success Criteria:</strong><br>
+                            <span class="param">RW_SPEED>=2000rpm</span>
+                        </div>
+                    </div>
+                    <p style="margin-top: 15px;"><strong>Escalation:</strong> MTQ provides slower response but functional control</p>
+                </div>
+            </div>
+
+            <div class="contingency">
+                <div class="contingency-header" onclick="toggleContingency(this)">
+                    <div class="contingency-title">C-AOCS-004 - Fine Pointing Instability</div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="contingency-content">
+                    <p><strong>Trigger:</strong> Attitude error exceeds 1 degree continuously</p>
+                    <p><strong>Recovery Steps:</strong></p>
+                    <ol>
+                        <li>1. Reduce fine pointing gains (func_id 10)</li>
+                        <li>2. Increase controller loop period</li>
+                        <li>3. Verify star tracker is locked</li>
+                        <li>4. Check for external torques (MTQ interference?)</li>
+                        <li>5. Perform momentum desaturation (func_id 1)</li>
+                        <li>6. Re-engage fine pointing with conservative gains</li>
+                    </ol>
+                    <div class="contingency-meta">
+                        <div class="contingency-meta-item">
+                            <strong>Commands:</strong><br>
+                            <span class="command">func_id 10</span>
+                        </div>
+                        <div class="contingency-meta-item">
+                            <strong>Success Criteria:</strong><br>
+                            <span class="param">ATT_ERR=<0.5deg</span>
+                        </div>
+                    </div>
+                    <p style="margin-top: 15px;"><strong>Escalation:</strong> Attitude control operational but with degraded accuracy</p>
+                </div>
+            </div>
+
+            <div class="contingency">
+                <div class="contingency-header" onclick="toggleContingency(this)">
+                    <div class="contingency-title">C-TCS-001 - TCS Activation Failure</div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="contingency-content">
+                    <p><strong>Trigger:</strong> Thermal control unable to activate</p>
+                    <p><strong>Recovery Steps:</strong></p>
+                    <ol>
+                        <li>1. Check heater/cooler power (EPS_TCS supply)</li>
+                        <li>2. Verify TCS command interface (func_id 40)</li>
+                        <li>3. Retry TCS enable command</li>
+                        <li>4. If still failing, enable heater backup strips</li>
+                        <li>5. Monitor component temperatures closely</li>
+                        <li>6. Limit power dissipation to thermal budget</li>
+                    </ol>
+                    <div class="contingency-meta">
+                        <div class="contingency-meta-item">
+                            <strong>Commands:</strong><br>
+                            <span class="command">func_id 40</span>
+                        </div>
+                        <div class="contingency-meta-item">
+                            <strong>Success Criteria:</strong><br>
+                            <span class="param">TCS_STATUS=ACTIVE</span>
+                        </div>
+                    </div>
+                    <p style="margin-top: 15px;"><strong>Escalation:</strong> Passive thermal control available as backup</p>
+                </div>
+            </div>
+
+            <div class="contingency">
+                <div class="contingency-header" onclick="toggleContingency(this)">
+                    <div class="contingency-title">C-TCS-002 - Heater Anomaly</div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="contingency-content">
+                    <p><strong>Trigger:</strong> Heater power consumption out of range</p>
+                    <p><strong>Recovery Steps:</strong></p>
+                    <ol>
+                        <li>1. Check heater power supply voltage</li>
+                        <li>2. Verify heater resistance is nominal</li>
+                        <li>3. Disable problematic heater (func_id 40/41)</li>
+                        <li>4. Re-configure remaining heaters</li>
+                        <li>5. Monitor component temps with active heater only</li>
+                        <li>6. Request FD approval to proceed without redundancy</li>
+                    </ol>
+                    <div class="contingency-meta">
+                        <div class="contingency-meta-item">
+                            <strong>Commands:</strong><br>
+                            <span class="command">func_id 40/41</span>
+                        </div>
+                        <div class="contingency-meta-item">
+                            <strong>Success Criteria:</strong><br>
+                            <span class="param">HTR_STATUS=OK</span>
+                        </div>
+                    </div>
+                    <p style="margin-top: 15px;"><strong>Escalation:</strong> Reduced thermal margin but acceptable</p>
+                </div>
+            </div>
+
+            <div class="contingency">
+                <div class="contingency-header" onclick="toggleContingency(this)">
+                    <div class="contingency-title">C-PL-001 - Payload Power Failure</div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="contingency-content">
+                    <p><strong>Trigger:</strong> Payload supply fails to reach 12V</p>
+                    <p><strong>Recovery Steps:</strong></p>
+                    <ol>
+                        <li>1. Check EPS primary bus voltage</li>
+                        <li>2. Verify payload power line continuity</li>
+                        <li>3. Cycle power to payload (func_id 19)</li>
+                        <li>4. Check for short circuit in payload</li>
+                        <li>5. If unable to restore, skip payload commissioning</li>
+                        <li>6. Plan diagnostics for return to Earth</li>
+                    </ol>
+                    <div class="contingency-meta">
+                        <div class="contingency-meta-item">
+                            <strong>Commands:</strong><br>
+                            <span class="command">func_id 19</span>
+                        </div>
+                        <div class="contingency-meta-item">
+                            <strong>Success Criteria:</strong><br>
+                            <span class="param">PL_BUS_V=12V</span>
+                        </div>
+                    </div>
+                    <p style="margin-top: 15px;"><strong>Escalation:</strong> Mission can proceed with payload off</p>
+                </div>
+            </div>
+
+            <div class="contingency">
+                <div class="contingency-header" onclick="toggleContingency(this)">
+                    <div class="contingency-title">C-PL-002 - Imager Health Degraded</div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="contingency-content">
+                    <p><strong>Trigger:</strong> Imager health parameter non-nominal</p>
+                    <p><strong>Recovery Steps:</strong></p>
+                    <ol>
+                        <li>1. Retrieve imager error log (func_id 28)</li>
+                        <li>2. Check imager temperature (should be 15-25C)</li>
+                        <li>3. Perform imager soft reset (func_id 26)</li>
+                        <li>4. Reload imager firmware if available</li>
+                        <li>5. Re-run imager health check</li>
+                        <li>6. If still degraded, disable affected spectral bands</li>
+                    </ol>
+                    <div class="contingency-meta">
+                        <div class="contingency-meta-item">
+                            <strong>Commands:</strong><br>
+                            <span class="command">func_id 26/28</span>
+                        </div>
+                        <div class="contingency-meta-item">
+                            <strong>Success Criteria:</strong><br>
+                            <span class="param">IMG_STATUS=OK</span>
+                        </div>
+                    </div>
+                    <p style="margin-top: 15px;"><strong>Escalation:</strong> Limited imaging capability acceptable</p>
+                </div>
+            </div>
+
+            <div class="contingency">
+                <div class="contingency-header" onclick="toggleContingency(this)">
+                    <div class="contingency-title">C-PL-003 - Calibration Load Failure</div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="contingency-content">
+                    <p><strong>Trigger:</strong> Calibration data fails to load</p>
+                    <p><strong>Recovery Steps:</strong></p>
+                    <ol>
+                        <li>1. Verify calibration data file integrity</li>
+                        <li>2. Re-transmit calibration file from ground</li>
+                        <li>3. Retry load calibration (func_id 37)</li>
+                        <li>4. If still failing, use default calibration</li>
+                        <li>5. Request FD to upload refined calibration later</li>
+                        <li>6. Document any calibration gaps</li>
+                    </ol>
+                    <div class="contingency-meta">
+                        <div class="contingency-meta-item">
+                            <strong>Commands:</strong><br>
+                            <span class="command">func_id 37</span>
+                        </div>
+                        <div class="contingency-meta-item">
+                            <strong>Success Criteria:</strong><br>
+                            <span class="param">CAL_STATUS=LOADED</span>
+                        </div>
+                    </div>
+                    <p style="margin-top: 15px;"><strong>Escalation:</strong> Can operate with reduced calibration accuracy</p>
+                </div>
+            </div>
+
+            <div class="contingency">
+                <div class="contingency-header" onclick="toggleContingency(this)">
+                    <div class="contingency-title">C-PL-004 - Storage Allocation Failure</div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="contingency-content">
+                    <p><strong>Trigger:</strong> Onboard storage fails to allocate properly</p>
+                    <p><strong>Recovery Steps:</strong></p>
+                    <ol>
+                        <li>1. Check available storage space</li>
+                        <li>2. Delete non-critical stored data if needed</li>
+                        <li>3. Re-attempt allocation (func_id 28)</li>
+                        <li>4. If persistent, reduce storage allocation</li>
+                        <li>5. Implement continuous downlink of data</li>
+                        <li>6. Proceed with reduced onboard buffering</li>
+                    </ol>
+                    <div class="contingency-meta">
+                        <div class="contingency-meta-item">
+                            <strong>Commands:</strong><br>
+                            <span class="command">func_id 28</span>
+                        </div>
+                        <div class="contingency-meta-item">
+                            <strong>Success Criteria:</strong><br>
+                            <span class="param">STORAGE=OK</span>
+                        </div>
+                    </div>
+                    <p style="margin-top: 15px;"><strong>Escalation:</strong> Real-time downlink mitigates storage issue</p>
+                </div>
+            </div>
+
+            <div class="contingency">
+                <div class="contingency-header" onclick="toggleContingency(this)">
+                    <div class="contingency-title">C-DL-001 - Downlink Data Corruption</div>
+                    <div class="toggle-icon">▼</div>
+                </div>
+                <div class="contingency-content">
+                    <p><strong>Trigger:</strong> Payload data arrives corrupted on ground</p>
+                    <p><strong>Recovery Steps:</strong></p>
+                    <ol>
+                        <li>1. Check spacecraft data encoding (func_id 65)</li>
+                        <li>2. Reduce downlink rate to improve link margin</li>
+                        <li>3. Request ground to increase RX sensitivity</li>
+                        <li>4. Verify error correction coding enabled</li>
+                        <li>5. Resume downlink with improved link quality</li>
+                        <li>6. Log error metrics for post-mission analysis</li>
+                    </ol>
+                    <div class="contingency-meta">
+                        <div class="contingency-meta-item">
+                            <strong>Commands:</strong><br>
+                            <span class="command">func_id 65</span>
+                        </div>
+                        <div class="contingency-meta-item">
+                            <strong>Success Criteria:</strong><br>
+                            <span class="param">DL_QUALITY=GOOD</span>
+                        </div>
+                    </div>
+                    <p style="margin-top: 15px;"><strong>Escalation:</strong> Proceed with increased error checking</p>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Back to Top Button -->
+    <button class="back-to-top" onclick="scrollToTop()">↑</button>
+
+    <script>
+        // Navigation link highlighting
+        document.querySelectorAll('.sidebar nav a').forEach(link => {
+            link.addEventListener('click', function() {
+                document.querySelectorAll('.sidebar nav a').forEach(l => l.classList.remove('active'));
+                this.classList.add('active');
+            });
+        });
+
+        // Back to top button visibility
+        window.addEventListener('scroll', function() {
+            const btn = document.querySelector('.back-to-top');
+            if (window.scrollY > 300) {
+                btn.classList.add('show');
+            } else {
+                btn.classList.remove('show');
+            }
+        });
+
+        function scrollToTop() {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function toggleContingency(header) {
+            const content = header.nextElementSibling;
+            content.classList.toggle('active');
+            const icon = header.querySelector('.toggle-icon');
+            icon.style.transform = content.classList.contains('active') ? 'rotate(180deg)' : 'rotate(0deg)';
+        }
+
+        function scrollToContingency(contingencyId) {
+            const section = document.getElementById('contingency');
+            section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+            // Find and expand the contingency
+            setTimeout(() => {
+                const contingencies = document.querySelectorAll('.contingency');
+                contingencies.forEach(cont => {
+                    const header = cont.querySelector('.contingency-header');
+                    if (header && header.textContent.includes(contingencyId)) {
+                        const content = cont.querySelector('.contingency-content');
+                        if (!content.classList.contains('active')) {
+                            content.classList.add('active');
+                            const icon = header.querySelector('.toggle-icon');
+                            icon.style.transform = 'rotate(180deg)';
+                        }
+                        cont.style.boxShadow = `0 0 20px rgba(255, 152, 0, 0.5)`;
+                        setTimeout(() => {
+                            cont.style.boxShadow = 'none';
+                        }, 2000);
+                    }
+                });
+            }, 300);
+        }
+
+        // Smooth scroll for sidebar links
+        document.querySelectorAll('.sidebar nav a').forEach(anchor => {
+            anchor.addEventListener('click', function(e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            });
+        });
+    </script>
+</body>
+</html>

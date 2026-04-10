@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "smo-mcs"
+version = "0.1.0"
+description = "SMO Mission Control System"
+requires-python = ">=3.10"
+dependencies = [
+    "smo-common",
+    "aiohttp>=3.9",
+]
+
+[project.scripts]
+smo-mcs = "smo_mcs.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/smo_mcs"]

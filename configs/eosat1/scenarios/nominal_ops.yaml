@@ -1,0 +1,11 @@
+name: "Nominal Operations"
+difficulty: BASIC
+duration_s: 1800
+briefing: |
+  Familiarisation scenario. Monitor nominal spacecraft operations
+  through one full orbit including eclipse entry/exit and a ground
+  station contact window. No failures will be injected.
+events: []
+expected_responses:
+  - { category: detect, description: "Observe eclipse entry thermal transient" }
+  - { category: detect, description: "Observe AOS and verify link establishment" }

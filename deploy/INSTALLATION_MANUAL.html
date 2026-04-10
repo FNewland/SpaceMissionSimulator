@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SMO Suite — Installation &amp; Deployment Manual</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0f172a;
+  --surface: #1e293b;
+  --border: #334155;
+  --accent: #6366f1;
+  --accent-light: #818cf8;
+  --text: #e2e8f0;
+  --text-dim: #94a3b8;
+  --text-muted: #64748b;
+  --green: #22c55e;
+  --blue: #3b82f6;
+  --yellow: #eab308;
+  --red: #ef4444;
+  --orange: #f97316;
+  --cyan: #06b6d4;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.container {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 40px 32px;
+}
+
+/* Header */
+.doc-header {
+  text-align: center;
+  padding: 48px 0 36px;
+  border-bottom: 2px solid var(--accent);
+  margin-bottom: 40px;
+}
+
+.doc-header h1 {
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  margin-bottom: 8px;
+}
+
+.doc-header h1 span { color: var(--accent); }
+
+.doc-header .subtitle {
+  font-size: 16px;
+  color: var(--text-dim);
+  margin-bottom: 16px;
+}
+
+.doc-header .version-info {
+  font-size: 12px;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+}
+
+.aig-badge {
+  display: inline-block;
+  margin-top: 16px;
+  padding: 6px 16px;
+  background: rgba(249, 115, 22, 0.1);
+  border: 1px solid rgba(249, 115, 22, 0.3);
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--orange);
+  letter-spacing: 1.5px;
+}
+
+/* TOC */
+.toc {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 24px 28px;
+  margin-bottom: 40px;
+}
+
+.toc h2 {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--accent);
+  text-transform: uppercase;
+  margin-bottom: 16px;
+}
+
+.toc ol {
+  padding-left: 24px;
+}
+
+.toc li {
+  margin-bottom: 6px;
+}
+
+.toc a {
+  color: var(--text-dim);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.toc a:hover { color: var(--accent-light); }
+
+/* Sections */
+h2 {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--accent-light);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+  margin: 48px 0 20px;
+}
+
+h3 {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 28px 0 12px;
+}
+
+h4 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin: 20px 0 8px;
+  letter-spacing: 0.5px;
+}
+
+p { margin-bottom: 12px; }
+
+/* Code blocks */
+pre {
+  background: #0a0f1a;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px 20px;
+  overflow-x: auto;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  margin-bottom: 16px;
+  color: var(--text-dim);
+}
+
+code {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 13px;
+  background: rgba(99, 102, 241, 0.1);
+  padding: 2px 6px;
+  border-radius: 3px;
+  color: var(--accent-light);
+}
+
+pre code {
+  background: none;
+  padding: 0;
+  color: inherit;
+}
+
+/* Tables */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 16px;
+  font-size: 14px;
+}
+
+th {
+  text-align: left;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-weight: 600;
+  color: var(--text-dim);
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+td {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+/* Info boxes */
+.info-box {
+  border-radius: 6px;
+  padding: 16px 20px;
+  margin-bottom: 16px;
+  border-left: 4px solid;
+}
+
+.info-box.note {
+  background: rgba(59, 130, 246, 0.08);
+  border-color: var(--blue);
+}
+
+.info-box.warning {
+  background: rgba(234, 179, 8, 0.08);
+  border-color: var(--yellow);
+}
+
+.info-box.danger {
+  background: rgba(239, 68, 68, 0.08);
+  border-color: var(--red);
+}
+
+.info-box.success {
+  background: rgba(34, 197, 94, 0.08);
+  border-color: var(--green);
+}
+
+.info-box strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.info-box.note strong { color: var(--blue); }
+.info-box.warning strong { color: var(--yellow); }
+.info-box.danger strong { color: var(--red); }
+.info-box.success strong { color: var(--green); }
+
+/* Lists */
+ul, ol { padding-left: 24px; margin-bottom: 12px; }
+li { margin-bottom: 4px; color: var(--text-dim); }
+
+/* Diagram boxes */
+.arch-diagram {
+  background: #0a0f1a;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 20px;
+  margin-bottom: 16px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-dim);
+  white-space: pre;
+  overflow-x: auto;
+}
+
+/* Highlight classes */
+.port  { color: var(--cyan); font-weight: 600; }
+.host  { color: var(--green); }
+.label { color: var(--yellow); }
+.file  { color: var(--accent-light); }
+
+/* Footer */
+.doc-footer {
+  margin-top: 64px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+<!-- ══════════════════════ HEADER ══════════════════════ -->
+<div class="doc-header">
+  <h1><span>SMO</span> Suite</h1>
+  <div class="subtitle">Installation &amp; Deployment Manual</div>
+  <div class="subtitle">Space Mission Operations — EOSAT-1 Ocean Monitoring</div>
+  <div class="version-info">Version 0.1.0 &mdash; Generated 2026-03-30</div>
+  <div class="aig-badge">ARTIFICIAL INTELLIGENCE GENERATED</div>
+</div>
+
+<!-- ══════════════════════ TOC ══════════════════════ -->
+<div class="toc">
+  <h2>Table of Contents</h2>
+  <ol>
+    <li><a href="#overview">System Overview</a></li>
+    <li><a href="#prerequisites">Prerequisites</a></li>
+    <li><a href="#quickstart">Quick Start (Single Machine)</a></li>
+    <li><a href="#architecture">Network Architecture</a></li>
+    <li><a href="#config">Configuration Reference</a></li>
+    <li><a href="#single">Single-Machine Deployment</a></li>
+    <li><a href="#distributed">Distributed Deployment</a></li>
+    <li><a href="#gateway">Gateway (Multi-Site MCS)</a></li>
+    <li><a href="#widescreen">Wide-Screen Planner Display</a></li>
+    <li><a href="#remote">Remote Browser Access</a></li>
+    <li><a href="#firewall">Firewall &amp; Network</a></li>
+    <li><a href="#packaging">Packaging for Distribution</a></li>
+    <li><a href="#components">Component Reference</a></li>
+    <li><a href="#troubleshooting">Troubleshooting</a></li>
+    <li><a href="#files">File Reference</a></li>
+  </ol>
+</div>
+
+<!-- ══════════════════════ 1. OVERVIEW ══════════════════════ -->
+<h2 id="overview">1. System Overview</h2>
+
+<p>The SMO (Space Mission Operations) Suite is a complete spacecraft operations simulation and training system for the EOSAT-1 ocean monitoring mission. It consists of five components that can run on a single machine or be distributed across a network:</p>
+
+<table>
+  <tr><th>Component</th><th>Purpose</th><th>Default Port</th></tr>
+  <tr><td><strong>Simulator</strong></td><td>Spacecraft simulation engine with instructor UI</td><td>8001 (TC), 8002 (TM), 8080 (HTTP)</td></tr>
+  <tr><td><strong>MCS</strong></td><td>Mission Control System operator interface (6 positions)</td><td>9090 (HTTP/WS)</td></tr>
+  <tr><td><strong>Planner</strong></td><td>Mission planning, scheduling, budgets, imaging</td><td>9091 (HTTP)</td></tr>
+  <tr><td><strong>Gateway</strong></td><td>TM/TC relay for multi-site MCS deployments</td><td>10025 (TCP)</td></tr>
+  <tr><td><strong>Common</strong></td><td>Shared library (protocols, config, orbit math)</td><td>N/A (library)</td></tr>
+</table>
+
+<div class="arch-diagram">
+┌─────────────────────────────────────────────────────────────┐
+│                    SIMULATOR (:8080)                        │
+│  SimulationEngine → TC :8001 / TM :8002                    │
+│  Instructor Web UI (scenarios, failures, breakpoints)       │
+└──────┬────────────────────┬─────────────────────────────────┘
+       │ TCP :8001 (TC)     │ TCP :8002 (TM)
+       │                    │
+┌──────▼────────────────────▼─────────────────────────────────┐
+│                    MCS (:9090)                               │
+│  6 Operator Positions, 11 Subsystem Tabs                    │
+│  WebSocket → Browsers on network                            │
+│  Alarm Journal, Procedures, GO/NO-GO, TM Archive            │
+└──────┬──────────────────────────────────────────────────────┘
+       │ HTTP (browsers)
+       ▼
+  Any browser on the network: http://&lt;mcs-ip&gt;:9090
+
+┌─────────────────────────────────────────────────────────────┐
+│                   PLANNER (:9091)                            │
+│  Orbit prediction, contact windows, pass scheduling         │
+│  Power/data budget, imaging targets                         │
+│  Standard UI: /       Wide-screen UI: /wide                 │
+└─────────────────────────────────────────────────────────────┘
+</div>
+
+<!-- ══════════════════════ 2. PREREQUISITES ══════════════════════ -->
+<h2 id="prerequisites">2. Prerequisites</h2>
+
+<h3>Required</h3>
+<ul>
+  <li><strong>Python 3.11 or newer</strong> (3.12, 3.13 also work)</li>
+  <li><strong>pip</strong> (bundled with Python 3.11+)</li>
+  <li><strong>Internet access</strong> during installation (to download Python packages)</li>
+  <li><strong>Web browser</strong> for operator/planner UIs (Chrome, Firefox, Safari, Edge)</li>
+</ul>
+
+<h3>Installing Python 3.11+</h3>
+
+<h4>macOS</h4>
+<pre><code># Using Homebrew
+brew install python@3.11
+
+# Or download from python.org
+# https://www.python.org/downloads/</code></pre>
+
+<h4>Ubuntu / Debian</h4>
+<pre><code>sudo apt update
+sudo apt install python3.11 python3.11-venv python3.11-dev</code></pre>
+
+<h4>RHEL / CentOS / Fedora</h4>
+<pre><code>sudo dnf install python3.11</code></pre>
+
+<h4>Windows</h4>
+<pre><code># Download installer from https://www.python.org/downloads/
+# During installation, check "Add Python to PATH"
+# Then open PowerShell and verify:
+python --version</code></pre>
+
+<h3>Verify Python Version</h3>
+<pre><code>python3.11 --version   # Should show Python 3.11.x or higher
+# or
+python3 --version      # Must be 3.11+</code></pre>
+
+<!-- ══════════════════════ 3. QUICK START ══════════════════════ -->
+<h2 id="quickstart">3. Quick Start (Single Machine)</h2>
+
+<p>To get everything running on one machine in under 2 minutes:</p>
+
+<pre><code># 1. Clone or extract the project
+cd SpaceMissionSimulation
+
+# 2. Run the installer
+./deploy/install.sh
+
+# 3. Start all services
+./deploy/start-all.sh
+
+# 4. Open in your browser:
+#    MCS:        http://localhost:9090
+#    Planner:    http://localhost:9091
+#    Instructor: http://localhost:8080</code></pre>
+
+<div class="info-box success">
+  <strong>That's it!</strong>
+  For single-machine use with default settings, no configuration changes are needed. The default <code>smo-env.conf</code> uses <code>localhost</code> for everything.
+</div>
+
+<!-- ══════════════════════ 4. ARCHITECTURE ══════════════════════ -->
+<h2 id="architecture">4. Network Architecture</h2>
+
+<h3>4.1 Single Machine</h3>
+<p>All five components run on the same machine. The MCS connects directly to the simulator's TCP ports. Browsers on the same machine (or network) access the web UIs.</p>
+
+<div class="arch-diagram">
+Machine A (your computer):
+  Simulator   →  TC :8001, TM :8002, HTTP :8080
+  MCS         →  HTTP :9090  (connects to localhost:8001/8002)
+  Planner     →  HTTP :9091
+
+Browser access:
+  http://localhost:9090       ← MCS
+  http://localhost:9091       ← Planner (standard)
+  http://localhost:9091/wide  ← Planner (5760×1080)
+  http://localhost:8080       ← Instructor
+</div>
+
+<h3>4.2 Two-Machine Split (Simulator + Ops)</h3>
+<p>Simulator on one machine, MCS and Planner on another. Common for training where the instructor machine is separate from operators.</p>
+
+<div class="arch-diagram">
+Machine A (Instructor): 192.168.1.100
+  Simulator   →  TC :8001, TM :8002, HTTP :8080
+
+Machine B (Operators): 192.168.1.101
+  MCS         →  HTTP :9090  (connects to 192.168.1.100:8001/8002)
+  Planner     →  HTTP :9091
+
+Browsers on network:
+  http://192.168.1.101:9090   ← MCS
+  http://192.168.1.101:9091   ← Planner
+  http://192.168.1.100:8080   ← Instructor
+</div>
+
+<h3>4.3 Full Distribution (3+ Machines)</h3>
+
+<div class="arch-diagram">
+Machine A (Simulator):   192.168.1.100
+  Simulator  → TC :8001, TM :8002, HTTP :8080
+
+Machine B (MCS):         192.168.1.101
+  MCS        → HTTP :9090
+
+Machine C (Planner):     192.168.1.102
+  Planner    → HTTP :9091
+
+Machine D (Gateway):     192.168.1.103  [optional]
+  Gateway    → :10025 (relays to Simulator)
+</div>
+
+<h3>4.4 Multi-Site with Gateway</h3>
+<p>The Gateway allows multiple MCS instances at different locations to share a single simulator. It fans out TM to all connected clients and aggregates TC upstream.</p>
+
+<div class="arch-diagram">
+                    ┌─────────────┐
+                    │  Simulator  │
+                    │ :8001/:8002 │
+                    └──────┬──────┘
+                           │
+                    ┌──────▼──────┐
+                    │   Gateway   │
+                    │   :10025    │
+                    └──┬───┬───┬──┘
+                       │   │   │
+            ┌──────────┘   │   └──────────┐
+            │              │              │
+     ┌──────▼──────┐ ┌────▼────┐ ┌───────▼──────┐
+     │   MCS #1    │ │  MCS #2 │ │    MCS #3    │
+     │  Site Alpha │ │ Site Bravo│ │ Site Charlie │
+     └─────────────┘ └─────────┘ └──────────────┘
+</div>
+
+<!-- ══════════════════════ 5. CONFIGURATION ══════════════════════ -->
+<h2 id="config">5. Configuration Reference</h2>
+
+<p>All network settings are in a single file: <code>deploy/smo-env.conf</code></p>
+
+<h3>5.1 Simulator Settings</h3>
+<table>
+  <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>SIMULATOR_HOST</code></td><td>localhost</td><td>Hostname/IP where the simulator runs (used by MCS to connect TO it)</td></tr>
+  <tr><td><code>SIMULATOR_TC_PORT</code></td><td>8001</td><td>TCP port for telecommand uplink</td></tr>
+  <tr><td><code>SIMULATOR_TM_PORT</code></td><td>8002</td><td>TCP port for telemetry downlink</td></tr>
+  <tr><td><code>SIMULATOR_HTTP_PORT</code></td><td>8080</td><td>HTTP port for instructor web UI</td></tr>
+  <tr><td><code>SIMULATOR_SPEED</code></td><td>1.0</td><td>Simulation speed (1.0 = real-time, 10.0 = 10x)</td></tr>
+</table>
+
+<h3>5.2 MCS Settings</h3>
+<table>
+  <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>MCS_HTTP_PORT</code></td><td>9090</td><td>HTTP port for the MCS web UI</td></tr>
+  <tr><td><code>MCS_TM_HOST</code></td><td>${SIMULATOR_HOST}</td><td>Where MCS connects for TM data</td></tr>
+  <tr><td><code>MCS_TM_PORT</code></td><td>${SIMULATOR_TM_PORT}</td><td>TM port to connect to</td></tr>
+</table>
+
+<h3>5.3 Planner Settings</h3>
+<table>
+  <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>PLANNER_HTTP_PORT</code></td><td>9091</td><td>HTTP port for the planner web UI</td></tr>
+  <tr><td><code>PLANNER_REACHABLE_HOST</code></td><td>localhost</td><td>How the MCS can reach the planner (for the MCS UI's planner integration)</td></tr>
+</table>
+
+<h3>5.4 Gateway Settings</h3>
+<table>
+  <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>USE_GATEWAY</code></td><td>no</td><td>Set to "yes" to enable the gateway relay</td></tr>
+  <tr><td><code>GATEWAY_HOST</code></td><td>localhost</td><td>Hostname/IP where the gateway runs</td></tr>
+  <tr><td><code>GATEWAY_LISTEN_PORT</code></td><td>10025</td><td>Port the gateway listens on</td></tr>
+  <tr><td><code>GATEWAY_UPSTREAM_HOST</code></td><td>${SIMULATOR_HOST}</td><td>Upstream simulator host</td></tr>
+  <tr><td><code>GATEWAY_UPSTREAM_PORT</code></td><td>${SIMULATOR_TM_PORT}</td><td>Upstream simulator TM port</td></tr>
+</table>
+
+<h3>5.5 Mission Configuration</h3>
+<table>
+  <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>MISSION_CONFIG</code></td><td>configs/eosat1/</td><td>Path to mission configuration directory</td></tr>
+</table>
+
+<!-- ══════════════════════ 6. SINGLE MACHINE ══════════════════════ -->
+<h2 id="single">6. Single-Machine Deployment</h2>
+
+<h3>Step 1: Install</h3>
+<pre><code>cd SpaceMissionSimulation
+./deploy/install.sh</code></pre>
+
+<h3>Step 2: Configure (optional for single machine)</h3>
+<p>The defaults work for single-machine deployment. No changes needed.</p>
+
+<h3>Step 3: Start</h3>
+<pre><code>./deploy/start-all.sh</code></pre>
+
+<h3>Step 4: Access</h3>
+<p>Open a browser to any of these URLs:</p>
+<table>
+  <tr><th>Service</th><th>URL</th></tr>
+  <tr><td>MCS (Operator UI)</td><td><code>http://localhost:9090</code></td></tr>
+  <tr><td>Planner (Standard)</td><td><code>http://localhost:9091</code></td></tr>
+  <tr><td>Planner (Wide-Screen)</td><td><code>http://localhost:9091/wide</code></td></tr>
+  <tr><td>Instructor UI</td><td><code>http://localhost:8080</code></td></tr>
+</table>
+
+<div class="info-box note">
+  <strong>Note</strong>
+  Other computers on the same network can access these UIs by replacing <code>localhost</code> with this machine's IP address (e.g., <code>http://192.168.1.100:9090</code>).
+</div>
+
+<!-- ══════════════════════ 7. DISTRIBUTED ══════════════════════ -->
+<h2 id="distributed">7. Distributed Deployment</h2>
+
+<h3>Example: Simulator on Machine A, MCS+Planner on Machine B</h3>
+
+<h4>Machine A (Simulator) — 192.168.1.100</h4>
+<pre><code># 1. Install (simulator only)
+./deploy/install.sh --sim-only
+
+# 2. Edit deploy/smo-env.conf — no changes needed for simulator host
+
+# 3. Start the simulator
+./deploy/start-simulator.sh</code></pre>
+
+<h4>Machine B (MCS + Planner) — 192.168.1.101</h4>
+<pre><code># 1. Install (MCS + planner)
+./deploy/install.sh
+
+# 2. Edit deploy/smo-env.conf:
+#    SIMULATOR_HOST="192.168.1.100"
+#    PLANNER_REACHABLE_HOST="192.168.1.101"
+
+# 3. Start MCS and Planner
+./deploy/start-mcs.sh &amp;
+./deploy/start-planner.sh &amp;</code></pre>
+
+<h4>Configuration for Machine B</h4>
+<pre><code># deploy/smo-env.conf on Machine B:
+SIMULATOR_HOST="192.168.1.100"    # Point to Machine A
+SIMULATOR_TC_PORT=8001
+SIMULATOR_TM_PORT=8002
+SIMULATOR_HTTP_PORT=8080
+
+MCS_HTTP_PORT=9090
+PLANNER_HTTP_PORT=9091
+PLANNER_REACHABLE_HOST="192.168.1.101"  # Machine B's own IP</code></pre>
+
+<h3>Example: Full 3-Machine Setup</h3>
+
+<h4>Machine A — Simulator (192.168.1.100)</h4>
+<pre><code>./deploy/install.sh --sim-only
+./deploy/start-simulator.sh</code></pre>
+
+<h4>Machine B — MCS (192.168.1.101)</h4>
+<pre><code># smo-env.conf:
+SIMULATOR_HOST="192.168.1.100"
+PLANNER_REACHABLE_HOST="192.168.1.102"
+
+./deploy/install.sh --mcs-only
+./deploy/start-mcs.sh</code></pre>
+
+<h4>Machine C — Planner (192.168.1.102)</h4>
+<pre><code>./deploy/install.sh --plan-only
+./deploy/start-planner.sh</code></pre>
+
+<div class="info-box warning">
+  <strong>Important</strong>
+  Each machine needs a copy of the project (or at least its package + configs + deploy directory). Use <code>./deploy/package.sh</code> to create a distributable archive, then extract it on each machine.
+</div>
+
+<!-- ══════════════════════ 8. GATEWAY ══════════════════════ -->
+<h2 id="gateway">8. Gateway (Multi-Site MCS)</h2>
+
+<p>The Gateway is a transparent TM/TC relay that allows multiple MCS instances to connect to a single simulator. Use it when you have operators at multiple locations.</p>
+
+<h3>Setup</h3>
+<pre><code># On the gateway machine — edit deploy/smo-env.conf:
+USE_GATEWAY="yes"
+GATEWAY_HOST="192.168.1.103"
+GATEWAY_LISTEN_PORT=10025
+GATEWAY_UPSTREAM_HOST="192.168.1.100"   # Simulator
+GATEWAY_UPSTREAM_PORT=8002              # Simulator TM port
+
+# Start the gateway:
+./deploy/start-gateway.sh</code></pre>
+
+<h3>MCS Configuration to Use Gateway</h3>
+<pre><code># On each MCS machine — edit deploy/smo-env.conf:
+USE_GATEWAY="yes"
+GATEWAY_HOST="192.168.1.103"
+GATEWAY_LISTEN_PORT=10025
+
+# The MCS start script will automatically connect to the gateway
+# instead of the simulator when USE_GATEWAY="yes"
+./deploy/start-mcs.sh</code></pre>
+
+<!-- ══════════════════════ 9. WIDE SCREEN ══════════════════════ -->
+<h2 id="widescreen">9. Wide-Screen Planner Display (5760 &times; 1080)</h2>
+
+<p>The planner includes a special layout optimized for ultra-wide displays (e.g., triple-monitor setups at 5760 &times; 1080 resolution). It shows all panels side by side in a 5-column layout:</p>
+
+<div class="arch-diagram">
+┌──────────────────┬─────────────┬───────────┬───────────┬────────────┐
+│                  │   CONTACT   │ ACTIVITY  │  POWER &  │  IMAGING   │
+│    GROUND TRACK  │  WINDOWS    │ SCHEDULE  │   DATA    │  TARGETS   │
+│    MAP (Leaflet) │  24h Timeline│           │  BUDGET   │            │
+│                  │  + Table    │           │  Charts   │  + Opps    │
+│   ~1920px wide   │  ~1200px    │  ~860px   │  ~860px   │  ~920px    │
+└──────────────────┴─────────────┴───────────┴───────────┴────────────┘
+</div>
+
+<h3>Accessing the Wide-Screen UI</h3>
+<pre><code># Standard planner:
+http://&lt;planner-host&gt;:9091
+
+# Wide-screen planner (5760×1080):
+http://&lt;planner-host&gt;:9091/wide</code></pre>
+
+<div class="info-box note">
+  <strong>Display Setup</strong>
+  For the best experience on a 5760&times;1080 display:
+  <ul style="margin-top:8px;">
+    <li>Use Chrome or Firefox in full-screen mode (F11)</li>
+    <li>Set browser zoom to 100%</li>
+    <li>The layout uses CSS flexbox and adapts to the available width</li>
+    <li>It also works on standard screens but panels will be narrower</li>
+  </ul>
+</div>
+
+<!-- ══════════════════════ 10. REMOTE ACCESS ══════════════════════ -->
+<h2 id="remote">10. Remote Browser Access</h2>
+
+<p>All web UIs (MCS, Planner, Instructor) bind to <code>0.0.0.0</code> by default, meaning they accept connections from any network interface. Any browser on the same network can connect.</p>
+
+<h3>Finding Your IP Address</h3>
+<pre><code># macOS
+ipconfig getifaddr en0        # Wi-Fi
+ipconfig getifaddr en1        # Ethernet
+
+# Linux
+hostname -I | awk '{print $1}'
+# or
+ip addr show | grep "inet " | grep -v 127.0.0.1
+
+# Windows
+ipconfig | findstr "IPv4"</code></pre>
+
+<h3>Connecting from Other Machines</h3>
+<p>Replace <code>localhost</code> with the host machine's IP address:</p>
+<pre><code># If MCS is running on 192.168.1.101:
+http://192.168.1.101:9090          # MCS
+http://192.168.1.101:9090          # (any browser on the network)
+
+# Multiple operators can connect simultaneously
+# Each selects their operator position in the MCS UI</code></pre>
+
+<div class="info-box note">
+  <strong>Multiple Operators</strong>
+  The MCS supports 6 simultaneous operator positions: Captain, EPS, AOCS, OBDH, TTC, and Payload. Each browser session selects a position from the dropdown. Position-based access control restricts which commands each operator can send.
+</div>
+
+<!-- ══════════════════════ 11. FIREWALL ══════════════════════ -->
+<h2 id="firewall">11. Firewall &amp; Network</h2>
+
+<h3>Required Ports</h3>
+<table>
+  <tr><th>Machine</th><th>Port</th><th>Protocol</th><th>Direction</th><th>Purpose</th></tr>
+  <tr><td>Simulator</td><td>8001</td><td>TCP</td><td>Inbound</td><td>TC uplink from MCS</td></tr>
+  <tr><td>Simulator</td><td>8002</td><td>TCP</td><td>Inbound</td><td>TM downlink to MCS</td></tr>
+  <tr><td>Simulator</td><td>8080</td><td>TCP</td><td>Inbound</td><td>Instructor web UI</td></tr>
+  <tr><td>MCS</td><td>9090</td><td>TCP</td><td>Inbound</td><td>Operator web UI + WebSocket</td></tr>
+  <tr><td>Planner</td><td>9091</td><td>TCP</td><td>Inbound</td><td>Planner web UI</td></tr>
+  <tr><td>Gateway</td><td>10025</td><td>TCP</td><td>Inbound</td><td>MCS relay connections</td></tr>
+</table>
+
+<h3>macOS Firewall</h3>
+<pre><code># macOS will prompt "Allow incoming connections" when each service starts.
+# Click "Allow" for each.
+# Or add exceptions in System Preferences → Security → Firewall → Options</code></pre>
+
+<h3>Linux (UFW)</h3>
+<pre><code># Simulator machine
+sudo ufw allow 8001/tcp
+sudo ufw allow 8002/tcp
+sudo ufw allow 8080/tcp
+
+# MCS machine
+sudo ufw allow 9090/tcp
+
+# Planner machine
+sudo ufw allow 9091/tcp
+
+# Gateway machine (if used)
+sudo ufw allow 10025/tcp</code></pre>
+
+<h3>Linux (firewalld)</h3>
+<pre><code>sudo firewall-cmd --permanent --add-port=9090/tcp
+sudo firewall-cmd --reload</code></pre>
+
+<!-- ══════════════════════ 12. PACKAGING ══════════════════════ -->
+<h2 id="packaging">12. Packaging for Distribution</h2>
+
+<p>To create a clean distributable archive for deployment on other machines:</p>
+
+<pre><code># Create the package
+./deploy/package.sh
+
+# Or with a custom name
+./deploy/package.sh --name eosat1-training
+
+# Output: smo-suite-20260330-143000.tar.gz</code></pre>
+
+<h3>What's Included</h3>
+<ul>
+  <li>All 5 source packages (smo-common, smo-simulator, smo-mcs, smo-planner, smo-gateway)</li>
+  <li>Mission configuration (configs/eosat1/)</li>
+  <li>All 64 procedures, 28 scenarios, 11 manual sections</li>
+  <li>Deployment scripts and this installation manual</li>
+  <li>Test suite (996 tests)</li>
+  <li>Documentation</li>
+</ul>
+
+<h3>What's NOT Included</h3>
+<ul>
+  <li>Python virtual environment (.venv) — recreated by install.sh</li>
+  <li>SQLite TM archives (data/*.db)</li>
+  <li>Build artifacts (__pycache__, *.egg-info)</li>
+</ul>
+
+<h3>Deploying on a Target Machine</h3>
+<pre><code># 1. Copy the archive
+scp smo-suite-*.tar.gz user@target-machine:~/
+
+# 2. On the target machine
+ssh user@target-machine
+tar xzf smo-suite-*.tar.gz
+cd smo-suite-*
+
+# 3. Install
+./deploy/install.sh
+
+# 4. Configure
+vi deploy/smo-env.conf
+
+# 5. Run
+./deploy/start-all.sh</code></pre>
+
+<!-- ══════════════════════ 13. COMPONENTS ══════════════════════ -->
+<h2 id="components">13. Component Reference</h2>
+
+<h3>13.1 Simulator</h3>
+<p>The spacecraft simulator implements a full PUS-C service stack (Services 1, 3, 5, 6, 8, 9, 11, 12, 15, 17, 19, 20) with pluggable subsystem models for EPS, AOCS, TCS, OBDH, TTC, and Payload.</p>
+<ul>
+  <li><strong>Entry point:</strong> <code>smo-simulator --config configs/eosat1/ [--speed 1.0]</code></li>
+  <li><strong>Instructor UI:</strong> Inject failures, run scenarios, set breakpoints, control sim speed</li>
+  <li><strong>Subsystems:</strong> 6-panel solar array, dual magnetometers, 6 CSS heads, 2 star cameras, battery-heater thermal, multispectral payload (4 bands)</li>
+  <li><strong>State machines:</strong> Separation (7 phases), bootloader, transponder command channel</li>
+</ul>
+
+<h3>13.2 MCS (Mission Control System)</h3>
+<p>WCAG 2.1 AA-compliant web UI with 6 operator positions and 11 subsystem tabs.</p>
+<ul>
+  <li><strong>Entry point:</strong> <code>smo-mcs --config configs/eosat1/ --connect &lt;host&gt;:&lt;port&gt; --port 9090</code></li>
+  <li><strong>Tabs:</strong> Overview, EPS, AOCS, TCS, OBDH, TTC, Payload, Commanding, PUS, Procedures, Manual</li>
+  <li><strong>Features:</strong> Real-time telemetry via WebSocket, SVG block diagrams, Chart.js trending, alarm journal, procedure execution, GO/NO-GO coordination, world map, stored TM playback</li>
+  <li><strong>Archive:</strong> SQLite-backed TM archive for historical parameter queries</li>
+</ul>
+
+<h3>13.3 Planner</h3>
+<p>Mission planning with orbit prediction using SGP4 propagation.</p>
+<ul>
+  <li><strong>Entry point:</strong> <code>smo-planner --config configs/eosat1/ --port 9091</code></li>
+  <li><strong>Standard UI:</strong> <code>http://host:9091/</code> — map + contacts + schedule (stacked)</li>
+  <li><strong>Wide-screen UI:</strong> <code>http://host:9091/wide</code> — 5 columns side by side (5760&times;1080)</li>
+  <li><strong>Features:</strong> Contact window prediction, pass-based scheduling, conflict detection, power budget (SoC prediction), data budget (downlink capacity), imaging target planner (7 ocean current targets)</li>
+</ul>
+
+<h3>13.4 Gateway</h3>
+<p>Transparent bidirectional TM/TC relay for multi-site deployments.</p>
+<ul>
+  <li><strong>Entry point:</strong> <code>smo-gateway --upstream &lt;host&gt;:&lt;port&gt; --listen 0.0.0.0:10025</code></li>
+  <li><strong>TM:</strong> Fans out to all connected downstream clients</li>
+  <li><strong>TC:</strong> Forwards from any downstream client to the upstream simulator</li>
+</ul>
+
+<h3>13.5 Mission Configuration (EOSAT-1)</h3>
+<table>
+  <tr><th>Category</th><th>Count</th><th>Location</th></tr>
+  <tr><td>Subsystem configs</td><td>7 YAML files</td><td>configs/eosat1/subsystems/</td></tr>
+  <tr><td>Procedures</td><td>64 files</td><td>configs/eosat1/procedures/</td></tr>
+  <tr><td>Failure scenarios</td><td>28 files</td><td>configs/eosat1/scenarios/</td></tr>
+  <tr><td>Manual sections</td><td>11 files</td><td>configs/eosat1/manual/</td></tr>
+  <tr><td>Operator positions</td><td>6 roles</td><td>configs/eosat1/mcs/positions/</td></tr>
+  <tr><td>Activity types</td><td>7 types</td><td>configs/eosat1/planning/</td></tr>
+  <tr><td>Imaging targets</td><td>7 targets</td><td>configs/eosat1/planning/</td></tr>
+</table>
+
+<!-- ══════════════════════ 14. TROUBLESHOOTING ══════════════════════ -->
+<h2 id="troubleshooting">14. Troubleshooting</h2>
+
+<h3>14.1 "Command not found: smo-simulator"</h3>
+<pre><code># Make sure the virtual environment is activated:
+source .venv/bin/activate
+
+# Re-install the package:
+pip install -e packages/smo-common -e packages/smo-simulator</code></pre>
+
+<h3>14.2 "Address already in use"</h3>
+<pre><code># Another process is using the port. Find and kill it:
+lsof -i :8080    # macOS/Linux
+# or
+netstat -tlnp | grep 8080   # Linux
+
+# Kill the process:
+kill &lt;PID&gt;
+
+# Or change the port in deploy/smo-env.conf</code></pre>
+
+<h3>14.3 MCS cannot connect to Simulator</h3>
+<ul>
+  <li>Verify the simulator is running: <code>curl http://&lt;sim-host&gt;:8080/api/state</code></li>
+  <li>Check that <code>SIMULATOR_HOST</code> in smo-env.conf is correct</li>
+  <li>Check firewall rules (ports 8001, 8002 must be open on the simulator machine)</li>
+  <li>Try <code>telnet &lt;sim-host&gt; 8002</code> to verify TCP connectivity</li>
+</ul>
+
+<h3>14.4 Browser shows "WebSocket connection failed"</h3>
+<ul>
+  <li>The MCS will fall back to HTTP polling automatically</li>
+  <li>Check that you're using the correct host/port in the browser URL</li>
+  <li>Corporate proxies may block WebSocket — try direct network access</li>
+</ul>
+
+<h3>14.5 Planner shows "SIMULATED" instead of "LIVE"</h3>
+<ul>
+  <li>The planner needs time (a few seconds) to compute initial contact windows</li>
+  <li>Check the planner log output for errors</li>
+  <li>Verify the TLE data in configs/eosat1/orbit.yaml is valid</li>
+</ul>
+
+<h3>14.6 Wide-screen planner doesn't fill the screen</h3>
+<ul>
+  <li>Make sure the browser is in full-screen mode (F11)</li>
+  <li>Set browser zoom to 100% (Ctrl+0 / Cmd+0)</li>
+  <li>The layout adapts to available width — it works best at 5760px but scales to other widths</li>
+</ul>
+
+<h3>14.7 Python version error</h3>
+<pre><code># If you get "requires-python >= 3.11" errors:
+python3 --version   # Must be 3.11+
+
+# Install Python 3.11 specifically:
+# macOS:  brew install python@3.11
+# Ubuntu: sudo apt install python3.11 python3.11-venv
+
+# Then recreate the venv:
+rm -rf .venv
+python3.11 -m venv .venv
+./deploy/install.sh</code></pre>
+
+<h3>14.8 Running Tests</h3>
+<pre><code>source .venv/bin/activate
+pip install pytest pytest-asyncio
+pytest tests/ -v   # All 996 tests</code></pre>
+
+<!-- ══════════════════════ 15. FILES ══════════════════════ -->
+<h2 id="files">15. File Reference</h2>
+
+<h3>Deployment Directory (deploy/)</h3>
+<table>
+  <tr><th>File</th><th>Purpose</th></tr>
+  <tr><td><code>smo-env.conf</code></td><td>Network configuration (IPs, ports) — edit this</td></tr>
+  <tr><td><code>install.sh</code></td><td>Clean installation (venv, packages, verification)</td></tr>
+  <tr><td><code>start-all.sh</code></td><td>Start all components on this machine</td></tr>
+  <tr><td><code>start-simulator.sh</code></td><td>Start simulator only</td></tr>
+  <tr><td><code>start-mcs.sh</code></td><td>Start MCS only</td></tr>
+  <tr><td><code>start-planner.sh</code></td><td>Start planner only</td></tr>
+  <tr><td><code>start-gateway.sh</code></td><td>Start gateway relay only</td></tr>
+  <tr><td><code>package.sh</code></td><td>Create distributable archive</td></tr>
+  <tr><td><code>INSTALLATION_MANUAL.html</code></td><td>This document</td></tr>
+</table>
+
+<h3>Source Packages (packages/)</h3>
+<table>
+  <tr><th>Package</th><th>Description</th><th>Entry Point</th></tr>
+  <tr><td><code>smo-common</code></td><td>Shared protocols, config schemas, orbit math</td><td>Library only</td></tr>
+  <tr><td><code>smo-simulator</code></td><td>Spacecraft simulation engine</td><td><code>smo-simulator</code></td></tr>
+  <tr><td><code>smo-mcs</code></td><td>Mission Control System</td><td><code>smo-mcs</code></td></tr>
+  <tr><td><code>smo-planner</code></td><td>Mission Planning Tool</td><td><code>smo-planner</code></td></tr>
+  <tr><td><code>smo-gateway</code></td><td>TM/TC Relay Gateway</td><td><code>smo-gateway</code></td></tr>
+</table>
+
+<h3>Python Dependencies</h3>
+<table>
+  <tr><th>Package</th><th>Version</th><th>Used By</th></tr>
+  <tr><td>pydantic</td><td>&ge; 2.0</td><td>smo-common (config schemas)</td></tr>
+  <tr><td>pyyaml</td><td>&ge; 6.0</td><td>smo-common (YAML config loading)</td></tr>
+  <tr><td>sgp4</td><td>&ge; 2.20</td><td>smo-common (TLE orbit propagation)</td></tr>
+  <tr><td>numpy</td><td>&ge; 1.24</td><td>smo-common (orbit math)</td></tr>
+  <tr><td>aiohttp</td><td>&ge; 3.9</td><td>All servers (HTTP/WebSocket)</td></tr>
+</table>
+
+<!-- ══════════════════════ FOOTER ══════════════════════ -->
+<div class="doc-footer">
+  <p>SMO Suite &mdash; Space Mission Operations</p>
+  <p>EOSAT-1 Ocean Monitoring Mission</p>
+  <p style="margin-top:8px; color: var(--orange);">AI-Generated Content &mdash; <a href="https://mpeters.uqo.ca/en/logos-ia-en-peters-2023/" style="color:var(--orange);">AIG Attribution</a></p>
+</div>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,265 @@
+activity_types:
+  - name: imaging_pass
+    description: "Payload imaging acquisition"
+    duration_s: 120
+    min_duration_s: 60
+    max_duration_s: 300
+    power_w: 75
+    data_volume_mb: 800
+    requires_attitude: nominal
+    requires_daylight: true
+    requires_contact: false
+    requires_subsystems:
+      - payload
+      - aocs
+    priority: high
+    procedure_ref: NOM-001
+    command_sequence:
+      - service: 8
+        subtype: 1
+        func_id: 0x14
+        description: "PAYLOAD_IMAGER_ON"
+      - wait_s: 5
+      - service: 8
+        subtype: 1
+        func_id: 0x16
+        description: "PAYLOAD_START_IMAGING"
+      - wait_for:
+          parameter: payload.imaging_active
+          value: true
+          timeout_s: 30
+    conflicts_with:
+      - software_upload
+      - momentum_desaturation
+    pre_conditions:
+      - "payload.fpa_temp_c < -3.0"
+      - "eps.bus_voltage > 24.0"
+      - "aocs.mode == 1"
+    thermal_constraints:
+      max_continuous_minutes: 30
+      max_per_orbit_minutes: 30
+      required_cooldown_s: 300
+      fpa_temp_min_c: -50.0
+      fpa_temp_max_c: -5.0
+
+  - name: data_dump
+    description: "Stored data downlink"
+    duration_s: 600
+    min_duration_s: 300
+    max_duration_s: 1200
+    power_w: 50
+    data_volume_mb: 0
+    requires_attitude: nominal
+    requires_daylight: false
+    requires_contact: true
+    requires_subsystems:
+      - ttc
+      - obdh
+    priority: high
+    procedure_ref: NOM-002
+    command_sequence:
+      - service: 8
+        subtype: 1
+        func_id: 0x32
+        description: "TTC_HIGH_RATE"
+      - wait_s: 3
+      - service: 15
+        subtype: 9
+        store_id: 3
+        description: "S15_DUMP_SCIENCE_STORE"
+    conflicts_with:
+      - imaging_pass
+      - software_upload
+    pre_conditions:
+      - "ttc.in_contact == true"
+      - "eps.bus_voltage > 24.0"
+
+  - name: calibration
+    description: "Sensor calibration sequence"
+    duration_s: 180
+    min_duration_s: 120
+    max_duration_s: 300
+    power_w: 50
+    data_volume_mb: 50
+    requires_attitude: nominal
+    requires_daylight: true
+    requires_contact: false
+    requires_subsystems:
+      - payload
+      - aocs
+    priority: medium
+    procedure_ref: COM-002
+    command_sequence:
+      - service: 8
+        subtype: 1
+        func_id: 0x08
+        description: "AOCS_CALIBRATE_ST"
+    conflicts_with:
+      - imaging_pass
+    pre_conditions:
+      - "aocs.mode == 1"
+      - "payload.fpa_temp_c < -3.0"
+    thermal_constraints:
+      max_continuous_minutes: 5
+      fpa_temp_max_c: -5.0
+
+  - name: housekeeping_collection
+    description: "Extended HK data collection"
+    duration_s: 60
+    min_duration_s: 30
+    max_duration_s: 120
+    power_w: 5
+    data_volume_mb: 10
+    requires_attitude: null
+    requires_daylight: false
+    requires_contact: false
+    requires_subsystems:
+      - obdh
+    priority: low
+    procedure_ref: NOM-009
+    command_sequence:
+      - service: 3
+        subtype: 27
+        sid: 1
+        description: "S3_REQUEST_HK_ALL"
+    conflicts_with: []
+    pre_conditions: []
+
+  - name: software_upload
+    description: "Flight software patch upload"
+    duration_s: 1200
+    min_duration_s: 600
+    max_duration_s: 2400
+    power_w: 20
+    data_volume_mb: 0
+    requires_attitude: null
+    requires_daylight: false
+    requires_contact: true
+    requires_subsystems:
+      - ttc
+      - obdh
+    priority: high
+    procedure_ref: NOM-005
+    command_sequence:
+      - service: 6
+        subtype: 2
+        description: "S6_LOAD_MEMORY"
+    conflicts_with:
+      - imaging_pass
+      - data_dump
+    pre_conditions:
+      - "ttc.in_contact == true"
+      - "eps.battery_soc > 60"
+
+  - name: momentum_desaturation
+    description: "Reaction wheel momentum dump using magnetorquers"
+    duration_s: 600
+    min_duration_s: 300
+    max_duration_s: 1200
+    power_w: 30
+    data_volume_mb: 0
+    requires_attitude: null
+    requires_daylight: false
+    requires_contact: false
+    requires_subsystems:
+      - aocs
+    priority: medium
+    procedure_ref: NOM-006
+    command_sequence:
+      - service: 8
+        subtype: 1
+        func_id: 0x01
+        description: "AOCS_DESAT"
+    conflicts_with:
+      - imaging_pass
+      - data_dump
+    pre_conditions:
+      - "aocs.total_momentum > 0.5"
+    aocs_constraints:
+      resets_momentum: true
+      target_momentum: 0.0
+      required_gap_s_after: 30
+
+  - name: thermal_rebalance
+    description: "Thermal subsystem heater duty redistribution"
+    duration_s: 300
+    min_duration_s: 120
+    max_duration_s: 600
+    power_w: 15
+    data_volume_mb: 0
+    requires_attitude: null
+    requires_daylight: false
+    requires_contact: false
+    requires_subsystems:
+      - tcs
+    priority: medium
+    procedure_ref: NOM-007
+    command_sequence:
+      - service: 8
+        subtype: 1
+        func_id: 0x28
+        description: "TCS_REBALANCE_HEATERS"
+    conflicts_with:
+      - imaging_pass
+    pre_conditions:
+      - "tcs.temp_regulation_margin < 2.0"
+    thermal_constraints:
+      max_continuous_minutes: 20
+      fpa_temp_max_c: 5.0
+
+  - name: load_shedding
+    description: "EPS contingency load shedding sequence"
+    duration_s: 60
+    min_duration_s: 30
+    max_duration_s: 120
+    power_w: 0
+    data_volume_mb: 0
+    requires_attitude: null
+    requires_daylight: false
+    requires_contact: false
+    requires_subsystems:
+      - eps
+    priority: high
+    procedure_ref: CTG-001
+    command_sequence:
+      - service: 8
+        subtype: 1
+        func_id: 0x1A
+        description: "EPS_LOAD_SHED_ENABLE"
+    conflicts_with:
+      - imaging_pass
+      - data_dump
+      - software_upload
+    pre_conditions:
+      - "eps.power_margin_w < -50"
+
+  - name: fdir_recovery
+    description: "Post-anomaly safe-mode recovery sequence"
+    duration_s: 180
+    min_duration_s: 120
+    max_duration_s: 300
+    power_w: 20
+    data_volume_mb: 0
+    requires_attitude: null
+    requires_daylight: false
+    requires_contact: false
+    requires_subsystems:
+      - aocs
+      - eps
+    priority: high
+    procedure_ref: CTG-002
+    command_sequence:
+      - service: 8
+        subtype: 1
+        func_id: 0x00
+        description: "AOCS_SET_MODE_SAFE"
+      - wait_s: 10
+      - service: 8
+        subtype: 1
+        func_id: 0x1B
+        description: "EPS_SAFE_MODE_INIT"
+    conflicts_with:
+      - imaging_pass
+      - data_dump
+    pre_conditions:
+      - "fdir.level >= 2"

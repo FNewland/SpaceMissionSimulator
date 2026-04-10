@@ -1,0 +1,65 @@
+# AOCS Reset - Level 2 Recovery for Persistent AOCS Failures
+# Performs a soft reset of AOCS subsystem
+
+procedure_id: "aocs_reset"
+name: "AOCS Reset"
+category: "fdir_response"
+description: "Level 2 recovery: AOCS subsystem reset"
+
+steps:
+  - step_id: 1
+    name: "Payload Off"
+    description: "Power off payload to stabilize spacecraft"
+    delay_s: 0.0
+    command: "s8_command"
+    params:
+      func_id: 26  # PAYLOAD_SET_MODE
+      data: [0x00]  # mode = 0 (off)
+
+  - step_id: 2
+    name: "Disable All Reaction Wheels"
+    description: "Disable all reaction wheels for safety"
+    delay_s: 1.0
+    command: "s8_command"
+    params:
+      func_id: 2  # AOCS_DISABLE_WHEEL
+      data: [0x00]  # wheel 0
+
+  - step_id: 3
+    name: "Disable Wheel 1"
+    description: "Disable wheel 1"
+    delay_s: 1.5
+    command: "s8_command"
+    params:
+      func_id: 2  # AOCS_DISABLE_WHEEL
+      data: [0x01]  # wheel 1
+
+  - step_id: 4
+    name: "Disable Wheel 2"
+    description: "Disable wheel 2"
+    delay_s: 2.0
+    command: "s8_command"
+    params:
+      func_id: 2  # AOCS_DISABLE_WHEEL
+      data: [0x02]  # wheel 2
+
+  - step_id: 5
+    name: "Disable Wheel 3"
+    description: "Disable wheel 3"
+    delay_s: 2.5
+    command: "s8_command"
+    params:
+      func_id: 2  # AOCS_DISABLE_WHEEL
+      data: [0x03]  # wheel 3
+
+  - step_id: 6
+    name: "AOCS Safe Mode"
+    description: "Enter safe mode"
+    delay_s: 3.0
+    command: "s8_command"
+    params:
+      func_id: 0  # AOCS_SET_MODE
+      data: [0x02]  # mode = 2 (safe)
+
+timeout_s: 30.0
+max_retries: 1

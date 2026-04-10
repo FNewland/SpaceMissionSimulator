@@ -1,0 +1,658 @@
+procedures:
+  # === LEOP Procedures ===
+  # Cold-boot ordering note: under the new initial state where ttc_tx,
+  # aocs_wheels, payload, fpa_cooler, htr_bat and htr_obc all default OFF
+  # and the OBDH is in bootloader, LEOP-001 establishes the link and exits
+  # the bootloader, then LEOP-007 is run BEFORE -004 / -005 / -006 because
+  # those need wheels powered and the OBC in application mode.
+
+  - id: LEOP-001
+    name: "First Acquisition of Signal & OBC Boot"
+    file: "leop/first_acquisition.md"
+    category: leop
+    required_positions: [flight_director, ttc, fdir_systems]
+    position_roles:
+      flight_director: "Authorize pass start, GO/NO-GO decisions"
+      ttc: "Configure ground station, monitor RF acquisition"
+      fdir_systems: "Issue OBC_BOOT_APP, verify sw_image transition"
+    command_services: [3, 8, 9, 17]
+
+  - id: LEOP-002
+    name: "Initial Health Check"
+    file: "leop/initial_health_check.md"
+    category: leop
+    required_positions: [flight_director, eps_tcs, fdir_systems]
+    position_roles:
+      flight_director: "Coordinate checkout sequence"
+      eps_tcs: "Verify power and thermal status"
+      fdir_systems: "Verify OBDH and HK configuration"
+    command_services: [3, 5, 8, 17]
+
+  - id: LEOP-003
+    name: "Initial Orbit Determination"
+    file: "leop/initial_orbit_determination.md"
+    category: leop
+    required_positions: [flight_director, aocs, ttc]
+    position_roles:
+      flight_director: "Approve orbit solution"
+      aocs: "Process orbit data, update onboard ephemeris"
+      ttc: "Provide range/Doppler data"
+    command_services: [8, 9]
+
+  - id: LEOP-004
+    name: "Solar Array Verification"
+    file: "leop/solar_array_verification.md"
+    category: leop
+    required_positions: [flight_director, eps_tcs]
+    position_roles:
+      flight_director: "Authorize deployment verification"
+      eps_tcs: "Monitor solar array currents and voltages"
+    command_services: [8]
+
+  - id: LEOP-005
+    name: "Sun Acquisition"
+    file: "leop/sun_acquisition.md"
+    category: leop
+    required_positions: [flight_director, aocs]
+    position_roles:
+      flight_director: "Authorize attitude maneuver"
+      aocs: "Command AOCS mode transition, monitor rates"
+    command_services: [8]
+
+  - id: LEOP-006
+    name: "Time Synchronisation"
+    file: "leop/time_sync.md"
+    category: leop
+    required_positions: [flight_director]
+    position_roles:
+      flight_director: "Execute time sync, verify accuracy"
+    command_services: [9]
+
+  - id: LEOP-007
+    name: "Sequential Power-On"
+    file: "leop/sequential_power_on.md"
+    category: leop
+    required_positions: [flight_director, eps_tcs, aocs, ttc, fdir_systems]
+    position_roles:
+      flight_director: "Coordinate power-on sequence, GO/NO-GO decisions"
+      eps_tcs: "Command power lines, monitor power budget"
+      aocs: "Commission AOCS sensors and actuators"
+      ttc: "Monitor link quality throughout"
+      fdir_systems: "Monitor OBDH health, configure alarms"
+    command_services: [8, 3, 5]
+
+  # === Commissioning Procedures ===
+  - id: COM-001
+    name: "EPS Checkout"
+    file: "commissioning/eps_checkout.md"
+    category: commissioning
+    required_positions: [flight_director, eps_tcs]
+    position_roles:
+      flight_director: "Authorize power line switching"
+      eps_tcs: "Execute EPS tests, verify power distribution"
+    command_services: [3, 8, 20]
+
+  - id: COM-002
+    name: "TCS Verification"
+    file: "commissioning/tcs_verification.md"
+    category: commissioning
+    required_positions: [flight_director, eps_tcs]
+    position_roles:
+      flight_director: "Authorize heater activation"
+      eps_tcs: "Verify thermal control loops and heater operation"
+    command_services: [3, 8, 20]
+
+  - id: COM-003
+    name: "AOCS Sensor Calibration"
+    file: "commissioning/aocs_sensor_calibration.md"
+    category: commissioning
+    required_positions: [flight_director, aocs]
+    position_roles:
+      flight_director: "Authorize calibration sequence"
+      aocs: "Execute sensor calibration, validate output"
+    command_services: [3, 8, 20]
+
+  - id: COM-004
+    name: "AOCS Actuator Checkout"
+    file: "commissioning/aocs_actuator_checkout.md"
+    category: commissioning
+    required_positions: [flight_director, aocs]
+    position_roles:
+      flight_director: "Authorize actuator tests"
+      aocs: "Test reaction wheels, magnetorquers"
+    command_services: [3, 8, 20]
+
+  - id: COM-005
+    name: "AOCS Mode Transitions"
+    file: "commissioning/aocs_mode_transitions.md"
+    category: commissioning
+    required_positions: [flight_director, aocs]
+    position_roles:
+      flight_director: "Authorize mode changes"
+      aocs: "Execute mode transitions, verify stability"
+    command_services: [3, 8, 20]
+
+  - id: COM-006
+    name: "TTC Link Verification"
+    file: "commissioning/ttc_link_verification.md"
+    category: commissioning
+    required_positions: [flight_director, ttc]
+    position_roles:
+      flight_director: "Coordinate link test"
+      ttc: "Verify uplink/downlink at all data rates"
+    command_services: [3, 8, 17, 20]
+
+  - id: COM-007
+    name: "OBDH Checkout"
+    file: "commissioning/obdh_checkout.md"
+    category: commissioning
+    required_positions: [flight_director, fdir_systems]
+    position_roles:
+      flight_director: "Authorize OBC tests"
+      fdir_systems: "Verify OBC, CAN bus, memory subsystems"
+    command_services: [3, 6, 8, 20]
+
+  - id: COM-008
+    name: "FDIR Configuration"
+    file: "commissioning/fdir_configuration.md"
+    category: commissioning
+    required_positions: [flight_director, fdir_systems]
+    position_roles:
+      flight_director: "Approve FDIR configuration"
+      fdir_systems: "Configure monitoring limits and event-actions"
+    command_services: [3, 5, 8, 12, 19, 20]
+
+  - id: COM-009
+    name: "Payload Power On"
+    file: "commissioning/payload_power_on.md"
+    category: commissioning
+    required_positions: [flight_director, payload_ops, eps_tcs]
+    position_roles:
+      flight_director: "Authorize payload activation"
+      payload_ops: "Power on imager, verify telemetry"
+      eps_tcs: "Monitor power budget impact"
+    command_services: [3, 8, 15, 20]
+
+  - id: COM-010
+    name: "FPA Cooler Activation"
+    file: "commissioning/fpa_cooler_activation.md"
+    category: commissioning
+    required_positions: [flight_director, payload_ops, eps_tcs]
+    position_roles:
+      flight_director: "Authorize cooler start"
+      payload_ops: "Activate cooler, monitor FPA temp"
+      eps_tcs: "Monitor power consumption and thermal"
+    command_services: [3, 8, 20]
+
+  - id: COM-011
+    name: "Payload Calibration"
+    file: "commissioning/payload_calibration.md"
+    category: commissioning
+    required_positions: [flight_director, payload_ops]
+    position_roles:
+      flight_director: "Authorize calibration"
+      payload_ops: "Execute calibration sequence, verify image quality"
+    command_services: [3, 8, 15, 20]
+
+  - id: COM-012
+    name: "First Light"
+    file: "commissioning/first_light.md"
+    category: commissioning
+    required_positions: [flight_director, payload_ops, aocs]
+    position_roles:
+      flight_director: "Authorize first imaging"
+      payload_ops: "Capture first image, assess quality"
+      aocs: "Ensure pointing accuracy for imaging"
+    command_services: [3, 8, 11, 15, 20]
+
+  - id: COM-013
+    name: "ADCS Full Commissioning"
+    file: "commissioning/adcs_commissioning.md"
+    category: commissioning
+    required_positions: [flight_director, aocs, eps_tcs]
+    position_roles:
+      flight_director: "Authorize mode transitions"
+      aocs: "Execute sensor checks, actuator verification, mode transitions"
+      eps_tcs: "Monitor power during actuator testing"
+    command_services: [8]
+
+  # === Nominal Operations Procedures ===
+  - id: NOM-001
+    name: "Pass Startup"
+    file: "nominal/startup.md"
+    category: nominal
+    required_positions: [flight_director, ttc]
+    position_roles:
+      flight_director: "Authorize pass start, initial GO/NO-GO"
+      ttc: "Verify link acquisition"
+    command_services: [3, 8, 17]
+
+  - id: NOM-002
+    name: "Imaging Session"
+    file: "nominal/imaging_session.md"
+    category: nominal
+    required_positions: [payload_ops, aocs]
+    position_roles:
+      payload_ops: "Configure and execute imaging"
+      aocs: "Ensure pointing for imaging windows"
+    command_services: [8, 11]
+
+  - id: NOM-003
+    name: "Data Downlink"
+    file: "nominal/data_downlink.md"
+    category: nominal
+    required_positions: [ttc, payload_ops]
+    position_roles:
+      ttc: "Configure high-rate downlink"
+      payload_ops: "Select and prioritize data for download"
+    command_services: [8, 15]
+
+  - id: NOM-005
+    name: "HK Configuration"
+    file: "nominal/hk_configuration.md"
+    category: nominal
+    required_positions: [fdir_systems]
+    position_roles:
+      fdir_systems: "Adjust HK reporting rates and SID configuration"
+    command_services: [3]
+
+  - id: NOM-006
+    name: "Software Upload"
+    file: "nominal/software_upload.md"
+    category: nominal
+    required_positions: [flight_director, fdir_systems]
+    position_roles:
+      flight_director: "Authorize upload, GO/NO-GO at each stage"
+      fdir_systems: "Execute memory load and verify"
+    command_services: [6, 8]
+
+  - id: NOM-007
+    name: "Momentum Management"
+    file: "nominal/momentum_management.md"
+    category: nominal
+    required_positions: [aocs]
+    position_roles:
+      aocs: "Execute momentum desaturation"
+    command_services: [8]
+
+  - id: NOM-008
+    name: "Clock Synchronisation"
+    file: "nominal/clock_sync.md"
+    category: nominal
+    required_positions: [flight_director, fdir_systems]
+    position_roles:
+      flight_director: "Verify time delta threshold"
+      fdir_systems: "Execute time update command"
+    command_services: [9]
+
+  - id: NOM-009
+    name: "Routine Health Check"
+    file: "nominal/routine_health_check.md"
+    category: nominal
+    required_positions: [flight_director]
+    position_roles:
+      flight_director: "Review all subsystem parameters"
+    command_services: [3, 5]
+
+  - id: NOM-010
+    name: "Eclipse Transition"
+    file: "nominal/eclipse_transition.md"
+    category: nominal
+    required_positions: [eps_tcs, aocs]
+    position_roles:
+      eps_tcs: "Monitor power balance during eclipse"
+      aocs: "Monitor attitude during eclipse transition"
+    command_services: [3, 8]
+
+  - id: NOM-011
+    name: "Data Rate Change"
+    file: "nominal/data_rate_change.md"
+    category: nominal
+    required_positions: [ttc]
+    position_roles:
+      ttc: "Configure and verify new data rate"
+    command_services: [8]
+
+  - id: NOM-012
+    name: "Shift Handover"
+    file: "nominal/shift_handover.md"
+    category: nominal
+    required_positions: [flight_director]
+    position_roles:
+      flight_director: "Conduct handover briefing and log"
+    command_services: []
+
+  # === Contingency Procedures ===
+  - id: CTG-001
+    name: "Under-Voltage Load Shed"
+    file: "contingency/undervoltage_loadshed.md"
+    category: contingency
+    required_positions: [flight_director, eps_tcs]
+    position_roles:
+      flight_director: "Authorize load shedding sequence"
+      eps_tcs: "Execute power line disconnections"
+    command_services: [3, 5, 8, 20]
+
+  - id: CTG-002
+    name: "AOCS Anomaly Recovery"
+    file: "contingency/aocs_anomaly.md"
+    category: contingency
+    required_positions: [flight_director, aocs]
+    position_roles:
+      flight_director: "Authorize recovery actions"
+      aocs: "Diagnose and recover AOCS"
+    command_services: [3, 5, 8, 20]
+
+  - id: CTG-003
+    name: "TTC Link Loss Recovery"
+    file: "contingency/ttc_link_loss.md"
+    category: contingency
+    required_positions: [flight_director, ttc]
+    position_roles:
+      flight_director: "Coordinate link recovery"
+      ttc: "Reconfigure RF chain and ground station"
+    command_services: [3, 5, 8, 17, 20]
+
+  - id: CTG-004
+    name: "Thermal Exceedance"
+    file: "contingency/thermal_exceedance.md"
+    category: contingency
+    required_positions: [flight_director, payload_ops, eps_tcs]
+    position_roles:
+      flight_director: "Authorize thermal response"
+      payload_ops: "Safe payload if affected"
+      eps_tcs: "Adjust heaters and power"
+    command_services: [3, 5, 8, 20]
+
+  - id: CTG-005
+    name: "EPS Safe Mode"
+    file: "contingency/eps_safe_mode.md"
+    category: contingency
+    required_positions: [flight_director, eps_tcs]
+    position_roles:
+      flight_director: "Authorize EPS recovery"
+      eps_tcs: "Execute EPS safe mode recovery"
+    command_services: [3, 5, 8, 20]
+
+  - id: CTG-006
+    name: "Payload Anomaly"
+    file: "contingency/payload_anomaly.md"
+    category: contingency
+    required_positions: [flight_director, payload_ops]
+    position_roles:
+      flight_director: "Authorize payload response"
+      payload_ops: "Diagnose and safe payload"
+    command_services: [3, 5, 8, 20]
+
+  - id: CTG-007
+    name: "Reaction Wheel Anomaly"
+    file: "contingency/reaction_wheel_anomaly.md"
+    category: contingency
+    required_positions: [flight_director, aocs]
+    position_roles:
+      flight_director: "Authorize RW recovery"
+      aocs: "Diagnose RW issue, switch to backup"
+    command_services: [3, 5, 8, 20]
+
+  - id: CTG-008
+    name: "Star Tracker Failure"
+    file: "contingency/star_tracker_failure.md"
+    category: contingency
+    required_positions: [flight_director, aocs]
+    position_roles:
+      flight_director: "Authorize ST recovery"
+      aocs: "Switch to backup ST, recalibrate"
+    command_services: [3, 5, 8, 20]
+
+  - id: CTG-009
+    name: "Solar Array Degradation"
+    file: "contingency/solar_array_degradation.md"
+    category: contingency
+    required_positions: [flight_director, eps_tcs]
+    position_roles:
+      flight_director: "Authorize power budget adjustment"
+      eps_tcs: "Assess degradation, adjust power profile"
+    command_services: [3, 5, 8, 20]
+
+  - id: CTG-010
+    name: "OBDH Watchdog Recovery"
+    file: "contingency/obdh_watchdog_recovery.md"
+    category: contingency
+    required_positions: [flight_director, fdir_systems]
+    position_roles:
+      flight_director: "Authorize OBC recovery actions"
+      fdir_systems: "Assess watchdog event, verify OBC state"
+    command_services: [3, 5, 8, 20]
+
+  - id: CTG-011
+    name: "OBC Redundancy Switchover"
+    file: "contingency/obc_redundancy_switchover.md"
+    category: contingency
+    required_positions: [flight_director, fdir_systems]
+    position_roles:
+      flight_director: "Authorize OBC switchover"
+      fdir_systems: "Execute switchover, verify new OBC"
+    command_services: [3, 5, 8, 20]
+
+  - id: CTG-012
+    name: "Overcurrent Response"
+    file: "contingency/overcurrent_response.md"
+    category: contingency
+    required_positions: [flight_director, eps_tcs]
+    position_roles:
+      flight_director: "Authorize power line reset"
+      eps_tcs: "Isolate and reset overcurrent line"
+    command_services: [3, 5, 8, 20]
+
+  - id: CTG-013
+    name: "Battery Cell Failure"
+    file: "contingency/battery_cell_failure.md"
+    category: contingency
+    required_positions: [flight_director, eps_tcs]
+    position_roles:
+      flight_director: "Authorize battery management"
+      eps_tcs: "Assess cell failure, adjust charge limits"
+    command_services: [3, 5, 8, 20]
+
+  - id: CTG-014
+    name: "BER Anomaly"
+    file: "contingency/ber_anomaly.md"
+    category: contingency
+    required_positions: [flight_director, ttc]
+    position_roles:
+      flight_director: "Authorize link reconfiguration"
+      ttc: "Diagnose BER issue, adjust modulation/rate"
+    command_services: [3, 5, 8, 17, 20]
+
+  - id: CTG-015
+    name: "Corrupted Image Recovery"
+    file: "contingency/corrupted_image.md"
+    category: contingency
+    required_positions: [payload_ops]
+    position_roles:
+      payload_ops: "Assess corruption, retake if possible"
+    command_services: [3, 8, 15]
+
+  - id: CTG-016
+    name: "Memory Segment Failure"
+    file: "contingency/memory_segment_failure.md"
+    category: contingency
+    required_positions: [flight_director, fdir_systems]
+    position_roles:
+      flight_director: "Authorize memory management"
+      fdir_systems: "Isolate bad segment, remap storage"
+    command_services: [3, 5, 6, 8, 20]
+
+  - id: CTG-017
+    name: "Bus Failure Switchover"
+    file: "contingency/bus_failure_switchover.md"
+    category: contingency
+    required_positions: [flight_director, fdir_systems]
+    position_roles:
+      flight_director: "Authorize bus switchover"
+      fdir_systems: "Switch CAN bus, verify communication"
+    command_services: [3, 5, 8, 20]
+
+  - id: CTG-018
+    name: "Boot Loader Recovery"
+    file: "contingency/boot_loader_recovery.md"
+    category: contingency
+    required_positions: [flight_director, fdir_systems]
+    position_roles:
+      flight_director: "Authorize boot recovery"
+      fdir_systems: "Execute boot loader recovery sequence"
+    command_services: [3, 5, 6, 8, 20]
+
+  - id: CTG-019
+    name: "No Telemetry at Pass Start"
+    file: "contingency/no_telemetry_at_pass.md"
+    category: contingency
+    required_positions: [flight_director, ttc]
+    position_roles:
+      flight_director: "Coordinate RF chain diagnostics"
+      ttc: "Diagnose transponder/antenna/GS issues"
+    command_services: [8, 17]
+
+  - id: CTG-020
+    name: "Ground Station Antenna Failure"
+    file: "contingency/gs_antenna_failure.md"
+    category: contingency
+    required_positions: [flight_director, ttc]
+    position_roles:
+      flight_director: "Authorize station switchover"
+      ttc: "Diagnose GS equipment, switch to backup station"
+    command_services: [8, 17]
+
+  - id: CTG-021
+    name: "OBC Bootloader Recovery"
+    file: "contingency/obc_bootloader_recovery.md"
+    category: contingency
+    required_positions: [flight_director, fdir_systems]
+    position_roles:
+      flight_director: "Authorize OBC recovery sequence"
+      fdir_systems: "Execute bootloader recovery, verify app boot"
+    command_services: [6, 8]
+
+  - id: CTG-022
+    name: "CAN Bus Failure Isolation"
+    file: "contingency/bus_failure_isolation.md"
+    category: contingency
+    required_positions: [flight_director, fdir_systems]
+    position_roles:
+      flight_director: "Authorize bus isolation"
+      fdir_systems: "Isolate failed CAN bus, verify backup bus"
+    command_services: [8]
+
+  - id: CTG-023
+    name: "Progressive Load Shed"
+    file: "contingency/progressive_load_shed.md"
+    category: contingency
+    required_positions: [flight_director, eps_tcs]
+    position_roles:
+      flight_director: "Authorize progressive load shedding"
+      eps_tcs: "Execute staged load shed by SoC threshold"
+    command_services: [3, 5, 8]
+
+  - id: CTG-024
+    name: "Solar Panel Loss Response"
+    file: "contingency/solar_panel_loss_response.md"
+    category: contingency
+    required_positions: [flight_director, eps_tcs, aocs]
+    position_roles:
+      flight_director: "Authorize power budget revision"
+      eps_tcs: "Assess panel loss impact, adjust power profile"
+      aocs: "Adjust attitude for optimal remaining panel illumination"
+    command_services: [3, 5, 8]
+
+  - id: CTG-025
+    name: "AOCS Sensor Loss Recovery"
+    file: "contingency/aocs_sensor_loss_recovery.md"
+    category: contingency
+    required_positions: [flight_director, aocs]
+    position_roles:
+      flight_director: "Authorize sensor switchover"
+      aocs: "Switch to backup sensor, reconfigure ADCS"
+    command_services: [8]
+
+  - id: CTG-026
+    name: "AOCS Actuator Stuck Recovery"
+    file: "contingency/aocs_actuator_stuck_recovery.md"
+    category: contingency
+    required_positions: [flight_director, aocs, eps_tcs]
+    position_roles:
+      flight_director: "Authorize actuator recovery"
+      aocs: "Power-cycle actuator, switch to 3-wheel mode if needed"
+      eps_tcs: "Cycle actuator power line"
+    command_services: [8]
+
+  - id: CTG-027
+    name: "GPS Time Synchronisation and AOCS Recovery"
+    file: "contingency/gps_time_sync_recovery.md"
+    category: contingency
+    required_positions: [flight_director, aocs, fdir_systems]
+    position_roles:
+      flight_director: "Authorize GPS time sync"
+      aocs: "Monitor AOCS mode, re-commission if SAFE_BOOT triggered"
+      fdir_systems: "Verify OBC time updated, monitor events"
+    command_services: [8, 9]
+
+  # === Emergency Procedures ===
+  - id: EMG-001
+    name: "Emergency Safe Mode"
+    file: "emergency/emergency_safe_mode.md"
+    category: emergency
+    required_positions: [flight_director]
+    position_roles:
+      flight_director: "Command immediate safe mode entry"
+    command_services: [8]
+
+  - id: EMG-002
+    name: "Total Power Failure"
+    file: "emergency/total_power_failure.md"
+    category: emergency
+    required_positions: [flight_director, eps_tcs]
+    position_roles:
+      flight_director: "Coordinate emergency response"
+      eps_tcs: "Manage emergency power restoration"
+    command_services: [8]
+
+  - id: EMG-003
+    name: "OBC Reboot"
+    file: "emergency/obc_reboot.md"
+    category: emergency
+    required_positions: [flight_director, fdir_systems]
+    position_roles:
+      flight_director: "Authorize emergency reboot"
+      fdir_systems: "Execute reboot, verify recovery"
+    command_services: [8]
+
+  - id: EMG-004
+    name: "Loss of Communication"
+    file: "emergency/loss_of_communication.md"
+    category: emergency
+    required_positions: [flight_director, ttc]
+    position_roles:
+      flight_director: "Coordinate comms recovery"
+      ttc: "Execute blind commanding, reconfigure RF"
+    command_services: [8, 17]
+
+  - id: EMG-005
+    name: "Loss of Attitude"
+    file: "emergency/loss_of_attitude.md"
+    category: emergency
+    required_positions: [flight_director, aocs]
+    position_roles:
+      flight_director: "Authorize emergency attitude recovery"
+      aocs: "Execute detumble and reacquisition"
+    command_services: [8]
+
+  - id: EMG-006
+    name: "Thermal Runaway"
+    file: "emergency/thermal_runaway.md"
+    category: emergency
+    required_positions: [flight_director, eps_tcs, payload_ops]
+    position_roles:
+      flight_director: "Coordinate thermal emergency"
+      eps_tcs: "Emergency heater shutdown"
+      payload_ops: "Emergency payload power off"
+    command_services: [8]

@@ -1,0 +1,38 @@
+# Load Shedding Stage 1 - Triggered at SoC < 30%
+# Non-essential loads reduced to extend battery life
+
+procedure_id: "load_shed_stage1"
+name: "Load Shedding Stage 1"
+category: "fdir_response"
+description: "Activate load shedding stage 1 (SoC < 30%)"
+
+steps:
+  - step_id: 1
+    name: "Payload Standby"
+    description: "Transition payload to standby mode (reduced power)"
+    delay_s: 0.0
+    command: "s8_command"
+    params:
+      func_id: 26  # PAYLOAD_SET_MODE
+      data: [0x01]  # mode = 1 (standby)
+
+  - step_id: 2
+    name: "Reduce Heaters"
+    description: "Reduce heater duty cycle to 50%"
+    delay_s: 1.0
+    command: "s8_command"
+    params:
+      func_id: 46  # TCS_SET_HEATER_DUTY_LIMIT
+      data: [0x00, 0x32]  # circuit=0 (battery), max_duty=50%
+
+  - step_id: 3
+    name: "Load Shed Stage 1"
+    description: "Activate load shedding stage 1"
+    delay_s: 2.0
+    command: "s8_command"
+    params:
+      func_id: 25  # EPS_EMERGENCY_LOAD_SHED
+      data: [0x01]  # stage = 1
+
+timeout_s: 20.0
+max_retries: 2

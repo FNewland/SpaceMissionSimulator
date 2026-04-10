@@ -1,0 +1,41 @@
+name: "Cascading Sensor Failure"
+difficulty: ADVANCED
+duration_s: 2700
+briefing: |
+  A cascading sequence of AOCS sensor failures tests the operator's diagnostic and
+  recovery skills. At T+60s star tracker 1 fails — the onboard FDIR should auto-switch
+  to ST2 but the operator must verify. At T+180s the +X coarse sun sensor head fails,
+  degrading the composite sun vector. At T+300s magnetometer A fails, requiring the
+  operator to manually switch to magnetometer B. The operator must track each failure,
+  assess cumulative impact on attitude determination, and decide whether the remaining
+  sensor suite is adequate for mission operations or requires fallback to safe mode.
+events:
+  - time_offset_s: 60
+    action: inject
+    params:
+      subsystem: aocs
+      failure: st_failure
+      magnitude: 1.0
+      onset: step
+      unit: 1
+  - time_offset_s: 180
+    action: inject
+    params:
+      subsystem: aocs
+      failure: css_head_fail
+      magnitude: 1.0
+      onset: step
+      face: px
+  - time_offset_s: 300
+    action: inject
+    params:
+      subsystem: aocs
+      failure: mag_a_fail
+      magnitude: 1.0
+      onset: step
+expected_responses:
+  - { category: detect, description: "Detect ST1 failure (status=4) and verify ST2 acquisition" }
+  - { category: detect, description: "Detect CSS +X head failure from per-head illumination telemetry" }
+  - { category: detect, description: "Detect MAG-A failure from magnetometer readings going invalid" }
+  - { category: isolate, description: "Diagnose each failure independently and assess cumulative impact" }
+  - { category: recover, description: "Switch to MAG-B, verify adequate sensor suite, or transition to safe mode" }

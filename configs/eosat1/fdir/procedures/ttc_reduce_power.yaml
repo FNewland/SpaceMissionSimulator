@@ -1,0 +1,29 @@
+# TTC Reduce Power - Level 1 Recovery for TTC Link Issues
+# Reduces TTC TX power and data rate to improve link stability
+
+procedure_id: "ttc_reduce_power"
+name: "TTC Reduce Power"
+category: "fdir_response"
+description: "Level 1 recovery: Reduce TTC TX power and data rate"
+
+steps:
+  - step_id: 1
+    name: "Set Data Rate Low"
+    description: "Reduce data rate to 1 kbps"
+    delay_s: 0.0
+    command: "s8_command"
+    params:
+      func_id: 65  # TTC_SET_DATA_RATE
+      data: [0x00]  # rate = 0 (1 kbps low rate)
+
+  - step_id: 2
+    name: "Set TX Power Medium"
+    description: "Set TX power to 50% (medium level)"
+    delay_s: 1.0
+    command: "s8_command"
+    params:
+      func_id: 68  # TTC_SET_TX_POWER
+      data: [0x32]  # 50% power level
+
+timeout_s: 15.0
+max_retries: 2

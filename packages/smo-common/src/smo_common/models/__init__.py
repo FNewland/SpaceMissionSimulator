@@ -1,0 +1,1 @@
+"""SMO Common — Model interfaces."""

@@ -1,0 +1,22 @@
+model: payload_basic
+fpa_cooler_target_c: -15.0
+fpa_ambient_c: 5.0
+fpa_tau_cooling_s: 100.0
+fpa_tau_warming_s: 120.0
+fpa_cooler_power_w: 15.0
+image_size_mb: 800.0
+total_storage_mb: 20000.0
+line_rate_hz: 500.0
+data_rate_mbps: 80.0
+
+param_ids:
+  pli_mode: 0x0600
+  fpa_temp: 0x0601
+  cooler_pwr: 0x0602
+  imager_temp: 0x0603
+  store_used: 0x0604
+  image_count: 0x0605
+  scene_id: 0x0606
+  line_rate: 0x0607
+  data_rate: 0x0608
+  checksum_errors: 0x0609

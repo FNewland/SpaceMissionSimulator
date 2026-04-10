@@ -1,0 +1,38 @@
+# AOCS Safe Mode Recovery - Level 1 Recovery for AOCS Anomalies
+# Transitions AOCS to safe mode and reduces power draw
+
+procedure_id: "aocs_safe_mode_recovery"
+name: "AOCS Safe Mode Recovery"
+category: "fdir_response"
+description: "Level 1 recovery: AOCS safe mode entry"
+
+steps:
+  - step_id: 1
+    name: "AOCS Safe Mode"
+    description: "Command AOCS to safe mode"
+    delay_s: 0.0
+    command: "s8_command"
+    params:
+      func_id: 0  # AOCS_SET_MODE
+      data: [0x02]  # mode = 2 (safe)
+
+  - step_id: 2
+    name: "Reset Reaction Wheels"
+    description: "Reset reaction wheel commands to clear any stuck states"
+    delay_s: 1.0
+    command: "s8_command"
+    params:
+      func_id: 8  # RW_SET_SPEED_BIAS
+      data: [0xFF, 0x00, 0x00]  # all wheels, zero bias
+
+  - step_id: 3
+    name: "Payload Standby"
+    description: "Reduce payload to standby to decrease power draw"
+    delay_s: 2.0
+    command: "s8_command"
+    params:
+      func_id: 26  # PAYLOAD_SET_MODE
+      data: [0x01]  # mode = 1 (standby)
+
+timeout_s: 20.0
+max_retries: 2

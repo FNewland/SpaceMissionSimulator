@@ -1,0 +1,22 @@
+# EOSAT-1 Orbit Configuration — Sun-Synchronous LEO (Ocean Current Monitoring)
+# 450 km altitude, 98° inclination SSO
+# TLE generated for 450 km circular SSO (mean motion ~15.24 rev/day)
+tle_line1: "1 99001U 26001A   26068.50000000  .00000100  00000-0  10000-4 0  9990"
+tle_line2: "2 99001  98.0000 120.0000 0001200  90.0000 270.0000 15.24000000 00010"
+# T-0: mission start epoch for MET computation (ISO 8601 UTC)
+t0_epoch: "2026-03-10T00:00:00Z"
+altitude_km: 450.0
+inclination_deg: 98.0
+earth_radius_km: 6371.0
+
+ground_stations:
+  - name: Iqaluit
+    lat_deg: 63.747
+    lon_deg: -68.518
+    alt_km: 0.034
+    min_elevation_deg: 5.0
+  - name: Troll
+    lat_deg: -72.012
+    lon_deg: 2.535
+    alt_km: 1.275
+    min_elevation_deg: 5.0

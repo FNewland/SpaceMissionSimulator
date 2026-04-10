@@ -1,0 +1,26 @@
+name: "Reaction Wheel Stuck at Speed"
+difficulty: ADVANCED
+duration_s: 2700
+briefing: |
+  Reaction wheel 1 (RW-1, index 0) experiences a seizure at T+120s — the bearing
+  locks and the wheel stops responding to torque commands while retaining its current
+  speed. The three remaining wheels must compensate, causing momentum to accumulate.
+  The operator must detect the stuck wheel from telemetry (speed not responding to
+  commands, temperature rising), disable wheel 1, reconfigure AOCS to three-wheel
+  mode, and perform a momentum dump using the magnetorquers to prevent remaining
+  wheel saturation.
+events:
+  - time_offset_s: 120
+    action: inject
+    params:
+      subsystem: aocs
+      failure: rw_seizure
+      magnitude: 1.0
+      onset: step
+      wheel: 0
+expected_responses:
+  - { category: detect, description: "Detect RW-1 speed anomaly — speed frozen, not responding to commands" }
+  - { category: detect, description: "Detect RW-1 temperature rising due to bearing seizure" }
+  - { category: isolate, description: "Confirm wheel 0 is seized by correlating speed freeze with temperature rise" }
+  - { category: recover, description: "Disable wheel 0, command 3-wheel mode (S8 func_id 5), perform momentum dump" }
+  - { category: recover, description: "Verify stable pointing in 3-wheel mode with relaxed error tolerance" }

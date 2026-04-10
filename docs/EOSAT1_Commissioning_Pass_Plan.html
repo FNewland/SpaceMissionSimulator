@@ -1,0 +1,1561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EOSAT-1 Commissioning Pass Plan</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #0a0e17;
+            color: #c8d0e0;
+            line-height: 1.6;
+        }
+        .sidebar {
+            position: fixed; left: 0; top: 0; width: 260px; height: 100vh;
+            background-color: #141b2d; border-right: 2px solid #4fc3f7;
+            overflow-y: auto; padding: 20px; z-index: 1000;
+        }
+        .sidebar h1 { font-size: 16px; margin-bottom: 10px; color: #4fc3f7; text-transform: uppercase; letter-spacing: 1px; }
+        .sidebar h2 { font-size: 12px; margin: 15px 0 5px; color: #ff9800; text-transform: uppercase; letter-spacing: 1px; }
+        .sidebar nav a {
+            display: block; padding: 8px 12px; margin: 4px 0;
+            background-color: rgba(255,255,255,0.05); border-left: 3px solid transparent;
+            color: #c8d0e0; text-decoration: none; border-radius: 4px;
+            transition: all 0.3s ease; font-size: 12px;
+        }
+        .sidebar nav a:hover { background-color: rgba(255,255,255,0.1); border-left-color: #4fc3f7; }
+        .sidebar nav a.iq { border-left-color: #4fc3f7; }
+        .sidebar nav a.tr { border-left-color: #bb86fc; }
+        .sidebar .stats { margin-top: 20px; padding: 10px; background: rgba(255,255,255,0.05); border-radius: 4px; font-size: 11px; }
+        .sidebar .stats div { margin: 3px 0; }
+        .container { margin-left: 260px; padding: 40px; max-width: 1400px; }
+        .header { margin-bottom: 40px; text-align: center; border-bottom: 2px solid #4fc3f7; padding-bottom: 20px; }
+        .header h1 { font-size: 36px; margin-bottom: 5px; color: #4fc3f7; text-transform: uppercase; letter-spacing: 2px; }
+        .header p { color: #ff9800; font-size: 14px; }
+        .orbit-info {
+            display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px;
+            margin: 30px 0; padding: 20px; background: rgba(255,255,255,0.03); border-radius: 8px;
+        }
+        .orbit-info .item { text-align: center; }
+        .orbit-info .item .label { font-size: 11px; color: #888; text-transform: uppercase; }
+        .orbit-info .item .value { font-size: 20px; color: #4fc3f7; font-weight: 700; }
+
+        /* Timeline bar */
+        .timeline-bar {
+            position: relative; margin: 30px 0 50px; height: 80px;
+            background: rgba(255,255,255,0.03); border-radius: 8px; overflow: visible;
+        }
+        .timeline-bar .hour-mark {
+            position: absolute; top: 0; height: 100%; border-left: 1px solid rgba(255,255,255,0.1);
+            font-size: 10px; color: #666; padding-left: 4px; padding-top: 2px;
+        }
+        .timeline-bar .pass-block {
+            position: absolute; top: 20px; height: 40px; border-radius: 4px; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 10px; font-weight: 600; color: #fff; min-width: 8px;
+            transition: transform 0.2s;
+        }
+        .timeline-bar .pass-block:hover { transform: scaleY(1.3); }
+        .timeline-bar .pass-block.iq { background: rgba(79,195,247,0.7); border: 1px solid #4fc3f7; }
+        .timeline-bar .pass-block.tr { background: rgba(187,134,252,0.7); border: 1px solid #bb86fc; }
+        .timeline-legend { display: flex; gap: 20px; justify-content: center; margin: 10px 0 30px; font-size: 12px; }
+        .timeline-legend span { display: flex; align-items: center; gap: 6px; }
+        .timeline-legend .dot { width: 12px; height: 12px; border-radius: 3px; }
+
+        /* Pass sections */
+        section { margin-bottom: 50px; scroll-margin-top: 20px; }
+        .pass-header {
+            padding: 15px 20px; border-radius: 8px 8px 0 0; display: flex;
+            justify-content: space-between; align-items: center;
+        }
+        .pass-header h2 { font-size: 20px; color: #fff; }
+        .pass-header .pass-meta { text-align: right; font-size: 12px; }
+        .pass-header .pass-meta .el { font-size: 16px; font-weight: 700; }
+        .pass-body {
+            background: rgba(255,255,255,0.03); border-radius: 0 0 8px 8px; padding: 20px;
+            border: 1px solid rgba(255,255,255,0.08); border-top: none;
+        }
+        .pass-summary { margin-bottom: 15px; font-style: italic; color: #aaa; }
+        .phase-badge {
+            display: inline-block; padding: 3px 10px; border-radius: 12px;
+            font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+        }
+
+        /* Step table */
+        table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+        th { text-align: left; padding: 8px 10px; font-size: 11px; color: #888;
+             text-transform: uppercase; border-bottom: 1px solid rgba(255,255,255,0.1); }
+        td { padding: 8px 10px; font-size: 13px; border-bottom: 1px solid rgba(255,255,255,0.05); vertical-align: top; }
+        .step-num { color: #4fc3f7; font-weight: 700; width: 40px; text-align: center; }
+        .cmd { color: #ff9800; font-family: monospace; font-size: 12px; }
+        .tm { color: #4caf50; font-family: monospace; font-size: 11px; }
+        .pos-FD { color: #4fc3f7; }
+        .pos-FDIR { color: #f44336; }
+        .pos-EPS_TCS { color: #ff9800; }
+        .pos-TTC { color: #bb86fc; }
+        .pos-AOCS { color: #4caf50; }
+        .pos-Payload { color: #64ffda; }
+        .go-gate {
+            display: inline-block; padding: 2px 8px; border-radius: 4px;
+            font-size: 11px; font-weight: 700;
+        }
+        .go-gate.go { background: rgba(76,175,80,0.2); color: #4caf50; border: 1px solid #4caf50; }
+        .go-gate.critical { background: rgba(255,87,34,0.2); color: #ff5722; border: 1px solid #ff5722; }
+        .go-gate.monitor { background: rgba(255,152,0,0.2); color: #ff9800; border: 1px solid #ff9800; }
+        .go-gate.gate { background: rgba(79,195,247,0.2); color: #4fc3f7; border: 1px solid #4fc3f7; }
+
+        /* Autonomous box */
+        .autonomous-box {
+            margin-top: 15px; padding: 12px 15px; background: rgba(255,152,0,0.08);
+            border-left: 3px solid #ff9800; border-radius: 0 4px 4px 0; font-size: 12px;
+        }
+        .autonomous-box strong { color: #ff9800; }
+
+        /* Gap indicator */
+        .gap-indicator {
+            text-align: center; padding: 15px; margin: 10px 0; color: #666;
+            font-size: 12px; border: 1px dashed rgba(255,255,255,0.1); border-radius: 4px;
+        }
+        .gap-indicator .gap-time { font-size: 18px; color: #ff9800; font-weight: 700; }
+
+        /* Contingency reference */
+        .contingency-ref { font-size: 11px; color: #f44336; cursor: pointer; text-decoration: underline; }
+
+        /* Final declaration */
+        .declaration {
+            text-align: center; padding: 30px; margin: 40px 0;
+            background: linear-gradient(135deg, rgba(79,195,247,0.1), rgba(76,175,80,0.1));
+            border: 2px solid #4caf50; border-radius: 12px;
+        }
+        .declaration h2 { font-size: 28px; color: #4caf50; margin-bottom: 10px; }
+        .declaration p { color: #aaa; }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <h1>Pass Plan</h1>
+        <h2>Ground Stations</h2>
+        <nav>
+            <a href="#pass-1" class="tr">P1 Troll T+00:21 (SEPARATION MONITORIN...)</a>
+            <a href="#pass-2" class="tr">P2 Troll T+01:53 (OBC BOOT & INITIAL P...)</a>
+            <a href="#pass-3" class="tr">P3 Troll T+03:25 (EPS COMMISSIONING & ...)</a>
+            <a href="#pass-4" class="tr">P4 Troll T+04:58 (OBDH COMMISSIONING...)</a>
+            <a href="#pass-5" class="tr">P5 Troll T+06:34 (AOCS INITIAL CHECKOU...)</a>
+            <a href="#pass-6" class="iq">P6 Iqaluit T+09:04 (AOCS COMMISSIONING —...)</a>
+            <a href="#pass-7" class="iq">P7 Iqaluit T+10:36 (AOCS COMMISSIONING —...)</a>
+            <a href="#pass-8" class="iq">P8 Iqaluit T+12:09 (TCS COMMISSIONING...)</a>
+            <a href="#pass-9" class="iq">P9 Iqaluit T+13:42 (PAYLOAD POWER-ON...)</a>
+            <a href="#pass-10" class="tr">P10 Troll T+16:03 (PAYLOAD CONFIGURATIO...)</a>
+            <a href="#pass-11" class="tr">P11 Troll T+17:35 (PAYLOAD CALIBRATION...)</a>
+            <a href="#pass-12" class="iq">P12 Iqaluit T+18:14 (FINE POINTING VERIFI...)</a>
+            <a href="#pass-13" class="tr">P13 Troll T+19:08 (HIGH-RATE DOWNLINK T...)</a>
+            <a href="#pass-14" class="iq">P14 Iqaluit T+19:45 (FDIR ARMING & SYSTEM...)</a>
+            <a href="#pass-15" class="tr">P15 Troll T+20:40 (FIRST OPERATIONAL IM...)</a>
+            <a href="#pass-16" class="iq">P16 Iqaluit T+21:17 (NOMINAL OPERATIONS T...)</a>
+        </nav>
+        <div class="stats">
+            <div><strong style="color:#4fc3f7">Total Passes:</strong> 19 in 24h</div>
+            <div><strong style="color:#bb86fc">Iqaluit:</strong> 8 passes</div>
+            <div><strong style="color:#bb86fc">Troll:</strong> 11 passes</div>
+            <div><strong style="color:#ff9800">Contact Time:</strong> ~131 min (9.1%)</div>
+            <div><strong style="color:#4caf50">Commissioning:</strong> 16 passes / ~21h</div>
+            <div><strong style="color:#4caf50">Steps:</strong> 73 total</div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <h1>EOSAT-1 Commissioning Pass Plan</h1>
+            <p>Chennai (Sriharikota) Launch &mdash; 450 km SSO, 98&deg; Inclination</p>
+            <p style="color: #c8d0e0; margin-top: 5px;">Ground Stations: Iqaluit (63.7&deg;N, Canada) + Troll (72.0&deg;S, Antarctica)</p>
+        </div>
+
+        <div class="orbit-info">
+            <div class="item"><div class="label">Orbital Period</div><div class="value">93.4 min</div></div>
+            <div class="item"><div class="label">Altitude</div><div class="value">450 km</div></div>
+            <div class="item"><div class="label">Inclination</div><div class="value">98.0&deg;</div></div>
+            <div class="item"><div class="label">First Contact</div><div class="value">T+00:21</div></div>
+        </div>
+
+        <!-- Timeline bar -->
+        <h3 style="color: #4fc3f7; margin-bottom: 10px;">24-Hour Pass Timeline</h3>
+        <div class="timeline-bar">
+            <div class="hour-mark" style="left:0.0%">0h</div>
+            <div class="hour-mark" style="left:4.2%">1h</div>
+            <div class="hour-mark" style="left:8.3%">2h</div>
+            <div class="hour-mark" style="left:12.5%">3h</div>
+            <div class="hour-mark" style="left:16.7%">4h</div>
+            <div class="hour-mark" style="left:20.8%">5h</div>
+            <div class="hour-mark" style="left:25.0%">6h</div>
+            <div class="hour-mark" style="left:29.2%">7h</div>
+            <div class="hour-mark" style="left:33.3%">8h</div>
+            <div class="hour-mark" style="left:37.5%">9h</div>
+            <div class="hour-mark" style="left:41.7%">10h</div>
+            <div class="hour-mark" style="left:45.8%">11h</div>
+            <div class="hour-mark" style="left:50.0%">12h</div>
+            <div class="hour-mark" style="left:54.2%">13h</div>
+            <div class="hour-mark" style="left:58.3%">14h</div>
+            <div class="hour-mark" style="left:62.5%">15h</div>
+            <div class="hour-mark" style="left:66.7%">16h</div>
+            <div class="hour-mark" style="left:70.8%">17h</div>
+            <div class="hour-mark" style="left:75.0%">18h</div>
+            <div class="hour-mark" style="left:79.2%">19h</div>
+            <div class="hour-mark" style="left:83.3%">20h</div>
+            <div class="hour-mark" style="left:87.5%">21h</div>
+            <div class="hour-mark" style="left:91.7%">22h</div>
+            <div class="hour-mark" style="left:95.8%">23h</div>
+            <div class="hour-mark" style="left:100.0%">24h</div>
+            <div class="pass-block tr" style="left:1.46%;width:0.50%" title="Troll P1 T+00:21-T+00:29 (19&deg;)">1</div>
+            <div class="pass-block tr" style="left:7.85%;width:0.56%" title="Troll P2 T+01:53-T+02:01 (35&deg;)">2</div>
+            <div class="pass-block tr" style="left:14.24%;width:0.59%" title="Troll P3 T+03:25-T+03:33 (80&deg;)">3</div>
+            <div class="pass-block tr" style="left:20.69%;width:0.53%" title="Troll P4 T+04:58-T+05:06 (24&deg;)">4</div>
+            <div class="pass-block tr" style="left:27.36%;width:0.30%" title="Troll P5 T+06:34-T+06:38 (8&deg;)">5</div>
+            <div class="pass-block iq" style="left:37.78%;width:0.43%" title="Iqaluit P6 T+09:04-T+09:11 (13&deg;)">6</div>
+            <div class="pass-block iq" style="left:44.17%;width:0.59%" title="Iqaluit P7 T+10:36-T+10:45 (70&deg;)">7</div>
+            <div class="pass-block iq" style="left:50.62%;width:0.52%" title="Iqaluit P8 T+12:09-T+12:17 (23&deg;)">8</div>
+            <div class="pass-block iq" style="left:57.08%;width:0.30%" title="Iqaluit P9 T+13:42-T+13:46 (8&deg;)">9</div>
+            <div class="pass-block tr" style="left:66.88%;width:0.42%" title="Troll P10 T+16:03-T+16:09 (12&deg;)">10</div>
+            <div class="pass-block tr" style="left:73.26%;width:0.56%" title="Troll P11 T+17:35-T+17:43 (36&deg;)">11</div>
+            <div class="pass-block iq" style="left:75.97%;width:0.37%" title="Iqaluit P12 T+18:14-T+18:20 (10&deg;)">12</div>
+            <div class="pass-block tr" style="left:79.72%;width:0.56%" title="Troll P13 T+19:08-T+19:16 (65&deg;)">13</div>
+            <div class="pass-block iq" style="left:82.29%;width:0.56%" title="Iqaluit P14 T+19:45-T+19:53 (34&deg;)">14</div>
+            <div class="pass-block tr" style="left:86.11%;width:0.53%" title="Troll P15 T+20:40-T+20:48 (26&deg;)">15</div>
+            <div class="pass-block iq" style="left:88.68%;width:0.58%" title="Iqaluit P16 T+21:17-T+21:25 (40&deg;)">16</div>
+            <div class="pass-block tr" style="left:92.50%;width:0.49%" title="Troll P17 T+22:12-T+22:19 (17&deg;)">17</div>
+            <div class="pass-block iq" style="left:95.35%;width:0.30%" title="Iqaluit P18 T+22:53-T+22:57 (8&deg;)">18</div>
+            <div class="pass-block tr" style="left:98.89%;width:0.49%" title="Troll P19 T+23:44-T+23:51 (17&deg;)">19</div>
+        </div>
+        <div class="timeline-legend">
+            <span><div class="dot" style="background:#4fc3f7"></div> Iqaluit</span>
+            <span><div class="dot" style="background:#bb86fc"></div> Troll</span>
+        </div>
+
+        <section id="pass-1">
+            <div class="pass-header" style="background: linear-gradient(90deg, #bb86fc22, transparent); border-left: 4px solid #bb86fc;">
+                <div>
+                    <h2>PASS 1 — Troll</h2>
+                    <span class="phase-badge" style="background:#ff572233; color:#ff5722; border:1px solid #ff5722;">SEPARATION MONITORING</span>
+                </div>
+                <div class="pass-meta">
+                    <div>T+00:21 &mdash; T+00:29</div>
+                    <div class="el" style="color:#bb86fc">19.4&deg; max</div>
+                    <div>7 min duration</div>
+                </div>
+            </div>
+            <div class="pass-body">
+                <div class="pass-summary">First contact. Separation timer still counting (T+21 to T+29 min). Receive bootloader beacon. Verify spacecraft alive. NO commanding — observe only.</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Step</th>
+                            <th>Time</th>
+                            <th>Action</th>
+                            <th>Position</th>
+                            <th>Command</th>
+                            <th>TM Verification</th>
+                            <th>Gate</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="step-num">1</td>
+                            <td>T+00:21</td>
+                            <td>Verify separation event received via bootloader beacon</td>
+                            <td class="pos-FD" style="font-weight:600">FD</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">sep_timer_active (0x0127)=1, spacecraft_phase (0x0129)=SEPARATION</td>
+                            <td><span class="go-gate go">GO/NO-GO: Beacon received</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">2</td>
+                            <td>T+00:25</td>
+                            <td>Monitor separation timer countdown, confirm safe hold mode</td>
+                            <td class="pos-FD" style="font-weight:600">FD</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">sep_timer_remaining (0x0128) counting down, obc_mode (0x0300)=SAFE</td>
+                            <td><span class="go-gate monitor">MONITOR ONLY</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="autonomous-box">
+                    <strong>Between Passes:</strong> Separation timer continues counting. Spacecraft in bootloader safe hold, beacon transmitting. No commanding until timer expires at ~T+00:30.
+                </div>
+            </div>
+        </section>
+        <div class="gap-indicator">
+            NO CONTACT &mdash; <span class="gap-time">1h 24m</span> &mdash; Autonomous Operations
+        </div>
+        <section id="pass-2">
+            <div class="pass-header" style="background: linear-gradient(90deg, #bb86fc22, transparent); border-left: 4px solid #bb86fc;">
+                <div>
+                    <h2>PASS 2 — Troll</h2>
+                    <span class="phase-badge" style="background:#ff980033; color:#ff9800; border:1px solid #ff9800;">OBC BOOT & INITIAL POWER</span>
+                </div>
+                <div class="pass-meta">
+                    <div>T+01:53 &mdash; T+02:01</div>
+                    <div class="el" style="color:#bb86fc">34.8&deg; max</div>
+                    <div>8 min duration</div>
+                </div>
+            </div>
+            <div class="pass-body">
+                <div class="pass-summary">Separation timer expired. Boot OBC application software. Verify bootloader → application transition. Initial EPS health check.</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Step</th>
+                            <th>Time</th>
+                            <th>Action</th>
+                            <th>Position</th>
+                            <th>Command</th>
+                            <th>TM Verification</th>
+                            <th>Gate</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="step-num">3</td>
+                            <td>T+01:53</td>
+                            <td>Confirm separation timer expired, spacecraft_phase=BOOTLOADER</td>
+                            <td class="pos-FDIR" style="font-weight:600">FDIR</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">sep_timer_active=0, spacecraft_phase (0x0129)=BOOTLOADER_OPS</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">4</td>
+                            <td>T+01:55</td>
+                            <td>Boot OBC application software</td>
+                            <td class="pos-FDIR" style="font-weight:600">FDIR</td>
+                            <td class="cmd">S8 func_id=55 (OBC_BOOT_APP)</td>
+                            <td class="tm">sw_image (0x0311)=1 (APP)</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">5</td>
+                            <td>T+01:57</td>
+                            <td>Verify OBC health — CPU, memory, reboot count</td>
+                            <td class="pos-FDIR" style="font-weight:600">FDIR</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">cpu_load (0x0302)<80%, mem_used (0x0303)<50%, reboot_count (0x030A)=0</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">6</td>
+                            <td>T+01:59</td>
+                            <td>Initial EPS check — battery SoC and bus voltage</td>
+                            <td class="pos-EPS_TCS" style="font-weight:600">EPS_TCS</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">battery_soc (0x0101)>70%, bus_voltage (0x0105)>27V</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="autonomous-box">
+                    <strong>Between Passes:</strong> OBC running application software. AOCS remains OFF. Battery discharging on essential loads only (~3W). Heaters OFF.
+                </div>
+            </div>
+        </section>
+        <div class="gap-indicator">
+            NO CONTACT &mdash; <span class="gap-time">1h 24m</span> &mdash; Autonomous Operations
+        </div>
+        <section id="pass-3">
+            <div class="pass-header" style="background: linear-gradient(90deg, #bb86fc22, transparent); border-left: 4px solid #bb86fc;">
+                <div>
+                    <h2>PASS 3 — Troll (HIGH ELEVATION 79.8°)</h2>
+                    <span class="phase-badge" style="background:#ff980033; color:#ff9800; border:1px solid #ff9800;">EPS COMMISSIONING & ANTENNA DEPLOY</span>
+                </div>
+                <div class="pass-meta">
+                    <div>T+03:25 &mdash; T+03:33</div>
+                    <div class="el" style="color:#bb86fc">79.8&deg; max</div>
+                    <div>8 min duration</div>
+                </div>
+            </div>
+            <div class="pass-body">
+                <div class="pass-summary">Best Troll pass — high elevation, strong link margin. Enable power distribution, deploy antenna, establish full command link. Critical pass.</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Step</th>
+                            <th>Time</th>
+                            <th>Action</th>
+                            <th>Position</th>
+                            <th>Command</th>
+                            <th>TM Verification</th>
+                            <th>Gate</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="step-num">7</td>
+                            <td>T+03:25</td>
+                            <td>Enable battery heater</td>
+                            <td class="pos-EPS_TCS" style="font-weight:600">EPS_TCS</td>
+                            <td class="cmd">S8 func_id=40 (HEATER_BATTERY)</td>
+                            <td class="tm">htr_bat (0x040A)=ON</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">8</td>
+                            <td>T+03:26</td>
+                            <td>Set battery charge rate</td>
+                            <td class="pos-EPS_TCS" style="font-weight:600">EPS_TCS</td>
+                            <td class="cmd">S8 func_id=23 (EPS_SET_CHARGE_RATE)</td>
+                            <td class="tm">battery_soc (0x0101) stable</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">9</td>
+                            <td>T+03:27</td>
+                            <td>Enable power lines 0-2, 5-7 (essential loads)</td>
+                            <td class="pos-EPS_TCS" style="font-weight:600">EPS_TCS</td>
+                            <td class="cmd">S8 func_id=19 (EPS_POWER_ON)</td>
+                            <td class="tm">power_line_0..7 (0x0110-0x0117) as expected</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">10</td>
+                            <td>T+03:28</td>
+                            <td>Verify power distribution — line currents normal</td>
+                            <td class="pos-EPS_TCS" style="font-weight:600">EPS_TCS</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">pwr_line_0_curr..7_curr (0x0118-0x011F) within limits</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">11</td>
+                            <td>T+03:29</td>
+                            <td>Deploy comms antenna</td>
+                            <td class="pos-TTC" style="font-weight:600">TTC</td>
+                            <td class="cmd">S8 func_id=69 (TTC_DEPLOY_ANTENNA)</td>
+                            <td class="tm">antenna_deployed (0x0520)=1</td>
+                            <td><span class="go-gate critical">GO — CRITICAL</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">12</td>
+                            <td>T+03:30</td>
+                            <td>Verify carrier lock and bit/frame sync</td>
+                            <td class="pos-TTC" style="font-weight:600">TTC</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">carrier_lock (0x0510)=1, bit_sync (0x0511)=1, frame_sync (0x0512)=1</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">13</td>
+                            <td>T+03:31</td>
+                            <td>Check link margin and Eb/N0</td>
+                            <td class="pos-TTC" style="font-weight:600">TTC</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">link_margin (0x0503)>3dB, eb_n0 (0x0519)>10dB</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">14</td>
+                            <td>T+03:32</td>
+                            <td>Set nominal data rate</td>
+                            <td class="pos-TTC" style="font-weight:600">TTC</td>
+                            <td class="cmd">S8 func_id=65 (TTC_SET_DATA_RATE)</td>
+                            <td class="tm">Confirm 1 kbps housekeeping rate</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="autonomous-box">
+                    <strong>Between Passes:</strong> Antenna deployed, full TM/TC link established. Power lines enabled. Battery heater running. Spacecraft thermally stabilizing.
+                </div>
+            </div>
+        </section>
+        <div class="gap-indicator">
+            NO CONTACT &mdash; <span class="gap-time">1h 24m</span> &mdash; Autonomous Operations
+        </div>
+        <section id="pass-4">
+            <div class="pass-header" style="background: linear-gradient(90deg, #bb86fc22, transparent); border-left: 4px solid #bb86fc;">
+                <div>
+                    <h2>PASS 4 — Troll</h2>
+                    <span class="phase-badge" style="background:#f4433633; color:#f44336; border:1px solid #f44336;">OBDH COMMISSIONING</span>
+                </div>
+                <div class="pass-meta">
+                    <div>T+04:58 &mdash; T+05:06</div>
+                    <div class="el" style="color:#bb86fc">23.5&deg; max</div>
+                    <div>8 min duration</div>
+                </div>
+            </div>
+            <div class="pass-body">
+                <div class="pass-summary">Complete OBDH checkout — watchdog, CAN bus, diagnostics. Enable FDIR baseline. Verify OBC fully operational.</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Step</th>
+                            <th>Time</th>
+                            <th>Action</th>
+                            <th>Position</th>
+                            <th>Command</th>
+                            <th>TM Verification</th>
+                            <th>Gate</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="step-num">15</td>
+                            <td>T+04:58</td>
+                            <td>Enable OBC watchdog timer</td>
+                            <td class="pos-FDIR" style="font-weight:600">FDIR</td>
+                            <td class="cmd">S8 func_id=59 (OBC_WATCHDOG_ENABLE)</td>
+                            <td class="tm">Watchdog active</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">16</td>
+                            <td>T+04:59</td>
+                            <td>Set watchdog period (60s)</td>
+                            <td class="pos-FDIR" style="font-weight:600">FDIR</td>
+                            <td class="cmd">S8 func_id=58 (OBC_SET_WATCHDOG_PERIOD)</td>
+                            <td class="tm">Period confirmed</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">17</td>
+                            <td>T+05:00</td>
+                            <td>Verify CAN bus A and B status</td>
+                            <td class="pos-FDIR" style="font-weight:600">FDIR</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">bus_a_status (0x030F)=OK, bus_b_status (0x0310)=OK</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">18</td>
+                            <td>T+05:01</td>
+                            <td>Run OBC diagnostics</td>
+                            <td class="pos-FDIR" style="font-weight:600">FDIR</td>
+                            <td class="cmd">S8 func_id=61 (OBC_DIAGNOSTIC)</td>
+                            <td class="tm">Diagnostic pass</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">19</td>
+                            <td>T+05:02</td>
+                            <td>Verify reboot capability</td>
+                            <td class="pos-FDIR" style="font-weight:600">FDIR</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">reboot_count (0x030A)=0</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">20</td>
+                            <td>T+05:04</td>
+                            <td>Load FDIR baseline tables</td>
+                            <td class="pos-FDIR" style="font-weight:600">FDIR</td>
+                            <td class="cmd">S8 func_id=61 (OBC_DIAGNOSTIC)</td>
+                            <td class="tm">FDIR tables loaded</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="autonomous-box">
+                    <strong>Between Passes:</strong> OBDH fully commissioned. Watchdog active. FDIR baseline loaded. 2.5 hour gap to next contact — AOCS detumble should begin autonomously if rates exceed threshold.
+                </div>
+            </div>
+        </section>
+        <div class="gap-indicator">
+            NO CONTACT &mdash; <span class="gap-time">1h 28m</span> &mdash; Autonomous Operations
+        </div>
+        <section id="pass-5">
+            <div class="pass-header" style="background: linear-gradient(90deg, #bb86fc22, transparent); border-left: 4px solid #bb86fc;">
+                <div>
+                    <h2>PASS 5 — Troll (LOW ELEVATION 7.5°)</h2>
+                    <span class="phase-badge" style="background:#4caf5033; color:#4caf50; border:1px solid #4caf50;">AOCS INITIAL CHECKOUT</span>
+                </div>
+                <div class="pass-meta">
+                    <div>T+06:34 &mdash; T+06:38</div>
+                    <div class="el" style="color:#bb86fc">7.5&deg; max</div>
+                    <div>4 min duration</div>
+                </div>
+            </div>
+            <div class="pass-body">
+                <div class="pass-summary">Short, low-elevation pass. Quick AOCS mode set and rate check only. Save detailed AOCS work for longer passes.</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Step</th>
+                            <th>Time</th>
+                            <th>Action</th>
+                            <th>Position</th>
+                            <th>Command</th>
+                            <th>TM Verification</th>
+                            <th>Gate</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="step-num">21</td>
+                            <td>T+06:34</td>
+                            <td>Set AOCS mode to DETUMBLE/SUN_POINTING</td>
+                            <td class="pos-AOCS" style="font-weight:600">AOCS</td>
+                            <td class="cmd">S8 func_id=0 (AOCS_SET_MODE)</td>
+                            <td class="tm">aocs_mode (0x020F)=SUN_POINT</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">22</td>
+                            <td>T+06:36</td>
+                            <td>Check angular rates (should be reducing)</td>
+                            <td class="pos-AOCS" style="font-weight:600">AOCS</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">rate_roll (0x0204), rate_pitch (0x0205), rate_yaw (0x0206) < 0.5 deg/s</td>
+                            <td><span class="go-gate monitor">MONITOR</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="autonomous-box">
+                    <strong>Between Passes:</strong> AOCS in sun-pointing mode, magnetorquers detumbling. 2.5 hour gap — detumble and thermal stabilization continue autonomously. This is the longest gap before Iqaluit visibility.
+                </div>
+            </div>
+        </section>
+        <div class="gap-indicator">
+            NO CONTACT &mdash; <span class="gap-time">2h 26m</span> &mdash; Autonomous Operations
+        </div>
+        <section id="pass-6">
+            <div class="pass-header" style="background: linear-gradient(90deg, #4fc3f722, transparent); border-left: 4px solid #4fc3f7;">
+                <div>
+                    <h2>PASS 6 — Iqaluit (FIRST NORTHERN CONTACT)</h2>
+                    <span class="phase-badge" style="background:#4caf5033; color:#4caf50; border:1px solid #4caf50;">AOCS COMMISSIONING — SENSORS</span>
+                </div>
+                <div class="pass-meta">
+                    <div>T+09:04 &mdash; T+09:11</div>
+                    <div class="el" style="color:#4fc3f7">12.9&deg; max</div>
+                    <div>6 min duration</div>
+                </div>
+            </div>
+            <div class="pass-body">
+                <div class="pass-summary">First Iqaluit contact at T+9h. Enable magnetorquers, power star tracker, validate sun sensors. Verify detumble progress.</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Step</th>
+                            <th>Time</th>
+                            <th>Action</th>
+                            <th>Position</th>
+                            <th>Command</th>
+                            <th>TM Verification</th>
+                            <th>Gate</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="step-num">23</td>
+                            <td>T+09:04</td>
+                            <td>Enable magnetorquers</td>
+                            <td class="pos-AOCS" style="font-weight:600">AOCS</td>
+                            <td class="cmd">S8 func_id=9 (MTQ_ENABLE)</td>
+                            <td class="tm">MTQ status active</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">24</td>
+                            <td>T+09:06</td>
+                            <td>Power on star tracker ST1</td>
+                            <td class="pos-AOCS" style="font-weight:600">AOCS</td>
+                            <td class="cmd">S8 func_id=4 (ST1_POWER)</td>
+                            <td class="tm">st1_status (0x0240)=ON, st1_num_stars (0x0241)>5</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">25</td>
+                            <td>T+09:08</td>
+                            <td>Validate sun vector sensors</td>
+                            <td class="pos-AOCS" style="font-weight:600">AOCS</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">sun_vec_0..3_valid (0x0245-0x0248)</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="autonomous-box">
+                    <strong>Between Passes:</strong> Star tracker acquiring. Magnetorquers active. Detumble should be nearly complete after ~9 hours. ST1 needs ~15 min for initial star catalogue match.
+                </div>
+            </div>
+        </section>
+        <div class="gap-indicator">
+            NO CONTACT &mdash; <span class="gap-time">1h 25m</span> &mdash; Autonomous Operations
+        </div>
+        <section id="pass-7">
+            <div class="pass-header" style="background: linear-gradient(90deg, #4fc3f722, transparent); border-left: 4px solid #4fc3f7;">
+                <div>
+                    <h2>PASS 7 — Iqaluit (HIGH ELEVATION 70.2°)</h2>
+                    <span class="phase-badge" style="background:#4caf5033; color:#4caf50; border:1px solid #4caf50;">AOCS COMMISSIONING — ACTUATORS & ATTITUDE</span>
+                </div>
+                <div class="pass-meta">
+                    <div>T+10:36 &mdash; T+10:45</div>
+                    <div class="el" style="color:#4fc3f7">70.2&deg; max</div>
+                    <div>8 min duration</div>
+                </div>
+            </div>
+            <div class="pass-body">
+                <div class="pass-summary">Best Iqaluit pass. Complete AOCS commissioning: momentum check, desaturation, slew test, attitude verification. Critical pass for pointing.</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Step</th>
+                            <th>Time</th>
+                            <th>Action</th>
+                            <th>Position</th>
+                            <th>Command</th>
+                            <th>TM Verification</th>
+                            <th>Gate</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="step-num">26</td>
+                            <td>T+10:36</td>
+                            <td>Verify attitude error < 1° (post-detumble)</td>
+                            <td class="pos-AOCS" style="font-weight:600">AOCS</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">att_error (0x0217) < 1.0°</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">27</td>
+                            <td>T+10:37</td>
+                            <td>Check reaction wheel momentum</td>
+                            <td class="pos-AOCS" style="font-weight:600">AOCS</td>
+                            <td class="cmd">S8 func_id=11 (AOCS_CHECK_MOMENTUM)</td>
+                            <td class="tm">Momentum within limits</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">28</td>
+                            <td>T+10:38</td>
+                            <td>Run desaturation cycle</td>
+                            <td class="pos-AOCS" style="font-weight:600">AOCS</td>
+                            <td class="cmd">S8 func_id=1 (AOCS_DESATURATE)</td>
+                            <td class="tm">Desaturation complete</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">29</td>
+                            <td>T+10:39</td>
+                            <td>Command slew to nadir target</td>
+                            <td class="pos-AOCS" style="font-weight:600">AOCS</td>
+                            <td class="cmd">S8 func_id=10 (AOCS_SLEW_TO)</td>
+                            <td class="tm">slew_state (0x0285)=SLEWING then COMPLETE</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">30</td>
+                            <td>T+10:40</td>
+                            <td>Verify slew completion</td>
+                            <td class="pos-AOCS" style="font-weight:600">AOCS</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">slew_state=100 (COMPLETE)</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">31</td>
+                            <td>T+10:41</td>
+                            <td>Confirm angular rates settled</td>
+                            <td class="pos-AOCS" style="font-weight:600">AOCS</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">rate_roll, rate_pitch, rate_yaw < 0.001 deg/s</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">32</td>
+                            <td>T+10:42</td>
+                            <td>Verify final AOCS mode = NOMINAL</td>
+                            <td class="pos-AOCS" style="font-weight:600">AOCS</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">aocs_mode (0x020F)=NOMINAL(4)</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">33</td>
+                            <td>T+10:44</td>
+                            <td>GO/NO-GO: AOCS Commissioning Complete</td>
+                            <td class="pos-FD" style="font-weight:600">FD</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">All AOCS params nominal</td>
+                            <td><span class="go-gate gate">GO — AOCS GATE</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="autonomous-box">
+                    <strong>Between Passes:</strong> AOCS fully commissioned. Spacecraft in 3-axis stabilized nadir-pointing mode. Ready for thermal and payload commissioning.
+                </div>
+            </div>
+        </section>
+        <div class="gap-indicator">
+            NO CONTACT &mdash; <span class="gap-time">1h 24m</span> &mdash; Autonomous Operations
+        </div>
+        <section id="pass-8">
+            <div class="pass-header" style="background: linear-gradient(90deg, #4fc3f722, transparent); border-left: 4px solid #4fc3f7;">
+                <div>
+                    <h2>PASS 8 — Iqaluit</h2>
+                    <span class="phase-badge" style="background:#ff980033; color:#ff9800; border:1px solid #ff9800;">TCS COMMISSIONING</span>
+                </div>
+                <div class="pass-meta">
+                    <div>T+12:09 &mdash; T+12:17</div>
+                    <div class="el" style="color:#4fc3f7">22.7&deg; max</div>
+                    <div>8 min duration</div>
+                </div>
+            </div>
+            <div class="pass-body">
+                <div class="pass-summary">Thermal control system checkout. Verify zone temperatures, configure heaters, set control setpoints. Enable autonomous thermal control.</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Step</th>
+                            <th>Time</th>
+                            <th>Action</th>
+                            <th>Position</th>
+                            <th>Command</th>
+                            <th>TM Verification</th>
+                            <th>Gate</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="step-num">34</td>
+                            <td>T+12:09</td>
+                            <td>Read all thermal zone temperatures (zones 0-9)</td>
+                            <td class="pos-EPS_TCS" style="font-weight:600">EPS_TCS</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">zone_0_temp..zone_9_temp (0x0400-0x0409) all within [-20, +50]°C</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">35</td>
+                            <td>T+12:10</td>
+                            <td>Configure battery heater (verify from Pass 3)</td>
+                            <td class="pos-EPS_TCS" style="font-weight:600">EPS_TCS</td>
+                            <td class="cmd">S8 func_id=40 (HEATER_BATTERY)</td>
+                            <td class="tm">htr_bat (0x040A)=ON</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">36</td>
+                            <td>T+12:11</td>
+                            <td>Configure OBC heater</td>
+                            <td class="pos-EPS_TCS" style="font-weight:600">EPS_TCS</td>
+                            <td class="cmd">S8 func_id=41 (HEATER_OBC)</td>
+                            <td class="tm">htr_obc (0x040B)=ON</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">37</td>
+                            <td>T+12:12</td>
+                            <td>Verify heater duty cycles nominal</td>
+                            <td class="pos-EPS_TCS" style="font-weight:600">EPS_TCS</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">htr_0_duty (0x040E), htr_1_duty (0x040F), htr_2_duty (0x0410) within limits</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">38</td>
+                            <td>T+12:13</td>
+                            <td>Check total heater power draw</td>
+                            <td class="pos-EPS_TCS" style="font-weight:600">EPS_TCS</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">total_heater_power (0x0411) < 15W</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">39</td>
+                            <td>T+12:15</td>
+                            <td>Set heater control setpoints</td>
+                            <td class="pos-EPS_TCS" style="font-weight:600">EPS_TCS</td>
+                            <td class="cmd">S8 func_id=44 (HEATER_SET_SETPOINT)</td>
+                            <td class="tm">Setpoints confirmed</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">40</td>
+                            <td>T+12:16</td>
+                            <td>GO/NO-GO: TCS Commissioning Complete</td>
+                            <td class="pos-FD" style="font-weight:600">FD</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">All thermal params within limits</td>
+                            <td><span class="go-gate gate">GO — TCS GATE</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="autonomous-box">
+                    <strong>Between Passes:</strong> TCS fully commissioned. Autonomous thermal control running. Heaters cycling as needed. Battery and OBC protected.
+                </div>
+            </div>
+        </section>
+        <div class="gap-indicator">
+            NO CONTACT &mdash; <span class="gap-time">1h 25m</span> &mdash; Autonomous Operations
+        </div>
+        <section id="pass-9">
+            <div class="pass-header" style="background: linear-gradient(90deg, #4fc3f722, transparent); border-left: 4px solid #4fc3f7;">
+                <div>
+                    <h2>PASS 9 — Iqaluit (LOW 7.6°)</h2>
+                    <span class="phase-badge" style="background:#64ffda33; color:#64ffda; border:1px solid #64ffda;">PAYLOAD POWER-ON</span>
+                </div>
+                <div class="pass-meta">
+                    <div>T+13:42 &mdash; T+13:46</div>
+                    <div class="el" style="color:#4fc3f7">7.6&deg; max</div>
+                    <div>4 min duration</div>
+                </div>
+            </div>
+            <div class="pass-body">
+                <div class="pass-summary">Short pass. Enable payload power line and set initial payload mode only. Detailed config deferred to next pass.</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Step</th>
+                            <th>Time</th>
+                            <th>Action</th>
+                            <th>Position</th>
+                            <th>Command</th>
+                            <th>TM Verification</th>
+                            <th>Gate</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="step-num">41</td>
+                            <td>T+13:42</td>
+                            <td>Enable payload power line (line 3 or 4)</td>
+                            <td class="pos-EPS_TCS" style="font-weight:600">EPS_TCS</td>
+                            <td class="cmd">S8 func_id=19 (EPS_POWER_ON)</td>
+                            <td class="tm">power_line_3 (0x0113)=ON</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">42</td>
+                            <td>T+13:44</td>
+                            <td>Set payload to STANDBY mode</td>
+                            <td class="pos-Payload" style="font-weight:600">Payload</td>
+                            <td class="cmd">S8 func_id=26 (PAYLOAD_SET_MODE)</td>
+                            <td class="tm">Payload mode = STANDBY</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="autonomous-box">
+                    <strong>Between Passes:</strong> Payload powered, warming up in standby. FPA cooling down to operating temperature. ~2.5 hour gap to next contact for thermal stabilization.
+                </div>
+            </div>
+        </section>
+        <div class="gap-indicator">
+            NO CONTACT &mdash; <span class="gap-time">2h 17m</span> &mdash; Autonomous Operations
+        </div>
+        <section id="pass-10">
+            <div class="pass-header" style="background: linear-gradient(90deg, #bb86fc22, transparent); border-left: 4px solid #bb86fc;">
+                <div>
+                    <h2>PASS 10 — Troll</h2>
+                    <span class="phase-badge" style="background:#64ffda33; color:#64ffda; border:1px solid #64ffda;">PAYLOAD CONFIGURATION</span>
+                </div>
+                <div class="pass-meta">
+                    <div>T+16:03 &mdash; T+16:09</div>
+                    <div class="el" style="color:#bb86fc">12.0&deg; max</div>
+                    <div>6 min duration</div>
+                </div>
+            </div>
+            <div class="pass-body">
+                <div class="pass-summary">Configure payload imaging parameters: bands, integration time, gain. Verify FPA temperature and readiness.</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Step</th>
+                            <th>Time</th>
+                            <th>Action</th>
+                            <th>Position</th>
+                            <th>Command</th>
+                            <th>TM Verification</th>
+                            <th>Gate</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="step-num">43</td>
+                            <td>T+16:03</td>
+                            <td>Check FPA temperature (should be at operating temp)</td>
+                            <td class="pos-Payload" style="font-weight:600">Payload</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">fpa_temp (0x0601) < 10°C</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">44</td>
+                            <td>T+16:04</td>
+                            <td>Set spectral band configuration</td>
+                            <td class="pos-Payload" style="font-weight:600">Payload</td>
+                            <td class="cmd">S8 func_id=33 (PAYLOAD_SET_BAND_CONFIG)</td>
+                            <td class="tm">Band config accepted</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">45</td>
+                            <td>T+16:05</td>
+                            <td>Set integration time</td>
+                            <td class="pos-Payload" style="font-weight:600">Payload</td>
+                            <td class="cmd">S8 func_id=34 (PAYLOAD_SET_INTEGRATION_TIME)</td>
+                            <td class="tm">Integration time confirmed</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">46</td>
+                            <td>T+16:07</td>
+                            <td>Set gain parameters</td>
+                            <td class="pos-Payload" style="font-weight:600">Payload</td>
+                            <td class="cmd">S8 func_id=35 (PAYLOAD_SET_GAIN)</td>
+                            <td class="tm">Gain setting confirmed</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">47</td>
+                            <td>T+16:08</td>
+                            <td>Verify per-band SNR baselines</td>
+                            <td class="pos-Payload" style="font-weight:600">Payload</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">band_0..3_snr (0x0620-0x0623) > 30 dB</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="autonomous-box">
+                    <strong>Between Passes:</strong> Payload configured and ready for calibration. Instrument thermally stable.
+                </div>
+            </div>
+        </section>
+        <div class="gap-indicator">
+            NO CONTACT &mdash; <span class="gap-time">1h 26m</span> &mdash; Autonomous Operations
+        </div>
+        <section id="pass-11">
+            <div class="pass-header" style="background: linear-gradient(90deg, #bb86fc22, transparent); border-left: 4px solid #bb86fc;">
+                <div>
+                    <h2>PASS 11 — Troll (36.5°)</h2>
+                    <span class="phase-badge" style="background:#64ffda33; color:#64ffda; border:1px solid #64ffda;">PAYLOAD CALIBRATION</span>
+                </div>
+                <div class="pass-meta">
+                    <div>T+17:35 &mdash; T+17:43</div>
+                    <div class="el" style="color:#bb86fc">36.5&deg; max</div>
+                    <div>8 min duration</div>
+                </div>
+            </div>
+            <div class="pass-body">
+                <div class="pass-summary">Run payload calibration sequence. Capture dark frames and calibration images. Verify image quality.</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Step</th>
+                            <th>Time</th>
+                            <th>Action</th>
+                            <th>Position</th>
+                            <th>Command</th>
+                            <th>TM Verification</th>
+                            <th>Gate</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="step-num">48</td>
+                            <td>T+17:35</td>
+                            <td>Start payload calibration sequence</td>
+                            <td class="pos-Payload" style="font-weight:600">Payload</td>
+                            <td class="cmd">S8 func_id=37 (PAYLOAD_START_CALIBRATION)</td>
+                            <td class="tm">Calibration running</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">49</td>
+                            <td>T+17:37</td>
+                            <td>Capture test image (dark frame)</td>
+                            <td class="pos-Payload" style="font-weight:600">Payload</td>
+                            <td class="cmd">S8 func_id=28 (PAYLOAD_CAPTURE)</td>
+                            <td class="tm">image_count (0x0605) incremented</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">50</td>
+                            <td>T+17:38</td>
+                            <td>Verify image count and quality metrics</td>
+                            <td class="pos-Payload" style="font-weight:600">Payload</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">image_count > 0, band SNR nominal</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">51</td>
+                            <td>T+17:39</td>
+                            <td>Download test image for ground verification</td>
+                            <td class="pos-Payload" style="font-weight:600">Payload</td>
+                            <td class="cmd">S8 func_id=29 (PAYLOAD_DOWNLOAD_IMAGE)</td>
+                            <td class="tm">Download started</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">52</td>
+                            <td>T+17:41</td>
+                            <td>Verify FPA temperature stability</td>
+                            <td class="pos-Payload" style="font-weight:600">Payload</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">fpa_temp (0x0601) stable ±0.5°C</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">53</td>
+                            <td>T+17:42</td>
+                            <td>GO/NO-GO: Payload Commissioning Complete</td>
+                            <td class="pos-FD" style="font-weight:600">FD</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">All payload params nominal</td>
+                            <td><span class="go-gate gate">GO — PAYLOAD GATE</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="autonomous-box">
+                    <strong>Between Passes:</strong> Payload fully commissioned and calibrated. Ready for operational imaging.
+                </div>
+            </div>
+        </section>
+        <div class="gap-indicator">
+            NO CONTACT &mdash; <span class="gap-time">31m</span> &mdash; Autonomous Operations
+        </div>
+        <section id="pass-12">
+            <div class="pass-header" style="background: linear-gradient(90deg, #4fc3f722, transparent); border-left: 4px solid #4fc3f7;">
+                <div>
+                    <h2>PASS 12 — Iqaluit (10.4°)</h2>
+                    <span class="phase-badge" style="background:#4caf5033; color:#4caf50; border:1px solid #4caf50;">FINE POINTING VERIFICATION</span>
+                </div>
+                <div class="pass-meta">
+                    <div>T+18:14 &mdash; T+18:20</div>
+                    <div class="el" style="color:#4fc3f7">10.4&deg; max</div>
+                    <div>5 min duration</div>
+                </div>
+            </div>
+            <div class="pass-body">
+                <div class="pass-summary">Short pass. Verify fine pointing stability achieved. Check attitude error meets payload requirements (<0.1°).</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Step</th>
+                            <th>Time</th>
+                            <th>Action</th>
+                            <th>Position</th>
+                            <th>Command</th>
+                            <th>TM Verification</th>
+                            <th>Gate</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="step-num">54</td>
+                            <td>T+18:14</td>
+                            <td>Set AOCS to NOMINAL fine pointing mode</td>
+                            <td class="pos-AOCS" style="font-weight:600">AOCS</td>
+                            <td class="cmd">S8 func_id=0 (AOCS_SET_MODE)</td>
+                            <td class="tm">aocs_mode (0x020F)=NOMINAL(4)</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">55</td>
+                            <td>T+18:16</td>
+                            <td>Verify attitude error < 0.05°</td>
+                            <td class="pos-AOCS" style="font-weight:600">AOCS</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">att_error (0x0217) < 0.05°</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="autonomous-box">
+                    <strong>Between Passes:</strong> Fine pointing verified. Spacecraft ready for operational imaging passes.
+                </div>
+            </div>
+        </section>
+        <div class="gap-indicator">
+            NO CONTACT &mdash; <span class="gap-time">48m</span> &mdash; Autonomous Operations
+        </div>
+        <section id="pass-13">
+            <div class="pass-header" style="background: linear-gradient(90deg, #bb86fc22, transparent); border-left: 4px solid #bb86fc;">
+                <div>
+                    <h2>PASS 13 — Troll (64.9°)</h2>
+                    <span class="phase-badge" style="background:#bb86fc33; color:#bb86fc; border:1px solid #bb86fc;">HIGH-RATE DOWNLINK TEST</span>
+                </div>
+                <div class="pass-meta">
+                    <div>T+19:08 &mdash; T+19:16</div>
+                    <div class="el" style="color:#bb86fc">64.9&deg; max</div>
+                    <div>8 min duration</div>
+                </div>
+            </div>
+            <div class="pass-body">
+                <div class="pass-summary">High-elevation pass ideal for downlink testing. Configure high-rate data link. Download payload calibration data.</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Step</th>
+                            <th>Time</th>
+                            <th>Action</th>
+                            <th>Position</th>
+                            <th>Command</th>
+                            <th>TM Verification</th>
+                            <th>Gate</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="step-num">56</td>
+                            <td>T+19:08</td>
+                            <td>Configure high-rate downlink</td>
+                            <td class="pos-TTC" style="font-weight:600">TTC</td>
+                            <td class="cmd">S8 func_id=65 (TTC_SET_DATA_RATE)</td>
+                            <td class="tm">Data rate set to high-rate</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">57</td>
+                            <td>T+19:09</td>
+                            <td>Verify link margin at high rate</td>
+                            <td class="pos-TTC" style="font-weight:600">TTC</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">link_margin (0x0503)>3dB at high rate</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">58</td>
+                            <td>T+19:10</td>
+                            <td>Download calibration images via high-rate link</td>
+                            <td class="pos-Payload" style="font-weight:600">Payload</td>
+                            <td class="cmd">S8 func_id=29 (PAYLOAD_DOWNLOAD_IMAGE)</td>
+                            <td class="tm">Data transfer active</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">59</td>
+                            <td>T+19:13</td>
+                            <td>Verify data integrity (frame counts, CRC)</td>
+                            <td class="pos-TTC" style="font-weight:600">TTC</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">No frame errors</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">60</td>
+                            <td>T+19:15</td>
+                            <td>GO/NO-GO: Downlink Commissioning Complete</td>
+                            <td class="pos-FD" style="font-weight:600">FD</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">High-rate downlink verified</td>
+                            <td><span class="go-gate gate">GO — DOWNLINK GATE</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="autonomous-box">
+                    <strong>Between Passes:</strong> Downlink chain verified end-to-end. Full data pipeline operational.
+                </div>
+            </div>
+        </section>
+        <div class="gap-indicator">
+            NO CONTACT &mdash; <span class="gap-time">29m</span> &mdash; Autonomous Operations
+        </div>
+        <section id="pass-14">
+            <div class="pass-header" style="background: linear-gradient(90deg, #4fc3f722, transparent); border-left: 4px solid #4fc3f7;">
+                <div>
+                    <h2>PASS 14 — Iqaluit (34.0°)</h2>
+                    <span class="phase-badge" style="background:#f4433633; color:#f44336; border:1px solid #f44336;">FDIR ARMING & SYSTEM CHECKOUT</span>
+                </div>
+                <div class="pass-meta">
+                    <div>T+19:45 &mdash; T+19:53</div>
+                    <div class="el" style="color:#4fc3f7">34.0&deg; max</div>
+                    <div>8 min duration</div>
+                </div>
+            </div>
+            <div class="pass-body">
+                <div class="pass-summary">Arm FDIR automated responses. Load error thresholds. Run full system diagnostic snapshot.</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Step</th>
+                            <th>Time</th>
+                            <th>Action</th>
+                            <th>Position</th>
+                            <th>Command</th>
+                            <th>TM Verification</th>
+                            <th>Gate</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="step-num">61</td>
+                            <td>T+19:45</td>
+                            <td>Capture full system diagnostic snapshot</td>
+                            <td class="pos-FDIR" style="font-weight:600">FDIR</td>
+                            <td class="cmd">S8 func_id=61 (OBC_DIAGNOSTIC)</td>
+                            <td class="tm">Diagnostic complete</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">62</td>
+                            <td>T+19:47</td>
+                            <td>Arm FDIR automated responses</td>
+                            <td class="pos-FDIR" style="font-weight:600">FDIR</td>
+                            <td class="cmd">S8 func_id=62 (OBC_FDIR_ARM) [if available]</td>
+                            <td class="tm">FDIR armed</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">63</td>
+                            <td>T+19:49</td>
+                            <td>Load error thresholds for all subsystems</td>
+                            <td class="pos-FDIR" style="font-weight:600">FDIR</td>
+                            <td class="cmd">S12 monitoring definitions</td>
+                            <td class="tm">Thresholds loaded</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">64</td>
+                            <td>T+19:51</td>
+                            <td>Enable recovery procedures</td>
+                            <td class="pos-FDIR" style="font-weight:600">FDIR</td>
+                            <td class="cmd">S19 event-action definitions</td>
+                            <td class="tm">Recovery enabled</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">65</td>
+                            <td>T+19:52</td>
+                            <td>Verify FDIR fully operational</td>
+                            <td class="pos-FDIR" style="font-weight:600">FDIR</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">All FDIR checks pass</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="autonomous-box">
+                    <strong>Between Passes:</strong> FDIR fully armed. Spacecraft can handle anomalies autonomously.
+                </div>
+            </div>
+        </section>
+        <div class="gap-indicator">
+            NO CONTACT &mdash; <span class="gap-time">47m</span> &mdash; Autonomous Operations
+        </div>
+        <section id="pass-15">
+            <div class="pass-header" style="background: linear-gradient(90deg, #bb86fc22, transparent); border-left: 4px solid #bb86fc;">
+                <div>
+                    <h2>PASS 15 — Troll</h2>
+                    <span class="phase-badge" style="background:#64ffda33; color:#64ffda; border:1px solid #64ffda;">FIRST OPERATIONAL IMAGE</span>
+                </div>
+                <div class="pass-meta">
+                    <div>T+20:40 &mdash; T+20:48</div>
+                    <div class="el" style="color:#bb86fc">26.3&deg; max</div>
+                    <div>8 min duration</div>
+                </div>
+            </div>
+            <div class="pass-body">
+                <div class="pass-summary">Command first operational Earth observation image. This validates the full imaging chain from pointing through capture to storage.</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Step</th>
+                            <th>Time</th>
+                            <th>Action</th>
+                            <th>Position</th>
+                            <th>Command</th>
+                            <th>TM Verification</th>
+                            <th>Gate</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="step-num">66</td>
+                            <td>T+20:40</td>
+                            <td>Command operational image capture</td>
+                            <td class="pos-Payload" style="font-weight:600">Payload</td>
+                            <td class="cmd">S8 func_id=28 (PAYLOAD_CAPTURE)</td>
+                            <td class="tm">image_count incremented</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">67</td>
+                            <td>T+20:44</td>
+                            <td>Verify image stored successfully</td>
+                            <td class="pos-Payload" style="font-weight:600">Payload</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">Image in onboard store</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="autonomous-box">
+                    <strong>Between Passes:</strong> First operational image captured and stored. Ready for download on next high-elevation pass.
+                </div>
+            </div>
+        </section>
+        <div class="gap-indicator">
+            NO CONTACT &mdash; <span class="gap-time">29m</span> &mdash; Autonomous Operations
+        </div>
+        <section id="pass-16">
+            <div class="pass-header" style="background: linear-gradient(90deg, #4fc3f722, transparent); border-left: 4px solid #4fc3f7;">
+                <div>
+                    <h2>PASS 16 — Iqaluit (39.9°)</h2>
+                    <span class="phase-badge" style="background:#4fc3f733; color:#4fc3f7; border:1px solid #4fc3f7;">NOMINAL OPERATIONS TRANSITION</span>
+                </div>
+                <div class="pass-meta">
+                    <div>T+21:17 &mdash; T+21:25</div>
+                    <div class="el" style="color:#4fc3f7">39.9&deg; max</div>
+                    <div>8 min duration</div>
+                </div>
+            </div>
+            <div class="pass-body">
+                <div class="pass-summary">Final commissioning checks. Transition spacecraft_phase to NOMINAL. Download first operational image. Declare mission operational.</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Step</th>
+                            <th>Time</th>
+                            <th>Action</th>
+                            <th>Position</th>
+                            <th>Command</th>
+                            <th>TM Verification</th>
+                            <th>Gate</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="step-num">68</td>
+                            <td>T+21:17</td>
+                            <td>Final EPS health verification</td>
+                            <td class="pos-EPS_TCS" style="font-weight:600">EPS_TCS</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">battery_soc (0x0101)>70%, all power lines nominal</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">69</td>
+                            <td>T+21:18</td>
+                            <td>Final AOCS attitude verification</td>
+                            <td class="pos-AOCS" style="font-weight:600">AOCS</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">att_error<0.05°, rates<0.001 deg/s</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">70</td>
+                            <td>T+21:19</td>
+                            <td>Final TCS thermal verification</td>
+                            <td class="pos-EPS_TCS" style="font-weight:600">EPS_TCS</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">All zones within operational limits</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">71</td>
+                            <td>T+21:20</td>
+                            <td>Final TTC link margin verification</td>
+                            <td class="pos-TTC" style="font-weight:600">TTC</td>
+                            <td class="cmd">N/A</td>
+                            <td class="tm">link_margin>3dB, carrier locked</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">72</td>
+                            <td>T+21:22</td>
+                            <td>Download first operational image</td>
+                            <td class="pos-Payload" style="font-weight:600">Payload</td>
+                            <td class="cmd">S8 func_id=29 (PAYLOAD_DOWNLOAD_IMAGE)</td>
+                            <td class="tm">Image received at ground</td>
+                            <td><span class="go-gate go">GO</span></td>
+                        </tr>
+                        <tr>
+                            <td class="step-num">73</td>
+                            <td>T+21:24</td>
+                            <td>DECLARE NOMINAL OPERATIONS — Mission Commissioning Complete</td>
+                            <td class="pos-FD" style="font-weight:600">FD</td>
+                            <td class="cmd">Set spacecraft_phase=NOMINAL</td>
+                            <td class="tm">spacecraft_phase (0x0129)=NOMINAL</td>
+                            <td><span class="go-gate gate">GO — MISSION GATE</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="autonomous-box">
+                    <strong>Between Passes:</strong> SPACECRAFT FULLY COMMISSIONED. Nominal operations begin. Routine contact schedule via Iqaluit and Troll.
+                </div>
+            </div>
+        </section>
+
+        <div class="declaration">
+            <h2>MISSION COMMISSIONING COMPLETE</h2>
+            <p>Elapsed time from separation: ~21 hours 24 minutes</p>
+            <p>Passes used: 16 of 19 available (3 remaining for contingency margin)</p>
+            <p style="margin-top:15px; color:#4caf50;">All subsystems nominal. EOSAT-1 is operational.</p>
+        </div>
+
+        <!-- Post-commissioning passes -->
+        <section id="post-commission">
+            <h2 style="color:#888; margin-bottom:15px;">Post-Commissioning Passes (Available for Contingency)</h2>
+            <table>
+                <thead><tr><th>Pass</th><th>Station</th><th>AOS</th><th>LOS</th><th>Max El</th><th>Notes</th></tr></thead>
+                <tbody>
+                    <tr>
+                        <td class="step-num">17</td>
+                        <td style="color:#bb86fc">Troll</td>
+                        <td>T+22:12</td>
+                        <td>T+22:19</td>
+                        <td>17.3&deg;</td>
+                        <td style="color:#888">Available for contingency repeat or early operations</td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">18</td>
+                        <td style="color:#4fc3f7">Iqaluit</td>
+                        <td>T+22:53</td>
+                        <td>T+22:57</td>
+                        <td>7.6&deg;</td>
+                        <td style="color:#888">Available for contingency repeat or early operations</td>
+                    </tr>
+                    <tr>
+                        <td class="step-num">19</td>
+                        <td style="color:#bb86fc">Troll</td>
+                        <td>T+23:44</td>
+                        <td>T+23:51</td>
+                        <td>17.2&deg;</td>
+                        <td style="color:#888">Available for contingency repeat or early operations</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <!-- Position summary -->
+        <section id="position-summary">
+            <h2 style="color:#4fc3f7; margin-bottom:20px;">Position Activity Summary</h2>
+            <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:15px;">
+                <div style="background:rgba(255,255,255,0.03); border-left:3px solid #4fc3f7; padding:15px; border-radius:4px;">
+                    <div style="color:#4fc3f7; font-weight:700; font-size:14px;">Flight Director</div>
+                    <div style="font-size:12px; color:#888; margin-top:5px;"><strong>Active Passes:</strong> 1, 7, 8, 11, 13, 16</div>
+                    <div style="font-size:12px; color:#888; margin-top:3px;"><strong>GO/NO-GO Gates:</strong> AOCS Gate (P7), TCS Gate (P8), Payload Gate (P11), Downlink Gate (P13), Mission Gate (P16)</div>
+                </div>
+                <div style="background:rgba(255,255,255,0.03); border-left:3px solid #ff9800; padding:15px; border-radius:4px;">
+                    <div style="color:#ff9800; font-weight:700; font-size:14px;">Power & Thermal</div>
+                    <div style="font-size:12px; color:#888; margin-top:5px;"><strong>Active Passes:</strong> 2, 3, 8, 9, 16</div>
+                    <div style="font-size:12px; color:#888; margin-top:3px;"><strong>GO/NO-GO Gates:</strong> Power GO (P3), TCS GO (P8)</div>
+                </div>
+                <div style="background:rgba(255,255,255,0.03); border-left:3px solid #4caf50; padding:15px; border-radius:4px;">
+                    <div style="color:#4caf50; font-weight:700; font-size:14px;">Flight Dynamics</div>
+                    <div style="font-size:12px; color:#888; margin-top:5px;"><strong>Active Passes:</strong> 5, 6, 7, 12, 16</div>
+                    <div style="font-size:12px; color:#888; margin-top:3px;"><strong>GO/NO-GO Gates:</strong> AOCS GO (P7), Fine Pointing GO (P12)</div>
+                </div>
+                <div style="background:rgba(255,255,255,0.03); border-left:3px solid #bb86fc; padding:15px; border-radius:4px;">
+                    <div style="color:#bb86fc; font-weight:700; font-size:14px;">TT&C</div>
+                    <div style="font-size:12px; color:#888; margin-top:5px;"><strong>Active Passes:</strong> 3, 13, 16</div>
+                    <div style="font-size:12px; color:#888; margin-top:3px;"><strong>GO/NO-GO Gates:</strong> Link GO (P3), Downlink GO (P13)</div>
+                </div>
+                <div style="background:rgba(255,255,255,0.03); border-left:3px solid #f44336; padding:15px; border-radius:4px;">
+                    <div style="color:#f44336; font-weight:700; font-size:14px;">FDIR / Systems</div>
+                    <div style="font-size:12px; color:#888; margin-top:5px;"><strong>Active Passes:</strong> 2, 4, 14</div>
+                    <div style="font-size:12px; color:#888; margin-top:3px;"><strong>GO/NO-GO Gates:</strong> OBDH GO (P4), FDIR GO (P14)</div>
+                </div>
+                <div style="background:rgba(255,255,255,0.03); border-left:3px solid #64ffda; padding:15px; border-radius:4px;">
+                    <div style="color:#64ffda; font-weight:700; font-size:14px;">Payload Operations</div>
+                    <div style="font-size:12px; color:#888; margin-top:5px;"><strong>Active Passes:</strong> 9, 10, 11, 13, 15, 16</div>
+                    <div style="font-size:12px; color:#888; margin-top:3px;"><strong>GO/NO-GO Gates:</strong> Payload GO (P11)</div>
+                </div>
+            </div>
+        </section>
+    </div>
+</body>
+</html>

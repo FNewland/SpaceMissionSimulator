@@ -1,0 +1,285 @@
+structures:
+  - sid: 1
+    name: EPS
+    interval_s: 1.0
+    parameters:
+      - { param_id: 0x0100, pack_format: H, scale: 100 }
+      - { param_id: 0x0101, pack_format: H, scale: 100 }
+      - { param_id: 0x0102, pack_format: h, scale: 100 }
+      - { param_id: 0x0109, pack_format: h, scale: 100 }
+      - { param_id: 0x0103, pack_format: H, scale: 100 }
+      - { param_id: 0x0104, pack_format: H, scale: 100 }
+      - { param_id: 0x010B, pack_format: H, scale: 100 }
+      - { param_id: 0x010C, pack_format: H, scale: 100 }
+      - { param_id: 0x0105, pack_format: H, scale: 100 }
+      - { param_id: 0x0106, pack_format: H, scale: 10 }
+      - { param_id: 0x0107, pack_format: H, scale: 10 }
+      - { param_id: 0x0108, pack_format: B, scale: 1 }
+      - { param_id: 0x010D, pack_format: B, scale: 1 }
+      - { param_id: 0x010E, pack_format: B, scale: 1 }
+      - { param_id: 0x010F, pack_format: B, scale: 1 }
+      # Power line status
+      - { param_id: 0x0110, pack_format: B, scale: 1 }
+      - { param_id: 0x0111, pack_format: B, scale: 1 }
+      - { param_id: 0x0112, pack_format: B, scale: 1 }
+      - { param_id: 0x0113, pack_format: B, scale: 1 }
+      - { param_id: 0x0114, pack_format: B, scale: 1 }
+      - { param_id: 0x0115, pack_format: B, scale: 1 }
+      - { param_id: 0x0116, pack_format: B, scale: 1 }
+      - { param_id: 0x0117, pack_format: B, scale: 1 }
+      # Per-line currents
+      - { param_id: 0x0118, pack_format: H, scale: 1000 }
+      - { param_id: 0x0119, pack_format: H, scale: 1000 }
+      - { param_id: 0x011A, pack_format: H, scale: 1000 }
+      - { param_id: 0x011B, pack_format: H, scale: 1000 }
+      - { param_id: 0x011C, pack_format: H, scale: 1000 }
+      - { param_id: 0x011D, pack_format: H, scale: 1000 }
+      - { param_id: 0x011E, pack_format: H, scale: 1000 }
+      - { param_id: 0x011F, pack_format: H, scale: 1000 }
+      # Phase 4: Battery DoD, cycles, MPPT, SA aging
+      - { param_id: 0x0120, pack_format: H, scale: 100 }
+      - { param_id: 0x0121, pack_format: H, scale: 1 }
+      - { param_id: 0x0122, pack_format: H, scale: 10000 }
+      - { param_id: 0x0123, pack_format: H, scale: 10000 }
+      # Per-panel solar array currents (Defect #2 fix: per-panel telemetry for single-panel failure diagnostics)
+      - { param_id: 0x012B, pack_format: H, scale: 1000 }  # px panel current
+      - { param_id: 0x012C, pack_format: H, scale: 1000 }  # mx panel current
+      - { param_id: 0x012D, pack_format: H, scale: 1000 }  # py panel current
+      - { param_id: 0x012E, pack_format: H, scale: 1000 }  # my panel current
+      - { param_id: 0x012F, pack_format: H, scale: 1000 }  # pz panel current
+      - { param_id: 0x0130, pack_format: H, scale: 1000 }  # mz panel current
+      # Enhanced telemetry: load switching and power management
+      - { param_id: 0x0131, pack_format: B, scale: 1 }
+      - { param_id: 0x0132, pack_format: H, scale: 1000 }
+      - { param_id: 0x0143, pack_format: H, scale: 1000 }  # actual_charge_current_a (Defect #4)
+      - { param_id: 0x0133, pack_format: h, scale: 100 }
+      - { param_id: 0x0134, pack_format: B, scale: 1 }
+      - { param_id: 0x0135, pack_format: h, scale: 10 }
+      - { param_id: 0x0136, pack_format: H, scale: 100 }
+      - { param_id: 0x0137, pack_format: B, scale: 1 }
+      - { param_id: 0x0138, pack_format: B, scale: 1 }
+      - { param_id: 0x0139, pack_format: h, scale: 100 }
+
+  - sid: 2
+    name: AOCS
+    interval_s: 4.0
+    parameters:
+      - { param_id: 0x0200, pack_format: h, scale: 10000 }
+      - { param_id: 0x0201, pack_format: h, scale: 10000 }
+      - { param_id: 0x0202, pack_format: h, scale: 10000 }
+      - { param_id: 0x0203, pack_format: h, scale: 10000 }
+      - { param_id: 0x0204, pack_format: h, scale: 10000 }
+      - { param_id: 0x0205, pack_format: h, scale: 10000 }
+      - { param_id: 0x0206, pack_format: h, scale: 10000 }
+      - { param_id: 0x0217, pack_format: H, scale: 1000 }
+      - { param_id: 0x0207, pack_format: h, scale: 1 }
+      - { param_id: 0x0208, pack_format: h, scale: 1 }
+      - { param_id: 0x0209, pack_format: h, scale: 1 }
+      - { param_id: 0x020A, pack_format: h, scale: 1 }
+      - { param_id: 0x020F, pack_format: B, scale: 1 }
+      # Star tracker status
+      - { param_id: 0x0240, pack_format: B, scale: 1 }
+      - { param_id: 0x0241, pack_format: B, scale: 1 }
+      - { param_id: 0x0242, pack_format: B, scale: 1 }
+      - { param_id: 0x0243, pack_format: B, scale: 1 }
+      - { param_id: 0x0244, pack_format: B, scale: 1 }
+      # CSS sun vector
+      - { param_id: 0x0245, pack_format: h, scale: 10000 }
+      - { param_id: 0x0246, pack_format: h, scale: 10000 }
+      - { param_id: 0x0247, pack_format: h, scale: 10000 }
+      - { param_id: 0x0248, pack_format: B, scale: 1 }
+      # RW currents
+      - { param_id: 0x0250, pack_format: H, scale: 1000 }
+      - { param_id: 0x0251, pack_format: H, scale: 1000 }
+      - { param_id: 0x0252, pack_format: H, scale: 1000 }
+      - { param_id: 0x0253, pack_format: H, scale: 1000 }
+      # RW enabled flags
+      - { param_id: 0x0254, pack_format: B, scale: 1 }
+      - { param_id: 0x0255, pack_format: B, scale: 1 }
+      - { param_id: 0x0256, pack_format: B, scale: 1 }
+      - { param_id: 0x0257, pack_format: B, scale: 1 }
+      # Magnetorquer duty
+      - { param_id: 0x0258, pack_format: h, scale: 100 }
+      - { param_id: 0x0259, pack_format: h, scale: 100 }
+      - { param_id: 0x025A, pack_format: h, scale: 100 }
+      - { param_id: 0x025B, pack_format: H, scale: 1000 }
+      # Equipment enabled flags
+      - { param_id: 0x025C, pack_format: B, scale: 1 }   # mag_enabled
+      - { param_id: 0x025D, pack_format: B, scale: 1 }   # gyro_enabled
+      - { param_id: 0x025E, pack_format: B, scale: 1 }   # mtq_enabled
+      # Mode metadata
+      - { param_id: 0x0262, pack_format: B, scale: 1 }
+      - { param_id: 0x0264, pack_format: I, scale: 1 }
+      # Individual CSS head illumination values (defects/reviews/aocs.md Defect #4)
+      - { param_id: 0x027A, pack_format: H, scale: 1000 }  # css_px (+X head)
+      - { param_id: 0x027B, pack_format: H, scale: 1000 }  # css_mx (-X head)
+      - { param_id: 0x027C, pack_format: H, scale: 1000 }  # css_py (+Y head)
+      - { param_id: 0x027D, pack_format: H, scale: 1000 }  # css_my (-Y head)
+      - { param_id: 0x027E, pack_format: H, scale: 1000 }  # css_pz (+Z head)
+      - { param_id: 0x027F, pack_format: H, scale: 1000 }  # css_mz (-Z head)
+      # Phase 4: Gyro bias, GPS, mag field
+      - { param_id: 0x0270, pack_format: h, scale: 100000 }
+      - { param_id: 0x0271, pack_format: h, scale: 100000 }
+      - { param_id: 0x0272, pack_format: h, scale: 100000 }
+      - { param_id: 0x0273, pack_format: h, scale: 100 }
+      - { param_id: 0x0274, pack_format: B, scale: 1 }
+      - { param_id: 0x0275, pack_format: H, scale: 100 }
+      - { param_id: 0x0276, pack_format: B, scale: 1 }
+      - { param_id: 0x0277, pack_format: I, scale: 1 }
+      # Wave 5-C: Slew and momentum management
+      - { param_id: 0x0280, pack_format: H, scale: 100 }
+      - { param_id: 0x0281, pack_format: H, scale: 100 }
+      - { param_id: 0x0282, pack_format: H, scale: 100 }
+      - { param_id: 0x0283, pack_format: B, scale: 1 }
+      - { param_id: 0x0284, pack_format: H, scale: 100 }
+      - { param_id: 0x0285, pack_format: H, scale: 100 }
+      - { param_id: 0x0286, pack_format: H, scale: 100 }
+      - { param_id: 0x0287, pack_format: H, scale: 100 }
+      - { param_id: 0x0288, pack_format: H, scale: 100 }
+      - { param_id: 0x0289, pack_format: H, scale: 100 }
+      - { param_id: 0x028A, pack_format: H, scale: 100 }
+      - { param_id: 0x028B, pack_format: H, scale: 100 }
+      - { param_id: 0x028C, pack_format: H, scale: 100 }
+      - { param_id: 0x028D, pack_format: H, scale: 100 }
+
+  - sid: 3
+    name: TCS
+    interval_s: 60.0
+    parameters:
+      - { param_id: 0x0400, pack_format: h, scale: 100 }
+      - { param_id: 0x0401, pack_format: h, scale: 100 }
+      - { param_id: 0x0402, pack_format: h, scale: 100 }
+      - { param_id: 0x0403, pack_format: h, scale: 100 }
+      - { param_id: 0x0404, pack_format: h, scale: 100 }
+      - { param_id: 0x0405, pack_format: h, scale: 100 }
+      - { param_id: 0x0406, pack_format: h, scale: 100 }
+      - { param_id: 0x0407, pack_format: h, scale: 100 }
+      - { param_id: 0x0408, pack_format: h, scale: 100 }
+      - { param_id: 0x040A, pack_format: B, scale: 1 }
+      - { param_id: 0x040B, pack_format: B, scale: 1 }
+      - { param_id: 0x040C, pack_format: B, scale: 1 }
+      # Phase 4: Heater duty cycles and total power
+      - { param_id: 0x040E, pack_format: H, scale: 100 }
+      - { param_id: 0x040F, pack_format: H, scale: 100 }
+      - { param_id: 0x0411, pack_format: H, scale: 10 }
+      # Phase 5: Event generation and advanced thermal control
+      - { param_id: 0x0418, pack_format: B, scale: 1 }
+      - { param_id: 0x0419, pack_format: h, scale: 100 }
+
+  - sid: 4
+    name: Platform
+    interval_s: 8.0
+    parameters:
+      - { param_id: 0x0300, pack_format: B, scale: 1 }
+      - { param_id: 0x0302, pack_format: H, scale: 100 }
+      - { param_id: 0x0303, pack_format: H, scale: 100 }
+      - { param_id: 0x0304, pack_format: I, scale: 1 }
+      - { param_id: 0x0305, pack_format: I, scale: 1 }
+      - { param_id: 0x0306, pack_format: H, scale: 1 }
+      - { param_id: 0x0307, pack_format: I, scale: 1 }
+      - { param_id: 0x0308, pack_format: I, scale: 1 }
+      - { param_id: 0x0309, pack_format: I, scale: 1 }   # OBC CUC time
+      - { param_id: 0x030A, pack_format: H, scale: 1 }
+      # Dual OBC params
+      - { param_id: 0x030C, pack_format: B, scale: 1 }
+      - { param_id: 0x030D, pack_format: B, scale: 1 }
+      - { param_id: 0x030E, pack_format: B, scale: 1 }
+      - { param_id: 0x030F, pack_format: B, scale: 1 }
+      - { param_id: 0x0310, pack_format: B, scale: 1 }
+      - { param_id: 0x0311, pack_format: B, scale: 1 }
+      # Spacecraft phase (canonical id, written by engine._tick_spacecraft_phase)
+      - { param_id: 0x0129, pack_format: B, scale: 1 }
+      # Buffer fills
+      - { param_id: 0x0312, pack_format: H, scale: 100 }
+      - { param_id: 0x0313, pack_format: H, scale: 100 }
+      - { param_id: 0x0314, pack_format: H, scale: 100 }
+      # Phase 4: SEU, scrub, tasks, stack/heap
+      - { param_id: 0x0319, pack_format: H, scale: 1 }
+      - { param_id: 0x031A, pack_format: H, scale: 100 }
+      - { param_id: 0x031B, pack_format: B, scale: 1 }
+      - { param_id: 0x031C, pack_format: H, scale: 100 }
+      - { param_id: 0x031D, pack_format: H, scale: 100 }
+      - { param_id: 0x031E, pack_format: H, scale: 1 }
+
+  - sid: 5
+    name: Payload
+    interval_s: 8.0
+    parameters:
+      - { param_id: 0x0600, pack_format: B, scale: 1 }
+      - { param_id: 0x0601, pack_format: h, scale: 100 }
+      - { param_id: 0x0602, pack_format: H, scale: 10 }
+      - { param_id: 0x0603, pack_format: h, scale: 100 }
+      - { param_id: 0x0604, pack_format: H, scale: 100 }
+      - { param_id: 0x0605, pack_format: H, scale: 1 }
+      - { param_id: 0x0609, pack_format: H, scale: 1 }
+      # Memory and scene metadata
+      - { param_id: 0x060A, pack_format: I, scale: 1 }
+      - { param_id: 0x060B, pack_format: I, scale: 1 }
+      - { param_id: 0x060C, pack_format: H, scale: 1 }
+      - { param_id: 0x060D, pack_format: B, scale: 1 }
+      - { param_id: 0x0610, pack_format: B, scale: 1 }
+      - { param_id: 0x0612, pack_format: B, scale: 1 }
+      # Phase 4: Compression, cal lamp, SNR, detector temp
+      - { param_id: 0x0614, pack_format: H, scale: 100 }
+      - { param_id: 0x0615, pack_format: B, scale: 1 }
+      - { param_id: 0x0616, pack_format: H, scale: 100 }
+      - { param_id: 0x0617, pack_format: h, scale: 100 }
+      # Calibration and transfer state
+      - { param_id: 0x062A, pack_format: B, scale: 1 }
+      - { param_id: 0x062B, pack_format: H, scale: 100 }
+      - { param_id: 0x062C, pack_format: I, scale: 1 }
+      - { param_id: 0x062D, pack_format: B, scale: 1 }
+      - { param_id: 0x062E, pack_format: H, scale: 100 }
+      - { param_id: 0x062F, pack_format: H, scale: 100 }
+
+  - sid: 6
+    name: TTC
+    interval_s: 8.0
+    parameters:
+      - { param_id: 0x0500, pack_format: B, scale: 1 }
+      - { param_id: 0x0501, pack_format: B, scale: 1 }
+      - { param_id: 0x0502, pack_format: h, scale: 10 }
+      - { param_id: 0x0503, pack_format: h, scale: 10 }
+      - { param_id: 0x0506, pack_format: I, scale: 1 }
+      - { param_id: 0x0507, pack_format: h, scale: 100 }
+      - { param_id: 0x0508, pack_format: B, scale: 1 }
+      - { param_id: 0x0509, pack_format: I, scale: 1 }
+      - { param_id: 0x050A, pack_format: h, scale: 100 }
+      # BER, PA, lock sequence
+      - { param_id: 0x050C, pack_format: h, scale: 100 }
+      - { param_id: 0x050D, pack_format: h, scale: 10 }
+      - { param_id: 0x050F, pack_format: h, scale: 100 }
+      - { param_id: 0x0510, pack_format: B, scale: 1 }
+      - { param_id: 0x0511, pack_format: B, scale: 1 }
+      - { param_id: 0x0512, pack_format: B, scale: 1 }
+      - { param_id: 0x0513, pack_format: I, scale: 1 }
+      - { param_id: 0x0516, pack_format: B, scale: 1 }
+      - { param_id: 0x0519, pack_format: h, scale: 100 }
+      # Phase 4: AGC, Doppler, range rate, cmd auth
+      - { param_id: 0x051A, pack_format: h, scale: 10 }
+      - { param_id: 0x051B, pack_format: i, scale: 1 }
+      - { param_id: 0x051C, pack_format: h, scale: 10 }
+      - { param_id: 0x051D, pack_format: B, scale: 1 }
+      # Hidden telemetry now exposed
+      - { param_id: 0x051E, pack_format: I, scale: 1 }
+      - { param_id: 0x051F, pack_format: I, scale: 1 }
+      - { param_id: 0x0520, pack_format: B, scale: 1 }
+      - { param_id: 0x0521, pack_format: B, scale: 1 }
+      - { param_id: 0x0522, pack_format: H, scale: 10 }
+
+  # SID 10 (BootLoader) removed — the bootloader emits only SID 11 (Beacon).
+  # Per the flight-representative design, the bootloader has a single minimal
+  # HK packet; platform/OBDH/payload telemetry is produced only by the
+  # application software (phase ≥ 4).
+
+  - sid: 11
+    name: Beacon
+    interval_s: 30.0
+    parameters:
+      - { param_id: 0x0100, pack_format: H, scale: 100 }    # bat_voltage
+      - { param_id: 0x0101, pack_format: H, scale: 100 }    # bat_soc
+      - { param_id: 0x0300, pack_format: B, scale: 1 }      # obc_mode
+      - { param_id: 0x030A, pack_format: H, scale: 1 }      # reboot_count
+      - { param_id: 0x0311, pack_format: B, scale: 1 }      # sw_image
+      - { param_id: 0x030C, pack_format: B, scale: 1 }      # active_obc
+      - { param_id: 0x0129, pack_format: B, scale: 1 }      # spacecraft_phase (canonical id, matches engine + tests)

@@ -1,0 +1,22 @@
+model: ttc_basic
+ul_freq_mhz: 449.0
+dl_freq_mhz: 401.5
+tm_rate_hi_bps: 64000
+tm_rate_lo_bps: 1000
+eirp_dbw: 10.0
+gs_g_t_db: 20.0
+sc_gain_dbi: 3.0
+
+param_ids:
+  ttc_mode: 0x0500
+  link_status: 0x0501
+  rssi: 0x0502
+  link_margin: 0x0503
+  ul_freq: 0x0504
+  dl_freq: 0x0505
+  tm_data_rate: 0x0506
+  xpdr_temp: 0x0507
+  ranging_status: 0x0508
+  range_km: 0x0509
+  contact_elevation: 0x050A
+  contact_az: 0x050B

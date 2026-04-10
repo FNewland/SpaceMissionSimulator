@@ -1,0 +1,18 @@
+name: "Transponder Primary Failure"
+difficulty: ADVANCED
+duration_s: 2700
+briefing: |
+  The primary transponder will fail during AOS at T+300s.
+  The operator must switch to the redundant transponder to
+  restore communications.
+events:
+  - time_offset_s: 300
+    action: inject
+    params:
+      subsystem: ttc
+      failure: primary_failure
+      magnitude: 1.0
+expected_responses:
+  - { category: detect, description: "Detect loss of signal on primary" }
+  - { category: isolate, description: "Identify primary transponder failure" }
+  - { category: recover, description: "Switch to redundant transponder" }

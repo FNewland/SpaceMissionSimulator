@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "smo-common"
+version = "0.1.0"
+description = "SMO Common Library — protocols, config schemas, orbit utilities"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "sgp4>=2.20",
+    "numpy>=1.24",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/smo_common"]

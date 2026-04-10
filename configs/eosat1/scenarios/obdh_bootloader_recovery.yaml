@@ -1,0 +1,28 @@
+name: "OBC Stuck in Bootloader"
+difficulty: ADVANCED
+duration_s: 3600
+briefing: |
+  The OBC has crashed and rebooted into bootloader mode. Only the beacon
+  housekeeping structure (SID 11 on bootloader APID 0x002) is available, providing limited HK data.
+  The full application software is not running. The operator must verify
+  that the OBC is in bootloader mode, determine the reboot cause, attempt
+  to boot the application software via OBC_BOOT_APP (func_id 45), and if
+  that fails, perform a memory integrity check via Service 6 before
+  considering a memory reload or OBC switchover.
+
+events:
+  - time_offset_s: 30
+    action: inject
+    params:
+      subsystem: obdh
+      failure: obc_crash
+      magnitude: 1.0
+      onset: step
+
+expected_responses:
+  - { category: detect, description: "Detect loss of full HK — only beacon SID 11 on bootloader APID 0x002 available" }
+  - { category: isolate, description: "Verify bootloader mode from obdh.sw_image = 0 and reboot cause" }
+  - { category: command, description: "Attempt application boot via OBC_BOOT_APP (func_id 45)" }
+  - { category: detect, description: "Verify application running — obdh.sw_image = 1, all SIDs resume" }
+  - { category: command, description: "If boot fails: inhibit auto-boot (func_id 46), run MEM_CHECK (S6.9)" }
+  - { category: recover, description: "Restore OBC to nominal application mode with full HK" }

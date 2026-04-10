@@ -1,0 +1,56 @@
+# Load Shedding Stage 3 - Survival Mode (SoC < 10%)
+# Only essential systems: OBC, TTC, battery heater, AOCS safe mode
+
+procedure_id: "load_shed_stage3"
+name: "Load Shedding Stage 3"
+category: "fdir_response"
+description: "Activate load shedding stage 3 - Survival mode (SoC < 10%)"
+
+steps:
+  - step_id: 1
+    name: "Payload Off"
+    description: "Power off payload"
+    delay_s: 0.0
+    command: "s8_command"
+    params:
+      func_id: 26  # PAYLOAD_SET_MODE
+      data: [0x00]  # mode = 0 (off)
+
+  - step_id: 2
+    name: "AOCS Safe"
+    description: "AOCS safe mode with minimal power"
+    delay_s: 0.5
+    command: "s8_command"
+    params:
+      func_id: 0  # AOCS_SET_MODE
+      data: [0x02]  # mode = 2 (safe)
+
+  - step_id: 3
+    name: "TTC Minimal Power"
+    description: "Set TTC TX power to minimum"
+    delay_s: 1.0
+    command: "s8_command"
+    params:
+      func_id: 68  # TTC_SET_TX_POWER
+      data: [0x01]  # minimal power level
+
+  - step_id: 4
+    name: "Battery Heater Only"
+    description: "Keep only battery heater at minimal duty (10%)"
+    delay_s: 1.5
+    command: "s8_command"
+    params:
+      func_id: 46  # TCS_SET_HEATER_DUTY_LIMIT
+      data: [0x00, 0x0A]  # circuit=0 (battery), max_duty=10%
+
+  - step_id: 5
+    name: "Load Shed Stage 3"
+    description: "Activate load shedding stage 3"
+    delay_s: 2.0
+    command: "s8_command"
+    params:
+      func_id: 25  # EPS_EMERGENCY_LOAD_SHED
+      data: [0x03]  # stage = 3
+
+timeout_s: 30.0
+max_retries: 1

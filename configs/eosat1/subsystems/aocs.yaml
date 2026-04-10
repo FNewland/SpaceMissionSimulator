@@ -1,0 +1,39 @@
+model: aocs_basic
+modes: [nominal, detumble, safe, wheel_desat, slew]
+
+reaction_wheels:
+  max_speed_rpm: 5500
+  nominal_speed_rpm: 1200
+  desaturation_speed_rpm: 200
+
+num_wheels: 4
+attitude_error_deadband_deg: 0.01
+
+param_ids:
+  att_q1: 0x0200
+  att_q2: 0x0201
+  att_q3: 0x0202
+  att_q4: 0x0203
+  rate_roll: 0x0204
+  rate_pitch: 0x0205
+  rate_yaw: 0x0206
+  rw1_speed: 0x0207
+  rw2_speed: 0x0208
+  rw3_speed: 0x0209
+  rw4_speed: 0x020A
+  mag_x: 0x020B
+  mag_y: 0x020C
+  mag_z: 0x020D
+  aocs_mode: 0x020F
+  gps_lat: 0x0210
+  gps_lon: 0x0211
+  gps_alt: 0x0212
+  gps_vx: 0x0213
+  gps_vy: 0x0214
+  gps_vz: 0x0215
+  solar_beta: 0x0216
+  att_error: 0x0217
+  rw1_temp: 0x0218
+  rw2_temp: 0x0219
+  rw3_temp: 0x021A
+  rw4_temp: 0x021B

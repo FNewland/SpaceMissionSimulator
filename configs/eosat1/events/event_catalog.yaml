@@ -1,0 +1,122 @@
+events:
+  # Orbital events (0x0001-0x001F)
+  - { id: 0x0001, name: AOS, severity: INFO, subsystem: orbital, description: "Acquisition of Signal" }
+  - { id: 0x0002, name: LOS, severity: INFO, subsystem: orbital, description: "Loss of Signal" }
+  - { id: 0x0010, name: ECLIPSE_ENTRY, severity: INFO, subsystem: orbital, description: "Eclipse entry" }
+  - { id: 0x0011, name: ECLIPSE_EXIT, severity: INFO, subsystem: orbital, description: "Eclipse exit (sunlight entry)" }
+
+  # EPS events (0x0100-0x01FF)
+  - { id: 0x0100, name: EPS_MODE_CHANGE, severity: MEDIUM, subsystem: eps, description: "EPS mode transition" }
+  - { id: 0x0101, name: BATTERY_SOC_WARNING, severity: MEDIUM, subsystem: eps, description: "Battery SoC below 20%" }
+  - { id: 0x0102, name: BATTERY_SOC_CRITICAL, severity: HIGH, subsystem: eps, description: "Battery SoC below 10%" }
+  - { id: 0x0103, name: BUS_UNDERVOLTAGE_WARNING, severity: MEDIUM, subsystem: eps, description: "Bus voltage below 27V" }
+  - { id: 0x0104, name: BUS_UNDERVOLTAGE_CRITICAL, severity: HIGH, subsystem: eps, description: "Bus voltage below 25V" }
+  - { id: 0x0105, name: BUS_OVERCURRENT, severity: HIGH, subsystem: eps, description: "Bus current exceeds rated limit" }
+  - { id: 0x0106, name: LOAD_SHED_STAGE_1, severity: MEDIUM, subsystem: eps, description: "Load shedding stage 1 activated" }
+  - { id: 0x0107, name: LOAD_SHED_STAGE_2, severity: MEDIUM, subsystem: eps, description: "Load shedding stage 2 activated" }
+  - { id: 0x0108, name: LOAD_SHED_STAGE_3, severity: HIGH, subsystem: eps, description: "Load shedding stage 3 activated" }
+  - { id: 0x0109, name: BATTERY_OVERTEMP, severity: MEDIUM, subsystem: eps, description: "Battery temperature exceeded 45C" }
+  - { id: 0x010A, name: BATTERY_UNDERTEMP, severity: LOW, subsystem: eps, description: "Battery temperature below -5C" }
+  - { id: 0x010B, name: SOLAR_ARRAY_DEGRADED, severity: LOW, subsystem: eps, description: "Solar array output below expected" }
+  - { id: 0x010C, name: ECLIPSE_ENTRY_EPS, severity: INFO, subsystem: eps, description: "Eclipse entry - solar power to zero" }
+  - { id: 0x010D, name: ECLIPSE_EXIT_EPS, severity: INFO, subsystem: eps, description: "Eclipse exit - solar power resumed" }
+  - { id: 0x010E, name: CHARGE_COMPLETE, severity: INFO, subsystem: eps, description: "Battery reached 100% SoC" }
+  - { id: 0x010F, name: PDU_OVERCURRENT, severity: HIGH, subsystem: eps, description: "Individual power line overcurrent trip" }
+  - { id: 0x0110, name: POWER_LINE_SWITCHED, severity: INFO, subsystem: eps, description: "Power line state change" }
+  - { id: 0x0111, name: EPS_SAFE_MODE_ENTRY, severity: MEDIUM, subsystem: eps, description: "EPS entered safe/contingency mode" }
+
+  # AOCS events (0x0200-0x02FF)
+  - { id: 0x0200, name: AOCS_MODE_CHANGE, severity: LOW, subsystem: aocs, description: "AOCS mode transition" }
+  - { id: 0x0201, name: RW_OVERSPEED, severity: MEDIUM, subsystem: aocs, description: "Reaction wheel exceeded speed threshold (5000 RPM)" }
+  - { id: 0x0202, name: RW_BEARING_DEGRADED, severity: MEDIUM, subsystem: aocs, description: "Reaction wheel bearing health < 50%" }
+  - { id: 0x0203, name: ST_BLIND, severity: MEDIUM, subsystem: aocs, description: "Star tracker lost lock (blinded by sun)" }
+  - { id: 0x0204, name: ST_RECOVERY, severity: INFO, subsystem: aocs, description: "Star tracker reacquired lock" }
+  - { id: 0x0205, name: MOMENTUM_SATURATION, severity: MEDIUM, subsystem: aocs, description: "Reaction wheel momentum > 90% of maximum" }
+  - { id: 0x0206, name: ATTITUDE_ERROR_HIGH, severity: MEDIUM, subsystem: aocs, description: "Pointing error exceeded threshold" }
+  - { id: 0x0207, name: DESATURATION_START, severity: INFO, subsystem: aocs, description: "Wheel desaturation sequence started" }
+  - { id: 0x0208, name: DESATURATION_COMPLETE, severity: INFO, subsystem: aocs, description: "Wheel desaturation sequence completed" }
+  - { id: 0x0209, name: GPS_LOCK_LOST, severity: MEDIUM, subsystem: aocs, description: "GPS lock lost (degraded or no fix)" }
+  - { id: 0x020A, name: GPS_LOCK_ACQUIRED, severity: INFO, subsystem: aocs, description: "GPS lock acquired (3D+ fix)" }
+  - { id: 0x020B, name: GYRO_BIAS_HIGH, severity: LOW, subsystem: aocs, description: "Gyroscope bias drift exceeds threshold" }
+  - { id: 0x020C, name: CSS_DEGRADED, severity: MEDIUM, subsystem: aocs, description: "Coarse Sun Sensor multiple head failures" }
+
+  # OBDH events (0x0300-0x03FF)
+  - { id: 0x0300, name: OBDH_MODE_CHANGE, severity: MEDIUM, subsystem: obdh, description: "OBC mode transition" }
+  - { id: 0x0301, name: OBC_REBOOT, severity: HIGH, subsystem: obdh, description: "OBC reboot occurred" }
+  - { id: 0x0302, name: MEMORY_ERROR, severity: MEDIUM, subsystem: obdh, description: "Memory error detected" }
+  - { id: 0x0303, name: WATCHDOG_TIMEOUT, severity: HIGH, subsystem: obdh, description: "Watchdog timeout trigger reboot" }
+  - { id: 0x0304, name: BUS_FAILURE, severity: HIGH, subsystem: obdh, description: "CAN bus failure detected" }
+  - { id: 0x0305, name: BOOT_FAILURE, severity: HIGH, subsystem: obdh, description: "Application CRC check failed" }
+  - { id: 0x0306, name: OBC_SWITCHOVER, severity: MEDIUM, subsystem: obdh, description: "Redundant OBC activated" }
+  - { id: 0x0307, name: SEU_DETECTED, severity: LOW, subsystem: obdh, description: "Single-event upset detected" }
+  - { id: 0x0308, name: SCRUB_COMPLETE, severity: LOW, subsystem: obdh, description: "Memory scrub operation completed" }
+  - { id: 0x0309, name: TC_QUEUE_OVERFLOW, severity: MEDIUM, subsystem: obdh, description: "S11 TC scheduling queue full" }
+  - { id: 0x030A, name: TM_STORE_OVERFLOW, severity: MEDIUM, subsystem: obdh, description: "S15 TM storage full" }
+
+  # TCS events (0x0400-0x04FF)
+  - { id: 0x0400, name: TCS_OVERTEMP_WARNING, severity: MEDIUM, subsystem: tcs, description: "Thermal zone temperature above warning threshold" }
+  - { id: 0x0401, name: TCS_OVERTEMP_ALARM, severity: HIGH, subsystem: tcs, description: "Thermal zone temperature above alarm threshold" }
+  - { id: 0x0402, name: TCS_UNDERTEMP_WARNING, severity: MEDIUM, subsystem: tcs, description: "Thermal zone temperature below warning threshold" }
+  - { id: 0x0403, name: TCS_UNDERTEMP_ALARM, severity: HIGH, subsystem: tcs, description: "Thermal zone temperature below alarm threshold" }
+  - { id: 0x0404, name: HEATER_ON, severity: INFO, subsystem: tcs, description: "Heater activated" }
+  - { id: 0x0405, name: HEATER_OFF, severity: INFO, subsystem: tcs, description: "Heater deactivated" }
+  - { id: 0x0406, name: HEATER_STUCK_ON, severity: HIGH, subsystem: tcs, description: "Heater failure, cannot turn off" }
+  - { id: 0x0407, name: HEATER_STUCK_OFF, severity: HIGH, subsystem: tcs, description: "Heater failure, cannot turn on" }
+  - { id: 0x0408, name: TCS_MODE_CHANGE, severity: LOW, subsystem: tcs, description: "TCS mode transition (e.g., decontamination)" }
+  - { id: 0x0409, name: THERMAL_RUNAWAY, severity: HIGH, subsystem: tcs, description: "Temperature rate of change exceeded threshold" }
+  - { id: 0x040A, name: FPA_THERMAL_READY, severity: INFO, subsystem: tcs, description: "FPA temperature reached operational range" }
+  - { id: 0x040B, name: FPA_THERMAL_NOT_READY, severity: MEDIUM, subsystem: tcs, description: "FPA temperature left operational range" }
+
+  # Payload events (0x0600-0x06FF)
+  - { id: 0x0600, name: IMAGING_START, severity: INFO, subsystem: payload, description: "Imaging operation started" }
+  - { id: 0x0601, name: IMAGING_STOP, severity: INFO, subsystem: payload, description: "Imaging operation stopped" }
+  - { id: 0x0602, name: PAYLOAD_MODE_CHANGE, severity: INFO, subsystem: payload, description: "Payload mode change" }
+  - { id: 0x0603, name: STORAGE_WARNING, severity: LOW, subsystem: payload, description: "Payload storage above 90%" }
+  - { id: 0x0604, name: FPA_OVERTEMP, severity: MEDIUM, subsystem: payload, description: "FPA temperature exceeded -3C" }
+  - { id: 0x0605, name: FPA_UNDERTEMP, severity: MEDIUM, subsystem: payload, description: "FPA temperature below -15C" }
+  - { id: 0x0606, name: COOLER_FAILURE, severity: HIGH, subsystem: payload, description: "Cooler malfunction detected" }
+  - { id: 0x0607, name: IMAGE_CHECKSUM_ERROR, severity: MEDIUM, subsystem: payload, description: "Checksum error in captured image" }
+  - { id: 0x0608, name: SNR_DEGRADED, severity: LOW, subsystem: payload, description: "Average SNR below 25 dB" }
+  - { id: 0x0609, name: STORAGE_FULL, severity: HIGH, subsystem: payload, description: "Payload storage at 100%" }
+  - { id: 0x060A, name: BAD_SEGMENT_DETECTED, severity: MEDIUM, subsystem: payload, description: "Memory segment failure detected" }
+  - { id: 0x060B, name: CALIBRATION_COMPLETE, severity: INFO, subsystem: payload, description: "Calibration sequence finished" }
+  - { id: 0x060C, name: STORAGE_CRITICAL, severity: HIGH, subsystem: payload, description: "Payload storage above 95%" }
+  - { id: 0x060D, name: COMPRESSION_ERROR, severity: MEDIUM, subsystem: payload, description: "Compression ratio anomaly detected" }
+
+  # TTC events (0x0500-0x05FF)
+  - { id: 0x0500, name: CARRIER_LOCK_ACQUIRED, severity: INFO, subsystem: ttc, description: "Carrier lock acquired" }
+  - { id: 0x0501, name: CARRIER_LOCK_LOST, severity: MEDIUM, subsystem: ttc, description: "Carrier lock lost" }
+  - { id: 0x0502, name: BIT_SYNC_ACQUIRED, severity: INFO, subsystem: ttc, description: "Bit sync acquired" }
+  - { id: 0x0503, name: BIT_SYNC_LOST, severity: MEDIUM, subsystem: ttc, description: "Bit sync lost" }
+  - { id: 0x0504, name: FRAME_SYNC_ACQUIRED, severity: INFO, subsystem: ttc, description: "Frame sync acquired" }
+  - { id: 0x0505, name: FRAME_SYNC_LOST, severity: MEDIUM, subsystem: ttc, description: "Frame sync lost" }
+  - { id: 0x0506, name: LINK_MARGIN_WARNING, severity: MEDIUM, subsystem: ttc, description: "Link margin warning (Eb/N0 < 6 dB)" }
+  - { id: 0x0507, name: LINK_MARGIN_CRITICAL, severity: HIGH, subsystem: ttc, description: "Link margin critical (Eb/N0 < 3 dB)" }
+  - { id: 0x0508, name: PA_OVERTEMP_WARNING, severity: MEDIUM, subsystem: ttc, description: "Power amplifier overtemp warning (T > 55C)" }
+  - { id: 0x0509, name: PA_OVERTEMP_SHUTDOWN, severity: HIGH, subsystem: ttc, description: "Power amplifier overheat shutdown (T > 65C)" }
+  - { id: 0x050A, name: PA_OVERTEMP_RECOVERY, severity: INFO, subsystem: ttc, description: "Power amplifier temperature recovered (T < 50C)" }
+  - { id: 0x050B, name: TRANSPONDER_SWITCH, severity: MEDIUM, subsystem: ttc, description: "Transponder switched (primary/redundant)" }
+  - { id: 0x050C, name: BER_THRESHOLD_EXCEEDED, severity: MEDIUM, subsystem: ttc, description: "Bit error rate threshold exceeded (BER > 1e-5)" }
+  - { id: 0x050D, name: ANTENNA_DEPLOYED, severity: INFO, subsystem: ttc, description: "Antenna deployment confirmed" }
+  - { id: 0x050E, name: RANGING_ACQUIRED, severity: INFO, subsystem: ttc, description: "Ranging sequence acquired" }
+  - { id: 0x050F, name: RANGING_LOST, severity: INFO, subsystem: ttc, description: "Ranging sequence lost" }
+  - { id: 0x0510, name: AGC_SATURATION, severity: LOW, subsystem: ttc, description: "Automatic gain control saturation detected" }
+  - { id: 0x0511, name: UPLINK_TIMEOUT, severity: HIGH, subsystem: ttc, description: "No valid uplink command received (timeout threshold exceeded)" }
+  - { id: 0x0512, name: ANTENNA_DEPLOY_READY_RECOVERED, severity: INFO, subsystem: ttc, description: "Antenna deployment readiness recovered (pyro continuity OK)" }
+
+  # FDIR Advanced Events (0x0F00-0x0F0B)
+  - { id: 0x0F00, name: FDIR_FAULT_DETECTED, severity: MEDIUM, subsystem: fdir, description: "FDIR fault detected" }
+  - { id: 0x0F01, name: FDIR_RECOVERY_STARTED, severity: MEDIUM, subsystem: fdir, description: "FDIR recovery action initiated" }
+  - { id: 0x0F02, name: FDIR_RECOVERY_COMPLETE, severity: INFO, subsystem: fdir, description: "FDIR recovery completed successfully" }
+  - { id: 0x0F03, name: FDIR_RECOVERY_FAILED, severity: HIGH, subsystem: fdir, description: "FDIR recovery failed, escalating to next level" }
+  - { id: 0x0F04, name: FDIR_LEVEL_ESCALATION, severity: HIGH, subsystem: fdir, description: "FDIR escalated to higher response level" }
+  - { id: 0x0F05, name: LOAD_SHED_ACTIVATED, severity: MEDIUM, subsystem: eps, description: "Load shedding stage activated" }
+  - { id: 0x0F06, name: LOAD_SHED_DEACTIVATED, severity: INFO, subsystem: eps, description: "Load shedding stage deactivated" }
+  - { id: 0x0F07, name: PROCEDURE_STARTED, severity: INFO, subsystem: obdh, description: "Procedure execution started" }
+  - { id: 0x0F08, name: PROCEDURE_COMPLETED, severity: INFO, subsystem: obdh, description: "Procedure execution completed" }
+  - { id: 0x0F09, name: PROCEDURE_FAILED, severity: HIGH, subsystem: obdh, description: "Procedure execution failed" }
+  - { id: 0x0F0A, name: SAFE_MODE_ENTRY, severity: MEDIUM, subsystem: aocs, description: "Safe mode entry commanded" }
+  - { id: 0x0F0B, name: SAFE_MODE_EXIT, severity: INFO, subsystem: aocs, description: "Safe mode exit commanded" }
+
+  # FDIR parameter limit violations (0x8000-0x8FFF) — dynamically generated by FDIR rules
+  # Event IDs are 0x8000 | (param_id & 0x0FFF)
