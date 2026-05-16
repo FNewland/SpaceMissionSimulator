@@ -104,7 +104,10 @@ class SimulatorServer:
                 for w in self._tm_clients:
                     try:
                         w.write(frame)
-                        await w.drain()
+                        # Drain with timeout so a slow client can't stall
+                        # the entire broadcast loop and cause tm_queue to
+                        # overflow.
+                        await asyncio.wait_for(w.drain(), timeout=2.0)
                     except Exception:
                         disconnected.append(w)
                 for w in disconnected:
