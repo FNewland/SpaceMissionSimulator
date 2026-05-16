@@ -286,11 +286,23 @@ class RFSimBridge:
                     self._pipeline.set_transmitting(False)
 
     async def _relay_recovered_tm(self):
-        """RF mode: relay packets recovered by the RX pipeline to MCS clients."""
+        """RF mode: relay packets recovered by the RX pipeline to MCS clients.
+
+        Uses batch drain to avoid the per-packet async/executor overhead
+        of get_recovered_packet(). Falls back to the blocking get when
+        the queue is empty so we don't spin.
+        """
         while self._running:
-            packet = await self._pipeline.get_recovered_packet()
-            if packet is not None:
-                await self._broadcast_tm(packet)
+            # Batch drain: grab everything available without blocking
+            batch = self._pipeline.drain_recovered_packets()
+            if batch:
+                for packet in batch:
+                    await self._broadcast_tm(packet)
+            else:
+                # Queue empty — wait for next packet (blocking, avoids spin)
+                packet = await self._pipeline.get_recovered_packet()
+                if packet is not None:
+                    await self._broadcast_tm(packet)
 
     async def _process_tm_frame_mode(self, packet: bytes):
         """FRAME mode: byte-level CCSDS framing (no real signal processing)."""

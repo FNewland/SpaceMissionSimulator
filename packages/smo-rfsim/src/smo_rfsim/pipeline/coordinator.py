@@ -156,6 +156,21 @@ class PipelineCoordinator:
         except (asyncio.TimeoutError, queue.Empty):
             return None
 
+    def drain_recovered_packets(self, max_count: int = 100) -> list[bytes]:
+        """Non-blocking batch drain of all available recovered packets.
+
+        Much faster than repeated get_recovered_packet() calls because
+        it avoids the async/executor overhead per packet. Use this from
+        synchronous code or when you need to catch up with a burst.
+        """
+        packets = []
+        for _ in range(max_count):
+            try:
+                packets.append(self._recovered_queue.get_nowait())
+            except queue.Empty:
+                break
+        return packets
+
     # ── TC uplink (MCS → pipeline → sim) ──
 
     def process_tc(self, tc_packet: bytes) -> Optional[bytes]:
