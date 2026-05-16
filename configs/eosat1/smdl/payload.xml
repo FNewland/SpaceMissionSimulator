@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="Payload" Creator="EOSAT-1 SMDL Generator" Date="2026-04-19" Version="1.0">
+  <Description>SMP2 model catalogue for Payload subsystem</Description>
+  <Type Name="UInt8" Uuid="7981e083-ea41-5360-ad7d-c285223a099c" xsi:type="Integer" Size="1" Signed="false"/>
+  <Type Name="UInt16" Uuid="64b04f7d-63c1-5e74-90d1-38d9516374dc" xsi:type="Integer" Size="2" Signed="false"/>
+  <Type Name="UInt32" Uuid="941a21b9-fbf3-52e2-b47f-35d45df8c6e4" xsi:type="Integer" Size="4" Signed="false"/>
+  <Type Name="Float32" Uuid="29ff6b59-5fbe-5cc8-ae68-9b98624c634d" xsi:type="Float" Size="4"/>
+  <Type Name="Int16" Uuid="6f8dd2f4-3676-5596-96c4-24551a8f5d41" xsi:type="Integer" Size="2" Signed="true"/>
+  <Type xsi:type="Bool" Name="Bool" Uuid="37acaaaf-e356-58be-b6a6-53bb9a33c6b2"/>
+  <Model Name="Payload_Model" Uuid="25001f07-ae74-5306-a00d-49141712db74">
+    <Description>Payload subsystem simulation model</Description>
+    <Field Name="payload_mode" Uuid="66b9d0cb-276b-5c0d-998f-a3e4d3090e29" Type="UInt8" Kind="Output" View="true"/>
+    <Field Name="payload_fpa_temp" Uuid="0a860dd4-3a7e-545e-8649-b389974438d7" Type="Int16" Kind="Output" View="true">
+      <Description>[C]</Description>
+    </Field>
+    <Field Name="payload_cooler_pwr" Uuid="84025559-072b-51b6-9c0e-c360c9b3c8d9" Type="UInt16" Kind="Output" View="true">
+      <Description>[W]</Description>
+    </Field>
+    <Field Name="payload_imager_temp" Uuid="ce1d2ff4-9f23-52d1-84d9-91582b0299f7" Type="Int16" Kind="Output" View="true">
+      <Description>Imager electronics temperature [C]</Description>
+    </Field>
+    <Field Name="payload_store_used" Uuid="e05a1a48-f46b-5326-934e-c2d3203cc8ac" Type="UInt16" Kind="Output" View="true">
+      <Description>[%]</Description>
+    </Field>
+    <Field Name="payload_image_count" Uuid="ddafcf7d-f07a-52df-8e20-9af783f01ad9" Type="UInt16" Kind="Output" View="true"/>
+    <Field Name="payload_checksum_errors" Uuid="e3f22773-5435-5c6c-a082-758a5c160b23" Type="UInt16" Kind="Output" View="true"/>
+    <Field Name="payload_mem_total_mb" Uuid="c7872a83-0228-5b60-8f44-f0c132933730" Type="UInt32" Kind="Output" View="true">
+      <Description>Total payload memory [MB]</Description>
+    </Field>
+    <Field Name="payload_mem_used_mb" Uuid="0b46e08a-fa42-5333-b9a1-f72c296a447f" Type="UInt32" Kind="Output" View="true">
+      <Description>Used payload memory [MB]</Description>
+    </Field>
+    <Field Name="payload_last_scene_id" Uuid="d4a7c371-c4df-5349-8bbc-88f00b37f2f8" Type="UInt16" Kind="Output" View="true">
+      <Description>Last captured scene ID</Description>
+    </Field>
+    <Field Name="payload_last_scene_quality" Uuid="aee371d2-455f-51c4-a089-b5f7da920049" Type="UInt8" Kind="Output" View="true">
+      <Description>Quality metric of last image [%]</Description>
+    </Field>
+    <Field Name="payload_fpa_ready" Uuid="9958c0f4-ee7b-53a7-818f-02d2a2a60ab2" Type="UInt8" Kind="Output" View="true">
+      <Description>FPA temperature in range (0=no, 1=yes)</Description>
+    </Field>
+    <Field Name="payload_mem_segments_bad" Uuid="9c4fe5f9-6e7f-5219-91e7-c282365f57f4" Type="UInt8" Kind="Output" View="true">
+      <Description>Number of bad memory segments</Description>
+    </Field>
+    <Field Name="payload_duty_cycle_pct" Uuid="68cf7bc3-73d2-5f4f-8212-507cd61d48ae" Type="Float32" Kind="Output" View="true">
+      <Description>Imaging duty cycle [%]</Description>
+    </Field>
+    <Field Name="payload_compression_ratio" Uuid="b8b696f3-8af1-57d9-8ada-1212371a23bc" Type="UInt16" Kind="Output" View="true">
+      <Description>Image compression ratio</Description>
+    </Field>
+    <Field Name="payload_cal_lamp_on" Uuid="159e53ab-6df0-5c13-a809-18f508aec86d" Type="UInt8" Kind="Output" View="true">
+      <Description>Calibration lamp status (0=off, 1=on)</Description>
+    </Field>
+    <Field Name="payload_snr" Uuid="2d498348-1373-51d4-bdf0-73b269bd4b58" Type="UInt16" Kind="Output" View="true">
+      <Description>Signal-to-noise ratio [dB]</Description>
+    </Field>
+    <Field Name="payload_detector_temp" Uuid="0a5da8cb-47c8-5cdb-9b91-6f19681fa133" Type="Int16" Kind="Output" View="true">
+      <Description>CCD/CMOS detector temperature [C]</Description>
+    </Field>
+    <Field Name="payload_integration_time" Uuid="3d7d6956-3102-53c5-be71-8bdc934238b6" Type="Float32" Kind="Output" View="true">
+      <Description>Detector integration time [ms]</Description>
+    </Field>
+    <Field Name="payload_swath_width_km" Uuid="994148ce-c616-507d-8790-d71e1714a4a9" Type="Float32" Kind="Output" View="true">
+      <Description>Ground swath width [km]</Description>
+    </Field>
+    <Field Name="payload_band_blue_snr" Uuid="ccbfefdf-569e-5d79-96fb-45e9abc039ad" Type="Float32" Kind="Output" View="true">
+      <Description>Blue band (443 nm) SNR [dB]</Description>
+    </Field>
+    <Field Name="payload_band_green_snr" Uuid="35d98753-cb32-5243-a635-c3e52b1b7b01" Type="Float32" Kind="Output" View="true">
+      <Description>Green band (560 nm) SNR [dB]</Description>
+    </Field>
+    <Field Name="payload_band_red_snr" Uuid="78c8cb4a-a0a1-5d9b-b8a1-6ef7e28ce0e2" Type="Float32" Kind="Output" View="true">
+      <Description>Red band (665 nm) SNR [dB]</Description>
+    </Field>
+    <Field Name="payload_band_nir_snr" Uuid="4fc085f4-cdf8-5e58-8c9f-bf836638192e" Type="Float32" Kind="Output" View="true">
+      <Description>NIR band (865 nm) SNR [dB]</Description>
+    </Field>
+    <Field Name="payload_active_bands" Uuid="33522736-ffb8-561d-8cdc-d74551d3e578" Type="Float32" Kind="Output" View="true">
+      <Description>Number of active spectral bands</Description>
+    </Field>
+    <Field Name="payload_band_enable_mask" Uuid="cb3918c2-404f-5174-8d21-6c29790a7b6b" Type="Float32" Kind="Output" View="true">
+      <Description>Spectral band enable bitmask (bits 0-3: blue/green/red/nir)</Description>
+    </Field>
+    <Field Name="payload_att_quality_factor" Uuid="497ec1a8-ba02-583b-89d9-dd47fd35a7e4" Type="Float32" Kind="Output" View="true">
+      <Description>Attitude-dependent image quality factor</Description>
+    </Field>
+    <Field Name="payload_att_error_deg" Uuid="6a75edc2-3d3c-58dd-80b5-3cee50afb046" Type="Float32" Kind="Output" View="true">
+      <Description>Attitude error used for quality calculation [deg]</Description>
+    </Field>
+    <Field Name="payload_gsd_m" Uuid="e278b349-53ed-57b7-9663-146e2c2bb5df" Type="Float32" Kind="Output" View="true">
+      <Description>Ground sample distance [m]</Description>
+    </Field>
+    <Field Name="payload_scene_entropy" Uuid="69ef765d-e4ea-5925-9f38-01677552bed9" Type="Float32" Kind="Output" View="true">
+      <Description>Scene entropy estimate for compression</Description>
+    </Field>
+    <Field Name="payload_calibration_active" Uuid="ca81a270-37f3-5d31-8d5a-1f4e02ff5a76" Type="UInt8" Kind="Output" View="true">
+      <Description>Calibration active (0=no, 1=yes)</Description>
+    </Field>
+    <Field Name="payload_calibration_progress" Uuid="d0970624-b784-52aa-a8a0-f9d6f0ef8075" Type="UInt16" Kind="Output" View="true">
+      <Description>Calibration progress percentage [%]</Description>
+    </Field>
+    <Field Name="payload_last_calibration_time" Uuid="1d349f73-63a6-591c-9317-b60f55d18831" Type="UInt32" Kind="Output" View="true">
+      <Description>Timestamp of last calibration completion [s]</Description>
+    </Field>
+    <Field Name="payload_transfer_active" Uuid="57b22f69-9d0a-50da-9631-9f0ad5101dc7" Type="UInt8" Kind="Output" View="true">
+      <Description>S13 transfer active (0=no, 1=yes)</Description>
+    </Field>
+    <Field Name="payload_transfer_progress" Uuid="b316abf3-5c1f-56ca-9f7b-46392bb71f25" Type="UInt16" Kind="Output" View="true">
+      <Description>S13 transfer progress percentage [%]</Description>
+    </Field>
+    <Field Name="payload_integration_time_ms" Uuid="f3ef4eb6-03a4-5569-9e42-f20f81703c7d" Type="UInt16" Kind="Output" View="true">
+      <Description>Detector integration time (average of all bands) [ms]</Description>
+    </Field>
+    <Field Name="payload_imager_status" Uuid="80be1a35-51ac-5a1e-902a-1b9d3d1b66c5" Type="Float32" Kind="Output" View="true">
+      <Description>Imager status word</Description>
+    </Field>
+    <Field Name="payload_fpa_setpoint" Uuid="8a3252ee-4700-59fd-9896-830610004c7c" Type="Float32" Kind="Output" View="true">
+      <Description>FPA temperature setpoint [C]</Description>
+    </Field>
+    <Field Name="payload_fpa_stability" Uuid="40d95eef-50a8-5003-b296-6254914bb1d5" Type="Float32" Kind="Output" View="true">
+      <Description>FPA temperature stability (stddev) [C]</Description>
+    </Field>
+    <Field Name="payload_cooler_duty" Uuid="eb8eca39-cd5f-5599-932c-5450e45352bd" Type="Float32" Kind="Output" View="true">
+      <Description>FPA cooler duty cycle [%]</Description>
+    </Field>
+    <Field Name="payload_integration_ms" Uuid="d701c3c5-dc21-5c01-9a4e-3c2e492cc16f" Type="Float32" Kind="Output" View="true">
+      <Description>Integration time setting [ms]</Description>
+    </Field>
+    <Field Name="payload_gain_code" Uuid="079e880f-73fb-5ac1-b5e4-182492cad2db" Type="Float32" Kind="Output" View="true">
+      <Description>Gain configuration code</Description>
+    </Field>
+    <Field Name="payload_cal_flag" Uuid="4722de78-8f13-5837-b58d-d740f58dc03a" Type="Float32" Kind="Output" View="true">
+      <Description>Calibration active flag</Description>
+    </Field>
+    <Field Name="payload_dark_frame_cnt" Uuid="b3855217-b89f-5c82-9fc9-36a5b52836cd" Type="Float32" Kind="Output" View="true">
+      <Description>Dark frame count</Description>
+    </Field>
+    <Field Name="payload_bias_frame_cnt" Uuid="14b47a59-bc7c-5aa0-a88a-57b846569cb7" Type="Float32" Kind="Output" View="true">
+      <Description>Bias frame count</Description>
+    </Field>
+    <Field Name="tc_PAYLOAD_SET_MODE_mode" Uuid="368ac496-dae5-5a4f-8339-a72d1173c7a3" Type="UInt8" Kind="Input">
+      <Description>0=off, 1=standby, 2=imaging</Description>
+    </Field>
+    <Field Name="tc_PAYLOAD_SET_SCENE_scene_id" Uuid="e98849b1-ce65-58a5-98a0-9b03f8ec58b5" Type="UInt16" Kind="Input"/>
+    <Field Name="tc_PAYLOAD_CAPTURE_scene_id" Uuid="71c4eef6-58f5-5906-bd65-e743efd0aea8" Type="UInt16" Kind="Input">
+      <Description>Scene identifier</Description>
+    </Field>
+    <Field Name="tc_PAYLOAD_CAPTURE_lines" Uuid="2eb559ed-4b19-5161-a3da-e2f28bc0c47d" Type="UInt16" Kind="Input">
+      <Description>Number of CCD lines to capture</Description>
+    </Field>
+    <Field Name="tc_PAYLOAD_DOWNLOAD_IMAGE_scene_id" Uuid="b60100d8-bc53-5b94-88b0-13edacf511a9" Type="UInt16" Kind="Input">
+      <Description>Scene ID to download</Description>
+    </Field>
+    <Field Name="tc_PAYLOAD_DELETE_IMAGE_scene_id" Uuid="d9a75da0-93fe-5255-89f4-57ef6c4b8860" Type="UInt16" Kind="Input">
+      <Description>Scene ID to delete</Description>
+    </Field>
+    <Field Name="tc_PAYLOAD_MARK_BAD_SEGMENT_segment_id" Uuid="018a1e78-1f79-564a-88eb-7695c8e16762" Type="UInt8" Kind="Input">
+      <Description>Segment index (0-79)</Description>
+    </Field>
+    <Field Name="tc_PAYLOAD_SET_BAND_CONFIG_mask" Uuid="2702f4f9-28dc-5a59-8dcf-195dedd73e02" Type="UInt8" Kind="Input">
+      <Description>Band mask (bits 0-3: blue/green/red/nir)</Description>
+    </Field>
+    <Field Name="tc_PAYLOAD_SET_INTEGRATION_TIME_blue_ms" Uuid="5163daee-2745-5ffa-b94e-e98d5fd9b663" Type="Float32" Kind="Input">
+      <Description>Blue band integration time (ms)</Description>
+    </Field>
+    <Field Name="tc_PAYLOAD_SET_INTEGRATION_TIME_green_ms" Uuid="e7382691-3529-5219-ac7e-0045a840d874" Type="Float32" Kind="Input">
+      <Description>Green band integration time (ms)</Description>
+    </Field>
+    <Field Name="tc_PAYLOAD_SET_INTEGRATION_TIME_red_ms" Uuid="9830f15d-2471-54d9-b790-0123988b71e5" Type="Float32" Kind="Input">
+      <Description>Red band integration time (ms)</Description>
+    </Field>
+    <Field Name="tc_PAYLOAD_SET_INTEGRATION_TIME_nir_ms" Uuid="bd4574a0-7a62-5c64-a783-fbfe74f4dc23" Type="Float32" Kind="Input">
+      <Description>NIR band integration time (ms)</Description>
+    </Field>
+    <Field Name="tc_PAYLOAD_SET_GAIN_gain" Uuid="19048d36-fdc1-50c9-ab74-8e55178bf742" Type="Float32" Kind="Input">
+      <Description>Detector gain (0.1-10.0)</Description>
+    </Field>
+    <Field Name="tc_PAYLOAD_COOLER_SETPOINT_setpoint_c" Uuid="aa76977b-6dc9-5987-bfd5-dc1dc03a6eeb" Type="Float32" Kind="Input">
+      <Description>Target temperature (-20C to 0C)</Description>
+    </Field>
+    <Field Name="tc_PAYLOAD_SET_COMPRESSION_ratio" Uuid="3e101724-b3a3-51dc-9ac0-312de773c706" Type="Float32" Kind="Input">
+      <Description>Compression ratio (0=auto, else manual)</Description>
+    </Field>
+    <EntryPoint Name="Step" Uuid="52e3d864-d5a5-5238-9a1a-efd1245a58cd">
+      <Description>Main simulation step</Description>
+    </EntryPoint>
+    <EntryPoint Name="UpdateImager" Uuid="5af874fa-7aa5-58df-89bb-0ddd3dbeade8">
+      <Description>UpdateImager</Description>
+    </EntryPoint>
+    <EntryPoint Name="UpdateStorage" Uuid="f2f51f50-24ac-5e1a-80ca-73bad08e8f99">
+      <Description>UpdateStorage</Description>
+    </EntryPoint>
+    <EventSource Name="Payload FPA Temperature High_WARNING" Uuid="e44f1cf0-2bce-5bb2-bfd2-31ac6492b28c">
+      <Description>WARNING alarm for Payload FPA Temperature High</Description>
+    </EventSource>
+    <EventSource Name="Payload Storage Full_WARNING" Uuid="7c63af5d-2bd9-5c2a-a838-63756dbdd436">
+      <Description>WARNING alarm for Payload Storage Full</Description>
+    </EventSource>
+    <EventSource Name="Payload Checksum Errors_WARNING" Uuid="68082a38-58a9-5cda-a359-f0cda8e84165">
+      <Description>WARNING alarm for Payload Checksum Errors</Description>
+    </EventSource>
+    <EventSource Name="Payload SNR Low_WARNING" Uuid="672015d1-f0c9-5106-9a40-7a15e4f0894d">
+      <Description>WARNING alarm for Payload SNR Low</Description>
+    </EventSource>
+  </Model>
+</Catalogue>

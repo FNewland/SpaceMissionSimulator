@@ -1,0 +1,405 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="AOCS" Creator="EOSAT-1 SMDL Generator" Date="2026-04-19" Version="1.0">
+  <Description>SMP2 model catalogue for AOCS subsystem</Description>
+  <Type Name="UInt8" Uuid="5f89f604-a171-5501-aa33-4d555fe61f64" xsi:type="Integer" Size="1" Signed="false"/>
+  <Type Name="UInt16" Uuid="6ba6c296-ed3b-5fbe-8a66-31fe90cbfb0d" xsi:type="Integer" Size="2" Signed="false"/>
+  <Type Name="UInt32" Uuid="fc7b136b-8597-5a35-8e88-5680f3e11a23" xsi:type="Integer" Size="4" Signed="false"/>
+  <Type Name="Float32" Uuid="f11668b0-82c3-52a1-b94b-372961ad51ca" xsi:type="Float" Size="4"/>
+  <Type Name="Int16" Uuid="0a04bae5-e341-5d1e-b462-99ddee2e7f1b" xsi:type="Integer" Size="2" Signed="true"/>
+  <Type xsi:type="Bool" Name="Bool" Uuid="5bddca20-f6c8-5270-a70e-002782e51b62"/>
+  <Model Name="AOCS_Model" Uuid="2dabb08c-03f8-5e03-bb9d-4ee4a937237d">
+    <Description>AOCS subsystem simulation model</Description>
+    <Field Name="aocs_att_q1" Uuid="0d58226e-a695-5bf0-8208-d5cfba20aa23" Type="Int16" Kind="Output" View="true">
+      <Description>Attitude quaternion q1</Description>
+    </Field>
+    <Field Name="aocs_att_q2" Uuid="a96d1655-2fdb-5e7c-b7a8-57ca8d0a9acd" Type="Int16" Kind="Output" View="true">
+      <Description>Attitude quaternion q2</Description>
+    </Field>
+    <Field Name="aocs_att_q3" Uuid="c5fea664-a17d-5525-86d7-4a958f810105" Type="Int16" Kind="Output" View="true">
+      <Description>Attitude quaternion q3</Description>
+    </Field>
+    <Field Name="aocs_att_q4" Uuid="3f68d3c6-8247-5c37-a287-be81b529be96" Type="Int16" Kind="Output" View="true">
+      <Description>Attitude quaternion q4</Description>
+    </Field>
+    <Field Name="aocs_rate_roll" Uuid="46c67002-25be-5ebc-9cd6-8cf842b3a091" Type="Int16" Kind="Output" View="true">
+      <Description>Roll rate [deg/s]</Description>
+    </Field>
+    <Field Name="aocs_rate_pitch" Uuid="5a76cb05-bbe1-56b2-87be-24558fe60496" Type="Int16" Kind="Output" View="true">
+      <Description>Pitch rate [deg/s]</Description>
+    </Field>
+    <Field Name="aocs_rate_yaw" Uuid="b4c9e60c-b160-53ce-975e-71a30237ba82" Type="Int16" Kind="Output" View="true">
+      <Description>Yaw rate [deg/s]</Description>
+    </Field>
+    <Field Name="aocs_rw1_speed" Uuid="cb82e471-047b-560f-8e6e-ba193050ae2c" Type="Int16" Kind="Output" View="true">
+      <Description>Reaction wheel 1 speed [RPM]</Description>
+    </Field>
+    <Field Name="aocs_rw2_speed" Uuid="5d8e2198-6ff4-5686-8b92-288861094869" Type="Int16" Kind="Output" View="true">
+      <Description>[RPM]</Description>
+    </Field>
+    <Field Name="aocs_rw3_speed" Uuid="49382e31-d808-5861-822c-80ce03f44e29" Type="Int16" Kind="Output" View="true">
+      <Description>[RPM]</Description>
+    </Field>
+    <Field Name="aocs_rw4_speed" Uuid="6a1e1f89-8dc7-5acb-905e-8abbe235ca72" Type="Int16" Kind="Output" View="true">
+      <Description>[RPM]</Description>
+    </Field>
+    <Field Name="aocs_mag_x" Uuid="21329003-649a-53c8-a679-4247311b8d38" Type="Float32" Kind="Output" View="true">
+      <Description>[nT]</Description>
+    </Field>
+    <Field Name="aocs_mag_y" Uuid="448b6383-adc4-5618-bc08-258b6bf9a88f" Type="Float32" Kind="Output" View="true">
+      <Description>[nT]</Description>
+    </Field>
+    <Field Name="aocs_mag_z" Uuid="4f780af8-ddce-53e7-8a2b-43832630c134" Type="Float32" Kind="Output" View="true">
+      <Description>[nT]</Description>
+    </Field>
+    <Field Name="aocs_mode" Uuid="f43da8c0-025f-5361-aaf6-25ceb77c7c49" Type="UInt8" Kind="Output" View="true"/>
+    <Field Name="aocs_gps_lat" Uuid="2a476d76-fe22-5e15-8162-6758e2014903" Type="Float32" Kind="Output" View="true">
+      <Description>[deg]</Description>
+    </Field>
+    <Field Name="aocs_gps_lon" Uuid="d489a2a9-82fe-5e0d-98f5-7560e269aa48" Type="Float32" Kind="Output" View="true">
+      <Description>[deg]</Description>
+    </Field>
+    <Field Name="aocs_gps_alt" Uuid="ca7a6e10-b5de-53dd-ab4a-44bc60cbcd89" Type="Float32" Kind="Output" View="true">
+      <Description>[km]</Description>
+    </Field>
+    <Field Name="aocs_solar_beta" Uuid="91bac3ae-f663-55f7-8b91-b625d335d4d8" Type="Float32" Kind="Output" View="true">
+      <Description>Solar beta angle [deg]</Description>
+    </Field>
+    <Field Name="aocs_att_error" Uuid="93f0d582-a3e9-5ed9-bdd1-347cb8e9a84e" Type="UInt16" Kind="Output" View="true">
+      <Description>[deg]</Description>
+    </Field>
+    <Field Name="aocs_rw1_temp" Uuid="f8dc8f00-0daf-5a32-bc9c-8a4a34257f1c" Type="Float32" Kind="Output" View="true">
+      <Description>[C]</Description>
+    </Field>
+    <Field Name="aocs_rw2_temp" Uuid="fa43f1e2-258c-587e-abc5-71102c019ca0" Type="Float32" Kind="Output" View="true">
+      <Description>[C]</Description>
+    </Field>
+    <Field Name="aocs_rw3_temp" Uuid="d33af519-eb22-5b2b-8ad2-d3086423b57b" Type="Float32" Kind="Output" View="true">
+      <Description>[C]</Description>
+    </Field>
+    <Field Name="aocs_rw4_temp" Uuid="b485e171-58b2-5122-bff2-9c088b8ecdb5" Type="Float32" Kind="Output" View="true">
+      <Description>[C]</Description>
+    </Field>
+    <Field Name="aocs_st1_status" Uuid="0a437680-233d-57f9-a9e9-3fe8ed125739" Type="UInt8" Kind="Output" View="true">
+      <Description>Star tracker 1 status (0=off,1=boot,2=tracking,3=blind,4=failed)</Description>
+    </Field>
+    <Field Name="aocs_st1_num_stars" Uuid="1aa13c47-9072-5d3a-9a16-89c179de108f" Type="UInt8" Kind="Output" View="true">
+      <Description>Star tracker 1 tracked star count</Description>
+    </Field>
+    <Field Name="aocs_st2_num_stars" Uuid="ac2c54b5-f55d-5632-b46a-a3256e9ad811" Type="UInt8" Kind="Output" View="true">
+      <Description>Star tracker 2 tracked star count</Description>
+    </Field>
+    <Field Name="aocs_st2_status" Uuid="4a5733b1-2ee8-5da5-88b4-8da3c7a2a17d" Type="UInt8" Kind="Output" View="true">
+      <Description>Star tracker 2 status (0=off,1=boot,2=tracking,3=blind,4=failed)</Description>
+    </Field>
+    <Field Name="aocs_st_selected" Uuid="77fc1e54-3ed8-593c-85c7-981b4384a715" Type="UInt8" Kind="Output" View="true">
+      <Description>Selected star tracker (1 or 2)</Description>
+    </Field>
+    <Field Name="aocs_css_sun_x" Uuid="912a7c5b-4330-5b48-9f9a-f881ef10c2ce" Type="Int16" Kind="Output" View="true">
+      <Description>CSS sun vector X</Description>
+    </Field>
+    <Field Name="aocs_css_sun_y" Uuid="033c0313-3a3d-56c7-99dd-5d638cc668c9" Type="Int16" Kind="Output" View="true">
+      <Description>CSS sun vector Y</Description>
+    </Field>
+    <Field Name="aocs_css_sun_z" Uuid="56df2bdc-88c0-5472-b1a2-2b64d337ba89" Type="Int16" Kind="Output" View="true">
+      <Description>CSS sun vector Z</Description>
+    </Field>
+    <Field Name="aocs_css_valid" Uuid="bdb3b206-c737-59d4-a269-00bbf8ec5fe9" Type="UInt8" Kind="Output" View="true">
+      <Description>CSS sun vector valid flag</Description>
+    </Field>
+    <Field Name="aocs_rw1_current" Uuid="2c9eda0c-33c2-55c3-aba8-c1f6419cac1b" Type="UInt16" Kind="Output" View="true">
+      <Description>Reaction wheel 1 current [A]</Description>
+    </Field>
+    <Field Name="aocs_rw2_current" Uuid="818ccde0-5ccd-5c2e-b837-32e7d4341f8f" Type="UInt16" Kind="Output" View="true">
+      <Description>Reaction wheel 2 current [A]</Description>
+    </Field>
+    <Field Name="aocs_rw3_current" Uuid="71122b20-e3e8-55b3-a218-0d649741f6bc" Type="UInt16" Kind="Output" View="true">
+      <Description>Reaction wheel 3 current [A]</Description>
+    </Field>
+    <Field Name="aocs_rw4_current" Uuid="f9114f72-ddad-502c-b873-c606aac5edd6" Type="UInt16" Kind="Output" View="true">
+      <Description>Reaction wheel 4 current [A]</Description>
+    </Field>
+    <Field Name="aocs_rw1_enabled" Uuid="8ced0aea-71a8-5f41-8c88-11e612375000" Type="UInt8" Kind="Output" View="true">
+      <Description>Reaction wheel 1 enabled</Description>
+    </Field>
+    <Field Name="aocs_rw2_enabled" Uuid="3963c007-c035-56de-babb-18b28f73912f" Type="UInt8" Kind="Output" View="true">
+      <Description>Reaction wheel 2 enabled</Description>
+    </Field>
+    <Field Name="aocs_rw3_enabled" Uuid="24f22cff-ee2f-5c48-84d0-8bc87b20b587" Type="UInt8" Kind="Output" View="true">
+      <Description>Reaction wheel 3 enabled</Description>
+    </Field>
+    <Field Name="aocs_rw4_enabled" Uuid="6cd49ff6-10dd-5d51-b413-0fa989afc5d5" Type="UInt8" Kind="Output" View="true">
+      <Description>Reaction wheel 4 enabled</Description>
+    </Field>
+    <Field Name="aocs_mtq_x_duty" Uuid="ac2c8699-3151-55f5-8417-88cd75e473f2" Type="Int16" Kind="Output" View="true">
+      <Description>Magnetorquer X duty cycle [%]</Description>
+    </Field>
+    <Field Name="aocs_mtq_y_duty" Uuid="b89a0141-9689-5252-b4bf-7a985e3ac7fe" Type="Int16" Kind="Output" View="true">
+      <Description>Magnetorquer Y duty cycle [%]</Description>
+    </Field>
+    <Field Name="aocs_mtq_z_duty" Uuid="bad59c1f-8bc2-52eb-a73d-7642eb33d772" Type="Int16" Kind="Output" View="true">
+      <Description>Magnetorquer Z duty cycle [%]</Description>
+    </Field>
+    <Field Name="aocs_total_momentum" Uuid="5a7fe168-1e18-5e9d-8500-90a4dd1c83ad" Type="UInt16" Kind="Output" View="true">
+      <Description>Total system angular momentum [Nms]</Description>
+    </Field>
+    <Field Name="aocs_mag_enabled" Uuid="b7e632b0-3316-5a3b-8448-7ac4a605b0a9" Type="UInt8" Kind="Output" View="true">
+      <Description>Magnetometer valid/enabled (0=off, 1=valid)</Description>
+    </Field>
+    <Field Name="aocs_gyro_enabled" Uuid="323777b5-da96-5062-8632-84f2f3d08c53" Type="UInt8" Kind="Output" View="true">
+      <Description>Gyroscope enabled (0=off, 1=on)</Description>
+    </Field>
+    <Field Name="aocs_mtq_enabled" Uuid="bb24660f-cab0-533b-86c3-757e9dbe678b" Type="UInt8" Kind="Output" View="true">
+      <Description>Magnetorquer enabled (0=off, 1=on)</Description>
+    </Field>
+    <Field Name="aocs_submode" Uuid="52e88e8e-b702-5f81-8207-1a61fcbe1b72" Type="UInt8" Kind="Output" View="true">
+      <Description>AOCS sub-mode</Description>
+    </Field>
+    <Field Name="aocs_time_in_mode" Uuid="45c502f7-6dea-561e-9c37-6deb1e8751e7" Type="UInt32" Kind="Output" View="true">
+      <Description>Time in current AOCS mode [s]</Description>
+    </Field>
+    <Field Name="aocs_gyro_bias_x" Uuid="89d82c27-b825-51b3-a4eb-e5b1947e1fd7" Type="Int16" Kind="Output" View="true">
+      <Description>Gyroscope X-axis bias estimate [deg/s]</Description>
+    </Field>
+    <Field Name="aocs_gyro_bias_y" Uuid="f67721b3-eeb2-5931-88e6-4436ef99379f" Type="Int16" Kind="Output" View="true">
+      <Description>Gyroscope Y-axis bias estimate [deg/s]</Description>
+    </Field>
+    <Field Name="aocs_gyro_bias_z" Uuid="f6f9b6d8-a539-5a26-b286-fe17b40c9549" Type="Int16" Kind="Output" View="true">
+      <Description>Gyroscope Z-axis bias estimate [deg/s]</Description>
+    </Field>
+    <Field Name="aocs_gyro_temp" Uuid="ad087097-5464-598d-b077-d5537502ff2b" Type="Int16" Kind="Output" View="true">
+      <Description>Gyroscope assembly temperature [C]</Description>
+    </Field>
+    <Field Name="aocs_gps_fix" Uuid="375dc307-ff4d-5300-a1dd-598657db058c" Type="UInt8" Kind="Output" View="true">
+      <Description>GPS fix type (0=none, 1=2D, 2=3D, 3=3D+vel)</Description>
+    </Field>
+    <Field Name="aocs_gps_pdop" Uuid="b6e63308-9808-5b5f-9c67-d67227901e3e" Type="UInt16" Kind="Output" View="true">
+      <Description>GPS position dilution of precision</Description>
+    </Field>
+    <Field Name="aocs_gps_num_sats" Uuid="959902c3-52b0-5b02-8115-89eb9bc1a162" Type="UInt8" Kind="Output" View="true">
+      <Description>GPS tracked satellite count</Description>
+    </Field>
+    <Field Name="aocs_mag_field_total" Uuid="3f71dc73-a329-5c16-823c-7766004beb55" Type="UInt32" Kind="Output" View="true">
+      <Description>Magnetometer total field magnitude [nT]</Description>
+    </Field>
+    <Field Name="aocs_sun_body_x" Uuid="accf2870-13f5-5311-bb94-68a800e59a5a" Type="Float32" Kind="Output" View="true">
+      <Description>Sun vector body X (from CSS composite)</Description>
+    </Field>
+    <Field Name="aocs_sun_body_y" Uuid="38445cae-4114-5311-9b73-f91f0bd4edd4" Type="Float32" Kind="Output" View="true">
+      <Description>Sun vector body Y (from CSS composite)</Description>
+    </Field>
+    <Field Name="aocs_sun_body_z" Uuid="75cc53dd-1b37-54c2-959b-22b89a9d7521" Type="Float32" Kind="Output" View="true">
+      <Description>Sun vector body Z (from CSS composite)</Description>
+    </Field>
+    <Field Name="aocs_mag_a_x" Uuid="af35b05b-dc68-5de3-9ff3-08d705837f29" Type="Float32" Kind="Output" View="true">
+      <Description>Magnetometer A X-axis [nT]</Description>
+    </Field>
+    <Field Name="aocs_mag_a_y" Uuid="06088187-4a50-525e-9acc-7af6c86e96f4" Type="Float32" Kind="Output" View="true">
+      <Description>Magnetometer A Y-axis [nT]</Description>
+    </Field>
+    <Field Name="aocs_mag_a_z" Uuid="4a2813cd-861f-587d-9765-e9e6439fc977" Type="Float32" Kind="Output" View="true">
+      <Description>Magnetometer A Z-axis [nT]</Description>
+    </Field>
+    <Field Name="aocs_mag_b_x" Uuid="93f67343-9f50-5c9d-92be-594d4a0743ee" Type="Float32" Kind="Output" View="true">
+      <Description>Magnetometer B X-axis [nT]</Description>
+    </Field>
+    <Field Name="aocs_mag_b_y" Uuid="c0493c3e-8122-5304-a15c-d2cd59f33dd4" Type="Float32" Kind="Output" View="true">
+      <Description>Magnetometer B Y-axis [nT]</Description>
+    </Field>
+    <Field Name="aocs_mag_b_z" Uuid="912b7c05-02fa-5ccc-ac78-1acfaeceeaee" Type="Float32" Kind="Output" View="true">
+      <Description>Magnetometer B Z-axis [nT]</Description>
+    </Field>
+    <Field Name="aocs_mag_select" Uuid="3791ff2f-a553-50c7-a58c-fff91f8541d4" Type="Float32" Kind="Output" View="true">
+      <Description>Active magnetometer (0=A, 1=B)</Description>
+    </Field>
+    <Field Name="aocs_css_px" Uuid="c92ec193-9fb2-5228-9e09-3185da4c7a72" Type="UInt16" Kind="Output" View="true">
+      <Description>CSS +X face illumination</Description>
+    </Field>
+    <Field Name="aocs_css_mx" Uuid="d1d6da3a-b687-5f12-872f-76c51c2d1db9" Type="UInt16" Kind="Output" View="true">
+      <Description>CSS -X face illumination</Description>
+    </Field>
+    <Field Name="aocs_css_py" Uuid="4d681bcc-23b7-5d05-9053-8a58ac7fc513" Type="UInt16" Kind="Output" View="true">
+      <Description>CSS +Y face illumination</Description>
+    </Field>
+    <Field Name="aocs_css_my" Uuid="0b19e7fa-8527-510e-873e-05a6595b1458" Type="UInt16" Kind="Output" View="true">
+      <Description>CSS -Y face illumination</Description>
+    </Field>
+    <Field Name="aocs_css_pz" Uuid="568015cc-3cab-5c14-b5ab-c21d63896a9f" Type="UInt16" Kind="Output" View="true">
+      <Description>CSS +Z face illumination</Description>
+    </Field>
+    <Field Name="aocs_css_mz" Uuid="57fbb8b3-c067-5937-b96f-23c9e80fc9a9" Type="UInt16" Kind="Output" View="true">
+      <Description>CSS -Z face illumination</Description>
+    </Field>
+    <Field Name="aocs_slew_time_remaining" Uuid="a9aba1b3-c921-57d1-be37-59cf021271ce" Type="UInt16" Kind="Output" View="true">
+      <Description>Time remaining in active slew maneuver [s]</Description>
+    </Field>
+    <Field Name="aocs_slew_progress" Uuid="4c3d4ac4-5e61-5872-ab20-94d7644055bb" Type="UInt16" Kind="Output" View="true">
+      <Description>Slew maneuver progress percentage [%]</Description>
+    </Field>
+    <Field Name="aocs_momentum_saturation_pct" Uuid="45b202f0-396a-52b1-84f6-92168432b085" Type="UInt16" Kind="Output" View="true">
+      <Description>Total momentum as percentage of max [%]</Description>
+    </Field>
+    <Field Name="aocs_attitude_source" Uuid="7a786c45-e755-53c7-a017-28dae0a8e126" Type="UInt8" Kind="Output" View="true">
+      <Description>Attitude source (0=ST,1=CSS,2=Gyro)</Description>
+    </Field>
+    <Field Name="aocs_rw1_bearing_health" Uuid="2ca33cbd-6a16-5c1e-841e-1c2d6f9431f0" Type="UInt16" Kind="Output" View="true">
+      <Description>Reaction wheel 1 bearing health [%]</Description>
+    </Field>
+    <Field Name="aocs_rw2_bearing_health" Uuid="9a3ccd81-b393-5311-b9bb-580f8ba036af" Type="UInt16" Kind="Output" View="true">
+      <Description>Reaction wheel 2 bearing health [%]</Description>
+    </Field>
+    <Field Name="aocs_rw3_bearing_health" Uuid="de23ca81-6661-5bec-bcb4-43fa198ae463" Type="UInt16" Kind="Output" View="true">
+      <Description>Reaction wheel 3 bearing health [%]</Description>
+    </Field>
+    <Field Name="aocs_rw4_bearing_health" Uuid="235eb3bf-051f-587e-a818-de66d5eb6928" Type="UInt16" Kind="Output" View="true">
+      <Description>Reaction wheel 4 bearing health [%]</Description>
+    </Field>
+    <Field Name="aocs_css_head_health_px" Uuid="01451bc3-51f2-5b67-8b15-5380cd19e38e" Type="UInt16" Kind="Output" View="true">
+      <Description>CSS +X head health [%]</Description>
+    </Field>
+    <Field Name="aocs_css_head_health_mx" Uuid="d4efd0a8-f108-5707-b4d2-223a21404279" Type="UInt16" Kind="Output" View="true">
+      <Description>CSS -X head health [%]</Description>
+    </Field>
+    <Field Name="aocs_css_head_health_py" Uuid="c2773b55-b038-5c10-91bf-ce7e3ffb78c0" Type="UInt16" Kind="Output" View="true">
+      <Description>CSS +Y head health [%]</Description>
+    </Field>
+    <Field Name="aocs_css_head_health_my" Uuid="64703ccc-a3e6-5503-93f4-c4777b717c8f" Type="UInt16" Kind="Output" View="true">
+      <Description>CSS -Y head health [%]</Description>
+    </Field>
+    <Field Name="aocs_css_head_health_pz" Uuid="3f8ab769-e80e-54c6-ba99-0087e9f5cf67" Type="UInt16" Kind="Output" View="true">
+      <Description>CSS +Z head health [%]</Description>
+    </Field>
+    <Field Name="aocs_css_head_health_mz" Uuid="0c0ba38b-a659-5479-bfe0-d7169f63bfa3" Type="UInt16" Kind="Output" View="true">
+      <Description>CSS -Z head health [%]</Description>
+    </Field>
+    <Field Name="aocs_wheels_enabled" Uuid="63b4d534-375b-5ebd-a05e-384938daa7cc" Type="Float32" Kind="Output" View="true">
+      <Description>Number of enabled reaction wheels</Description>
+    </Field>
+    <Field Name="aocs_css_sun_confidence" Uuid="d5a19cee-7883-566f-9dda-fe8b0d53d350" Type="Float32" Kind="Output" View="true">
+      <Description>CSS sun-pointing confidence (0..1)</Description>
+    </Field>
+    <Field Name="aocs_wheel_torque_cmd" Uuid="1a059b3c-b71f-57f2-992f-fa4634a9080e" Type="Float32" Kind="Output" View="true">
+      <Description>Commanded total RW torque [Nm]</Description>
+    </Field>
+    <Field Name="aocs_gps_ecef_x" Uuid="33b5e393-4aa0-54f8-bf33-8bbde5e88a20" Type="Float32" Kind="Output" View="true">
+      <Description>GPS ECEF position X [m]</Description>
+    </Field>
+    <Field Name="aocs_gps_ecef_y" Uuid="4aecb768-7dc0-5306-8563-860c959b399b" Type="Float32" Kind="Output" View="true">
+      <Description>GPS ECEF position Y [m]</Description>
+    </Field>
+    <Field Name="aocs_gps_ecef_z" Uuid="b9916bae-8bac-564d-9c88-e03ac485a61c" Type="Float32" Kind="Output" View="true">
+      <Description>GPS ECEF position Z [m]</Description>
+    </Field>
+    <Field Name="aocs_gps_vel_x" Uuid="8b6ca781-2180-5671-9662-a029717dd623" Type="Float32" Kind="Output" View="true">
+      <Description>GPS ECEF velocity X [m/s]</Description>
+    </Field>
+    <Field Name="aocs_gps_vel_y" Uuid="fe4fbd26-09a1-5a62-83ad-ec7f53e2c1bc" Type="Float32" Kind="Output" View="true">
+      <Description>GPS ECEF velocity Y [m/s]</Description>
+    </Field>
+    <Field Name="aocs_gps_vel_z" Uuid="6ce7dfc3-2c83-5b2c-b0ee-b6a24cb1e1ce" Type="Float32" Kind="Output" View="true">
+      <Description>GPS ECEF velocity Z [m/s]</Description>
+    </Field>
+    <Field Name="aocs_mtq_dipole_total" Uuid="9ae64e0b-559c-586e-bc38-c88dc3dec3da" Type="Float32" Kind="Output" View="true">
+      <Description>Commanded total MTQ dipole [Am^2]</Description>
+    </Field>
+    <Field Name="aocs_rw_cmd_sum" Uuid="54c159b3-5762-573c-8bd6-cf1ad571d636" Type="Float32" Kind="Output" View="true">
+      <Description>RW command sum diagnostic [Nm]</Description>
+    </Field>
+    <Field Name="tc_AOCS_SET_MODE_mode" Uuid="b778717a-6b09-5ffb-b871-73f4d9e870a1" Type="UInt8" Kind="Input">
+      <Description>0=off,1=safe_boot,2=detumble,3=coarse_sun,4=nominal_nadir,5=fine_point,6=slew,7=desaturation,8=eclipse_propagate</Description>
+    </Field>
+    <Field Name="tc_AOCS_DISABLE_WHEEL_wheel_idx" Uuid="449e00c2-eafd-59de-8916-e7861aacf48d" Type="UInt8" Kind="Input">
+      <Description>Wheel index (0-3)</Description>
+    </Field>
+    <Field Name="tc_AOCS_ENABLE_WHEEL_wheel_idx" Uuid="acf0c183-6b4a-5400-9fe7-3a81e99b29c2" Type="UInt8" Kind="Input">
+      <Description>Wheel index (0-3)</Description>
+    </Field>
+    <Field Name="tc_ST1_POWER_True" Uuid="daf47a5e-b23e-5fed-9eb0-87d6ef6a7377" Type="UInt8" Kind="Input">
+      <Description>0=off, 1=on</Description>
+    </Field>
+    <Field Name="tc_ST2_POWER_True" Uuid="3c2499ab-0290-5d9e-81dc-cb05f7c2716f" Type="UInt8" Kind="Input">
+      <Description>0=off, 1=on</Description>
+    </Field>
+    <Field Name="tc_ST_SELECT_unit" Uuid="02feb4d6-dc45-5466-8eb4-bc475bda401f" Type="UInt8" Kind="Input">
+      <Description>0=ST1, 1=ST2</Description>
+    </Field>
+    <Field Name="tc_MAG_SELECT_unit" Uuid="8ea53f32-9c62-5f72-8cb9-05902a37ab19" Type="UInt8" Kind="Input">
+      <Description>0=primary, 1=redundant</Description>
+    </Field>
+    <Field Name="tc_RW_SET_SPEED_BIAS_wheel_idx" Uuid="9b1fc67d-69d2-505a-a04d-ad29313291c4" Type="UInt8" Kind="Input"/>
+    <Field Name="tc_RW_SET_SPEED_BIAS_bias_rpm" Uuid="48704b3a-472e-5be3-b43f-76d920d5302d" Type="Int16" Kind="Input">
+      <Description>Speed bias in RPM</Description>
+    </Field>
+    <Field Name="tc_MTQ_ENABLE_enable" Uuid="c688216f-cf99-5a0d-ae1c-bef863ac1201" Type="UInt8" Kind="Input">
+      <Description>0=disable, 1=enable</Description>
+    </Field>
+    <Field Name="tc_AOCS_SLEW_TO_q_x" Uuid="4e731de7-df35-52b9-be61-9add2e3c716e" Type="Float32" Kind="Input">
+      <Description>Target quaternion X component</Description>
+    </Field>
+    <Field Name="tc_AOCS_SLEW_TO_q_y" Uuid="55479e83-45ea-5ba0-a079-d91d973a3083" Type="Float32" Kind="Input">
+      <Description>Target quaternion Y component</Description>
+    </Field>
+    <Field Name="tc_AOCS_SLEW_TO_q_z" Uuid="443b2ce4-0ce0-520c-88df-aa2d7aaa0110" Type="Float32" Kind="Input">
+      <Description>Target quaternion Z component</Description>
+    </Field>
+    <Field Name="tc_AOCS_SLEW_TO_q_w" Uuid="4749c8fb-d988-5ec6-b48c-99c8ff4396de" Type="Float32" Kind="Input">
+      <Description>Target quaternion W component (scalar)</Description>
+    </Field>
+    <Field Name="tc_AOCS_SLEW_TO_rate_dps" Uuid="6893f18f-5af7-5da2-b7f0-af2e9875b4af" Type="Float32" Kind="Input">
+      <Description>Slew rate in deg/s (0.1-10.0)</Description>
+    </Field>
+    <Field Name="tc_AOCS_RW_RAMP_DOWN_wheel_idx" Uuid="31cd904e-4303-5199-b000-acd6d3085202" Type="UInt8" Kind="Input">
+      <Description>Wheel index (0-3) or 255 for all</Description>
+    </Field>
+    <Field Name="tc_AOCS_RW_RAMP_DOWN_target_rpm" Uuid="b0305d17-1cf6-516a-9480-b8df69d8f619" Type="Float32" Kind="Input">
+      <Description>Target wheel speed (RPM)</Description>
+    </Field>
+    <Field Name="tc_AOCS_SET_DEADBAND_deadband_deg" Uuid="46805b4a-dd19-5a3a-8d0f-4fde4565d941" Type="Float32" Kind="Input">
+      <Description>Attitude error threshold (0-1 deg)</Description>
+    </Field>
+    <EntryPoint Name="Step" Uuid="5d2dd113-70f1-5947-85db-10d65a694ec0">
+      <Description>Main simulation step</Description>
+    </EntryPoint>
+    <EntryPoint Name="UpdateAttitude" Uuid="891ea662-32a7-54b6-8b5b-44eb4e9a8448">
+      <Description>UpdateAttitude</Description>
+    </EntryPoint>
+    <EntryPoint Name="UpdateSensors" Uuid="6e37cf06-71ea-5b5d-a72e-d9bfdec17566">
+      <Description>UpdateSensors</Description>
+    </EntryPoint>
+    <EntryPoint Name="UpdateActuators" Uuid="70ca1dc3-94a2-5557-97c4-b0cf1e6a8f30">
+      <Description>UpdateActuators</Description>
+    </EntryPoint>
+    <EventSource Name="AOCS Reaction Wheel 1 Overspeed_WARNING" Uuid="12eb53bb-a510-579e-9ffb-667008e8593d">
+      <Description>WARNING alarm for AOCS Reaction Wheel 1 Overspeed</Description>
+    </EventSource>
+    <EventSource Name="AOCS Reaction Wheel 2 Overspeed_WARNING" Uuid="fd72c335-387a-5de0-b97c-02cef61cfa73">
+      <Description>WARNING alarm for AOCS Reaction Wheel 2 Overspeed</Description>
+    </EventSource>
+    <EventSource Name="AOCS Reaction Wheel 3 Overspeed_WARNING" Uuid="2899d030-76b5-5acc-bb14-9de947ac42bd">
+      <Description>WARNING alarm for AOCS Reaction Wheel 3 Overspeed</Description>
+    </EventSource>
+    <EventSource Name="AOCS Reaction Wheel 4 Overspeed_WARNING" Uuid="0e8ed431-e01d-5d69-9fe0-1070165b76ca">
+      <Description>WARNING alarm for AOCS Reaction Wheel 4 Overspeed</Description>
+    </EventSource>
+    <EventSource Name="AOCS Total Momentum Saturated_WARNING" Uuid="c96ea238-120c-57ae-b22d-81e8ffa076e8">
+      <Description>WARNING alarm for AOCS Total Momentum Saturated</Description>
+    </EventSource>
+    <EventSource Name="AOCS Attitude Error High_WARNING" Uuid="ebc60f9b-70c9-55e4-ab61-d77d3570a605">
+      <Description>WARNING alarm for AOCS Attitude Error High</Description>
+    </EventSource>
+    <EventSource Name="AOCS Star Tracker 1 Blind_ALARM" Uuid="22f14432-9449-501b-8905-c94ebd7f97cb">
+      <Description>ALARM alarm for AOCS Star Tracker 1 Blind</Description>
+    </EventSource>
+    <EventSource Name="AOCS Star Tracker 2 Blind_ALARM" Uuid="8d399afa-62f6-57f4-a300-8ef85d1e3d31">
+      <Description>ALARM alarm for AOCS Star Tracker 2 Blind</Description>
+    </EventSource>
+    <EventSource Name="AOCS Gyro X-Axis Bias High_WARNING" Uuid="c41951e1-5251-562c-9ed3-1112707c3bb2">
+      <Description>WARNING alarm for AOCS Gyro X-Axis Bias High</Description>
+    </EventSource>
+    <EventSource Name="AOCS Gyro Y-Axis Bias High_WARNING" Uuid="22021df9-6bb2-506f-baf3-36f594370f56">
+      <Description>WARNING alarm for AOCS Gyro Y-Axis Bias High</Description>
+    </EventSource>
+    <EventSource Name="AOCS Gyro Z-Axis Bias High_WARNING" Uuid="437075f5-1c29-5830-b279-e055141c2cd8">
+      <Description>WARNING alarm for AOCS Gyro Z-Axis Bias High</Description>
+    </EventSource>
+  </Model>
+</Catalogue>

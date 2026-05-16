@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" Name="EOSAT-1" Creator="EOSAT-1 SMDL Generator" Date="2026-04-19" Version="1.0">
+  <Description>EOSAT-1 SMP2 Master Catalogue — references all subsystem models</Description>
+  <Implementation Source="eps.xml"/>
+  <Implementation Source="aocs.xml"/>
+  <Implementation Source="obdh.xml"/>
+  <Implementation Source="tcs.xml"/>
+  <Implementation Source="ttc.xml"/>
+  <Implementation Source="payload.xml"/>
+</Catalogue>

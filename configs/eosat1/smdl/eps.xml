@@ -1,0 +1,291 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="EPS" Creator="EOSAT-1 SMDL Generator" Date="2026-04-19" Version="1.0">
+  <Description>SMP2 model catalogue for EPS subsystem</Description>
+  <Type Name="UInt8" Uuid="1b57882a-4b2d-53f8-a27f-be0563caa586" xsi:type="Integer" Size="1" Signed="false"/>
+  <Type Name="UInt16" Uuid="5fcf9bfd-72b9-5f0c-b036-3cad6f5a8506" xsi:type="Integer" Size="2" Signed="false"/>
+  <Type Name="Float32" Uuid="5cfc56db-c07c-5ba6-9337-ae0243cc507d" xsi:type="Float" Size="4"/>
+  <Type Name="Int16" Uuid="b8eb6dde-9f1b-5a4c-a8a2-f8f2d9f45bcd" xsi:type="Integer" Size="2" Signed="true"/>
+  <Type xsi:type="Bool" Name="Bool" Uuid="ad84ef90-6bba-54f4-ad77-023efe2841e3"/>
+  <Model Name="EPS_Model" Uuid="dd36a096-7bdf-52fc-a1e5-416e86371c96">
+    <Description>EPS subsystem simulation model</Description>
+    <Field Name="eps_bat_voltage" Uuid="1306fd74-4851-59c8-8d89-47615a357924" Type="UInt16" Kind="Output" View="true">
+      <Description>Battery voltage [V]</Description>
+    </Field>
+    <Field Name="eps_bat_soc" Uuid="18f13bc3-4a92-5548-801a-a87a4e723ec0" Type="UInt16" Kind="Output" View="true">
+      <Description>Battery state of charge [%]</Description>
+    </Field>
+    <Field Name="eps_bat_temp" Uuid="bda0b853-f75e-5501-b99d-394433bd6e45" Type="Int16" Kind="Output" View="true">
+      <Description>Battery temperature [C]</Description>
+    </Field>
+    <Field Name="eps_sa_a_current" Uuid="7e6e86af-beae-5f95-bdd1-c4fca8c6a7e5" Type="UInt16" Kind="Output" View="true">
+      <Description>Solar array A current [A]</Description>
+    </Field>
+    <Field Name="eps_sa_b_current" Uuid="3f4ebc66-5279-5636-9253-b2bb6cbc7f4d" Type="UInt16" Kind="Output" View="true">
+      <Description>Solar array B current [A]</Description>
+    </Field>
+    <Field Name="eps_bus_voltage" Uuid="e39e1a1d-45cc-567b-9bd4-fc6ce0887f24" Type="UInt16" Kind="Output" View="true">
+      <Description>Bus voltage [V]</Description>
+    </Field>
+    <Field Name="eps_power_cons" Uuid="c92f34ed-e1c4-569b-a911-da5784f422ff" Type="UInt16" Kind="Output" View="true">
+      <Description>Power consumption [W]</Description>
+    </Field>
+    <Field Name="eps_power_gen" Uuid="116d67ce-7b5f-5443-8638-d1b524460783" Type="UInt16" Kind="Output" View="true">
+      <Description>Power generation [W]</Description>
+    </Field>
+    <Field Name="eps_eclipse_flag" Uuid="1e22d3c7-e670-5d37-a44a-3e97d77ecfd5" Type="UInt8" Kind="Output" View="true">
+      <Description>Eclipse flag</Description>
+    </Field>
+    <Field Name="eps_bat_current" Uuid="3b90c05c-920a-5558-b086-08f668267a0e" Type="Int16" Kind="Output" View="true">
+      <Description>Battery current [A]</Description>
+    </Field>
+    <Field Name="eps_bat_capacity_wh" Uuid="63eb4cd5-77e8-5486-a3ce-3897f9c2af47" Type="Float32" Kind="Output" View="true">
+      <Description>Battery capacity [Wh]</Description>
+    </Field>
+    <Field Name="eps_sa_a_voltage" Uuid="15f0369a-4b77-5c30-ab06-7e7a8cf2982d" Type="UInt16" Kind="Output" View="true">
+      <Description>Solar array A voltage [V]</Description>
+    </Field>
+    <Field Name="eps_sa_b_voltage" Uuid="0d6827cd-00b8-53c3-b068-fee9dc9e8631" Type="UInt16" Kind="Output" View="true">
+      <Description>Solar array B voltage [V]</Description>
+    </Field>
+    <Field Name="eps_oc_trip_flags" Uuid="658bc1ea-ed48-5ccb-bdcd-a84e9bd1d0b1" Type="UInt8" Kind="Output" View="true">
+      <Description>Overcurrent trip status bitmask</Description>
+    </Field>
+    <Field Name="eps_uv_flag" Uuid="4198e780-c83f-5457-a019-5dd70a7e380f" Type="UInt8" Kind="Output" View="true">
+      <Description>Undervoltage flag</Description>
+    </Field>
+    <Field Name="eps_ov_flag" Uuid="545ce38b-1b0a-549b-98f4-ea433bb40e31" Type="UInt8" Kind="Output" View="true">
+      <Description>Overvoltage flag</Description>
+    </Field>
+    <Field Name="eps_pl_obc" Uuid="7e31ab65-12f7-52b1-841c-7e2ecba1095f" Type="UInt8" Kind="Output" View="true">
+      <Description>Power line OBC (non-switchable)</Description>
+    </Field>
+    <Field Name="eps_pl_ttc_rx" Uuid="ce1d3442-d412-5e10-89a6-66ccf2455973" Type="UInt8" Kind="Output" View="true">
+      <Description>Power line TTC RX (non-switchable)</Description>
+    </Field>
+    <Field Name="eps_pl_ttc_tx" Uuid="126ddda5-e1b5-57cb-99af-bad8b779b43d" Type="UInt8" Kind="Output" View="true">
+      <Description>Power line TTC TX</Description>
+    </Field>
+    <Field Name="eps_pl_payload" Uuid="fb7aa4c4-9ed0-5eab-ab07-a89fbc13a5a9" Type="UInt8" Kind="Output" View="true">
+      <Description>Power line Payload</Description>
+    </Field>
+    <Field Name="eps_pl_fpa_cooler" Uuid="527e2fc4-4a45-5aac-a91c-5c147af34934" Type="UInt8" Kind="Output" View="true">
+      <Description>Power line FPA cooler</Description>
+    </Field>
+    <Field Name="eps_pl_htr_bat" Uuid="d6cee6a1-47d6-5859-820d-2a1c8060fb50" Type="UInt8" Kind="Output" View="true">
+      <Description>Power line Battery heater</Description>
+    </Field>
+    <Field Name="eps_pl_htr_obc" Uuid="ee6d001f-5405-5d96-bb45-c72f72ae6e65" Type="UInt8" Kind="Output" View="true">
+      <Description>Power line OBC heater</Description>
+    </Field>
+    <Field Name="eps_pl_aocs_wheels" Uuid="e3f6db7d-178e-5f62-8e0c-a1ec54098d3a" Type="UInt8" Kind="Output" View="true">
+      <Description>Power line AOCS wheels</Description>
+    </Field>
+    <Field Name="eps_line_current_0" Uuid="fde9a220-64db-52e4-9f77-2f9e10a0f8d5" Type="UInt16" Kind="Output" View="true">
+      <Description>Power line 0 (OBC) current [A]</Description>
+    </Field>
+    <Field Name="eps_line_current_1" Uuid="017fdceb-9bd7-51fd-87a6-824706c23190" Type="UInt16" Kind="Output" View="true">
+      <Description>Power line 1 (TTC RX) current [A]</Description>
+    </Field>
+    <Field Name="eps_line_current_2" Uuid="85dc03f5-9dde-50a2-a44b-acbb248cf3f7" Type="UInt16" Kind="Output" View="true">
+      <Description>Power line 2 (TTC TX) current [A]</Description>
+    </Field>
+    <Field Name="eps_line_current_3" Uuid="87fc54fb-a273-5201-923d-5c3dd1a1054d" Type="UInt16" Kind="Output" View="true">
+      <Description>Power line 3 (Payload) current [A]</Description>
+    </Field>
+    <Field Name="eps_line_current_4" Uuid="519bee89-444e-5600-b3db-01cfa0cad95b" Type="UInt16" Kind="Output" View="true">
+      <Description>Power line 4 (FPA cooler) current [A]</Description>
+    </Field>
+    <Field Name="eps_line_current_5" Uuid="91b503c3-89c2-50b5-89d9-2fb737595163" Type="UInt16" Kind="Output" View="true">
+      <Description>Power line 5 (Heater bat) current [A]</Description>
+    </Field>
+    <Field Name="eps_line_current_6" Uuid="c711b8f8-247b-5506-a30a-8bde076ce006" Type="UInt16" Kind="Output" View="true">
+      <Description>Power line 6 (Heater OBC) current [A]</Description>
+    </Field>
+    <Field Name="eps_line_current_7" Uuid="52d8de69-c831-52b4-a417-96a87a39da1f" Type="UInt16" Kind="Output" View="true">
+      <Description>Power line 7 (AOCS wheels) current [A]</Description>
+    </Field>
+    <Field Name="eps_bat_dod" Uuid="d90a42cd-60a3-519e-a2fb-caa13b2e727b" Type="UInt16" Kind="Output" View="true">
+      <Description>Battery depth of discharge [%]</Description>
+    </Field>
+    <Field Name="eps_bat_cycles" Uuid="dda83f1d-817f-5351-97ed-7602774bbe56" Type="UInt16" Kind="Output" View="true">
+      <Description>Battery charge/discharge cycle count</Description>
+    </Field>
+    <Field Name="eps_mppt_efficiency" Uuid="1d27175e-a75a-524c-abcc-c452654101c8" Type="UInt16" Kind="Output" View="true">
+      <Description>MPPT tracker efficiency</Description>
+    </Field>
+    <Field Name="eps_sa_age_factor" Uuid="dd3dad54-2dae-5f6c-9058-5cea1c6ea021" Type="UInt16" Kind="Output" View="true">
+      <Description>Solar array aging degradation factor</Description>
+    </Field>
+    <Field Name="eps_sa_a_degradation" Uuid="9f2100de-ae41-5494-9811-5c900974d925" Type="Float32" Kind="Output" View="true">
+      <Description>Solar array A degradation factor</Description>
+    </Field>
+    <Field Name="eps_sa_b_degradation" Uuid="cd089153-544e-58d0-a1c5-77ba317dd8ca" Type="Float32" Kind="Output" View="true">
+      <Description>Solar array B degradation factor</Description>
+    </Field>
+    <Field Name="eps_sa_lifetime_hours" Uuid="90528092-3393-53cc-8de9-927d99dc9208" Type="Float32" Kind="Output" View="true">
+      <Description>Solar array cumulative sunlit hours [h]</Description>
+    </Field>
+    <Field Name="eps_sep_timer_active" Uuid="1aa795a5-980c-5e70-a0c5-36a96007d1b9" Type="Float32" Kind="Output" View="true">
+      <Description>Separation timer active (0=no, 1=yes)</Description>
+    </Field>
+    <Field Name="eps_sep_timer_remaining" Uuid="9440cbe6-afb3-522e-b827-82648768db69" Type="Float32" Kind="Output" View="true">
+      <Description>Separation timer remaining seconds [s]</Description>
+    </Field>
+    <Field Name="eps_pdm_unsw_status" Uuid="f6940a11-ce9e-5078-a6cd-4d623890829d" Type="UInt8" Kind="Output" View="true">
+      <Description>PDM unswitchable lines status bitmask (RX|OBC)</Description>
+    </Field>
+    <Field Name="eps_spacecraft_phase" Uuid="0589a7a5-10f1-544d-97e2-c3cd99752e4d" Type="Float32" Kind="Output" View="true">
+      <Description>Spacecraft phase (0=pre-sep,1=sep-timer,2=init-pwr,3=bootloader,4=leop,5=commission,6=nominal)</Description>
+    </Field>
+    <Field Name="eps_sa_px_current" Uuid="877adbaa-2b1d-529f-8b91-b58b5fb5329b" Type="UInt16" Kind="Output" View="true">
+      <Description>Solar panel +X current [A]</Description>
+    </Field>
+    <Field Name="eps_sa_mx_current" Uuid="a89f412e-9456-5cb0-a67c-ecb7a5c27193" Type="UInt16" Kind="Output" View="true">
+      <Description>Solar panel -X current [A]</Description>
+    </Field>
+    <Field Name="eps_sa_py_current" Uuid="fed38354-1ce1-5b2d-86f5-cb7e149509e3" Type="UInt16" Kind="Output" View="true">
+      <Description>Solar panel +Y current [A]</Description>
+    </Field>
+    <Field Name="eps_sa_my_current" Uuid="13ee8559-327a-5fbf-a5eb-1c744cdafc3f" Type="UInt16" Kind="Output" View="true">
+      <Description>Solar panel -Y current [A]</Description>
+    </Field>
+    <Field Name="eps_sa_pz_current" Uuid="6134c31c-5b8a-5a3a-b717-3a1f07825518" Type="UInt16" Kind="Output" View="true">
+      <Description>Solar panel +Z current [A]</Description>
+    </Field>
+    <Field Name="eps_sa_mz_current" Uuid="9ef49355-0e7e-5faf-b5ce-8dec3ac214a4" Type="UInt16" Kind="Output" View="true">
+      <Description>Solar panel -Z current [A]</Description>
+    </Field>
+    <Field Name="eps_per_switch_state" Uuid="ad6a0eae-ba54-50c2-86d2-d5b352d523d8" Type="UInt8" Kind="Output" View="true">
+      <Description>Bitmask of all load switch states</Description>
+    </Field>
+    <Field Name="eps_charge_rate_a" Uuid="1be208cf-a089-5708-90ae-f606b640aa1e" Type="UInt16" Kind="Output" View="true">
+      <Description>Battery charge rate override [A]</Description>
+    </Field>
+    <Field Name="eps_solar_array_drive_angle" Uuid="3b55f30a-680d-57c6-8f85-497f408fb2ca" Type="Int16" Kind="Output" View="true">
+      <Description>Solar array drive angle [deg]</Description>
+    </Field>
+    <Field Name="eps_load_shed_stage" Uuid="0e565699-d2cb-5cca-8f67-9c8bc6a34b17" Type="UInt8" Kind="Output" View="true">
+      <Description>Load shedding stage (0-3)</Description>
+    </Field>
+    <Field Name="eps_power_margin_w" Uuid="36a2686a-78c6-5611-9578-9dede4abdb4f" Type="Int16" Kind="Output" View="true">
+      <Description>Power generation minus consumption [W]</Description>
+    </Field>
+    <Field Name="eps_battery_health_pct" Uuid="1fcc642a-19d7-5216-812c-7501768c0807" Type="UInt16" Kind="Output" View="true">
+      <Description>Battery health percentage [%]</Description>
+    </Field>
+    <Field Name="eps_eps_mode" Uuid="2820e27a-9576-51f4-8933-3a2a63bd0b82" Type="UInt8" Kind="Output" View="true">
+      <Description>EPS mode (0=nominal, 1=safe, 2=emergency)</Description>
+    </Field>
+    <Field Name="eps_battery_heater_on" Uuid="e031f305-bd45-54fd-bd72-3da65fe741e9" Type="UInt8" Kind="Output" View="true">
+      <Description>Battery heater status</Description>
+    </Field>
+    <Field Name="eps_battery_heater_setpoint" Uuid="e77e330f-32b1-5a99-8ade-d42af4e05315" Type="Int16" Kind="Output" View="true">
+      <Description>Battery heater setpoint [C]</Description>
+    </Field>
+    <Field Name="eps_wing_status" Uuid="6b7d3089-2e58-5d01-a3a9-53d6717cc302" Type="Float32" Kind="Output" View="true">
+      <Description>Solar wing deployment status bitmask (bit0=+Y deployed, bit1=-Y deployed)</Description>
+    </Field>
+    <Field Name="eps_wing_deploy_timer" Uuid="2ef40b2c-5d5c-593e-8ebd-71a660502e90" Type="Float32" Kind="Output" View="true">
+      <Description>Solar wing deployment timer (countdown, 0=complete) [s]</Description>
+    </Field>
+    <Field Name="eps_eclipse_active" Uuid="67f3e8b4-3f75-57a3-a175-f15ee8de8070" Type="Float32" Kind="Output" View="true">
+      <Description>Eclipse active flag (0=sun, 1=eclipse)</Description>
+    </Field>
+    <Field Name="eps_power_margin" Uuid="2448f27f-c4d3-5342-8f9f-8168d717d6e4" Type="Float32" Kind="Output" View="true">
+      <Description>Power margin (generation - consumption) [W]</Description>
+    </Field>
+    <Field Name="eps_subsys_power_eps" Uuid="c0f3f7b6-dadc-5b5e-a999-280abb70548a" Type="Float32" Kind="Output" View="true">
+      <Description>EPS subsystem power draw [W]</Description>
+    </Field>
+    <Field Name="eps_subsys_power_aocs" Uuid="136e3fef-0622-507c-9025-4201d883543a" Type="Float32" Kind="Output" View="true">
+      <Description>AOCS subsystem power draw [W]</Description>
+    </Field>
+    <Field Name="eps_subsys_power_tcs" Uuid="aaf66ab1-5604-598d-8097-1e9e17d1cfb3" Type="Float32" Kind="Output" View="true">
+      <Description>TCS subsystem power draw [W]</Description>
+    </Field>
+    <Field Name="eps_subsys_power_ttc" Uuid="91cbcdba-cb3c-53b3-9c9b-d02f58c32eda" Type="Float32" Kind="Output" View="true">
+      <Description>TTC subsystem power draw [W]</Description>
+    </Field>
+    <Field Name="eps_subsys_power_payload" Uuid="11620600-cd4a-551d-8569-a96b865544c7" Type="Float32" Kind="Output" View="true">
+      <Description>Payload subsystem power draw [W]</Description>
+    </Field>
+    <Field Name="eps_subsys_power_obdh" Uuid="07757abe-c165-5556-84da-dc1a97c4ecd5" Type="Float32" Kind="Output" View="true">
+      <Description>OBDH subsystem power draw [W]</Description>
+    </Field>
+    <Field Name="eps_actual_charge_current_a" Uuid="e2514a6e-12c0-5a4b-b4cd-e321f7d4b3b1" Type="UInt16" Kind="Output" View="true">
+      <Description>Actual battery charge current [A]</Description>
+    </Field>
+    <Field Name="tc_EPS_PAYLOAD_MODE_mode" Uuid="9b9af66c-210f-58fb-9720-d494d7708489" Type="UInt8" Kind="Input">
+      <Description>0=off, 1=standby, 2=imaging</Description>
+    </Field>
+    <Field Name="tc_EPS_FPA_COOLER_True" Uuid="92cf8928-a31b-558e-937f-442b6cd3af85" Type="UInt8" Kind="Input">
+      <Description>0=off, 1=on</Description>
+    </Field>
+    <Field Name="tc_EPS_TRANSPONDER_TX_True" Uuid="e98bdb83-2bc7-5f05-b1bd-3bed6a8d485e" Type="UInt8" Kind="Input">
+      <Description>0=off, 1=on</Description>
+    </Field>
+    <Field Name="tc_EPS_POWER_ON_line_index" Uuid="3e6fb092-28d9-5db3-9d8b-df3ae1f71775" Type="UInt8" Kind="Input">
+      <Description>Power line index (0-7)</Description>
+    </Field>
+    <Field Name="tc_EPS_POWER_OFF_line_index" Uuid="6c56eaa2-e22c-51a9-ac63-864acaeb2983" Type="UInt8" Kind="Input">
+      <Description>Power line index (0-7)</Description>
+    </Field>
+    <Field Name="tc_EPS_RESET_OC_FLAG_line_index" Uuid="8acebd4e-0e3c-5de6-967f-5b9efcc1086f" Type="UInt8" Kind="Input">
+      <Description>Power line index (0-7)</Description>
+    </Field>
+    <Field Name="tc_EPS_SWITCH_LOAD_load_id" Uuid="e7492f80-dc15-5deb-aaef-fa0dc72788ef" Type="UInt8" Kind="Input">
+      <Description>Load ID (0-7)</Description>
+    </Field>
+    <Field Name="tc_EPS_SWITCH_LOAD_state" Uuid="de7a0cd0-be9d-5966-8e8b-08f1430e7907" Type="UInt8" Kind="Input">
+      <Description>0=off, 1=on</Description>
+    </Field>
+    <Field Name="tc_EPS_SET_CHARGE_RATE_rate_a" Uuid="cb4f19d8-156e-5c2b-8585-859b72ea757f" Type="Float32" Kind="Input">
+      <Description>Charge rate in Amps (0=auto)</Description>
+    </Field>
+    <Field Name="tc_EPS_SOLAR_ARRAY_DRIVE_angle_deg" Uuid="b5445eb2-13d3-53ac-b1ae-2069a178f77d" Type="Int16" Kind="Input">
+      <Description>Drive angle in degrees (-90 to +90)</Description>
+    </Field>
+    <Field Name="tc_EPS_EMERGENCY_LOAD_SHED_stage" Uuid="f19bcf91-a388-54b8-a7cc-1e916d858089" Type="UInt8" Kind="Input">
+      <Description>Shed stage (0-3)</Description>
+    </Field>
+    <EntryPoint Name="Step" Uuid="cf36da21-1288-5034-bcaa-550b495ce899">
+      <Description>Main simulation step</Description>
+    </EntryPoint>
+    <EntryPoint Name="UpdatePower" Uuid="3f5c069b-7d97-50d8-8e3e-8b6d6cb05edd">
+      <Description>UpdatePower</Description>
+    </EntryPoint>
+    <EntryPoint Name="UpdateBattery" Uuid="0fc5e1cc-1782-5a6e-a8a7-a8174dfe4fee">
+      <Description>UpdateBattery</Description>
+    </EntryPoint>
+    <EntryPoint Name="UpdateSolarArray" Uuid="112629de-5346-5bc6-9dc9-7b6c26cd4a8d">
+      <Description>UpdateSolarArray</Description>
+    </EntryPoint>
+    <EventSource Name="EPS Battery SoC Warning_WARNING" Uuid="cc925cc3-f127-5717-a6a2-ccdd124ead42">
+      <Description>WARNING alarm for EPS Battery SoC Warning</Description>
+    </EventSource>
+    <EventSource Name="EPS Battery SoC Critical_ALARM" Uuid="4733c0c1-97c1-5516-b9ba-abc3d3ffdde1">
+      <Description>ALARM alarm for EPS Battery SoC Critical</Description>
+    </EventSource>
+    <EventSource Name="EPS Bus Voltage Low_WARNING" Uuid="6d0597ae-d082-5c46-968b-94717590429f">
+      <Description>WARNING alarm for EPS Bus Voltage Low</Description>
+    </EventSource>
+    <EventSource Name="EPS Bus Voltage Critical_ALARM" Uuid="35206df3-d75f-5a38-ae9c-6bd26773bfb8">
+      <Description>ALARM alarm for EPS Bus Voltage Critical</Description>
+    </EventSource>
+    <EventSource Name="EPS Battery Overcurrent_WARNING" Uuid="e738b158-0ff7-5c17-8f4c-b17b8efbfd8c">
+      <Description>WARNING alarm for EPS Battery Overcurrent</Description>
+    </EventSource>
+    <EventSource Name="EPS Battery Overtemp_WARNING" Uuid="8f682d89-1883-5daf-939d-783056a8c1ef">
+      <Description>WARNING alarm for EPS Battery Overtemp</Description>
+    </EventSource>
+    <EventSource Name="EPS Battery Undertemp_WARNING" Uuid="50c22633-f45c-50f5-bbd2-68f2af809a76">
+      <Description>WARNING alarm for EPS Battery Undertemp</Description>
+    </EventSource>
+    <EventSource Name="EPS Solar Array A Low Current_WARNING" Uuid="47af3296-be87-57e5-b704-b80686154b23">
+      <Description>WARNING alarm for EPS Solar Array A Low Current</Description>
+    </EventSource>
+    <EventSource Name="EPS Solar Array B Low Current_WARNING" Uuid="d123b7dd-ff6a-56dd-a0f5-ad07936ff466">
+      <Description>WARNING alarm for EPS Solar Array B Low Current</Description>
+    </EventSource>
+  </Model>
+</Catalogue>
