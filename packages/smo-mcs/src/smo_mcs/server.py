@@ -117,6 +117,7 @@ class MCSServer:
         self._param_cache: dict[int, dict] = {}
         self._param_cache_lock = asyncio.Lock()
         self._last_tm_frame_ts: Optional[float] = None  # epoch time of last received TM frame
+        self.tm_packets_received: int = 0
 
         # Wire up the real HK decoder. Two prior fix passes left _process_tm
         # only logging packet metadata into a debug dict; the param cache was
@@ -568,6 +569,7 @@ class MCSServer:
                 await asyncio.sleep(2)
 
     async def _process_tm(self, pkt) -> None:
+        self.tm_packets_received += 1
         # Update last TM frame timestamp for staleness tracking
         now = _time_mod.time()
 

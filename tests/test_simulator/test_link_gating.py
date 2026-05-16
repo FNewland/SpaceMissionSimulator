@@ -36,6 +36,8 @@ def make_mock_engine():
     engine._in_contact = False
     engine._override_passes = False
     engine.tm_queue = queue.Queue(maxsize=2000)
+    engine.tm_queue_drops = 0
+    engine.tm_packets_enqueued = 0
     engine._tm_storage = MagicMock()
     engine.tm_builder = MagicMock()
     engine.tm_builder.build_verification_failure = MagicMock(return_value=b'\x00' * 20)
@@ -156,6 +158,8 @@ class TestTCGating:
         engine._override_passes = False
         engine.tc_queue = queue.Queue(maxsize=500)
         engine.tm_queue = queue.Queue(maxsize=2000)
+        engine.tm_queue_drops = 0
+        engine.tm_packets_enqueued = 0
         engine._tm_storage = MagicMock()
         engine.tm_builder = MagicMock()
         engine.tm_builder.build_verification_failure = MagicMock(return_value=b'\x00' * 20)
@@ -327,6 +331,8 @@ class TestTCGatingDuringTTCFailure:
         engine._override_passes = False
         engine.tc_queue = queue.Queue(maxsize=500)
         engine.tm_queue = queue.Queue(maxsize=2000)
+        engine.tm_queue_drops = 0
+        engine.tm_packets_enqueued = 0
         engine._tm_storage = MagicMock()
         engine.tm_builder = MagicMock()
         engine.tm_builder.build_verification_failure = MagicMock(return_value=b'\x00' * 20)
@@ -372,6 +378,8 @@ class TestTCGatingDuringTTCFailure:
         engine._in_contact = True
         engine._override_passes = False
         engine.tm_queue = queue.Queue(maxsize=2000)
+        engine.tm_queue_drops = 0
+        engine.tm_packets_enqueued = 0
         engine._tm_storage = MagicMock()
 
         # Mock tm_builder to return a valid packet
@@ -423,6 +431,8 @@ class TestOnDemandTMLeak:
         engine._in_contact = False  # NOT in orbital contact <-- KEY
         engine._override_passes = False
         engine.tm_queue = queue.Queue(maxsize=2000)
+        engine.tm_queue_drops = 0
+        engine.tm_packets_enqueued = 0
         engine._tm_storage = MagicMock()
 
         # Mock tm_builder to return a valid S20 TM packet
@@ -462,6 +472,8 @@ class TestOnDemandTMLeak:
         engine._in_contact = True     # IN orbital contact
         engine._override_passes = False
         engine.tm_queue = queue.Queue(maxsize=2000)
+        engine.tm_queue_drops = 0
+        engine.tm_packets_enqueued = 0
         engine._tm_storage = MagicMock()
 
         mock_pkt = b'\x08\x09' + struct.pack('>H', 0x0100) + struct.pack('>f', 28.5) + b'\x00' * 10
@@ -496,6 +508,8 @@ class TestOnDemandTMLeak:
         engine._in_contact = True     # IN contact
         engine._override_passes = False
         engine.tm_queue = queue.Queue(maxsize=2000)
+        engine.tm_queue_drops = 0
+        engine.tm_packets_enqueued = 0
         engine._tm_storage = MagicMock()
 
         mock_pkt = b'\x08\x09' + struct.pack('>H', 0x0100) + struct.pack('>f', 28.5) + b'\x00' * 10
@@ -530,6 +544,8 @@ class TestOnDemandTMLeak:
         engine._in_contact = False    # OUT of contact
         engine._override_passes = True  # BUT override is on
         engine.tm_queue = queue.Queue(maxsize=2000)
+        engine.tm_queue_drops = 0
+        engine.tm_packets_enqueued = 0
         engine._tm_storage = MagicMock()
 
         mock_pkt = b'\x08\x09' + struct.pack('>H', 0x0100) + struct.pack('>f', 28.5) + b'\x00' * 10

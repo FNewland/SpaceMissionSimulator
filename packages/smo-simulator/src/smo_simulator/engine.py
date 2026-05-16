@@ -55,6 +55,10 @@ class SimulationEngine:
         self.instr_queue: queue.Queue = queue.Queue(maxsize=200)
         self.event_queue: queue.Queue = queue.Queue(maxsize=500)
 
+        # Diagnostic counters
+        self.tm_queue_drops: int = 0
+        self.tm_packets_enqueued: int = 0
+
         self._sim_time = datetime.now(timezone.utc)
 
         # Load configs
@@ -1468,7 +1472,9 @@ class SimulationEngine:
         if self.downlink_active:
             try:
                 self.tm_queue.put_nowait(pkt)
+                self.tm_packets_enqueued += 1
             except queue.Full:
+                self.tm_queue_drops += 1
                 logger.warning("TM queue full (%d) — packet dropped",
                                self.tm_queue.maxsize)
         # Route to onboard storage regardless of contact — but ONLY when the

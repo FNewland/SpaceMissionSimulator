@@ -65,7 +65,7 @@ class SpacecraftTX(threading.Thread):
 
         # I/O
         self._output = output_buffer or SampleBuffer(name="tx_out")
-        self._packet_queue = packet_queue or queue.Queue()
+        self._packet_queue = packet_queue or queue.Queue(maxsize=500)
 
         # Pacing
         self._frame_interval = self._calc_frame_interval()
@@ -74,6 +74,7 @@ class SpacecraftTX(threading.Thread):
         self.frames_transmitted = 0
         self.idle_frames = 0
         self.data_frames = 0
+        self.packet_drops = 0
 
     def _calc_frame_interval(self) -> float:
         """Time in seconds to transmit one coded frame."""
@@ -111,6 +112,7 @@ class SpacecraftTX(threading.Thread):
         try:
             self._packet_queue.put_nowait(packet)
         except queue.Full:
+            self.packet_drops += 1
             logger.warning("TX packet dropped: queue full (%d)",
                            self._packet_queue.maxsize)
 

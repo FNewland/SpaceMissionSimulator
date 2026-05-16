@@ -66,6 +66,7 @@ class RFSimBridge:
         # Stats
         self._tm_packets_relayed = 0
         self._tc_packets_relayed = 0
+        self._tm_packets_delivered = 0
         self._sim_eb_n0: float = config.channel.eb_n0_db
         self._sim_rssi: float = -120.0
 
@@ -327,6 +328,7 @@ class RFSimBridge:
                 dead.append(writer)
         for w in dead:
             self._mcs_clients_tm.remove(w)
+        self._tm_packets_delivered += 1
 
     # ── Radio status updates ──
 

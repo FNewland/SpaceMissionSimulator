@@ -33,6 +33,7 @@ class SimulatorServer:
         self._tm_port = self._config.get("tm_port", 8002)
         self._http_port = self._config.get("http_port", 8080)
         self._running = False
+        self.tm_packets_broadcast: int = 0
 
     async def start(self) -> None:
         self._running = True
@@ -99,6 +100,7 @@ class SimulatorServer:
         while self._running:
             try:
                 pkt = self.engine.tm_queue.get_nowait()
+                self.tm_packets_broadcast += 1
                 frame = frame_packet(pkt)
                 disconnected = []
                 for w in self._tm_clients:
