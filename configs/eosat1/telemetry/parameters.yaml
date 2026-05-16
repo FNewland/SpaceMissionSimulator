@@ -67,6 +67,10 @@ parameters:
   - { id: 0x0138, name: eps.battery_heater_on, subsystem: eps, description: "Battery heater status" }
   - { id: 0x0139, name: eps.battery_heater_setpoint, subsystem: eps, units: C, description: "Battery heater setpoint" }
 
+  # EPS Solar wing deployment telemetry
+  - { id: 0x0144, name: eps.wing_status, subsystem: eps, description: "Solar wing deployment status bitmask (bit0=+Y deployed, bit1=-Y deployed)" }
+  - { id: 0x0145, name: eps.wing_deploy_timer, subsystem: eps, units: s, description: "Solar wing deployment timer (countdown, 0=complete)" }
+
   # ===== AOCS =====
   - { id: 0x0200, name: aocs.att_q1, subsystem: aocs, description: Attitude quaternion q1 }
   - { id: 0x0201, name: aocs.att_q2, subsystem: aocs, description: Attitude quaternion q2 }
@@ -271,6 +275,7 @@ parameters:
   # DEFECT FIX #4 (ttc.md): Antenna deployment sensor telemetry
   - { id: 0x0535, name: ttc.antenna_deployment_ready, subsystem: ttc, description: "Antenna deployment ready (pyro continuity OK; 0=fault, 1=ready)" }
   - { id: 0x0536, name: ttc.antenna_deployment_sensor, subsystem: ttc, description: "Antenna deployment sensor status (0=unknown, 1=stowed, 2=deployed, 3=partial/jammed)" }
+  - { id: 0x0537, name: ttc.modulation_mode, subsystem: ttc, description: "Modulation scheme (0=BPSK, 1=QPSK, 2=8PSK, 3=OQPSK)" }
   - { id: 0x0523, name: ttc.active_gs, subsystem: ttc, description: "Active ground station index" , on_demand: true }
   - { id: 0x0524, name: ttc.gs_equipment_status, subsystem: ttc, description: "GS equipment status bitmask (antenna/LNA/TX/upconverter)" , on_demand: true }
 

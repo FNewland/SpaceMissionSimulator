@@ -11,23 +11,30 @@
 
 The Electrical Power Subsystem (EPS) generates, stores, regulates, and distributes electrical
 power to all spacecraft subsystems. It comprises six body-mounted GaAs solar panels (one per
-spacecraft face), a lithium-ion battery, a cold-redundant Power Distribution Module (PDM) with
-switchable and unswitchable lines, and associated harness.
+spacecraft face), two deployable solar wings on the +/-Y faces, a lithium-ion battery, a
+cold-redundant Power Distribution Module (PDM) with switchable and unswitchable lines, and
+associated harness.
 
 ## 2. Architecture
 
-### 2.1 Solar Panels — 6-Face Body-Mounted Model
+### 2.1 Solar Panels — Body-Mounted Panels and Deployable Wings
 
 | Parameter            | Value                      |
 |----------------------|----------------------------|
-| Configuration        | 6 body-mounted panels (one per face: +X, -X, +Y, -Y, +Z, -Z) |
+| Configuration        | 6 body-mounted panels + 2 deployable wings (+/-Y) |
 | Cell Technology      | Triple-junction GaAs       |
-| Peak Power (BOL)     | ~40 W (combined, best case) |
+| Body-mounted area    | 0.30 m2 total (stowed configuration) |
+| Deployed total area  | 0.78 m2 (body panels + both wings) |
+| Wing area            | 0.24 m2 per wing (+Y and -Y) |
+| Peak Power (BOL)     | ~64 W (combined, best sun angle, fully deployed) |
 | Operating Voltage    | 28 V (regulated bus)       |
-| Orientation          | Fixed to body faces        |
+| Wing deploy time     | ~30 s per wing (burn wire release) |
 
-Each of the six spacecraft faces carries a body-mounted solar panel. Power generation per
-panel depends on the cosine projection of the Sun vector onto the panel normal:
+Each of the six spacecraft faces carries a body-mounted solar panel. In addition, deployable
+solar wings are mounted on the +Y and -Y faces. When stowed, the total solar collection
+area is 0.30 m2 (body panels only). After wing deployment, the total area increases to
+0.78 m2 (0.24 m2 per wing added). Power generation per panel depends on the cosine
+projection of the Sun vector onto the panel normal:
 
 | Panel Face | Normal Vector | Notes                                           |
 |------------|---------------|--------------------------------------------------|
@@ -48,9 +55,42 @@ where `angle_to_sun` is the angle between the Sun vector and the panel normal in
 frame, and `degradation_factor` accounts for panel aging and damage. The total spacecraft
 power generation is the sum of all six panel contributions.
 
-In the dawn-dusk SSO at 450 km, the +Y and -Y panels typically provide the majority of
-power generation. The -Z (zenith) panel also contributes significantly when oriented towards
-the Sun. The +Z (nadir) panel receives primarily albedo illumination.
+In the dawn-dusk SSO at 450 km, the +Y and -Y panels (including deployable wings) typically
+provide the majority of power generation. The -Z (zenith) panel also contributes
+significantly when oriented towards the Sun. The +Z (nadir) panel receives primarily albedo
+illumination.
+
+### 2.1.1 Deployable Solar Wings
+
+The spacecraft carries two deployable solar wings, one on each of the +Y and -Y faces.
+Each wing adds 0.24 m2 of solar collection area and is held in the stowed position by a
+burn wire restraint mechanism. Deployment is commanded via S8 function management:
+
+| Parameter            | Value                      |
+|----------------------|----------------------------|
+| Wing location        | +Y face and -Y face       |
+| Area per wing        | 0.24 m2                    |
+| Deploy mechanism     | Burn wire (resistive heating) |
+| Deploy time          | ~30 seconds per wing       |
+| Deploy command       | EPS_DEPLOY_WING (func_id 81) |
+| Status query         | EPS_WING_STATUS (func_id 82) |
+| Status telemetry     | wing_status (0x0144) — bitmask: bit 0 = +Y, bit 1 = -Y |
+| Deploy timer TM      | wing_deploy_timer (0x0145) — countdown in seconds |
+| Deploy events        | 0x0112 (+Y deployed), 0x0113 (-Y deployed) |
+
+**Deployment procedure:**
+
+1. Verify spacecraft attitude is stable (body rates < 0.5 deg/s).
+2. Verify battery SoC > 50% (deployment consumes ~2 A for 30 s per wing).
+3. Send `EPS_DEPLOY_WING` with `wing=0` (+Y), `wing=1` (-Y), or `wing=2` (both).
+4. Monitor `wing_deploy_timer` (0x0145) counting down from 30 s.
+5. Confirm deployment via `wing_status` (0x0144) bitmask and event generation.
+6. Verify increased power generation on the corresponding +Y / -Y panel currents.
+
+**Constraints:**
+- Wings should be deployed after antenna deployment and initial detumble.
+- Deploy one wing at a time when possible to manage attitude disturbance.
+- If a wing fails to deploy, a retry can be commanded after 60 s cooldown.
 
 ### 2.2 Battery
 
@@ -131,6 +171,21 @@ period after launcher separation:
 | EMERGENCY  | OBC, TTC essential only                        | ~25 W               |
 | ECLIPSE    | Battery-only supply, non-essential loads shed   | ~60 W               |
 
+### 3.1 Power Budget Breakdown (Nominal Subsystem Consumption)
+
+| Subsystem          | Typical Power | Notes                             |
+|--------------------|---------------|-----------------------------------|
+| OBC (primary)      | 15 W          | Reduced from earlier 40 W design  |
+| TTC receiver (RX)  | 5 W           | Always on (unswitchable)          |
+| TTC transmitter+PA | 20 W          | On during contacts only           |
+| AOCS sensors       | 7 W           | MAG + CSS + ST + gyros + GPS      |
+| AOCS actuators     | 6 W           | 4 reaction wheels + magnetorquers |
+| Payload (imaging)  | 45 W          | Active during imaging passes only |
+| Payload (standby)  | 8 W           | Electronics on, FPA cooler active |
+| FPA cooler         | 15 W          | Thermoelectric cooler             |
+| Battery heater     | 8 W           | Eclipse / cold phases             |
+| OBC heater         | 5 W           | Manual control                    |
+
 During eclipse transitions, the PCDU autonomously switches from solar array to battery
 supply. The `eclipse_flag` telemetry parameter (0x0108) indicates the current illumination
 state.
@@ -150,6 +205,8 @@ state.
 | 0x0108   | eclipse_flag    | bool   | Eclipse state (1 = in eclipse)       |
 | 0x0109   | bat_current     | A      | Battery charge/discharge current     |
 | 0x010A   | bat_capacity    | Ah     | Remaining battery capacity           |
+| 0x0144   | wing_status     | bitmask| Solar wing deployment status (bit0=+Y, bit1=-Y) |
+| 0x0145   | wing_deploy_timer| s     | Wing deployment countdown timer      |
 
 ## 5. Limit Definitions
 
@@ -177,6 +234,8 @@ state.
 | HK_REQUEST        | S3,S27   | Request EPS housekeeping (SID=1)      |
 | GET_PARAM         | S20,S3   | Read individual EPS parameter         |
 | SET_PARAM         | S20,S1   | Modify EPS configuration parameter    |
+| EPS_DEPLOY_WING   | S8,S1    | Deploy solar wing (func_id 81)        |
+| EPS_WING_STATUS   | S8,S1    | Query wing deployment status (func_id 82) |
 
 ### 6.1 Battery Heater Control
 
@@ -187,9 +246,10 @@ if `bat_temp` falls below 5 deg C.
 
 ## 7. Operational Notes
 
-1. During LEOP, solar array deployment is confirmed by monitoring `sa_a_current` and
-   `sa_b_current`. A current reading above 0.5 A on each wing indicates successful
-   deployment.
+1. During LEOP, body-mounted solar array operation is confirmed by monitoring `sa_a_current`
+   and `sa_b_current`. Deployable wing deployment is confirmed by monitoring `wing_status`
+   (0x0144) and the corresponding panel currents. A current increase on the +Y / -Y panel
+   after wing deployment indicates successful extension.
 2. Battery reconditioning is not required for Li-Ion cells. The battery management system
    autonomously balances cells.
 3. The `power_gen` vs. `power_cons` balance should be monitored each orbit. A sustained
@@ -211,16 +271,17 @@ if `bat_temp` falls below 5 deg C.
 
 ### 8.1 Per-Panel Degradation and Loss
 
-Because EOSAT-1 uses six body-mounted panels rather than deployable wings, the loss of a
-single panel reduces total power generation by approximately 10-25% depending on which
-panel is affected and the current attitude. The impact depends on which face is lost:
+EOSAT-1 uses six body-mounted panels plus two deployable wings on the +/-Y faces. The loss
+of a single panel or wing reduces total power generation depending on which element is
+affected and the current attitude. The impact depends on which face is lost:
 
-| Lost Panel | Impact                                                       |
-|------------|--------------------------------------------------------------|
-| +Y or -Y   | High impact: primary generation faces in dawn-dusk orbit     |
-| -Z (zenith) | Moderate impact: significant solar exposure face            |
-| +X or -X   | Low-moderate impact: secondary generation faces              |
-| +Z (nadir)  | Low impact: primarily receives albedo illumination           |
+| Lost Element       | Impact                                                       |
+|--------------------|--------------------------------------------------------------|
+| +Y or -Y wing      | High impact: major generation area in dawn-dusk orbit        |
+| +Y or -Y body panel| Moderate-high impact: primary generation faces               |
+| -Z (zenith)        | Moderate impact: significant solar exposure face             |
+| +X or -X           | Low-moderate impact: secondary generation faces              |
+| +Z (nadir)         | Low impact: primarily receives albedo illumination           |
 
 Operators should monitor per-panel current telemetry and compare against the solar model
 prediction for the current attitude. A sustained discrepancy exceeding 20% indicates panel

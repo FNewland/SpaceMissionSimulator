@@ -77,6 +77,89 @@ button, select, input { font-family: inherit; font-size: inherit; }
 /* ===== ANIMATIONS ===== */
 @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
 @keyframes pulse { 0%,100%{box-shadow:0 0 3px var(--status-nominal)} 50%{box-shadow:0 0 9px var(--status-nominal)} }
+@keyframes contingency-pulse {
+  0%,100% { border-color: rgba(255,107,107,.6); box-shadow: 0 0 8px rgba(255,107,107,.2); }
+  50%     { border-color: rgba(255,107,107,1);  box-shadow: 0 0 16px rgba(255,107,107,.5); }
+}
+
+/* ===== ECLIPSE COUNTDOWN ===== */
+.eclipse-countdown {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10px; font-weight: 600; font-variant-numeric: tabular-nums;
+  padding: 3px 9px; border-radius: var(--r);
+  background: var(--surface-secondary); border: 1px solid var(--surface-overlay);
+  color: var(--text-secondary); white-space: nowrap;
+}
+.eclipse-countdown.in-eclipse {
+  color: var(--status-commanding); border-color: rgba(107,179,255,.4);
+  background: rgba(107,179,255,.1);
+}
+.eclipse-countdown.approaching {
+  color: var(--status-warning); border-color: rgba(240,180,41,.4);
+  background: rgba(240,180,41,.1);
+}
+
+/* ===== LOAD SHED INDICATOR ===== */
+.load-shed-indicator {
+  display: flex; align-items: center; gap: 6px; padding: 6px 11px;
+  background: var(--surface-secondary); border: 1px solid var(--surface-tertiary);
+  border-radius: var(--r); margin-bottom: 8px;
+}
+.load-shed-indicator .lsi-label {
+  font-size: 9px; font-weight: 700; color: var(--text-tertiary);
+  letter-spacing: 1.5px; text-transform: uppercase; margin-right: 6px;
+}
+.load-shed-indicator .lsi-steps {
+  display: flex; gap: 3px; align-items: center;
+}
+.load-shed-indicator .lsi-step {
+  width: 48px; height: 16px; border-radius: 2px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 8px; font-weight: 700; letter-spacing: 0.5px;
+  border: 1px solid var(--surface-overlay); background: var(--surface-tertiary);
+  color: var(--text-tertiary); transition: all .3s;
+}
+.load-shed-indicator .lsi-step.active-0 { background: rgba(0,200,150,.15); border-color: rgba(0,200,150,.3); color: var(--status-nominal); }
+.load-shed-indicator .lsi-step.active-1 { background: rgba(240,180,41,.15); border-color: rgba(240,180,41,.3); color: var(--status-warning); }
+.load-shed-indicator .lsi-step.active-2 { background: rgba(255,140,0,.2); border-color: rgba(255,140,0,.4); color: #FF8C00; }
+.load-shed-indicator .lsi-step.active-3 { background: rgba(255,107,107,.15); border-color: rgba(255,107,107,.3); color: var(--status-alarm); }
+.load-shed-indicator .lsi-step.active-4 { background: rgba(180,40,40,.25); border-color: rgba(180,40,40,.5); color: #FF4444; }
+.load-shed-indicator .lsi-text {
+  font-size: 10px; font-weight: 600; margin-left: 8px;
+}
+.load-shed-top-badge {
+  display: none; align-items: center; gap: 4px;
+  font-size: 10px; font-weight: 700; padding: 3px 9px; border-radius: var(--r);
+  background: rgba(255,107,107,.12); border: 1px solid rgba(255,107,107,.35);
+  color: var(--status-alarm); white-space: nowrap; animation: blink 1.5s infinite;
+}
+.load-shed-top-badge.visible { display: inline-flex; }
+
+/* ===== CONTINGENCY BANNER ===== */
+.contingency-banner {
+  display: none; align-items: center; justify-content: center; gap: 12px;
+  width: 100%; height: 32px; padding: 0 18px;
+  background: linear-gradient(90deg, rgba(180,40,40,.85) 0%, rgba(200,60,20,.85) 100%);
+  border: 2px solid rgba(255,107,107,.6);
+  color: #fff; font-size: 11px; font-weight: 700; letter-spacing: 1.5px;
+  animation: contingency-pulse 2s infinite;
+  position: fixed; z-index: 97;
+  left: 0; right: 0;
+  top: calc(var(--top-bar-h) + var(--pos-bar-h) + var(--tab-bar-h));
+}
+.contingency-banner.visible { display: flex; }
+.contingency-banner.acknowledged {
+  opacity: 0.55; animation: none;
+  border-color: rgba(255,107,107,.3);
+}
+.contingency-banner .cb-text { flex: 1; text-align: center; }
+.contingency-banner .cb-ack-btn {
+  font-size: 9px; font-weight: 700; padding: 2px 10px; border-radius: 3px;
+  background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.3);
+  color: #fff; cursor: pointer; letter-spacing: 1px;
+  transition: background .15s;
+}
+.contingency-banner .cb-ack-btn:hover { background: rgba(255,255,255,.25); }
 
 /* ===== TOP BAR [A] ===== */
 #top-bar {
@@ -623,6 +706,7 @@ button, select, input { font-family: inherit; font-size: inherit; }
       <div class="clock-label" id="pass-countdown-label">NEXT AOS</div>
       <div class="clock-value" id="pass-countdown" style="font-size:11px;">--:--</div>
     </div>
+    <span id="eclipseCountdown" class="eclipse-countdown" title="Eclipse entry/exit countdown" aria-label="Eclipse countdown">ECLIPSE: --:--</span>
     <div id="alarm-badges" role="status" aria-label="System alarm summary" style="display:flex;gap:6px;">
       <div class="alarm-badge nominal" id="badge-nom" title="Nominal systems" aria-label="Nominal systems"><span class="dot" aria-hidden="true"></span><span id="badge-nom-n">0</span></div>
       <div class="alarm-badge warn" id="badge-warn" title="Warnings" aria-label="Warnings" style="display:none"><span class="dot" aria-hidden="true"></span><span id="badge-warn-n">0</span></div>
@@ -630,6 +714,7 @@ button, select, input { font-family: inherit; font-size: inherit; }
     </div>
   </div>
   <div class="right">
+    <span id="loadShedTopBadge" class="load-shed-top-badge" title="Load shedding active" aria-label="Load shed level">SHED L0</span>
     <button class="alarm-btn" id="alarm-journal-btn" aria-label="Open alarm journal" title="Alarm Journal">
       <span aria-hidden="true" style="font-size:12px;">&#x1F514;</span> ALARMS
       <span class="alarm-count-badge" id="alarm-count-badge" aria-live="polite">0</span>
@@ -671,6 +756,12 @@ button, select, input { font-family: inherit; font-size: inherit; }
   <button class="tab-btn" role="tab" aria-selected="false" aria-controls="pane-procedures" id="tab-procedures" data-tab="procedures"><span class="tab-dot"></span>PROCEDURES</button>
   <button class="tab-btn" role="tab" aria-selected="false" aria-controls="pane-ondemand" id="tab-ondemand" data-tab="ondemand"><span class="tab-dot"></span>ON-DEMAND TM</button>
   <button class="tab-btn" role="tab" aria-selected="false" aria-controls="pane-manual" id="tab-manual" data-tab="manual"><span class="tab-dot"></span>MANUAL</button>
+</div>
+
+<!-- ===== CONTINGENCY BANNER ===== -->
+<div id="contingencyBanner" class="contingency-banner" role="alert" aria-live="assertive">
+  <span class="cb-text" id="contingencyText">CONTINGENCY ACTIVE</span>
+  <button class="cb-ack-btn" id="contingencyAckBtn" aria-label="Acknowledge contingency">ACK</button>
 </div>
 
 <!-- ===== [D] MAIN CONTENT ===== -->
@@ -861,6 +952,18 @@ button, select, input { font-family: inherit; font-size: inherit; }
 
 <!-- EPS TAB -->
 <div class="tab-pane" id="pane-eps" role="tabpanel" aria-labelledby="tab-eps">
+  <!-- Load Shed Level Indicator -->
+  <div id="loadShedIndicator" class="load-shed-indicator" role="status" aria-label="Load shedding level">
+    <span class="lsi-label">LOAD SHED</span>
+    <div class="lsi-steps">
+      <div class="lsi-step active-0" id="lsi-step-0" data-level="0">NOM</div>
+      <div class="lsi-step" id="lsi-step-1" data-level="1">L1</div>
+      <div class="lsi-step" id="lsi-step-2" data-level="2">L2</div>
+      <div class="lsi-step" id="lsi-step-3" data-level="3">L3</div>
+      <div class="lsi-step" id="lsi-step-4" data-level="4">L4</div>
+    </div>
+    <span class="lsi-text val-nom" id="lsi-text">NOMINAL</span>
+  </div>
   <!-- EPS Power Distribution Diagram -->
   <div class="panel" role="region" aria-label="EPS power distribution diagram">
     <h2 class="panel-hdr">POWER DISTRIBUTION</h2>
@@ -2482,6 +2585,16 @@ let verifLog = [];
 let pollTimer = null;
 let lastTmTimestamp = null;
 
+// ===== CONTINGENCY UI STATE =====
+let _eclipsePhaseStart = null;    // timestamp when current eclipse phase began
+let _eclipseWasInEclipse = null;  // previous eclipse flag
+const ORBIT_PERIOD_S = 94 * 60;  // ~94 min orbit
+const ECLIPSE_FRACTION = 0.35;   // ~35% in eclipse
+const ECLIPSE_DURATION_S = ORBIT_PERIOD_S * ECLIPSE_FRACTION;       // ~33 min
+const SUNLIT_DURATION_S  = ORBIT_PERIOD_S * (1 - ECLIPSE_FRACTION); // ~61 min
+let _contingencyAcknowledged = false;
+let _contingencyLastReason = '';
+
 // ===== CHART.JS INFRASTRUCTURE =====
 const CHART_OPTS_BASE = {
   responsive: true, maintainAspectRatio: false, animation: { duration: 0 },
@@ -2631,6 +2744,15 @@ document.addEventListener('DOMContentLoaded', () => {
   initOverviewMap();
   initManualTab();
   initGoNoGo();
+  // Contingency banner ACK button
+  const ackBtn = document.getElementById('contingencyAckBtn');
+  if (ackBtn) {
+    ackBtn.addEventListener('click', () => {
+      _contingencyAcknowledged = true;
+      const banner = document.getElementById('contingencyBanner');
+      if (banner) banner.classList.add('acknowledged');
+    });
+  }
 });
 
 // ===== CLOCKS =====
@@ -3509,6 +3631,117 @@ function param(id) {
   return v != null ? v : null;
 }
 
+// ===== CONTINGENCY UI UPDATES =====
+function updateEclipseCountdown() {
+  const el = document.getElementById('eclipseCountdown');
+  if (!el) return;
+  const inEclipse = !!state.in_eclipse;
+  const now = Date.now() / 1000;
+
+  // Detect phase transition
+  if (_eclipseWasInEclipse === null || inEclipse !== _eclipseWasInEclipse) {
+    _eclipsePhaseStart = now;
+    _eclipseWasInEclipse = inEclipse;
+  }
+
+  const elapsed = now - (_eclipsePhaseStart || now);
+  const phaseDuration = inEclipse ? ECLIPSE_DURATION_S : SUNLIT_DURATION_S;
+  const remaining = Math.max(0, phaseDuration - elapsed);
+  const mm = Math.floor(remaining / 60);
+  const ss = Math.floor(remaining % 60);
+  const timeStr = String(mm).padStart(2, '0') + ':' + String(ss).padStart(2, '0');
+
+  if (inEclipse) {
+    el.textContent = 'ECLIPSE EXIT: ' + timeStr;
+    el.className = 'eclipse-countdown in-eclipse';
+  } else {
+    el.textContent = 'ECLIPSE IN: ' + timeStr;
+    // Approaching if < 5 min remaining
+    el.className = remaining < 300 ? 'eclipse-countdown approaching' : 'eclipse-countdown';
+  }
+}
+
+function updateLoadShedIndicator() {
+  const eps = state.eps;
+  const stage = (eps && eps.load_shed_stage != null) ? eps.load_shed_stage : 0;
+  const SHED_LABELS = [
+    'NOMINAL',
+    'SHED L1 \u2014 Payload OFF',
+    'SHED L2 \u2014 Cooler OFF',
+    'SHED L3 \u2014 TX OFF',
+    'SHED L4 \u2014 Wheels OFF'
+  ];
+  const SHED_CLASSES = ['val-nom', 'val-warn', '', '', 'val-alarm'];
+  const label = SHED_LABELS[stage] || ('SHED L' + stage);
+
+  // EPS pane stepped indicator
+  for (let i = 0; i <= 4; i++) {
+    const stepEl = document.getElementById('lsi-step-' + i);
+    if (!stepEl) continue;
+    // Remove all active-* classes
+    stepEl.className = 'lsi-step';
+    if (i <= stage) {
+      stepEl.classList.add('active-' + stage);
+    }
+  }
+  const textEl = document.getElementById('lsi-text');
+  if (textEl) {
+    textEl.textContent = label;
+    textEl.className = 'lsi-text';
+    if (stage === 0) textEl.classList.add('val-nom');
+    else if (stage === 1) textEl.classList.add('val-warn');
+    else if (stage >= 2) textEl.classList.add('val-alarm');
+  }
+
+  // Top bar badge — visible only when shed > 0
+  const topBadge = document.getElementById('loadShedTopBadge');
+  if (topBadge) {
+    if (stage > 0) {
+      topBadge.textContent = 'SHED L' + stage;
+      topBadge.classList.add('visible');
+    } else {
+      topBadge.classList.remove('visible');
+    }
+  }
+}
+
+function updateContingencyBanner() {
+  const banner = document.getElementById('contingencyBanner');
+  const textEl = document.getElementById('contingencyText');
+  if (!banner || !textEl) return;
+
+  const reasons = [];
+  // Check SC mode: 0=SAFE, 3=EMERGENCY
+  const scMode = state.sc_mode != null ? state.sc_mode : (state.obdh ? state.obdh.mode : null);
+  if (scMode === 0) reasons.push('SAFE MODE');
+  if (scMode === 3) reasons.push('EMERGENCY MODE');
+
+  // Check load shed
+  const eps = state.eps;
+  const shedStage = (eps && eps.load_shed_stage != null) ? eps.load_shed_stage : 0;
+  if (shedStage > 0) reasons.push('LOAD SHED LEVEL ' + shedStage);
+
+  if (reasons.length > 0) {
+    const reasonStr = reasons.join(' / ');
+    textEl.textContent = 'CONTINGENCY ACTIVE \u2014 ' + reasonStr;
+    banner.classList.add('visible');
+    // Reset ACK if reason changed
+    if (reasonStr !== _contingencyLastReason) {
+      _contingencyAcknowledged = false;
+      banner.classList.remove('acknowledged');
+      _contingencyLastReason = reasonStr;
+    }
+    // Shift main content down when banner is visible
+    document.getElementById('main').style.top = 'calc(var(--top-bar-h) + var(--pos-bar-h) + var(--tab-bar-h) + 32px)';
+  } else {
+    banner.classList.remove('visible');
+    banner.classList.remove('acknowledged');
+    _contingencyAcknowledged = false;
+    _contingencyLastReason = '';
+    document.getElementById('main').style.top = '';
+  }
+}
+
 // ===== MAIN UI UPDATE =====
 function updateUI() {
   if (!state) return;
@@ -3572,6 +3805,9 @@ function updateUI() {
   updateOBDH();
   updateAlarmBadges();
   updatePassCountdown(state);
+  updateEclipseCountdown();
+  updateLoadShedIndicator();
+  updateContingencyBanner();
 }
 
 // ===== OVERVIEW TAB =====

@@ -24,6 +24,8 @@ events:
   - { id: 0x010F, name: PDU_OVERCURRENT, severity: HIGH, subsystem: eps, description: "Individual power line overcurrent trip" }
   - { id: 0x0110, name: POWER_LINE_SWITCHED, severity: INFO, subsystem: eps, description: "Power line state change" }
   - { id: 0x0111, name: EPS_SAFE_MODE_ENTRY, severity: MEDIUM, subsystem: eps, description: "EPS entered safe/contingency mode" }
+  - { id: 0x0112, name: WING_PY_DEPLOYED, severity: INFO, subsystem: eps, description: "+Y solar wing deployed successfully" }
+  - { id: 0x0113, name: WING_MY_DEPLOYED, severity: INFO, subsystem: eps, description: "-Y solar wing deployed successfully" }
 
   # AOCS events (0x0200-0x02FF)
   - { id: 0x0200, name: AOCS_MODE_CHANGE, severity: LOW, subsystem: aocs, description: "AOCS mode transition" }

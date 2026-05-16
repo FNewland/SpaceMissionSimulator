@@ -95,6 +95,20 @@ class TTCState:
     uplink_lost: bool = False
     receiver_nf_degrade: float = 0.0  # dB noise figure increase
 
+    # ── Ground segment failure injection ──
+    # These model ground equipment degradation that affects the link
+    # budget from the ground side. Injected via the instructor interface.
+    gs_lna_degrade_db: float = 0.0          # LNA noise figure increase
+    gs_antenna_mispoint_db: float = 0.0     # Antenna pointing loss
+    gs_feed_loss_db: float = 0.0            # Feed/waveguide loss
+    gs_rfi_db: float = 0.0                  # RF interference noise rise
+    gs_hpa_degrade_db: float = 0.0          # Uplink HPA power reduction
+    gs_ref_osc_drift_db: float = 0.0        # Reference oscillator drift
+    gs_tracking_loss_db: float = 0.0        # Tracking system failure
+
+    # ── Modulation ──
+    modulation_mode: int = 0  # 0=BPSK, 1=QPSK, 2=8PSK, 3=OQPSK
+
     # S2 Device Access — device on/off states (device_id -> on/off)
     device_states: dict = field(default_factory=lambda: {
         0x0400: True,   # Transponder A
@@ -125,6 +139,37 @@ class TTCBasicModel(SubsystemModel):
         self._pa_shutdown_temp = 70.0
         self._pa_tau = 60.0  # PA thermal time constant (seconds)
         self._was_in_contact = False
+
+    # Modulation scheme parameters:
+    # bits_per_symbol, spectral_efficiency_factor, required_eb_n0_offset_db
+    MODULATION_PARAMS = {
+        0: {"name": "BPSK",  "bits_per_symbol": 1, "eb_n0_penalty": 0.0},
+        1: {"name": "QPSK",  "bits_per_symbol": 2, "eb_n0_penalty": 0.0},
+        2: {"name": "8PSK",  "bits_per_symbol": 3, "eb_n0_penalty": 3.6},
+        3: {"name": "OQPSK", "bits_per_symbol": 2, "eb_n0_penalty": 0.0},
+    }
+
+    @staticmethod
+    def _ber_for_modulation(mod_mode: int, eb_n0_linear: float) -> float:
+        """Compute BER for the given modulation and Eb/N0 (linear).
+
+        BPSK/QPSK/OQPSK: BER = 0.5 * erfc(sqrt(Eb/N0))
+        8PSK:             BER ~ (2/3) * erfc(sqrt((3*Eb/N0)/(2*(M-1))) * sin(pi/M))
+                          simplified: ~ erfc(sqrt(0.4 * Eb/N0))
+        """
+        if eb_n0_linear <= 0:
+            return 0.5
+        if mod_mode in (0, 1, 3):  # BPSK, QPSK, OQPSK (same BER per bit)
+            x = math.sqrt(eb_n0_linear)
+            if x > 5.0:
+                return 1e-12
+            return 0.5 * math.erfc(x)
+        elif mod_mode == 2:  # 8PSK
+            x = math.sqrt(0.4 * eb_n0_linear)
+            if x > 5.0:
+                return 1e-12
+            return (2.0 / 3.0) * math.erfc(x)
+        return 0.5 * math.erfc(math.sqrt(eb_n0_linear))
 
     @property
     def name(self) -> str:
@@ -213,31 +258,36 @@ class TTCBasicModel(SubsystemModel):
             s.data_rate_mode = 0
             s.tm_data_rate = self._tm_rate_lo
 
-        # ── Data rate selection (antenna deployment) ──
+        # ── Data rate selection (antenna deployment + modulation) ──
+        bits_per_sym = self.MODULATION_PARAMS.get(
+            s.modulation_mode, {"bits_per_symbol": 1})["bits_per_symbol"]
         if not s.antenna_deployed:
-            # Pre-deployment: force low-rate
+            # Pre-deployment: force low-rate BPSK
             s.tm_data_rate = self._tm_rate_lo
+            s.modulation_mode = 0  # safe mode = BPSK
         elif not s.beacon_mode:
-            # Post-deployment, normal mode: use configured high rate
-            s.tm_data_rate = self._tm_rate_hi
+            # Post-deployment: base rate × bits_per_symbol for modulation
+            base_rate = self._tm_rate_hi if s.data_rate_mode == 1 else self._tm_rate_lo
+            s.tm_data_rate = base_rate * bits_per_sym
 
         # Uplink loss blocks receive
         if s.uplink_lost:
             s.cmd_rx_count = s.cmd_rx_count  # No new commands
 
         s.link_active = in_contact
-        s.elevation_deg = orbit_state.gs_elevation_deg
-        s.azimuth_deg = orbit_state.gs_azimuth_deg
-        s.range_km = orbit_state.gs_range_km
-
-        # When passes are forced via override but no orbital geometry
-        # is available (range_km == 0), use a nominal mid-pass slant
-        # range so the link budget produces healthy signal values
-        # instead of triggering spurious alarms.
         pass_override = bool(shared_params.get(0x05FF, 0))
-        if pass_override and s.range_km <= 0:
-            s.range_km = 500.0          # ~500 km nominal mid-pass slant range
-            s.elevation_deg = max(s.elevation_deg, 45.0)
+
+        if pass_override and not orbit_state.in_contact:
+            # Pass override active but no real orbital contact — use
+            # a fixed nominal geometry so the link budget is stable.
+            s.range_km = 500.0
+            s.elevation_deg = 45.0
+            s.azimuth_deg = 180.0
+        else:
+            # Use real orbital geometry
+            s.elevation_deg = orbit_state.gs_elevation_deg
+            s.azimuth_deg = orbit_state.gs_azimuth_deg
+            s.range_km = orbit_state.gs_range_km
 
         # ── Lock acquisition sequence ──
         if in_contact and s.range_km > 0:
@@ -250,12 +300,22 @@ class TTCBasicModel(SubsystemModel):
 
             s._lock_timer += dt
 
-            s.carrier_lock = s._lock_timer >= s._carrier_lock_delay
+            # Lock timing depends on data rate — low rate takes longer
+            # because lower symbol rate means slower acquisition loops
+            rate_factor = 1.0
+            if s.tm_data_rate <= self._tm_rate_lo:
+                rate_factor = 3.0  # low rate: 3x slower lock
+            elif s.tm_data_rate >= self._tm_rate_hi * 2:
+                rate_factor = 0.7  # high-order mod: slightly faster
+
+            s.carrier_lock = s._lock_timer >= s._carrier_lock_delay * rate_factor
             s.bit_sync = (
-                s.carrier_lock and s._lock_timer >= s._bit_sync_delay
+                s.carrier_lock
+                and s._lock_timer >= s._bit_sync_delay * rate_factor
             )
             s.frame_sync = (
-                s.bit_sync and s._lock_timer >= s._frame_sync_delay
+                s.bit_sync
+                and s._lock_timer >= s._frame_sync_delay * rate_factor
             )
         else:
             # LOS
@@ -284,11 +344,17 @@ class TTCBasicModel(SubsystemModel):
             # Eb/N0 = EIRP + Gain - FSPL - kTB + coding gain
             noise_floor = -228.6 + self._gs_gt + noise_bw
             snr = s.rssi_dbm - 30 - noise_floor
+            # Ground segment penalties (from instructor-injected ground failures)
+            gs_penalty = (s.gs_lna_degrade_db + s.gs_antenna_mispoint_db
+                          + s.gs_feed_loss_db + s.gs_rfi_db
+                          + s.gs_hpa_degrade_db + s.gs_ref_osc_drift_db
+                          + s.gs_tracking_loss_db)
             s.eb_n0 = (
                 snr
                 + self._coding_gain
                 - s.ber_inject_offset
                 - s.receiver_nf_degrade
+                - gs_penalty
                 + random.gauss(0, 0.2)
             )
             s.link_margin_db = s.eb_n0 - 12.0 + random.gauss(0, 0.2)
@@ -297,16 +363,10 @@ class TTCBasicModel(SubsystemModel):
             if not s.antenna_deployed:
                 s.link_margin_db -= 6.0  # Stowed antenna penalty
 
-            # BER from Eb/N0 (simplified BPSK/QPSK)
+            # BER from Eb/N0 — modulation-dependent
             eb_n0_linear = 10.0 ** (s.eb_n0 / 10.0)
             if eb_n0_linear > 0:
-                # Q-function approximation: BER ~ 0.5 * erfc(sqrt(Eb/N0))
-                x = math.sqrt(eb_n0_linear)
-                # erfc approximation for large x
-                if x > 5.0:
-                    ber_val = 1e-12  # Effectively error-free
-                else:
-                    ber_val = 0.5 * math.erfc(x)
+                ber_val = self._ber_for_modulation(s.modulation_mode, eb_n0_linear)
                 s.ber = max(-12.0, math.log10(max(ber_val, 1e-12)))
             else:
                 s.ber = -1.0  # Very high BER
@@ -433,6 +493,13 @@ class TTCBasicModel(SubsystemModel):
         # DEFECT FIX #4 (ttc.md): Antenna deployment sensor telemetry
         shared_params[0x0535] = 1.0 if s.antenna_deployment_ready else 0.0
         shared_params[0x0536] = float(s.antenna_deployment_sensor)
+        # Modulation mode (0=BPSK, 1=QPSK, 2=8PSK, 3=OQPSK)
+        shared_params[0x0537] = float(s.modulation_mode)
+        # Ground segment total Eb/N0 penalty (dB)
+        shared_params[0x0538] = (s.gs_lna_degrade_db + s.gs_antenna_mispoint_db
+                                 + s.gs_feed_loss_db + s.gs_rfi_db
+                                 + s.gs_hpa_degrade_db + s.gs_ref_osc_drift_db
+                                 + s.gs_tracking_loss_db)
 
     def _generate_ttc_events(self) -> None:
         """Generate TTC events based on state transitions and thresholds."""
@@ -708,11 +775,21 @@ class TTCBasicModel(SubsystemModel):
 
         elif command == "set_modulation":
             mod_mode = int(cmd.get("mode", 0))
-            if mod_mode in (0, 1):  # 0=BPSK, 1=QPSK
-                # Store modulation mode for future use
-                setattr(self._state, "modulation_mode", mod_mode)
-                return {"success": True}
-            return {"success": False, "message": "Invalid modulation mode"}
+            if mod_mode not in self.MODULATION_PARAMS:
+                return {"success": False,
+                        "message": f"Invalid modulation mode {mod_mode}. "
+                        f"Valid: 0=BPSK, 1=QPSK, 2=8PSK, 3=OQPSK"}
+            old_mode = self._state.modulation_mode
+            self._state.modulation_mode = mod_mode
+            mp = self.MODULATION_PARAMS[mod_mode]
+            # Effective data rate scales with bits per symbol
+            base_rate = self._tm_rate_hi if self._state.data_rate_mode == 1 else self._tm_rate_lo
+            self._state.tm_data_rate = base_rate * mp["bits_per_symbol"]
+            logger.info("TTC modulation: %s → %s (data rate %d bps)",
+                        self.MODULATION_PARAMS[old_mode]["name"],
+                        mp["name"], self._state.tm_data_rate)
+            return {"success": True, "modulation": mp["name"],
+                    "data_rate_bps": self._state.tm_data_rate}
 
         elif command == "set_rx_gain":
             agc_target = float(cmd.get("agc_db", -60.0))
@@ -769,11 +846,26 @@ class TTCBasicModel(SubsystemModel):
             s.receiver_nf_degrade = float(kw.get("nf_db", magnitude * 5.0))
 
         elif failure == "antenna_deploy_failed":
-            # Burn-wire failed: antenna stuck stowed/jammed. Drives the
-            # gs_antenna_failure / no_telemetry_at_pass contingency procedures.
+            # Burn-wire failed: antenna stuck stowed/jammed.
             s.antenna_deployed = False
             s.antenna_deployment_ready = False
             s.antenna_deployment_sensor = 3  # partial/jammed
+
+        # ── Ground segment failures ──
+        elif failure == "gs_lna_degradation":
+            s.gs_lna_degrade_db = magnitude * 6.0
+        elif failure == "gs_antenna_mispoint":
+            s.gs_antenna_mispoint_db = magnitude * 10.0
+        elif failure == "gs_feed_loss":
+            s.gs_feed_loss_db = magnitude * 4.0
+        elif failure == "gs_rfi_interference":
+            s.gs_rfi_db = magnitude * 8.0
+        elif failure == "gs_hpa_degradation":
+            s.gs_hpa_degrade_db = magnitude * 5.0
+        elif failure == "gs_ref_osc_drift":
+            s.gs_ref_osc_drift_db = magnitude * 3.0
+        elif failure == "gs_tracking_loss":
+            s.gs_tracking_loss_db = magnitude * 15.0
 
     def clear_failure(self, failure: str, **kw) -> None:
         s = self._state
@@ -798,6 +890,22 @@ class TTCBasicModel(SubsystemModel):
 
         elif failure == "antenna_deploy_failed":
             s.antenna_deployment_ready = True
+
+        # ── Ground segment failures ──
+        elif failure == "gs_lna_degradation":
+            s.gs_lna_degrade_db = 0.0
+        elif failure == "gs_antenna_mispoint":
+            s.gs_antenna_mispoint_db = 0.0
+        elif failure == "gs_feed_loss":
+            s.gs_feed_loss_db = 0.0
+        elif failure == "gs_rfi_interference":
+            s.gs_rfi_db = 0.0
+        elif failure == "gs_hpa_degradation":
+            s.gs_hpa_degrade_db = 0.0
+        elif failure == "gs_ref_osc_drift":
+            s.gs_ref_osc_drift_db = 0.0
+        elif failure == "gs_tracking_loss":
+            s.gs_tracking_loss_db = 0.0
             s.antenna_deployment_sensor = 1  # stowed (operator must redeploy)
 
     def get_state(self) -> dict[str, Any]:

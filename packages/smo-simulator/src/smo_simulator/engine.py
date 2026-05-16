@@ -1014,8 +1014,9 @@ class SimulationEngine:
             elif svc == 8 and sub == 1 and len(pkt.data_field) >= 1:
                 func_id = pkt.data_field[0]
                 # OBDH boot maintenance + EPS power-line control +
-                # TTC antenna deploy (69) for VHF/UHF antenna release
-                if func_id in {19, 20, 52, 53, 54, 55, 56, 57, 61, 69}:
+                # TTC antenna deploy (69) + PA on/off (66/67) for LEOP
+                # first-contact downlink establishment
+                if func_id in {19, 20, 52, 53, 54, 55, 56, 57, 61, 66, 67, 69}:
                     allowed = True
             if not allowed:
                 # Reject at acceptance — no S1.3/S1.7 is emitted.
@@ -1515,7 +1516,7 @@ class SimulationEngine:
                                 'onset', 'duration_s', 'onset_duration_s')},
             )
         elif t == 'override_passes':
-            self._override_passes = bool(cmd.get('enabled', False))
+            self._override_passes = bool(cmd.get('enabled', cmd.get('on', False)))
         elif t == 'failure_clear':
             fid = cmd.get('failure_id')
             if fid:
@@ -1807,6 +1808,18 @@ class SimulationEngine:
                 'link_margin_dB': round(p.get(0x0503, 0), 1),
                 'range_km': round(p.get(0x0509, 0), 1),
                 'elevation_deg': round(p.get(0x050A, 0), 1),
+                # RF bridge fields
+                'eb_n0_db': round(p.get(0x0519, 0), 1),
+                'ber': round(p.get(0x050C, 0), 2),
+                'carrier_lock': bool(p.get(0x0510, 0)),
+                'bit_sync': bool(p.get(0x0511, 0)),
+                'frame_sync': bool(p.get(0x0512, 0)),
+                'doppler_hz': round(p.get(0x051B, 0), 1),
+                'modulation_mode': int(p.get(0x0537, 0)),
+                'gs_penalty_db': round(p.get(0x0538, 0), 1),
+                'pa_temp_C': round(p.get(0x050F, 0), 1),
+                'tx_power_W': round(p.get(0x050D, 0), 2),
+                'data_rate_bps': int(p.get(0x0506, 0)),
             },
             'payload': {
                 'mode': int(p.get(0x0600, 0)),

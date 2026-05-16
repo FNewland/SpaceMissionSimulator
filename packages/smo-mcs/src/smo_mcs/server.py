@@ -1947,15 +1947,18 @@ def main():
     parser.add_argument("--config", default="configs/eosat1/",
                         help="Config directory")
     parser.add_argument("--port", type=int, default=9090, help="HTTP port")
+    parser.add_argument("--tc-port", type=int, default=None,
+                        help="TC destination port (default: same host, port 8001)")
     parser.add_argument("--sim-epoch", default=None,
                         help="Fixed simulation epoch (ISO 8601 UTC, e.g. 2026-03-10T00:00:00Z). "
                              "If omitted, ground time uses real wall-clock UTC.")
     args = parser.parse_args()
 
     host, port = args.connect.rsplit(":", 1)
+    tc_port = args.tc_port if args.tc_port else 8001
     logging.basicConfig(level=logging.INFO)
     server = MCSServer(args.config, host, int(port), args.port,
-                       sim_epoch=args.sim_epoch)
+                       tc_port=tc_port, sim_epoch=args.sim_epoch)
     asyncio.run(server.start())
 
 

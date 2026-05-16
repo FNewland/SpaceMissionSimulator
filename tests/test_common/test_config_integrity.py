@@ -40,7 +40,7 @@ NEW_PROCEDURE_FILES = {
     "emergency/obc_reboot.md",
 }
 
-EXPECTED_MANUAL_FILE_COUNT = 15
+EXPECTED_MANUAL_FILE_COUNT = 18
 
 
 def _load_yaml(relative_path):
