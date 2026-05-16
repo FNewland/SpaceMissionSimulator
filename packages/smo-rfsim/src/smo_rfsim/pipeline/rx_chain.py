@@ -76,6 +76,8 @@ class GroundStationRX(threading.Thread):
         self.good_frames = 0
         self.bad_frames = 0
         self.packets_recovered = 0
+        self.rs_failures = 0
+        self.fecf_failures = 0
         self._lock = threading.Lock()
 
     @property
@@ -93,6 +95,10 @@ class GroundStationRX(threading.Thread):
     @property
     def frame_sync_state(self) -> SyncState:
         return self._frame_sync.state
+
+    @property
+    def flywheel_misses(self) -> int:
+        return self._frame_sync.flywheel_misses
 
     def get_constellation(self, max_points: int = 128) -> list[list[float]]:
         """Return recent demodulated I/Q points from the Costas loop output."""
@@ -185,6 +191,7 @@ class GroundStationRX(threading.Thread):
             if not ok:
                 with self._lock:
                     self.bad_frames += 1
+                    self.rs_failures += 1
                 return
             frame_data = bytes(rs_out)
 
@@ -193,6 +200,7 @@ class GroundStationRX(threading.Thread):
         if parsed is None:
             with self._lock:
                 self.bad_frames += 1
+                self.fecf_failures += 1
             return
 
         with self._lock:

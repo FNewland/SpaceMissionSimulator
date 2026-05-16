@@ -54,6 +54,7 @@ class PipelineCoordinator:
         # Packet queues
         self._tm_packet_queue: queue.Queue[bytes] = queue.Queue(maxsize=500)
         self._recovered_queue: queue.Queue[bytes] = queue.Queue(maxsize=500)
+        self._recovered_queue_drops: int = 0
 
         # TX stage
         self._tx = SpacecraftTX(
@@ -141,6 +142,7 @@ class PipelineCoordinator:
         try:
             self._recovered_queue.put_nowait(packet)
         except queue.Full:
+            self._recovered_queue_drops += 1
             logger.warning("Recovered packet dropped: queue full (%d)",
                            self._recovered_queue.maxsize)
 
@@ -266,6 +268,10 @@ class PipelineCoordinator:
         return self._rx.bad_frames
 
     @property
+    def flywheel_misses(self) -> int:
+        return self._rx.flywheel_misses
+
+    @property
     def tx_stats(self) -> dict:
         return {
             "frames_transmitted": self._tx.frames_transmitted,
@@ -275,6 +281,26 @@ class PipelineCoordinator:
             "rx_buffer_depth": self._channel_to_rx.depth,
             "tx_buffer_overflows": self._tx_to_channel.overflow_count,
             "rx_buffer_overflows": self._channel_to_rx.overflow_count,
+            "tm_queue_depth": self._tm_packet_queue.qsize(),
+            "recovered_queue_depth": self._recovered_queue.qsize(),
+        }
+
+    def get_diagnostics(self) -> dict:
+        """Snapshot of all pipeline counters for loss diagnosis."""
+        return {
+            "tx_frames_transmitted": self._tx.frames_transmitted,
+            "tx_data_frames": self._tx.data_frames,
+            "tx_idle_frames": self._tx.idle_frames,
+            "tx_packet_drops": self._tx.packet_drops,
+            "tx_buffer_overflows": self._tx_to_channel.overflow_count,
+            "rx_buffer_overflows": self._channel_to_rx.overflow_count,
+            "rx_good_frames": self._rx.good_frames,
+            "rx_bad_frames": self._rx.bad_frames,
+            "rx_rs_failures": self._rx.rs_failures,
+            "rx_fecf_failures": self._rx.fecf_failures,
+            "rx_packets_recovered": self._rx.packets_recovered,
+            "rx_flywheel_misses": self._rx.flywheel_misses,
+            "recovered_queue_drops": self._recovered_queue_drops,
             "tm_queue_depth": self._tm_packet_queue.qsize(),
             "recovered_queue_depth": self._recovered_queue.qsize(),
         }

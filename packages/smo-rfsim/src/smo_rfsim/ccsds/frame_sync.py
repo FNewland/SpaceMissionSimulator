@@ -47,6 +47,11 @@ class FrameSynchronizer:
         self._frame_offset: Optional[int] = None
         self.total_frames = 0
 
+    @property
+    def flywheel_misses(self) -> int:
+        """Current consecutive flywheel miss count (resets on good ASM or lock loss)."""
+        return self._flywheel_misses
+
     def feed(self, data: bytes) -> list[bytes]:
         """Feed raw bytes and return any complete frames extracted (without ASM)."""
         self._buffer.extend(data)
