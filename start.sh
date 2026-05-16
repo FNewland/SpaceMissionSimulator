@@ -72,23 +72,23 @@ sleep 2
 
 # ── RF Bridge (must start before MCS so it's listening) ──
 RFSIM_MSG=""
-CORTEX_MSG=""
+RADIO_MSG=""
 if [ -n "$RF_MODE" ]; then
     RFSIM_VENV="$SCRIPT_DIR/.venv-rfsim"
     if [ -d "$RFSIM_VENV" ]; then
         echo "==> Starting RF Bridge in $RF_MODE mode (Python 3.14 + GNU Radio)..."
         "$RFSIM_VENV/bin/smo-rfsim" \
             --config "$SCRIPT_DIR/configs/eosat1/rfsim.yaml" \
-            --mode "$RF_MODE" --cortex-web &
+            --mode "$RF_MODE" --radio-web &
     else
         echo "==> Starting RF Bridge in $RF_MODE mode (standard venv)..."
         smo-rfsim --config "$SCRIPT_DIR/configs/eosat1/rfsim.yaml" \
-                  --mode "$RF_MODE" --cortex-web &
+                  --mode "$RF_MODE" --radio-web &
     fi
     RFSIM_PID=$!
     sleep 2
     RFSIM_MSG="  RF Bridge:        mode=$RF_MODE  (MCS→TM:8012, TC:8011)"
-    CORTEX_MSG="  Cortex Status:    http://localhost:8094"
+    RADIO_MSG="  Radio Status:     http://localhost:8094"
 fi
 
 # Start MCS — in RF mode, connect through the bridge; otherwise direct to sim
@@ -145,7 +145,7 @@ echo "  Orbit Tools:      http://localhost:8093"
 echo "  Documentation:    http://localhost:8095"
 if [ -n "$RFSIM_MSG" ]; then
     echo "$RFSIM_MSG"
-    echo "$CORTEX_MSG"
+    echo "$RADIO_MSG"
 fi
 echo "========================================="
 if [ -n "$RF_MODE" ]; then

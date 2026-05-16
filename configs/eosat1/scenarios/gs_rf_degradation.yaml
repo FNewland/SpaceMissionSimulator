@@ -1,0 +1,47 @@
+name: "Ground Station RF Chain Degradation"
+difficulty: INTERMEDIATE
+duration_s: 1800
+briefing: |
+  During a routine pass, the ground station LNA begins degrading due to
+  a failing pre-amplifier. Simultaneously, the antenna tracking accuracy
+  degrades due to a servo motor issue. The operator must diagnose whether
+  the signal degradation is from the space segment (spacecraft PA/antenna)
+  or the ground segment (LNA/tracking), and take appropriate action.
+
+  This scenario requires the RF bridge in FRAME mode. The ground failures
+  are injected via the Radio UI API, while space segment failures use
+  the instructor interface.
+
+  Start with: SMO_RF_MODE=FRAME ./start.sh
+
+events:
+  - time_offset_s: 60
+    action: inject
+    params:
+      subsystem: ttc
+      failure: high_ber
+      magnitude: 0.3
+      onset: gradual
+      onset_duration_s: 120
+    note: "Mild space segment BER degradation (ionospheric interference)"
+
+  - time_offset_s: 180
+    action: ground_failure
+    params:
+      failure: lna_degradation
+      magnitude: 0.5
+    note: "Ground LNA pre-amp begins failing (3 dB noise increase)"
+
+  - time_offset_s: 360
+    action: ground_failure
+    params:
+      failure: antenna_mispoint
+      magnitude: 0.3
+    note: "Antenna servo drift causes 3 dB pointing loss"
+
+expected_responses:
+  - { category: detect, description: "Detect Eb/N0 dropping and BER rising on Radio display" }
+  - { category: isolate, description: "Compare RSSI vs Eb/N0 to distinguish space vs ground degradation" }
+  - { category: isolate, description: "Check ground equipment status (LNA, tracking) on Radio failure panel" }
+  - { category: recover, description: "If ground: clear LNA failure, re-calibrate tracking" }
+  - { category: recover, description: "If space: command PA power increase or switch to redundant transponder" }

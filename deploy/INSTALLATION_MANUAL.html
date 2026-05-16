@@ -352,7 +352,7 @@ li { margin-bottom: 4px; color: var(--text-dim); }
   <tr><td><strong>MCS</strong></td><td>smo-mcs</td><td>Mission Control System — 6 operator positions</td><td>9090 (HTTP/WS)</td></tr>
   <tr><td><strong>Planner</strong></td><td>smo-planner</td><td>Mission planning, scheduling, budgets, imaging</td><td>9091 (HTTP)</td></tr>
   <tr><td><strong>Gateway</strong></td><td>smo-gateway</td><td>TM/TC relay for multi-site MCS deployments</td><td>10025 (TCP)</td></tr>
-  <tr><td><strong>RF Sim</strong></td><td>smo-rfsim</td><td>CCSDS framing, channel coding, RF channel model</td><td>8011 (TC), 8012 (TM), 8094 (Cortex)</td></tr>
+  <tr><td><strong>RF Sim</strong></td><td>smo-rfsim</td><td>CCSDS framing, channel coding, RF channel model</td><td>8011 (TC), 8012 (TM), 8094 (Radio)</td></tr>
 </table>
 
 <h3>Auxiliary Tools</h3>
@@ -360,7 +360,7 @@ li { margin-bottom: 4px; color: var(--text-dim); }
   <tr><th>Tool</th><th>File</th><th>Default Port</th><th>Purpose</th></tr>
   <tr><td>Delayed TM Viewer</td><td>tools/delayed_tm_viewer.py</td><td>8092</td><td>Browse stored TM dump files</td></tr>
   <tr><td>Orbit Tools</td><td>tools/orbit_tools.py</td><td>8093</td><td>TLE/state vector to TC command converter</td></tr>
-  <tr><td>Cortex Web UI</td><td>(smo-rfsim built-in)</td><td>8094</td><td>Real-time RF link status dashboard</td></tr>
+  <tr><td>Radio Web UI</td><td>(smo-rfsim built-in)</td><td>8094</td><td>Real-time RF link status dashboard</td></tr>
   <tr><td>Documentation Viewer</td><td>tools/doc_viewer.py</td><td>8095</td><td>Browse mission documentation in-browser</td></tr>
 </table>
 
@@ -375,7 +375,7 @@ li { margin-bottom: 4px; color: var(--text-dim); }
        │  ┌─────────────────┴─────────────────────┐  (optional)
        │  │           RF BRIDGE                    │
        │  │  sim TC:8001/TM:8002 ↔ MCS TC:8011/TM:8012  │
-       │  │  Cortex Web UI :8094                   │
+       │  │  Radio Web UI :8094                   │
        │  └─────────────────┬─────────────────────┘
        │                    │
 ┌──────▼────────────────────▼─────────────────────────────────┐
@@ -498,7 +498,7 @@ cd SpaceMissionSimulator
 ./start.sh --rf
 
 # Additional UI available:
-#    Cortex RF Status: http://localhost:8094</code></pre>
+#    Radio RF Status: http://localhost:8094</code></pre>
 
 <!-- ══════════════════════ 4. FULL INSTALL ══════════════════════ -->
 <h2 id="full-install">4. Full Installation Guide</h2>
@@ -710,7 +710,7 @@ Machine D (Gateway):     192.168.1.103  [optional]
 │ TC:8001     │◄────│ TC:8001 ←→ TC:8011│────►│ TC:8011 │
 │ TM:8002     │────►│ TM:8002 ←→ TM:8012│────►│ TM:8012 │
 │ WS:8080     │────►│ WS feedback       │     │ :9090   │
-└─────────────┘     │ Cortex UI: :8094  │     └─────────┘
+└─────────────┘     │ Radio UI: :8094  │     └─────────┘
                     │                   │
                     │ CCSDS Framing:    │
                     │  TM: 1115B frames │
@@ -772,7 +772,7 @@ Machine D (Gateway):     192.168.1.103  [optional]
   <tr><td><code>channel.ber_target</code></td><td>1.0e-6</td><td>Target bit error rate</td></tr>
   <tr><td><code>network.mcs_tm_port</code></td><td>8012</td><td>TM port exposed to MCS</td></tr>
   <tr><td><code>network.mcs_tc_port</code></td><td>8011</td><td>TC port exposed to MCS</td></tr>
-  <tr><td><code>network.cortex_port</code></td><td>8094</td><td>Cortex web UI port</td></tr>
+  <tr><td><code>network.radio_port</code></td><td>8094</td><td>Radio web UI port</td></tr>
 </table>
 
 <h3>6.6 Mission Configuration</h3>
@@ -922,7 +922,7 @@ pip install -e packages/smo-rfsim</code></pre>
 export SMO_RF_MODE=FRAME
 ./start.sh</code></pre>
 
-<h3>10.4 Cortex Web UI</h3>
+<h3>10.4 Radio Web UI</h3>
 <p>When the RF bridge is running, a real-time status dashboard is available at <code>http://localhost:8094</code>, showing:</p>
 <ul>
   <li>Current Eb/N0 and BER</li>
@@ -1031,7 +1031,7 @@ ipconfig | findstr "IPv4"</code></pre>
   <tr><td>Gateway</td><td>10025</td><td>TCP</td><td>Inbound</td><td>MCS relay connections</td></tr>
   <tr><td>RF Bridge</td><td>8011</td><td>TCP</td><td>Inbound</td><td>TC from MCS (via bridge)</td></tr>
   <tr><td>RF Bridge</td><td>8012</td><td>TCP</td><td>Inbound</td><td>TM to MCS (via bridge)</td></tr>
-  <tr><td>RF Bridge</td><td>8094</td><td>TCP</td><td>Inbound</td><td>Cortex web UI</td></tr>
+  <tr><td>RF Bridge</td><td>8094</td><td>TCP</td><td>Inbound</td><td>Radio web UI</td></tr>
   <tr><td>Tools</td><td>8092-8095</td><td>TCP</td><td>Inbound</td><td>Auxiliary tool web UIs</td></tr>
 </table>
 
@@ -1177,7 +1177,7 @@ pytest tests/ -v -s</code></pre>
 
 <h3>17.5 RF Simulation Bridge</h3>
 <ul>
-  <li><strong>Entry point:</strong> <code>smo-rfsim --config configs/eosat1/rfsim.yaml --mode FRAME [--cortex-web]</code></li>
+  <li><strong>Entry point:</strong> <code>smo-rfsim --config configs/eosat1/rfsim.yaml --mode FRAME [--radio-web]</code></li>
   <li><strong>CCSDS Transfer Framing:</strong> TM frames (1115B, ASM, FECF), TC CLTUs (BCH 64/56)</li>
   <li><strong>Channel coding:</strong> RS(255,223) via reedsolo, rate-1/2 K=7 convolutional + Viterbi</li>
   <li><strong>Channel model:</strong> Eb/N0-based BER injection, AWGN, Doppler, path loss</li>

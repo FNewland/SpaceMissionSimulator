@@ -405,7 +405,7 @@ if $PASS && ! $INSTALL_FAIL; then
     echo "    MCS:         http://localhost:9090"
     echo "    Planner:     http://localhost:9091"
     if $INSTALL_RFSIM; then
-        echo "    Cortex RF:   http://localhost:8094  (when RF bridge active)"
+        echo "    Radio RF:    http://localhost:8094  (when RF bridge active)"
     fi
     echo ""
     echo "  Documentation:"

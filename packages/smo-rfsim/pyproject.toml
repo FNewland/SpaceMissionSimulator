@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "smo-rfsim"
+version = "0.1.0"
+description = "SMO RF Simulation Bridge — CCSDS Transfer Framing and RF Channel"
+requires-python = ">=3.10"
+dependencies = [
+    "smo-common",
+    "aiohttp>=3.9",
+    "reedsolo>=1.7",
+]
+
+[project.optional-dependencies]
+gnuradio = []  # GNU Radio installed via system package manager
+radio-web = ["aiohttp>=3.9"]
+rich = ["rich>=13.0"]
+
+[project.scripts]
+smo-rfsim = "smo_rfsim.bridge:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/smo_rfsim"]

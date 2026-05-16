@@ -1,0 +1,40 @@
+name: "Ground Antenna Tracking Loss During Critical Pass"
+difficulty: ADVANCED
+duration_s: 1200
+briefing: |
+  During a critical data downlink pass, the ground station antenna tracking
+  system fails completely, causing total loss of signal. The operator must
+  detect the loss, diagnose it as a ground issue (not spacecraft), attempt
+  to restore tracking, and if unsuccessful, plan recovery for the next pass.
+
+  Combined with a spacecraft transponder that has been commanded to high-power
+  mode, the operator must also manage the PA thermal budget since the spacecraft
+  continues transmitting even without ground reception.
+
+  Start with: SMO_RF_MODE=FRAME ./start.sh
+
+events:
+  - time_offset_s: 30
+    action: ground_failure
+    params:
+      failure: tracking_loss
+      magnitude: 1.0
+    note: "Complete antenna tracking loss — 15 dB penalty, total signal loss"
+
+  - time_offset_s: 300
+    action: inject
+    params:
+      subsystem: ttc
+      failure: pa_overheat
+      magnitude: 0.5
+      onset: gradual
+      onset_duration_s: 300
+    note: "PA heating with no ground reception to trigger duty cycling"
+
+expected_responses:
+  - { category: detect, description: "Detect total frame sync loss and Eb/N0 collapse on Radio" }
+  - { category: isolate, description: "Verify spacecraft TM was flowing before loss (not a spacecraft issue)" }
+  - { category: isolate, description: "Check Radio ground failure panel for tracking_loss" }
+  - { category: recover, description: "Clear tracking failure via Radio API or mechanical reset" }
+  - { category: recover, description: "After tracking restored, check PA temp and reduce TX if overheating" }
+  - { category: plan, description: "If tracking unrecoverable, schedule recovery for next ground station pass" }
