@@ -117,6 +117,7 @@ class TMFrameBuilder:
         self._mc_count = 0
         self._vc_counts: dict[int, int] = {}
         self._vc_buffers: dict[int, bytearray] = {}
+        self._pkt_offsets: dict[int, list[int]] = {}
 
     def _next_mc_count(self) -> int:
         c = self._mc_count
@@ -133,9 +134,16 @@ class TMFrameBuilder:
             self._vc_buffers[vcid] = bytearray()
         return self._vc_buffers[vcid]
 
+    def _get_pkt_offsets(self, vcid: int) -> list:
+        if vcid not in self._pkt_offsets:
+            self._pkt_offsets[vcid] = []
+        return self._pkt_offsets[vcid]
+
     def add_packet(self, packet: bytes, vcid: int = 0) -> list[TMFrame]:
         """Add an ECSS packet and return any complete frames produced."""
         buf = self._get_buffer(vcid)
+        offsets = self._get_pkt_offsets(vcid)
+        offsets.append(len(buf))  # record where this packet starts
         buf.extend(packet)
         return self._drain_frames(vcid)
 
@@ -165,41 +173,35 @@ class TMFrameBuilder:
     def _drain_frames(self, vcid: int) -> list[TMFrame]:
         """Extract as many complete frames as possible from the VC buffer.
 
-        Computes the correct First Header Pointer (FHP) for each frame
-        by scanning the data zone for CCSDS packet boundaries. The FHP
-        tells the receiver where the first packet header starts, allowing
-        it to resynchronise after frame loss.
+        Uses the packet-start offsets recorded by add_packet() to compute
+        the correct First Header Pointer (FHP) for each frame. The FHP
+        tells the receiver where the first new packet header starts,
+        allowing resynchronisation after frame loss.
         """
         buf = self._get_buffer(vcid)
+        offsets = self._get_pkt_offsets(vcid)
         frames = []
+        consumed = 0  # total bytes consumed from buffer so far
         while len(buf) >= self.data_zone_length:
             chunk = bytes(buf[:self.data_zone_length])
             del buf[:self.data_zone_length]
-            # Compute FHP: find the first CCSDS packet header in this chunk.
-            # Walk through the chunk using packet lengths to find boundaries.
-            fhp = FIRST_HEADER_POINTER_IDLE  # assume no new packet starts
-            offset = 0
-            # If this is the first frame or follows a frame where we know
-            # the alignment, byte 0 is a packet start.
-            # Track packet boundaries by reading length fields.
-            while offset + 6 <= len(chunk):
-                pkt_data_len = struct.unpack('>H', chunk[offset+4:offset+6])[0]
-                pkt_total = 6 + pkt_data_len + 1
-                if pkt_total > 65535 or pkt_total < 7:
-                    break  # not a valid packet header
-                if fhp == FIRST_HEADER_POINTER_IDLE:
-                    fhp = offset  # first packet header found
-                next_offset = offset + pkt_total
-                if next_offset > len(chunk):
-                    break  # packet spans into next frame
-                offset = next_offset
-                # Skip idle fill
-                while offset < len(chunk) and chunk[offset] == 0xFE:
-                    offset += 1
-            if fhp == FIRST_HEADER_POINTER_IDLE:
-                fhp = 0  # fallback: assume packet starts at byte 0
+            # Find the first packet-start offset that falls within this chunk
+            chunk_start = consumed
+            chunk_end = consumed + self.data_zone_length
+            fhp = FIRST_HEADER_POINTER_IDLE
+            for off in offsets:
+                if chunk_start <= off < chunk_end:
+                    fhp = off - chunk_start
+                    break
+            # Remove offsets we've passed
+            while offsets and offsets[0] < chunk_end:
+                offsets.pop(0)
             frame = self._build_frame(vcid, chunk, fhp)
             frames.append(frame)
+            consumed = chunk_end
+        # Adjust remaining offsets relative to new buffer start
+        for i in range(len(offsets)):
+            offsets[i] -= consumed
         return frames
 
     def _build_frame(self, vcid: int, data_zone: bytes,
@@ -269,30 +271,37 @@ class TMFrameParser:
 
         fhp = frame.header.first_header_pointer
 
-        # If FHP indicates no packet starts in this frame, just append
-        # the data (it's a continuation of a spanning packet).
         if fhp == FIRST_HEADER_POINTER_IDLE:
+            # No new packet starts in this frame — all data is
+            # continuation of a spanning packet from the previous frame.
+            self._reassembly_buffer.extend(frame.data)
+        elif fhp == 0:
+            # A packet starts at byte 0. If the reassembly buffer has
+            # a partial packet that we were building, try to extract it
+            # first (it won't succeed since we don't have its tail, but
+            # _extract_from_buffer handles that gracefully). Then start
+            # fresh with this frame's data.
+            if self._reassembly_buffer:
+                # Check if the partial data could form a valid packet
+                # (i.e., we have a valid header with a length we're
+                # waiting for). If not, it's orphaned — discard it.
+                if len(self._reassembly_buffer) >= 6:
+                    dl = struct.unpack('>H', self._reassembly_buffer[4:6])[0]
+                    needed = 6 + dl + 1
+                    if needed > 4096 or needed <= len(self._reassembly_buffer):
+                        # Corrupted or already complete — discard
+                        self._reassembly_buffer.clear()
+                    # else: valid partial, but we lost its tail — discard
+                    else:
+                        self._reassembly_buffer.clear()
+                else:
+                    self._reassembly_buffer.clear()
             self._reassembly_buffer.extend(frame.data)
         else:
-            # FHP points to the first packet header in this frame's data.
-            # Any data before FHP is the tail of a spanning packet from
-            # the previous frame — append it to complete that packet.
-            if fhp > 0:
-                self._reassembly_buffer.extend(frame.data[:fhp])
-            else:
-                # FHP == 0: packet starts at byte 0, no continuation data.
-                # If the reassembly buffer has orphaned partial data from
-                # a lost frame, discard it — we can't recover that packet.
-                if self._reassembly_buffer:
-                    logger.debug("FHP resync: discarding %d orphaned bytes",
-                                 len(self._reassembly_buffer))
-                    self._reassembly_buffer.clear()
-
-            # Now extract the completed spanning packet (if any) before
-            # switching to the new data starting at FHP.
+            # FHP > 0: data before FHP completes a spanning packet,
+            # data from FHP onwards starts a new packet.
+            self._reassembly_buffer.extend(frame.data[:fhp])
             packets_pre = self._extract_from_buffer()
-
-            # Replace buffer with data from FHP onwards (fresh alignment)
             self._reassembly_buffer = bytearray(frame.data[fhp:])
             packets_post = self._extract_from_buffer()
             return packets_pre + packets_post
