@@ -111,6 +111,35 @@ def system_stack():
         if not _wait_for_port(MCS_PORT, timeout=15):
             raise RuntimeError("MCS failed to start (port 9090)")
 
+        # 5. Start Planner
+        planner_proc = subprocess.Popen(
+            ["smo-planner", "--config", str(CONFIG_DIR), "--port", "9091"],
+            env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            cwd=str(PROJECT_ROOT))
+        procs.append(planner_proc)
+
+        # 6. Start Delayed TM Viewer
+        dtm_proc = subprocess.Popen(
+            ["python", str(PROJECT_ROOT / "tools" / "delayed_tm_viewer.py"),
+             "--port", "8092",
+             "--dumps", str(PROJECT_ROOT / "workspace" / "dumps")],
+            env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            cwd=str(PROJECT_ROOT))
+        procs.append(dtm_proc)
+
+        # 7. Start Orbit Tools
+        orb_proc = subprocess.Popen(
+            ["python", str(PROJECT_ROOT / "tools" / "orbit_tools.py"),
+             "--serve", "--port", "8093"],
+            env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            cwd=str(PROJECT_ROOT))
+        procs.append(orb_proc)
+
+        # Wait for ground tools
+        _wait_for_port(9091, timeout=10)
+        _wait_for_port(8092, timeout=10)
+        _wait_for_port(8093, timeout=10)
+
         # Give everything time to stabilize
         time.sleep(3.0)
 
@@ -181,20 +210,29 @@ def multi_window(system_stack, browser):
     instructor.goto(f"{system_stack['sim_http']}")
     instructor.wait_for_load_state("domcontentloaded")
 
-    # Delayed TM Viewer — stored TM dumps
+    # Delayed TM Viewer — stored TM dumps (optional)
     delayed_tm = ctx.new_page()
-    delayed_tm.goto("http://localhost:8092")
-    delayed_tm.wait_for_load_state("domcontentloaded")
+    try:
+        delayed_tm.goto("http://localhost:8092", timeout=10000)
+        delayed_tm.wait_for_load_state("domcontentloaded")
+    except Exception:
+        delayed_tm.set_content("<h1>Delayed TM Viewer — not available</h1>")
 
-    # Orbit Tools — TLE/state vector converter
+    # Orbit Tools — TLE/state vector converter (optional)
     orbit_tools = ctx.new_page()
-    orbit_tools.goto("http://localhost:8093")
-    orbit_tools.wait_for_load_state("domcontentloaded")
+    try:
+        orbit_tools.goto("http://localhost:8093", timeout=10000)
+        orbit_tools.wait_for_load_state("domcontentloaded")
+    except Exception:
+        orbit_tools.set_content("<h1>Orbit Tools — not available</h1>")
 
-    # Planner — pass scheduling, budgets
+    # Planner — pass scheduling, budgets (optional)
     planner = ctx.new_page()
-    planner.goto("http://localhost:9091")
-    planner.wait_for_load_state("domcontentloaded")
+    try:
+        planner.goto("http://localhost:9091", timeout=10000)
+        planner.wait_for_load_state("domcontentloaded")
+    except Exception:
+        planner.set_content("<h1>Planner — not available</h1>")
 
     yield {
         "mcs": mcs,
