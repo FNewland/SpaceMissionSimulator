@@ -60,6 +60,10 @@ class FrameSynchronizer:
         data is bit-inverted before returning so upper layers see correct bytes.
         """
         self._buffer.extend(data)
+        # Cap buffer to prevent unbounded growth during persistent ASM failure
+        max_buf = self.frame_length_with_asm * 10
+        if len(self._buffer) > max_buf:
+            del self._buffer[:len(self._buffer) - max_buf]
         frames = []
         while True:
             frame = self._try_extract()

@@ -182,7 +182,7 @@ class MCSServer:
         self._verification_log: deque[dict] = deque(maxlen=200)
 
         # Shift handover log
-        self._handover_log: list[dict] = []
+        self._handover_log: deque = deque(maxlen=500)
 
         # GO/NO-GO coordination state
         self._go_nogo_active = False
@@ -1357,7 +1357,7 @@ class MCSServer:
     # ── Shift handover ───────────────────────────────────────────────
 
     async def _handle_handover_get(self, request):
-        return web.json_response({"notes": self._handover_log})
+        return web.json_response({"notes": list(self._handover_log)})
 
     async def _handle_handover_post(self, request):
         import time as _time
