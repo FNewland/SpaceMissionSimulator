@@ -11,7 +11,7 @@ import logging
 from enum import Enum
 from typing import Optional
 
-from .asm import ASM_BYTES, ASM_LENGTH, correlate_asm
+from .asm import ASM_BYTES, ASM_LENGTH, correlate_asm, correlate_asm_with_inversion
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,7 @@ class FrameSynchronizer:
         self._flywheel_misses = 0
         self._frame_offset: Optional[int] = None
         self.total_frames = 0
+        self._inverted = False  # True if 180° BPSK phase ambiguity detected
 
     @property
     def flywheel_misses(self) -> int:
@@ -53,13 +54,19 @@ class FrameSynchronizer:
         return self._flywheel_misses
 
     def feed(self, data: bytes) -> list[bytes]:
-        """Feed raw bytes and return any complete frames extracted (without ASM)."""
+        """Feed raw bytes and return any complete frames extracted (without ASM).
+
+        If the stream is inverted (180° BPSK phase ambiguity), all frame
+        data is bit-inverted before returning so upper layers see correct bytes.
+        """
         self._buffer.extend(data)
         frames = []
         while True:
             frame = self._try_extract()
             if frame is None:
                 break
+            if self._inverted:
+                frame = bytes(b ^ 0xFF for b in frame)
             frames.append(frame)
         return frames
 
@@ -72,13 +79,22 @@ class FrameSynchronizer:
             return self._state_lock()
 
     def _state_search(self) -> Optional[bytes]:
-        """Scan for ASM anywhere in the buffer."""
-        pos = correlate_asm(bytes(self._buffer), 0, self.max_bit_errors)
+        """Scan for ASM (or inverted ASM) anywhere in the buffer.
+
+        BPSK receivers can lock at 180° phase offset, inverting all bits.
+        If the inverted ASM is found, we flag _inverted=True and invert
+        all frame data on extraction so the upper layers see correct bytes.
+        """
+        pos, inverted = correlate_asm_with_inversion(
+            bytes(self._buffer), 0, self.max_bit_errors)
         if pos < 0:
             # Keep last ASM_LENGTH-1 bytes in case ASM straddles feed boundary
             if len(self._buffer) > ASM_LENGTH:
                 del self._buffer[:len(self._buffer) - ASM_LENGTH + 1]
             return None
+        if inverted and not self._inverted:
+            logger.info("Frame sync: detected inverted ASM (180° phase ambiguity)")
+        self._inverted = inverted
         # Found a candidate ASM — strip everything up to and including ASM
         self._frame_offset = pos
         del self._buffer[:pos + ASM_LENGTH]
@@ -110,9 +126,9 @@ class FrameSynchronizer:
 
         if len(self._buffer) < ASM_LENGTH + self.frame_length:
             return None
-        # Check for ASM at position 0
+        # Check for ASM (or inverted ASM) at position 0
         candidate = bytes(self._buffer[:ASM_LENGTH])
-        pos = correlate_asm(candidate, 0, self.max_bit_errors)
+        pos, _ = correlate_asm_with_inversion(candidate, 0, self.max_bit_errors)
         if pos == 0:
             # ASM found at expected position
             del self._buffer[:ASM_LENGTH]
@@ -144,9 +160,9 @@ class FrameSynchronizer:
         if len(self._buffer) < ASM_LENGTH + self.frame_length:
             return None
 
-        # Check for ASM at position 0 first (fast path)
+        # Check for ASM (or inverted ASM) at position 0 first (fast path)
         candidate = bytes(self._buffer[:ASM_LENGTH])
-        pos = correlate_asm(candidate, 0, self.max_bit_errors)
+        pos, _ = correlate_asm_with_inversion(candidate, 0, self.max_bit_errors)
         if pos == 0:
             del self._buffer[:ASM_LENGTH]
             frame_data = bytes(self._buffer[:self.frame_length])
@@ -160,7 +176,8 @@ class FrameSynchronizer:
         search_range = min(3, len(self._buffer) - ASM_LENGTH - self.frame_length)
         for offset in range(1, search_range + 1):
             candidate = bytes(self._buffer[offset:offset + ASM_LENGTH])
-            if correlate_asm(candidate, 0, self.max_bit_errors) == 0:
+            pos_w, _ = correlate_asm_with_inversion(candidate, 0, self.max_bit_errors)
+            if pos_w == 0:
                 # Found ASM at a small offset — re-align
                 logger.debug("Frame sync: ASM found at offset +%d, realigning",
                              offset)
