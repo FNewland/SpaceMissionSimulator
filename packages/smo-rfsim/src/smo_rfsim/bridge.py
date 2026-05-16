@@ -243,11 +243,18 @@ class RFSimBridge:
                 if self.mode == RFSimMode.PACKET:
                     await self._broadcast_tm(packet)
                 elif self.mode == RFSimMode.RF and self._pipeline:
-                    # Enable TX — sim is sending packets = downlink active
+                    # Enable TX if not already on AND we have line of sight.
+                    # The sim's downlink_active gate means receiving a packet
+                    # here proves the sim thinks the link is up. But the
+                    # bridge's _sim_ws_feedback may have already set
+                    # _link_in_view=False (LOS), in which case we should
+                    # not re-enable TX — the packet is a stale remnant.
                     if not self._pipeline._tx._transmitting:
-                        logger.info("TM packet received — enabling pipeline TX")
-                        self._pipeline.set_link_in_view(True)
-                        self._pipeline.set_transmitting(True)
+                        if self._pipeline._link_in_view:
+                            logger.info("TM packet received — enabling pipeline TX")
+                            self._pipeline.set_transmitting(True)
+                        else:
+                            logger.debug("TM packet received but no LOS — TX stays off")
                     last_packet_time = asyncio.get_event_loop().time()
                     self._pipeline.enqueue_tm_packet(packet)
                 elif self.mode == RFSimMode.FRAME:

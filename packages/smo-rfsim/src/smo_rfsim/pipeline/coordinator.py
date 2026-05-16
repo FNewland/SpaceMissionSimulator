@@ -209,8 +209,12 @@ class PipelineCoordinator:
         When not in view: uplink blocked, TX off, channel outputs noise.
         """
         self._link_in_view = in_view
-        # Channel only passes signal when in view AND TX is on
-        self._channel.set_link_active(in_view and self._tx._transmitting)
+        if not in_view:
+            # No line of sight — disable TX and channel
+            self._tx.set_transmitting(False)
+            self._channel.set_link_active(False)
+        else:
+            self._channel.set_link_active(self._tx._transmitting)
 
     def set_transmitting(self, on: bool):
         """Set whether the spacecraft PA is on (downlink carrier present).
