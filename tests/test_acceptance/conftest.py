@@ -80,6 +80,14 @@ class RFTestHarness:
             for i in range(4):
                 aocs._state.active_wheels[i] = True
 
+        # Disable watchdog to prevent reboot during test accumulation
+        if obdh and hasattr(obdh, "_state"):
+            obdh._state.watchdog_armed = False
+            obdh._state.watchdog_timer = 0
+
+        # Disable FDIR to prevent safe mode during rapid mode transitions
+        self.engine._fdir_enabled = False
+
         # Re-enable all HK SIDs
         for sid in self.engine._hk_enabled:
             self.engine._hk_enabled[sid] = True
