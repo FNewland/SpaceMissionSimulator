@@ -132,6 +132,9 @@ def system_stack():
                     pass
 
 
+RADIO_PORT = 8094
+
+
 @pytest.fixture(scope="module")
 def mcs_page(system_stack, browser):
     """Provide a Playwright page connected to the MCS."""
@@ -148,3 +151,57 @@ def mcs_page(system_stack, browser):
 
     yield page
     context.close()
+
+
+@pytest.fixture(scope="module")
+def multi_window(system_stack, browser):
+    """Provide three side-by-side browser windows: MCS, Radio, Instructor.
+
+    Returns a dict with 'mcs', 'radio', 'instructor' Page objects.
+    All three are visible simultaneously when using --headed.
+    """
+    # Screen layout: MCS (left half), Radio (top-right), Instructor (bottom-right)
+    ctx = browser.new_context(viewport={"width": 960, "height": 1080})
+
+    # MCS — main operator display
+    mcs = ctx.new_page()
+    mcs.goto(system_stack["mcs_url"])
+    try:
+        mcs.wait_for_selector("#ws-dot.connected", timeout=20000)
+    except Exception:
+        mcs.wait_for_load_state("domcontentloaded")
+
+    # Radio dashboard — RF lock indicators
+    radio = ctx.new_page()
+    radio.goto(f"http://localhost:{RADIO_PORT}")
+    radio.wait_for_load_state("domcontentloaded")
+
+    # Instructor — sim control, pass override, failures
+    instructor = ctx.new_page()
+    instructor.goto(f"{system_stack['sim_http']}")
+    instructor.wait_for_load_state("domcontentloaded")
+
+    # Delayed TM Viewer — stored TM dumps
+    delayed_tm = ctx.new_page()
+    delayed_tm.goto("http://localhost:8092")
+    delayed_tm.wait_for_load_state("domcontentloaded")
+
+    # Orbit Tools — TLE/state vector converter
+    orbit_tools = ctx.new_page()
+    orbit_tools.goto("http://localhost:8093")
+    orbit_tools.wait_for_load_state("domcontentloaded")
+
+    # Planner — pass scheduling, budgets
+    planner = ctx.new_page()
+    planner.goto("http://localhost:9091")
+    planner.wait_for_load_state("domcontentloaded")
+
+    yield {
+        "mcs": mcs,
+        "radio": radio,
+        "instructor": instructor,
+        "delayed_tm": delayed_tm,
+        "orbit_tools": orbit_tools,
+        "planner": planner,
+    }
+    ctx.close()
