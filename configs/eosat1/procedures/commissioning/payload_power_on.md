@@ -14,7 +14,7 @@ the baseline payload state required for subsequent cooler activation and imaging
 - [ ] COM-001 through COM-008 completed — platform fully commissioned
 - [ ] AOCS in SAFE_POINT mode (mode 2) minimum, preferably NOMINAL_POINT (mode 3)
 - [ ] `eps.bat_soc` (0x0101) > 75% (payload power-on adds ~15W load)
-- [ ] `eps.power_gen` (0x0107) > 100W (sunlit phase preferred)
+- [ ] `eps.power_gen` (0x0107) > 40W (sunlit phase, wings deployed)
 - [ ] OBC in NOMINAL mode
 - [ ] `tcs.temp_fpa` (0x0408) in range [+5C, +25C] (ambient, pre-cooler)
 - [ ] Bidirectional VHF/UHF link active with link margin > 6 dB
@@ -26,7 +26,7 @@ the baseline payload state required for subsequent cooler activation and imaging
 **TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
 **Verify:** `eps.bus_voltage` (0x0105) in range [27.5V, 28.5V] within 10s
 **Verify:** `eps.bat_soc` (0x0101) > 75% within 10s
-**Verify:** `eps.power_gen` (0x0107) > 100W within 10s
+**Verify:** `eps.power_gen` (0x0107) > 40W within 10s
 **Action:** Record pre-power-on bus voltage, battery SOC, and power generation as baseline.
 **GO/NO-GO:** EPS can support additional payload load
 

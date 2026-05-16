@@ -17,7 +17,20 @@ battery:
   soc_0_v: 21.5
   internal_r_ohm: 0.05
 
-platform_idle_power_w: 95.0
+obc_power_w: 15.0
+platform_idle_power_w: 70.0
+
+# Body-mounted panels + deployable wings on ±Y faces
+solar_panels:
+  px_area_m2: 0.060    # +X body face (3U x 2U = 300x200mm)
+  mx_area_m2: 0.060    # -X body face
+  py_area_m2: 0.030    # +Y body face (3U x 1U = 300x100mm)
+  my_area_m2: 0.030    # -Y body face
+  pz_area_m2: 0.060    # +Z body face (zenith)
+  mz_area_m2: 0.060    # -Z body face (nadir)
+  wing_py_area_m2: 0.240   # +Y deployable wing (2x 3U panels)
+  wing_my_area_m2: 0.240   # -Y deployable wing (2x 3U panels)
+  wing_deploy_time_s: 30.0 # Burn wire release + spring deployment
 payload_power_w: 45.0
 payload_standby_power_w: 8.0
 fpa_cooler_power_w: 15.0

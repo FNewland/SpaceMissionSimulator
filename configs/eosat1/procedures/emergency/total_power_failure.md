@@ -20,8 +20,8 @@ provides a staged recovery plan. No loads may be re-enabled until SoC exceeds 30
 ## Power Budget --- Minimum Survival Configuration
 | Subsystem | Component | Power (W) | Status |
 |---|---|---|---|
-| OBC | Flight computer (emergency mode) | 12 | ON --- essential |
-| TT&C | Transponder (receive only) | 8 | ON --- essential |
+| OBC | Flight computer (emergency mode) | 15 | ON --- essential |
+| TT&C | Transponder (receive only) | 5 | ON --- essential |
 | AOCS | Magnetorquers + sun sensor | 10 | ON --- for sun acquisition |
 | EPS | Power control unit | 5 | ON --- essential |
 | TCS | Battery heater (thermostat) | 8 | THERMOSTAT --- survival only |
@@ -30,8 +30,8 @@ provides a staged recovery plan. No loads may be re-enabled until SoC exceeds 30
 | AOCS | Reaction wheels (standby) | 2 | STANDBY |
 | **Total** | | **~45W** | |
 
-Solar array capability at sun-pointing: ~120W (BOL, 500km SSO). Eclipse fraction: ~37%.
-Orbit-average power generation at sun-pointing: ~76W. Margin over survival: ~31W for charging.
+Solar array capability at sun-pointing: ~64W (BOL, wings deployed, 450 km SSO). Eclipse fraction: ~37%.
+Orbit-average power generation at sun-pointing: ~35W. Margin over survival: limited — careful load management required.
 
 ## Procedure Steps
 
@@ -79,7 +79,7 @@ generation rate to 1/60s, disables non-essential data recording.
 **Monitor:** `eps.bus_voltage` (0x0105) --- must be stable or increasing.
 **Monitor:** `eps.bat_voltage` (0x0100) --- verify battery accepting charge (voltage > 27V).
 **Monitor:** `eps.power_gen` (0x0107) vs `eps.power_cons` (0x0106) --- confirm power-positive.
-**Expected:** At ~45W load and ~120W generation, SoC should increase ~2--3% per sunlit phase (~60 min).
+**Expected:** At ~32W minimum load and ~64W peak generation (~35W orbit-average), SoC recovery will be slow — expect ~1% per sunlit phase (~60 min).
 **GO/NO-GO:** Power-positive state confirmed (generation > consumption).
 
 ### Step 6 --- Eclipse Monitoring (CRITICAL)
@@ -88,7 +88,7 @@ generation rate to 1/60s, disables non-essential data recording.
 **Monitor:** `eps.bus_voltage` (0x0105) throughout eclipse --- must remain > 25.0V.
 **Monitor:** `tcs.temp_battery` (0x0407) --- verify battery heater thermostat activates if needed.
 **Duration:** Eclipse lasts ~35 minutes at 500km SSO.
-**Expected drain:** ~45W x 35 min = ~26 Wh consumed. Battery capacity ~180 Wh, so ~14% SoC consumed.
+**Expected drain:** ~32W x 35 min = ~19 Wh consumed. Battery capacity ~120 Wh, so ~16% SoC consumed.
 **GO/NO-GO:** Bus voltage remains > 25.0V throughout eclipse. If voltage drops below 25.0V,
 under-voltage protection will disconnect non-essential buses automatically.
 
@@ -122,10 +122,10 @@ under-voltage protection will disconnect non-essential buses automatically.
 
 ## Off-Nominal Handling
 - If bus voltage drops below 25.0V: under-voltage protection activates autonomously. Expect loss of TT&C until next sunlit phase. Monitor via ground station for beacon re-acquisition.
-- If SoC does not increase in sunlit phase: possible solar array failure. Compare `eps.sa_a_current` (0x0103) vs `eps.sa_b_current` (0x0104). If one array at zero, single-array survival is possible but with reduced margin (~60W generation).
+- If SoC does not increase in sunlit phase: possible solar array failure. Compare `eps.sa_a_current` (0x0103) vs `eps.sa_b_current` (0x0104). If one wing at zero, single-wing survival is possible but with reduced margin (~42W peak generation).
 - If battery temperature drops below -10 degC: battery heater thermostat may have failed. Command `HEATER_CONTROL(circuit=battery, on=true)` manually. Accept increased power consumption to prevent battery damage.
 - If `obdh.reboot_count` (0x030A) incrementing: OBC may be experiencing brown-out resets. Disable all remaining optional loads and accept reduced telemetry.
-- If AOCS cannot maintain sun-pointing: accept tumbling with degraded average power generation (~40W average). Survival is still possible if battery temperature maintained.
+- If AOCS cannot maintain sun-pointing: accept tumbling with degraded average power generation (~15-20W average). Survival is still possible if battery temperature maintained.
 
 ## Post-Conditions
 - [ ] `eps.bat_soc` (0x0101) > 30% and trending upward

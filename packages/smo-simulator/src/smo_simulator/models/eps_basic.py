@@ -29,7 +29,7 @@ PANEL_NORMALS = {
 # energised at power-on. Every switchable line defaults OFF — operators must
 # explicitly command equipment on after separation, matching real LEOP flow.
 POWER_LINE_DEFS = [
-    ("obc", False, True, 40.0, "OBC computer"),
+    ("obc", False, True, 15.0, "OBC computer"),
     ("ttc_rx", False, True, 5.0, "TTC receiver"),
     ("ttc_tx", True, False, 20.0, "TTC transmitter"),
     ("payload", True, False, 8.0, "Payload imager"),
@@ -100,6 +100,13 @@ class EPSState:
     sa_panel_degradation: dict = field(default_factory=lambda: {
         'px': 1.0, 'mx': 1.0, 'py': 1.0, 'my': 1.0, 'pz': 1.0, 'mz': 1.0
     })
+    # ── Deployable solar wings (±Y faces) ──
+    wing_py_deployed: bool = False     # +Y wing deployed
+    wing_my_deployed: bool = False     # -Y wing deployed
+    wing_py_deploying: bool = False    # +Y deployment in progress
+    wing_my_deploying: bool = False    # -Y deployment in progress
+    wing_deploy_timer: float = 0.0    # Deployment timer (seconds remaining)
+    wing_deploy_target: str = ""      # Which wing is deploying ("py" or "my")
     # ── Phase 4: Flight hardware realism ──
     bat_dod_pct: float = 25.0       # Depth of discharge (100 - SoC)
     bat_cycles: int = 0              # Charge/discharge cycle count
@@ -192,16 +199,24 @@ class EPSBasicModel(SubsystemModel):
             "eclipse_flag": 0x0108, "bat_current": 0x0109,
             "bat_capacity_wh": 0x010A,
         })
+        # OBC power (configurable, default matches POWER_LINE_DEFS)
+        self._obc_power_w = config.get("obc_power_w", 15.0)
         # Per-panel solar areas (6U cubesat body-mounted panels)
         panel_cfg = config.get("solar_panels", {})
-        self._panel_areas = {
-            'px': panel_cfg.get('px_area_m2', 0.06),  # 6U face ~200x300mm = 0.06 m2
+        self._panel_areas_body = {
+            'px': panel_cfg.get('px_area_m2', 0.06),
             'mx': panel_cfg.get('mx_area_m2', 0.06),
-            'py': panel_cfg.get('py_area_m2', 0.03),  # 6U short face ~100x300mm
+            'py': panel_cfg.get('py_area_m2', 0.03),
             'my': panel_cfg.get('my_area_m2', 0.03),
             'pz': panel_cfg.get('pz_area_m2', 0.06),
-            'mz': panel_cfg.get('mz_area_m2', 0.06),  # Nadir face (partially obstructed by payload)
+            'mz': panel_cfg.get('mz_area_m2', 0.06),
         }
+        # Deployable wing areas (added to ±Y body areas when deployed)
+        self._wing_py_area = panel_cfg.get('wing_py_area_m2', 0.24)
+        self._wing_my_area = panel_cfg.get('wing_my_area_m2', 0.24)
+        self._wing_deploy_time_s = panel_cfg.get('wing_deploy_time_s', 30.0)
+        # Effective panel areas (updated when wings deploy)
+        self._panel_areas = dict(self._panel_areas_body)
         # Load power line config overrides if present
         pl_cfg = config.get("power_lines", {})
         for line_name in POWER_LINE_DEFAULTS:
@@ -219,6 +234,27 @@ class EPSBasicModel(SubsystemModel):
             events_to_generate.append((0x010C, f"Eclipse entry: SoC={s.bat_soc_pct:.1f}%"))
         elif not s.in_eclipse and s._prev_in_eclipse:
             events_to_generate.append((0x010D, f"Eclipse exit: resuming solar generation"))
+
+        # ── Wing deployment tick ──
+        if s.wing_py_deploying or s.wing_my_deploying:
+            s.wing_deploy_timer -= dt
+            if s.wing_deploy_timer <= 0:
+                s.wing_deploy_timer = 0.0
+                if s.wing_py_deploying:
+                    s.wing_py_deployed = True
+                    s.wing_py_deploying = False
+                    self._panel_areas['py'] = self._panel_areas_body['py'] + self._wing_py_area
+                    events_to_generate.append((0x010E, f"+Y solar wing deployed: area now {self._panel_areas['py']:.3f} m2"))
+                if s.wing_my_deploying:
+                    s.wing_my_deployed = True
+                    s.wing_my_deploying = False
+                    self._panel_areas['my'] = self._panel_areas_body['my'] + self._wing_my_area
+                    events_to_generate.append((0x010F, f"-Y solar wing deployed: area now {self._panel_areas['my']:.3f} m2"))
+        # Keep panel areas in sync with deployment state (e.g. after state restore)
+        if s.wing_py_deployed and not s.wing_py_deploying:
+            self._panel_areas['py'] = self._panel_areas_body['py'] + self._wing_py_area
+        if s.wing_my_deployed and not s.wing_my_deploying:
+            self._panel_areas['my'] = self._panel_areas_body['my'] + self._wing_my_area
 
         # Solar array aging: ~2.75% degradation per year in LEO
         # (typical GaAs triple junction)
@@ -299,7 +335,7 @@ class EPSBasicModel(SubsystemModel):
 
         # Compute per-line power and current
         line_powers = {}
-        line_powers["obc"] = 40.0  # non-switchable
+        line_powers["obc"] = self._obc_power_w  # non-switchable
         line_powers["ttc_rx"] = 5.0  # non-switchable
 
         if lines.get("ttc_tx", True):
@@ -568,6 +604,14 @@ class EPSBasicModel(SubsystemModel):
         shared_params[0x0139] = s.battery_heater_setpoint_c
         shared_params[0x010E] = 1 if s.uv_flag else 0
         shared_params[0x010F] = 1 if s.ov_flag else 0
+        # Deployable wing status
+        wing_status = 0
+        if s.wing_py_deployed: wing_status |= 0x01
+        if s.wing_my_deployed: wing_status |= 0x02
+        if s.wing_py_deploying: wing_status |= 0x10
+        if s.wing_my_deploying: wing_status |= 0x20
+        shared_params[0x0144] = float(wing_status)
+        shared_params[0x0145] = s.wing_deploy_timer
 
         # NOTE: An earlier duplicate telemetry-write block that referenced
         # undefined locals `lines`, `gen_w`, `cons_w` and re-wrote all of the
@@ -659,7 +703,52 @@ class EPSBasicModel(SubsystemModel):
                 self._state.eps_mode = mode
                 return {"success": True, "message": f"EPS mode set to {mode}"}
             return {"success": False, "message": "Invalid EPS mode"}
+        elif command == "deploy_wing":
+            return self._deploy_wing(cmd)
+        elif command == "get_wing_status":
+            s = self._state
+            return {"success": True, "py_deployed": s.wing_py_deployed,
+                    "my_deployed": s.wing_my_deployed,
+                    "py_deploying": s.wing_py_deploying,
+                    "my_deploying": s.wing_my_deploying,
+                    "deploy_timer": s.wing_deploy_timer}
         return {"success": False, "message": f"Unknown command: {command}"}
+
+    def _deploy_wing(self, cmd: dict) -> dict[str, Any]:
+        """Deploy a solar wing (+Y or -Y)."""
+        s = self._state
+        wing = cmd.get("wing", "").lower()
+        if wing == "py" or wing == "+y":
+            if s.wing_py_deployed:
+                return {"success": False, "message": "+Y wing already deployed"}
+            if s.wing_py_deploying:
+                return {"success": False, "message": "+Y wing deployment in progress"}
+            s.wing_py_deploying = True
+            s.wing_deploy_timer = self._wing_deploy_time_s
+            s.wing_deploy_target = "py"
+            return {"success": True, "message": f"+Y wing deployment initiated ({self._wing_deploy_time_s:.0f}s)"}
+        elif wing == "my" or wing == "-y":
+            if s.wing_my_deployed:
+                return {"success": False, "message": "-Y wing already deployed"}
+            if s.wing_my_deploying:
+                return {"success": False, "message": "-Y wing deployment in progress"}
+            s.wing_my_deploying = True
+            s.wing_deploy_timer = self._wing_deploy_time_s
+            s.wing_deploy_target = "my"
+            return {"success": True, "message": f"-Y wing deployment initiated ({self._wing_deploy_time_s:.0f}s)"}
+        elif wing == "both":
+            msgs = []
+            if not s.wing_py_deployed and not s.wing_py_deploying:
+                s.wing_py_deploying = True
+                msgs.append("+Y")
+            if not s.wing_my_deployed and not s.wing_my_deploying:
+                s.wing_my_deploying = True
+                msgs.append("-Y")
+            if msgs:
+                s.wing_deploy_timer = self._wing_deploy_time_s
+                return {"success": True, "message": f"Wing deployment initiated: {', '.join(msgs)} ({self._wing_deploy_time_s:.0f}s)"}
+            return {"success": False, "message": "Both wings already deployed"}
+        return {"success": False, "message": f"Invalid wing: {wing} (use 'py', 'my', or 'both')"}
 
     def _set_power_line(self, cmd: dict, on: bool) -> dict[str, Any]:
         """Switch a power line on or off."""

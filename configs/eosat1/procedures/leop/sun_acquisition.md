@@ -74,7 +74,7 @@ maintain sun-pointing attitude for positive power balance and thermal stability.
 
 ### Step 8 — Verify Power Generation Improvement
 **TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
-**Verify:** `eps.power_gen` (0x0107) > 80W within 60s (sun-pointed, both arrays illuminated)
+**Verify:** `eps.power_gen` (0x0107) > 40W within 60s (sun-pointed, wings deployed)
 **Verify:** `eps.bat_soc` (0x0101) stable or increasing within 120s
 **GO/NO-GO:** Positive power balance achieved in safe_point mode
 
@@ -96,7 +96,7 @@ maintain sun-pointing attitude for positive power balance and thermal stability.
 - [ ] Body rates damped to < 0.1 deg/s on all axes
 - [ ] AOCS in SAFE_POINT mode (mode 2)
 - [ ] Sun-pointing achieved with attitude error < 10 degrees
-- [ ] Power generation > 80W confirming positive energy balance
+- [ ] Power generation > 40W confirming positive energy balance
 - [ ] Battery SOC stable or increasing
 - [ ] All four reaction wheels operational
 - [ ] Sun Acquisition Report distributed

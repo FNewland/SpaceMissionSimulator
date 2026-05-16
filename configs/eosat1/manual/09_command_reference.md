@@ -87,7 +87,34 @@ to the individual subsystem manuals.
 | TTC_SWITCH_PRIMARY    | S8      | S1         | —          | Activate primary transponder    |
 | TTC_SWITCH_REDUNDANT  | S8      | S1         | —          | Activate redundant transponder  |
 
-### 2.5 TCS Commands
+### 2.5 EPS Commands
+
+| Command               | Service | Subservice | Parameters         | Description                           |
+|-----------------------|---------|------------|--------------------|-----------------------------------------|
+| EPS_PAYLOAD_MODE      | S8      | S1         | mode (uint8)       | Set payload mode: 0=OFF,1=STBY,2=IMG (func 16) |
+| EPS_FPA_COOLER        | S8      | S1         | on (uint8)         | FPA cooler on/off (func 17)            |
+| EPS_TX_ENABLE         | S8      | S1         | on (uint8)         | Transponder TX on/off (func 18)        |
+| EPS_POWER_LINE_ON     | S8      | S1         | line_idx (uint8)   | Switch power line on (func 19)         |
+| EPS_POWER_LINE_OFF    | S8      | S1         | line_idx (uint8)   | Switch power line off (func 20)        |
+| EPS_RESET_OC          | S8      | S1         | line_idx (uint8)   | Reset overcurrent trip (func 21)       |
+| EPS_DEPLOY_WING       | S8      | S1         | wing (uint8)       | Deploy solar wing: 0=+Y,1=-Y,2=both (func 81) |
+| EPS_WING_STATUS       | S8      | S1         | --                 | Query wing deployment status (func 82) |
+
+**Power line indices:** 0=OBC, 1=RX, 2=TX, 3=Payload, 4=FPA cooler, 5=Bat heater, 6=OBC heater, 7=AOCS wheels
+
+**EPS_DEPLOY_WING — wing values:**
+
+| Value | Target   | Description                                    |
+|-------|----------|------------------------------------------------|
+| 0     | +Y wing  | Deploy +Y face solar wing only                 |
+| 1     | -Y wing  | Deploy -Y face solar wing only                 |
+| 2     | Both     | Deploy both +Y and -Y wings sequentially       |
+
+Wing deployment takes approximately 30 seconds per wing via burn wire release. Monitor
+`wing_status` (0x0144) bitmask and `wing_deploy_timer` (0x0145) countdown. Successful
+deployment generates event 0x0112 (+Y) or 0x0113 (-Y).
+
+### 2.6 TCS Commands
 
 | Command          | Service | Subservice | Parameters            | Description                    |
 |------------------|---------|------------|-----------------------|--------------------------------|
@@ -111,7 +138,7 @@ to the individual subsystem manuals.
 
 | SID | Subsystem | Content                               |
 |-----|-----------|---------------------------------------|
-| 1   | EPS       | All EPS parameters (0x0100–0x010A)    |
+| 1   | EPS       | All EPS parameters (0x0100–0x010A, 0x0144–0x0145) |
 | 2   | AOCS      | All AOCS parameters (0x0200–0x021B)   |
 | 3   | OBDH      | All OBDH parameters (0x0300–0x030A)   |
 | 4   | TCS       | All TCS parameters (0x0400–0x040C)    |
@@ -150,6 +177,8 @@ to the individual subsystem manuals.
 | 0x0108   | eclipse_flag    | bool   | uint8   | Eclipse indicator              | —          | —           | —       | —        |
 | 0x0109   | bat_current     | A      | float32 | Battery current (+chg/-dischg) | —          | —           | —       | —        |
 | 0x010A   | bat_capacity    | Ah     | float32 | Remaining battery capacity     | —          | —           | —       | —        |
+| 0x0144   | wing_status     | bitmask| uint8   | Wing deploy status (b0=+Y,b1=-Y)| —         | —           | —       | —        |
+| 0x0145   | wing_deploy_timer| s     | uint16  | Wing deploy countdown          | —          | —           | —       | —        |
 
 ### 3.2 AOCS Parameters (0x02xx)
 
@@ -252,14 +281,14 @@ to the individual subsystem manuals.
 
 | Range           | Subsystem | Count |
 |-----------------|-----------|-------|
-| 0x0100 – 0x01FF | EPS       | 11    |
+| 0x0100 – 0x01FF | EPS       | 13    |
 | 0x0200 – 0x02FF | AOCS      | 20    |
 | 0x0300 – 0x03FF | OBDH      | 10    |
 | 0x0400 – 0x04FF | TCS       | 13    |
 | 0x0500 – 0x05FF | TTC       | 8     |
 | 0x0600 – 0x06FF | Payload   | 6     |
 
-**Total telemetry parameters:** 68
+**Total telemetry parameters:** 70
 
 ---
 

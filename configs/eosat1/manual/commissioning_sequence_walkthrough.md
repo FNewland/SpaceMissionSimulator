@@ -152,7 +152,7 @@ Now in application mode. All SIDs available. Check everything before powering on
 | `bat_soc` | 0x0101 | ~75% | > 50% |
 | `bat_temp` | 0x0102 | ~15°C | ∈ [0, 35]°C |
 | `power_gen` | 0x0107 | depends on sun | > 0 W if sunlit |
-| `power_cons` | 0x0106 | ~12 W (OBC + RX only) | < 30 W |
+| `power_cons` | 0x0106 | ~20 W (OBC 15W + RX 5W) | < 30 W |
 | `eclipse_flag` | 0x0108 | 0 or 1 | note for context |
 
 ### 4.3 Verify Power Line Switch States
@@ -352,7 +352,7 @@ To disable a specific wheel: `AOCS_DISABLE_WHEEL(wheel_idx=N)` (S8.1, func_id 2,
 
 | Parameter | Expected After Step 7.3 |
 |-----------|------------------------|
-| `power_cons` | ~33 W (OBC ~5W + RX ~3W + TX ~12W + heaters ~9W + wheels ~12W) |
+| `power_cons` | ~51 W (OBC ~15W + RX ~5W + TX ~12W + heaters ~9W + wheels ~12W) |
 | `bus_voltage` | > 27.0 V |
 | `bat_soc` | still > 60% |
 | `power_gen` - `power_cons` | positive margin if sunlit |
@@ -716,7 +716,7 @@ Prerequisites: AOCS in FINE_POINT (Phase 12.5), FPA stable at setpoint.
 | Parameter | Expected (Fully Commissioned) |
 |-----------|------------------------------|
 | `power_cons` | ~65–80 W (all subsystems on) |
-| `power_gen` | > 100 W when sunlit |
+| `power_gen` | > 40 W when sunlit (wings deployed, ~64 W peak) |
 | Margin | positive orbit-average |
 | `bat_soc` | > 60% and stable/charging |
 

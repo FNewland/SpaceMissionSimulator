@@ -21,11 +21,11 @@ from typing import Any
 from smo_planner.utils import parse_iso as _parse_iso
 
 
-# EOSAT-1 power/data constants
-ECLIPSE_BASE_POWER_W = 95.0
-SUNLIGHT_BASE_POWER_W = 95.0
-SOLAR_ARRAY_MAX_W = 280.0
-BATTERY_CAPACITY_WH = 1120.0
+# EOSAT-1 power/data constants (OBC 15W + RX 5W + wheels 12W = 32W base)
+ECLIPSE_BASE_POWER_W = 32.0
+SUNLIGHT_BASE_POWER_W = 32.0
+SOLAR_ARRAY_MAX_W = 64.0   # Deployed wings: ~64W peak sunlit generation
+BATTERY_CAPACITY_WH = 120.0
 INITIAL_SOC_PERCENT = 80.0
 MIN_SOC_PERCENT = 25.0
 ONBOARD_STORAGE_MB = 1024.0

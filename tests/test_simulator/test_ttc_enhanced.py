@@ -28,10 +28,18 @@ class TestTTCEnhanced:
     """Enhanced TTC model tests covering lock sequence, PA thermal,
     BER/Eb-N0, commands, failure injection, and new params."""
 
-    def _make_model(self):
-        """Create a configured TTCBasicModel for testing."""
+    def _make_model(self, antenna_deployed=True):
+        """Create a configured TTCBasicModel for testing.
+
+        Deploys the antenna by default so tests operate at high data rate
+        with nominal lock timing (carrier 2s, bit sync 5s, frame sync 10s).
+        Pass antenna_deployed=False for antenna deployment tests.
+        """
         model = TTCBasicModel()
         model.configure({})
+        if antenna_deployed:
+            model._state.antenna_deployed = True
+            model._state.antenna_deployment_sensor = 2  # deployed
         return model
 
     # ------------------------------------------------------------------
@@ -416,7 +424,7 @@ class TestTTCEnhanced:
     # ------------------------------------------------------------------
     def test_antenna_deployment_sensor_initial_state(self):
         """DEFECT FIX #4: Antenna deployment sensor should be stowed initially."""
-        model = self._make_model()
+        model = self._make_model(antenna_deployed=False)
         orbit = make_orbit_state(in_contact=False)
         params = {}
 
@@ -432,7 +440,7 @@ class TestTTCEnhanced:
 
     def test_antenna_deployment_command_updates_sensor(self):
         """DEFECT FIX #4: deploy_antennas command should update sensor to deployed."""
-        model = self._make_model()
+        model = self._make_model(antenna_deployed=False)
         orbit = make_orbit_state(in_contact=False)
         params = {}
 
@@ -461,7 +469,7 @@ class TestTTCEnhanced:
 
     def test_antenna_deployment_ready_fault(self):
         """DEFECT FIX #4: deploy_antennas should fail if deployment_ready=False."""
-        model = self._make_model()
+        model = self._make_model(antenna_deployed=False)
 
         # Inject fault: set deployment_ready to False
         model._state.antenna_deployment_ready = False

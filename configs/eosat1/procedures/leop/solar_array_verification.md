@@ -1,14 +1,16 @@
-# LEOP-003: Solar Array Deployment Verification
+# LEOP-003: Solar Array and Wing Deployment Verification
 **Subsystem:** EPS / Structure
 **Phase:** LEOP
-**Revision:** 1.0
+**Revision:** 2.0
 **Approved:** Flight Operations Director
 
 ## Purpose
-Verify that both solar array wings (SA-A and SA-B) have fully deployed following
-launch vehicle separation. Confirm deployment switch telemetry, measure individual
-string currents, and validate total power generation against predictions for the
-current sun angle and orbit phase.
+Deploy the +Y and -Y solar wings and verify that the body-mounted solar arrays (SA-A
+and SA-B) are operational following launch vehicle separation. Confirm wing deployment
+via telemetry, measure individual string currents, and validate total power generation
+against predictions for the current sun angle and orbit phase. The spacecraft has
+0.30 m2 of body-mounted panel area (stowed) increasing to 0.78 m2 after wing deployment
+(0.24 m2 per wing on +Y and -Y faces).
 
 ## Prerequisites
 - [ ] LEOP-001 (First Acquisition) completed successfully
@@ -17,8 +19,17 @@ current sun angle and orbit phase.
 - [ ] Spacecraft in sunlit portion of orbit (preferred) or approaching eclipse exit
 - [ ] EPS telemetry confirmed available (SID 1 responsive)
 - [ ] Flight Dynamics have provided current beta angle and sun vector
+- [ ] Body rates < 0.5 deg/s (detumble sufficient for wing deployment)
+- [ ] Battery SoC > 50% (wing deployment draws ~2 A for 30 s per wing)
 
 ## Procedure Steps
+
+### Step 0 — Command Wing Deployment
+**TC:** `S8_COMMAND(func_id=81, wing=2)` (Service 8, Subtype 1) — Deploy both wings
+**Verify:** `eps.wing_status` (0x0144) bit 0x10 or 0x20 set (deploying) within 5s
+**Action:** Wait 30 seconds for burn-wire release and spring deployment
+**Verify:** `eps.wing_status` (0x0144) = 0x03 (both wings deployed) within 45s
+**GO/NO-GO:** Both wings confirmed deployed. If only one deployed, attempt single-wing retry (see Off-Nominal).
 
 ### Step 1 — Request Detailed EPS Telemetry
 **TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
@@ -67,16 +78,18 @@ current sun angle and orbit phase.
 **GO/NO-GO:** Positive power budget confirmed or achievable after sun acquisition
 
 ## Off-Nominal Handling
-- If SA-A or SA-B deploy switch reads STOWED (value 0): Check if power generation from that wing is truly zero. If zero current confirmed, attempt deployment retry via `SET_PARAM(0x0120, 1)` for SA-A or `SET_PARAM(0x0121, 1)` for SA-B — requires Flight Director approval. If retry fails, assess single-wing power budget viability.
+- If a wing fails to deploy (wing_status bit not set after 45s): Retry single wing with `S8_COMMAND(func_id=81, wing=0)` for +Y or `S8_COMMAND(func_id=81, wing=1)` for -Y — requires Flight Director approval. If retry fails, assess single-wing power budget viability (single wing provides ~32W in sunlight, marginal for nominal ops).
 - If both arrays deployed but power generation < 10W in sunlight: Verify spacecraft is actually in sunlight via Flight Dynamics. Check for excessive tumble rate reducing effective solar incidence. Prioritize LEOP-004 (Sun Acquisition) to stabilize attitude.
 - If array currents asymmetric > 30%: Log anomaly. One array may have partial deployment or string failure. Continue LEOP with reduced power budget. Schedule detailed EPS investigation during commissioning.
 - If `eps.bat_soc` dropping rapidly (> 2% per minute): Reduce spacecraft load — disable non-essential heaters via `HEATER_CONTROL(circuit=2, on=0)`. Ensure AOCS detumble is using magnetorquers only (lower power). Prioritize sun acquisition.
 
 ## Post-Conditions
+- [ ] +Y solar wing deployed (wing_status bit 0 set, event 0x0112 received)
+- [ ] -Y solar wing deployed (wing_status bit 1 set, event 0x0113 received)
 - [ ] SA-A deployment confirmed via switch telemetry and current measurement
 - [ ] SA-B deployment confirmed via switch telemetry and current measurement
-- [ ] Total power generation measured and recorded
+- [ ] Total power generation measured and recorded (expected increase with wings)
 - [ ] Array symmetry verified within 15% tolerance
-- [ ] Power budget assessment completed
-- [ ] Solar Array Verification Report distributed
+- [ ] Power budget assessment completed (0.78 m2 deployed area)
+- [ ] Solar Array and Wing Deployment Verification Report distributed
 - [ ] GO decision for LEOP-004 (Sun Acquisition)

@@ -37,8 +37,8 @@ for mission operations.
 ### Step 3 — Solar Array Sunlit Performance
 **Action:** Perform this step during sunlit orbit phase with stable sun-pointing.
 **TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
-**Verify:** `eps.power_gen` (0x0107) in range [100W, 140W] within 10s
-**Action:** Record power generation. Expected ~135W at optimal sun angle with GaAs arrays. Actual value depends on current beta angle and attitude accuracy.
+**Verify:** `eps.power_gen` (0x0107) in range [40W, 65W] within 10s
+**Action:** Record power generation. Expected ~64W peak at optimal sun angle with deployed wings (0.78 m², 29.5% GaAs cells). Actual value depends on current beta angle, wing deployment status, and attitude accuracy.
 **GO/NO-GO:** Solar array power generation within expected range
 
 ### Step 4 — Eclipse Discharge Monitoring
@@ -53,7 +53,7 @@ for mission operations.
 ### Step 5 — Eclipse Exit Charge Recovery
 **Action:** Monitor battery charge recovery after eclipse exit.
 **TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — at eclipse exit +5 min
-**Verify:** `eps.power_gen` (0x0107) > 80W within 60s of eclipse exit
+**Verify:** `eps.power_gen` (0x0107) > 35W within 60s of eclipse exit
 **Verify:** `eps.bat_soc` (0x0101) increasing within 120s of eclipse exit
 **Action:** Record charge recovery rate. Battery should recover full charge within the sunlit portion of the orbit under nominal load.
 **GO/NO-GO:** Charge recovery nominal after eclipse
@@ -76,7 +76,7 @@ for mission operations.
 
 ## Off-Nominal Handling
 - If bus voltage < 27.0V: Check battery SOC. If SOC < 30%, reduce loads immediately. Disable non-essential heaters. Verify sun-pointing attitude. If bus voltage < 26.0V, enter safe mode via `OBC_SET_MODE(mode=0)`.
-- If power generation < 80W in sunlight with good sun-pointing: Check individual array string currents via `GET_PARAM(0x0112)` and `GET_PARAM(0x0113)`. If one wing underperforming, log anomaly. Assess single-wing power budget viability.
+- If power generation < 35W in sunlight with good sun-pointing: Check individual array string currents via `GET_PARAM(0x0112)` and `GET_PARAM(0x0113)`. If one wing underperforming, log anomaly. Assess single-wing power budget viability.
 - If battery SOC < 50% at end of eclipse: Reduce operational load. Defer commissioning activities requiring high power. Re-assess power budget.
 - If charge recovery rate below prediction: Check solar array degradation. Verify battery charge controller via `GET_PARAM(0x0109)`. If charge controller fault suspected, investigate redundant path.
 - If bus voltage oscillation detected: Check regulation mode via `GET_PARAM(0x010A)`. Log anomaly for EPS engineer review. If unstable, command `OBC_SET_MODE(mode=0)` for safe mode.
@@ -84,7 +84,7 @@ for mission operations.
 ## Post-Conditions
 - [ ] Bus voltage confirmed regulated at 28.0V +/- 0.5V
 - [ ] Battery voltage and SOC nominal (> 70% after full charge)
-- [ ] Solar array generating 100-140W in sunlight
+- [ ] Solar array generating 40-65W in sunlight (wings deployed, sun-pointed)
 - [ ] Eclipse discharge rate within prediction
 - [ ] Charge recovery nominal after eclipse exit
 - [ ] Positive orbit-average energy balance confirmed

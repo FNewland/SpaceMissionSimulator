@@ -68,16 +68,18 @@ The spacecraft body frame is defined as:
 - **-Z**: Zenith; zenith star camera and GPS antenna mounted here
 
 Each of the six body faces (+X, -X, +Y, -Y, +Z, -Z) carries a body-mounted solar panel and
-a coarse sun sensor head.
+a coarse sun sensor head. Deployable solar wings on the +Y and -Y faces (0.24 m2 each)
+extend the total solar collection area from 0.30 m2 (stowed) to 0.78 m2 (deployed).
 
 ### 4.2 Mass and Power Budget
 
 | Parameter        | Value          |
 |------------------|----------------|
 | Dry Mass         | ~12 kg (6U)   |
-| Peak Power Gen.  | ~40 W (sunlit) |
+| Peak Power Gen.  | ~40 W (sunlit, wings deployed) |
 | Avg. Power Cons. | ~20 W          |
 | Battery Capacity | 40 Ah @ 28V    |
+| OBC Power        | 15 W           |
 
 ### 4.3 Redundancy Architecture
 

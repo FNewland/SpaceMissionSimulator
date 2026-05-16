@@ -899,6 +899,21 @@ commands:
     description: "Request recent error log entries"
     fields: []
 
+  # EPS solar wing deployment (func_id 81-82)
+  - name: EPS_DEPLOY_WING
+    service: 8
+    subtype: 1
+    func_id: 81
+    description: "Deploy solar wing (+Y, -Y, or both) via burn wire"
+    fields:
+      - { name: wing, type: uint8, description: "0=+Y, 1=-Y, 2=both" }
+  - name: EPS_WING_STATUS
+    service: 8
+    subtype: 1
+    func_id: 82
+    description: "Query solar wing deployment status"
+    fields: []
+
   # GPS/time synchronisation (func_id 80)
   - name: OBC_GPS_TIME_SYNC
     service: 8
@@ -982,9 +997,9 @@ commands:
     service: 8
     subtype: 1
     func_id: 74
-    description: "Set modulation mode"
+    description: "Set modulation scheme. Changes symbol mapping and effective data rate. BPSK is the default safe mode. Higher-order schemes increase throughput but require better Eb/N0."
     fields:
-      - { name: mode, type: uint8, description: "0=BPSK, 1=QPSK" }
+      - { name: mode, type: uint8, description: "0=BPSK (1 bit/sym, most robust), 1=QPSK (2 bit/sym), 2=8PSK (3 bit/sym, needs +3.6 dB), 3=OQPSK (2 bit/sym, offset timing)" }
   - name: TTC_SET_RX_GAIN
     service: 8
     subtype: 1

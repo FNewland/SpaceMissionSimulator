@@ -6,9 +6,9 @@
 
 ## Purpose
 Respond to detected degradation in solar array power output, indicated by array current
-falling below the expected value for the current illumination conditions. EOSAT-1 has two
-deployable solar arrays (SA-A and SA-B) that together produce approximately 80W at optimal
-incidence. A sustained current shortfall of more than 20% from predicted values on either
+falling below the expected value for the current illumination conditions. EOSAT-1 has six body-mounted panels and two
+deployable solar wings (+/-Y) that together produce approximately 64W at optimal sun angle
+(wings deployed, 0.78 m² total area). A sustained current shortfall of more than 20% from predicted values on either
 array requires investigation and potential operational adjustments to maintain a positive
 power budget throughout each orbit.
 
@@ -73,7 +73,7 @@ power budget throughout each orbit.
 **Action:** Record SA-A current, SA-B current, power generation, and SoC as new baseline
 **Action:** Schedule daily trend comparison for array current vs prediction over next 7 days
 **Action:** Coordinate with mission planning to adjust imaging schedule based on degraded power budget
-**Action:** If single-array failure confirmed, assess operations on single-array power (approx 40W peak)
+**Action:** If single-wing failure confirmed, assess operations on reduced solar area (~42W peak with one wing, ~32W body-only). Check wing deployment status via `GET_PARAM(0x0144)`.
 **GO/NO-GO:** Monitoring plan established and operations plan adjusted — recovery complete
 
 ## Off-Nominal Handling

@@ -27,6 +27,7 @@ through the following major milestones:
 | First contact              | T+30 min to T+6 h | Beacon acquisition at Iqaluit or Troll |
 | Application boot           | First contact   | Transition from BOOTLOADER           |
 | Detumble complete          | T+1 to T+12 h  | Body rates < 0.5 deg/s              |
+| Solar wing deployment      | T+2 to T+14 h  | Deploy +Y and -Y solar wings        |
 | Sequential power-on        | T+12 to T+24 h | Subsystem activation                 |
 | ADCS commissioning         | T+24 to T+72 h | Sensor/actuator checkout             |
 | Nominal transition         | T+48 to T+72 h | Full operational capability          |
@@ -199,11 +200,64 @@ If the application fails to start:
 - Criteria: Full HK telemetry flowing, OBC in NOMINAL or SAFE mode.
 - Decision: Proceed to sequential power-on.
 
+## 6A. Solar Wing Deployment
+
+After application boot and initial detumble (body rates < 0.5 deg/s), the deployable
+solar wings on the +Y and -Y faces must be extended to provide full power generation
+capability. This step is performed before sequential power-on to ensure adequate power
+margin for subsystem activation.
+
+### 6A.1 Pre-Deployment Checks
+
+1. Verify application software is running (OBC mode = NOMINAL or SAFE).
+2. Verify body rates < 0.5 deg/s (detumble complete or sufficient).
+3. Verify battery SoC > 50% (wing deployment requires ~2 A per wing for 30 s).
+4. Request EPS HK (`HK_REQUEST SID=1`) and confirm nominal bus voltage.
+
+### 6A.2 Deploy +Y Wing
+
+1. Send `EPS_DEPLOY_WING` (func_id 81, wing=0) to deploy the +Y solar wing.
+2. Monitor `wing_deploy_timer` (0x0145) counting down from ~30 s.
+3. Wait for event 0x0112 (WING_PY_DEPLOYED) confirming deployment.
+4. Verify `wing_status` (0x0144) bit 0 is set.
+5. Monitor `sa_py_current` (0x012D) for increased current if in sunlight.
+6. Wait 60 seconds for attitude transient to settle.
+
+### 6A.3 Deploy -Y Wing
+
+1. Send `EPS_DEPLOY_WING` (func_id 81, wing=1) to deploy the -Y solar wing.
+2. Monitor `wing_deploy_timer` (0x0145) counting down from ~30 s.
+3. Wait for event 0x0113 (WING_MY_DEPLOYED) confirming deployment.
+4. Verify `wing_status` (0x0144) bit 1 is set.
+5. Monitor `sa_my_current` (0x012E) for increased current if in sunlight.
+
+### 6A.4 Post-Deployment Verification
+
+1. Request EPS HK and verify `power_gen` (0x0107) has increased.
+2. Confirm `wing_status` (0x0144) = 0x03 (both wings deployed).
+3. Compare total power generation against prediction for deployed configuration
+   (total area 0.78 m2 vs. 0.30 m2 stowed).
+4. Record deployment times and power readings in LEOP log.
+
+### 6A.5 Off-Nominal: Wing Deployment Failure
+
+If a wing fails to deploy (no event generated within 60 s, wing_status bit not set):
+
+1. Wait 60 seconds for burn wire cooldown.
+2. Retry the deployment command for the failed wing.
+3. If second attempt fails, continue LEOP with single wing deployed.
+4. Assess power budget viability with reduced solar area.
+5. Schedule detailed investigation during commissioning.
+
+**GO/NO-GO Checkpoint 3A: Solar Wing Deployment**
+- Criteria: Both wings deployed (wing_status = 0x03), power generation increased.
+- Decision: Proceed to sequential power-on.
+
 ## 7. Sequential Power-On Procedure
 
-After application boot, subsystems are powered on one at a time to verify health and
-manage the power budget. The order is critical — each step must be verified before
-proceeding.
+After application boot and solar wing deployment, subsystems are powered on one at a time
+to verify health and manage the power budget. The order is critical — each step must be
+verified before proceeding.
 
 ### 7.1 Power-On Sequence
 

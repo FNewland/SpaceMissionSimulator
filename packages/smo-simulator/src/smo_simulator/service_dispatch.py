@@ -393,6 +393,8 @@ class ServiceDispatcher:
             return self._route_ttc_cmd(func_id, data[1:])
         elif func_id == 80:
             return self._route_obdh_cmd(func_id, data[1:])
+        elif func_id in (81, 82):
+            return self._route_eps_cmd(func_id, data[1:])
         return []
 
     def _route_aocs_cmd(self, func_id: int, data: bytes) -> list[bytes]:
@@ -536,6 +538,15 @@ class ServiceDispatcher:
                 eps.handle_command({
                     "command": "emergency_load_shed", "stage": stage
                 })
+        elif func_id == 81:  # deploy solar wing
+            # data[0]: 0=+Y, 1=-Y, 2=both
+            wing_map = {0: "py", 1: "my", 2: "both"}
+            wing = wing_map.get(data[0], "both") if data else "both"
+            result = eps.handle_command({"command": "deploy_wing", "wing": wing})
+            if not result.get("success"):
+                return self._make_error_response(result)
+        elif func_id == 82:  # get wing status
+            eps.handle_command({"command": "get_wing_status"})
         return []
 
     def _make_error_response(self, result: dict) -> list[bytes]:

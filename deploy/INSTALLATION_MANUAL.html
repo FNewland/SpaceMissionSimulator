@@ -275,6 +275,30 @@ li { margin-bottom: 4px; color: var(--text-dim); }
   font-size: 12px;
   color: var(--text-muted);
 }
+
+/* Step numbers */
+.step-num {
+  display: inline-block;
+  width: 28px;
+  height: 28px;
+  background: var(--accent);
+  color: white;
+  border-radius: 50%;
+  text-align: center;
+  line-height: 28px;
+  font-weight: 700;
+  font-size: 14px;
+  margin-right: 8px;
+}
+
+@media print {
+  body { background: white; color: #1a1a1a; }
+  .container { max-width: 100%; }
+  pre { border-color: #ccc; background: #f5f5f5; color: #333; }
+  .arch-diagram { background: #f5f5f5; color: #333; border-color: #ccc; }
+  h2 { color: #4338ca; }
+  .info-box { break-inside: avoid; }
+}
 </style>
 </head>
 <body>
@@ -284,8 +308,8 @@ li { margin-bottom: 4px; color: var(--text-dim); }
 <div class="doc-header">
   <h1><span>SMO</span> Suite</h1>
   <div class="subtitle">Installation &amp; Deployment Manual</div>
-  <div class="subtitle">Space Mission Operations — EOSAT-1 Ocean Monitoring</div>
-  <div class="version-info">Version 0.1.0 &mdash; Generated 2026-03-30</div>
+  <div class="subtitle">Space Mission Operations &mdash; EOSAT-1 Ocean Monitoring</div>
+  <div class="version-info">Version 1.0.0 &mdash; Updated 2026-05-15</div>
   <div class="aig-badge">ARTIFICIAL INTELLIGENCE GENERATED</div>
 </div>
 
@@ -296,33 +320,48 @@ li { margin-bottom: 4px; color: var(--text-dim); }
     <li><a href="#overview">System Overview</a></li>
     <li><a href="#prerequisites">Prerequisites</a></li>
     <li><a href="#quickstart">Quick Start (Single Machine)</a></li>
+    <li><a href="#full-install">Full Installation Guide</a></li>
     <li><a href="#architecture">Network Architecture</a></li>
     <li><a href="#config">Configuration Reference</a></li>
     <li><a href="#single">Single-Machine Deployment</a></li>
     <li><a href="#distributed">Distributed Deployment</a></li>
     <li><a href="#gateway">Gateway (Multi-Site MCS)</a></li>
+    <li><a href="#rfsim">RF Simulation Layer</a></li>
+    <li><a href="#tools">Auxiliary Tools</a></li>
     <li><a href="#widescreen">Wide-Screen Planner Display</a></li>
     <li><a href="#remote">Remote Browser Access</a></li>
     <li><a href="#firewall">Firewall &amp; Network</a></li>
     <li><a href="#packaging">Packaging for Distribution</a></li>
+    <li><a href="#testing">Running Tests</a></li>
     <li><a href="#components">Component Reference</a></li>
     <li><a href="#troubleshooting">Troubleshooting</a></li>
     <li><a href="#files">File Reference</a></li>
+    <li><a href="#uninstall">Uninstallation</a></li>
   </ol>
 </div>
 
 <!-- ══════════════════════ 1. OVERVIEW ══════════════════════ -->
 <h2 id="overview">1. System Overview</h2>
 
-<p>The SMO (Space Mission Operations) Suite is a complete spacecraft operations simulation and training system for the EOSAT-1 ocean monitoring mission. It consists of five components that can run on a single machine or be distributed across a network:</p>
+<p>The SMO (Space Mission Operations) Suite is a complete spacecraft operations simulation and training system for the EOSAT-1 ocean monitoring mission. It provides a realistic mission control environment with a full PUS-C service stack, 6 operator positions, and comprehensive mission planning.</p>
 
 <table>
-  <tr><th>Component</th><th>Purpose</th><th>Default Port</th></tr>
-  <tr><td><strong>Simulator</strong></td><td>Spacecraft simulation engine with instructor UI</td><td>8001 (TC), 8002 (TM), 8080 (HTTP)</td></tr>
-  <tr><td><strong>MCS</strong></td><td>Mission Control System operator interface (6 positions)</td><td>9090 (HTTP/WS)</td></tr>
-  <tr><td><strong>Planner</strong></td><td>Mission planning, scheduling, budgets, imaging</td><td>9091 (HTTP)</td></tr>
-  <tr><td><strong>Gateway</strong></td><td>TM/TC relay for multi-site MCS deployments</td><td>10025 (TCP)</td></tr>
-  <tr><td><strong>Common</strong></td><td>Shared library (protocols, config, orbit math)</td><td>N/A (library)</td></tr>
+  <tr><th>Component</th><th>Package</th><th>Purpose</th><th>Default Ports</th></tr>
+  <tr><td><strong>Common</strong></td><td>smo-common</td><td>Shared library (protocols, config, orbit math)</td><td>N/A (library)</td></tr>
+  <tr><td><strong>Simulator</strong></td><td>smo-simulator</td><td>Spacecraft simulation engine with instructor UI</td><td>8001 (TC), 8002 (TM), 8080 (HTTP)</td></tr>
+  <tr><td><strong>MCS</strong></td><td>smo-mcs</td><td>Mission Control System — 6 operator positions</td><td>9090 (HTTP/WS)</td></tr>
+  <tr><td><strong>Planner</strong></td><td>smo-planner</td><td>Mission planning, scheduling, budgets, imaging</td><td>9091 (HTTP)</td></tr>
+  <tr><td><strong>Gateway</strong></td><td>smo-gateway</td><td>TM/TC relay for multi-site MCS deployments</td><td>10025 (TCP)</td></tr>
+  <tr><td><strong>RF Sim</strong></td><td>smo-rfsim</td><td>CCSDS framing, channel coding, RF channel model</td><td>8011 (TC), 8012 (TM), 8094 (Cortex)</td></tr>
+</table>
+
+<h3>Auxiliary Tools</h3>
+<table>
+  <tr><th>Tool</th><th>File</th><th>Default Port</th><th>Purpose</th></tr>
+  <tr><td>Delayed TM Viewer</td><td>tools/delayed_tm_viewer.py</td><td>8092</td><td>Browse stored TM dump files</td></tr>
+  <tr><td>Orbit Tools</td><td>tools/orbit_tools.py</td><td>8093</td><td>TLE/state vector to TC command converter</td></tr>
+  <tr><td>Cortex Web UI</td><td>(smo-rfsim built-in)</td><td>8094</td><td>Real-time RF link status dashboard</td></tr>
+  <tr><td>Documentation Viewer</td><td>tools/doc_viewer.py</td><td>8095</td><td>Browse mission documentation in-browser</td></tr>
 </table>
 
 <div class="arch-diagram">
@@ -332,6 +371,12 @@ li { margin-bottom: 4px; color: var(--text-dim); }
 │  Instructor Web UI (scenarios, failures, breakpoints)       │
 └──────┬────────────────────┬─────────────────────────────────┘
        │ TCP :8001 (TC)     │ TCP :8002 (TM)
+       │                    │
+       │  ┌─────────────────┴─────────────────────┐  (optional)
+       │  │           RF BRIDGE                    │
+       │  │  sim TC:8001/TM:8002 ↔ MCS TC:8011/TM:8012  │
+       │  │  Cortex Web UI :8094                   │
+       │  └─────────────────┬─────────────────────┘
        │                    │
 ┌──────▼────────────────────▼─────────────────────────────────┐
 │                    MCS (:9090)                               │
@@ -355,75 +400,247 @@ li { margin-bottom: 4px; color: var(--text-dim); }
 <h2 id="prerequisites">2. Prerequisites</h2>
 
 <h3>Required</h3>
-<ul>
-  <li><strong>Python 3.11 or newer</strong> (3.12, 3.13 also work)</li>
-  <li><strong>pip</strong> (bundled with Python 3.11+)</li>
-  <li><strong>Internet access</strong> during installation (to download Python packages)</li>
-  <li><strong>Web browser</strong> for operator/planner UIs (Chrome, Firefox, Safari, Edge)</li>
-</ul>
+<table>
+  <tr><th>Requirement</th><th>Minimum Version</th><th>Notes</th></tr>
+  <tr><td><strong>Python</strong></td><td>3.11</td><td>3.12, 3.13 also tested. 3.14 works for rfsim only.</td></tr>
+  <tr><td><strong>pip</strong></td><td>(bundled)</td><td>Included with Python 3.11+</td></tr>
+  <tr><td><strong>venv module</strong></td><td>(bundled)</td><td>Included with Python; may need separate install on some Linux distros</td></tr>
+  <tr><td><strong>Web browser</strong></td><td>Modern</td><td>Chrome, Firefox, Safari, or Edge for operator UIs</td></tr>
+  <tr><td><strong>Disk space</strong></td><td>~200 MB</td><td>Source + venv + dependencies</td></tr>
+</table>
+
+<h3>Optional</h3>
+<table>
+  <tr><th>Requirement</th><th>Purpose</th></tr>
+  <tr><td><strong>git</strong></td><td>Cloning the repository</td></tr>
+  <tr><td><strong>GNU Radio 3.10+</strong></td><td>RF simulation in full RF (BPSK) mode. Falls back to pure Python without it.</td></tr>
+  <tr><td><strong>Internet access</strong></td><td>Downloading Python packages during install. Not needed if using <code>--offline</code> mode.</td></tr>
+</table>
 
 <h3>Installing Python 3.11+</h3>
 
 <h4>macOS</h4>
-<pre><code># Using Homebrew
-brew install python@3.11
+<pre><code># Using Homebrew (recommended)
+brew install python@3.12
 
-# Or download from python.org
-# https://www.python.org/downloads/</code></pre>
+# Or download the official installer
+# https://www.python.org/downloads/macos/
+
+# Verify
+python3 --version   # Should show 3.11 or higher</code></pre>
 
 <h4>Ubuntu / Debian</h4>
-<pre><code>sudo apt update
-sudo apt install python3.11 python3.11-venv python3.11-dev</code></pre>
+<pre><code># Python 3.11 (Ubuntu 22.04+)
+sudo apt update
+sudo apt install python3.11 python3.11-venv python3.11-dev
 
-<h4>RHEL / CentOS / Fedora</h4>
-<pre><code>sudo dnf install python3.11</code></pre>
+# Python 3.12 (Ubuntu 24.04+)
+sudo apt update
+sudo apt install python3.12 python3.12-venv python3.12-dev
 
-<h4>Windows</h4>
-<pre><code># Download installer from https://www.python.org/downloads/
-# During installation, check "Add Python to PATH"
-# Then open PowerShell and verify:
+# Verify
+python3.11 --version</code></pre>
+
+<h4>Fedora / RHEL / CentOS</h4>
+<pre><code>sudo dnf install python3.11
+# or
+sudo dnf install python3.12
+
+# Verify
+python3.11 --version</code></pre>
+
+<h4>Arch Linux</h4>
+<pre><code>sudo pacman -S python
+# Python on Arch is typically the latest stable release
+
 python --version</code></pre>
 
-<h3>Verify Python Version</h3>
-<pre><code>python3.11 --version   # Should show Python 3.11.x or higher
-# or
-python3 --version      # Must be 3.11+</code></pre>
+<h4>Windows (native or WSL)</h4>
+<pre><code># Option A: WSL (recommended for full compatibility)
+# Install WSL, then follow the Ubuntu instructions above
+
+# Option B: Native Windows
+# Download installer from https://www.python.org/downloads/
+# During installation, check "Add Python to PATH"
+# Open PowerShell and verify:
+python --version</code></pre>
 
 <!-- ══════════════════════ 3. QUICK START ══════════════════════ -->
 <h2 id="quickstart">3. Quick Start (Single Machine)</h2>
 
-<p>To get everything running on one machine in under 2 minutes:</p>
+<p>Get everything running on one machine in 3 commands:</p>
 
-<pre><code># 1. Clone or extract the project
-cd SpaceMissionSimulation
+<pre><code># 1. Clone the repository (or extract the distribution archive)
+git clone https://github.com/FNewland/SpaceMissionSimulator.git
+cd SpaceMissionSimulator
 
 # 2. Run the installer
 ./deploy/install.sh
 
 # 3. Start all services
-./deploy/start-all.sh
+./start.sh
 
 # 4. Open in your browser:
+#    Instructor: http://localhost:8080
 #    MCS:        http://localhost:9090
-#    Planner:    http://localhost:9091
-#    Instructor: http://localhost:8080</code></pre>
+#    Planner:    http://localhost:9091</code></pre>
 
 <div class="info-box success">
   <strong>That's it!</strong>
-  For single-machine use with default settings, no configuration changes are needed. The default <code>smo-env.conf</code> uses <code>localhost</code> for everything.
+  For single-machine use with default settings, no configuration changes are needed. All services bind to <code>localhost</code> and use their default ports.
 </div>
 
-<!-- ══════════════════════ 4. ARCHITECTURE ══════════════════════ -->
-<h2 id="architecture">4. Network Architecture</h2>
+<h3>Quick Start with RF Simulation</h3>
+<pre><code># Install with RF simulation support
+./deploy/install.sh --rfsim
 
-<h3>4.1 Single Machine</h3>
-<p>All five components run on the same machine. The MCS connects directly to the simulator's TCP ports. Browsers on the same machine (or network) access the web UIs.</p>
+# Start with CCSDS framing + channel coding
+./start.sh --rf
+
+# Additional UI available:
+#    Cortex RF Status: http://localhost:8094</code></pre>
+
+<!-- ══════════════════════ 4. FULL INSTALL ══════════════════════ -->
+<h2 id="full-install">4. Full Installation Guide</h2>
+
+<p>This section walks through every step for a fresh machine with no Python or tools installed.</p>
+
+<h3><span class="step-num">1</span> Install System Dependencies</h3>
+
+<h4>macOS</h4>
+<pre><code># Install Homebrew (if not already installed)
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Install Python 3.12 and git
+brew install python@3.12 git
+
+# Verify
+python3 --version    # 3.12.x
+git --version</code></pre>
+
+<h4>Ubuntu / Debian</h4>
+<pre><code># Update package lists
+sudo apt update
+
+# Install Python 3.11, venv module, and git
+sudo apt install -y python3.11 python3.11-venv python3.11-dev git
+
+# Verify
+python3.11 --version
+git --version</code></pre>
+
+<h4>Fedora / RHEL 9+</h4>
+<pre><code>sudo dnf install -y python3.11 git
+python3.11 --version</code></pre>
+
+<h3><span class="step-num">2</span> Get the Source Code</h3>
+<pre><code># Clone from GitHub
+git clone https://github.com/FNewland/SpaceMissionSimulator.git
+cd SpaceMissionSimulator
+
+# Or, if you have a distribution archive:
+tar xzf smo-suite-*.tar.gz
+cd smo-suite-*</code></pre>
+
+<h3><span class="step-num">3</span> Run the Installer</h3>
+<pre><code># Full installation (all components)
+./deploy/install.sh
+
+# Or choose specific install options:
+./deploy/install.sh --rfsim          # Include RF simulation
+./deploy/install.sh --dev            # Include test dependencies
+./deploy/install.sh --rfsim --dev    # Both</code></pre>
+
+<p>The installer will:</p>
+<ol>
+  <li>Verify Python 3.11+ is available</li>
+  <li>Create a virtual environment in <code>.venv/</code></li>
+  <li>Upgrade pip, setuptools, and wheel</li>
+  <li>Install all SMO packages in development mode (<code>pip install -e</code>)</li>
+  <li>Install additional dependencies (sgp4, numpy, aiohttp, etc.)</li>
+  <li>Configure vendor asset symlinks for the web UIs</li>
+  <li>Verify all imports work correctly</li>
+</ol>
+
+<h3><span class="step-num">4</span> Verify the Installation</h3>
+<pre><code># Run the built-in verification
+./deploy/install.sh --check
+
+# Or verify manually
+source .venv/bin/activate
+python -c "import smo_common, smo_simulator, smo_mcs, smo_planner"
+echo "All core packages OK"</code></pre>
+
+<h3><span class="step-num">5</span> Start the Suite</h3>
+<pre><code># Quick start (all services + tools)
+./start.sh
+
+# Or use deploy scripts (reads smo-env.conf for network config)
+./deploy/start-all.sh</code></pre>
+
+<h3><span class="step-num">6</span> Open the UIs</h3>
+<p>Navigate your browser to:</p>
+<table>
+  <tr><th>Service</th><th>URL</th><th>Purpose</th></tr>
+  <tr><td>Instructor UI</td><td><code>http://localhost:8080</code></td><td>Control simulation, inject failures, run scenarios</td></tr>
+  <tr><td>MCS</td><td><code>http://localhost:9090</code></td><td>Operator interface (6 positions, 11 tabs)</td></tr>
+  <tr><td>Planner</td><td><code>http://localhost:9091</code></td><td>Mission planning, contacts, budgets</td></tr>
+  <tr><td>Planner (Wide)</td><td><code>http://localhost:9091/wide</code></td><td>5760&times;1080 ultra-wide layout</td></tr>
+  <tr><td>Delayed TM</td><td><code>http://localhost:8092</code></td><td>Stored TM dump browser</td></tr>
+  <tr><td>Orbit Tools</td><td><code>http://localhost:8093</code></td><td>TLE/state vector utilities</td></tr>
+  <tr><td>Documentation</td><td><code>http://localhost:8095</code></td><td>Mission manual viewer</td></tr>
+</table>
+
+<h3>Manual Installation (Without install.sh)</h3>
+<p>If you prefer to install step-by-step without the script:</p>
+<pre><code># 1. Clone the repo
+git clone https://github.com/FNewland/SpaceMissionSimulator.git
+cd SpaceMissionSimulator
+
+# 2. Create and activate virtual environment
+python3.11 -m venv .venv
+source .venv/bin/activate
+
+# 3. Upgrade build tools
+pip install --upgrade pip setuptools wheel
+
+# 4. Install packages (order matters — smo-common first)
+pip install -e packages/smo-common
+pip install -e packages/smo-simulator
+pip install -e packages/smo-mcs
+pip install -e packages/smo-planner
+pip install -e packages/smo-gateway
+
+# 5. (Optional) Install RF simulation
+pip install -e packages/smo-rfsim
+
+# 6. (Optional) Install test dependencies
+pip install pytest pytest-asyncio
+
+# 7. Fix vendor symlinks for web UIs
+bash fix_vendor_symlinks.sh
+
+# 8. Verify
+python -c "import smo_common, smo_simulator, smo_mcs, smo_planner"
+echo "Installation successful"
+
+# 9. Start
+./start.sh</code></pre>
+
+<!-- ══════════════════════ 5. ARCHITECTURE ══════════════════════ -->
+<h2 id="architecture">5. Network Architecture</h2>
+
+<h3>5.1 Single Machine</h3>
+<p>All components run on the same machine. The MCS connects directly to the simulator's TCP ports.</p>
 
 <div class="arch-diagram">
 Machine A (your computer):
   Simulator   →  TC :8001, TM :8002, HTTP :8080
   MCS         →  HTTP :9090  (connects to localhost:8001/8002)
   Planner     →  HTTP :9091
+  Delayed TM  →  HTTP :8092
+  Orbit Tools →  HTTP :8093
+  Doc Viewer  →  HTTP :8095
 
 Browser access:
   http://localhost:9090       ← MCS
@@ -432,8 +649,7 @@ Browser access:
   http://localhost:8080       ← Instructor
 </div>
 
-<h3>4.2 Two-Machine Split (Simulator + Ops)</h3>
-<p>Simulator on one machine, MCS and Planner on another. Common for training where the instructor machine is separate from operators.</p>
+<h3>5.2 Two-Machine Split (Simulator + Ops)</h3>
 
 <div class="arch-diagram">
 Machine A (Instructor): 192.168.1.100
@@ -449,7 +665,7 @@ Browsers on network:
   http://192.168.1.100:8080   ← Instructor
 </div>
 
-<h3>4.3 Full Distribution (3+ Machines)</h3>
+<h3>5.3 Full Distribution (3+ Machines)</h3>
 
 <div class="arch-diagram">
 Machine A (Simulator):   192.168.1.100
@@ -465,8 +681,7 @@ Machine D (Gateway):     192.168.1.103  [optional]
   Gateway    → :10025 (relays to Simulator)
 </div>
 
-<h3>4.4 Multi-Site with Gateway</h3>
-<p>The Gateway allows multiple MCS instances at different locations to share a single simulator. It fans out TM to all connected clients and aggregates TC upstream.</p>
+<h3>5.4 Multi-Site with Gateway</h3>
 
 <div class="arch-diagram">
                     ┌─────────────┐
@@ -487,22 +702,41 @@ Machine D (Gateway):     192.168.1.103  [optional]
      └─────────────┘ └─────────┘ └──────────────┘
 </div>
 
-<!-- ══════════════════════ 5. CONFIGURATION ══════════════════════ -->
-<h2 id="config">5. Configuration Reference</h2>
+<h3>5.5 With RF Simulation Bridge</h3>
+
+<div class="arch-diagram">
+┌─────────────┐     ┌───────────────────┐     ┌─────────┐
+│  Simulator  │     │    RF Bridge      │     │   MCS   │
+│ TC:8001     │◄────│ TC:8001 ←→ TC:8011│────►│ TC:8011 │
+│ TM:8002     │────►│ TM:8002 ←→ TM:8012│────►│ TM:8012 │
+│ WS:8080     │────►│ WS feedback       │     │ :9090   │
+└─────────────┘     │ Cortex UI: :8094  │     └─────────┘
+                    │                   │
+                    │ CCSDS Framing:    │
+                    │  TM: 1115B frames │
+                    │  RS(255,223) FEC  │
+                    │  ASM sync         │
+                    │  BER injection    │
+                    │ TC: BCH CLTUs     │
+                    └───────────────────┘
+</div>
+
+<!-- ══════════════════════ 6. CONFIG ══════════════════════ -->
+<h2 id="config">6. Configuration Reference</h2>
 
 <p>All network settings are in a single file: <code>deploy/smo-env.conf</code></p>
 
-<h3>5.1 Simulator Settings</h3>
+<h3>6.1 Simulator Settings</h3>
 <table>
   <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
-  <tr><td><code>SIMULATOR_HOST</code></td><td>localhost</td><td>Hostname/IP where the simulator runs (used by MCS to connect TO it)</td></tr>
+  <tr><td><code>SIMULATOR_HOST</code></td><td>localhost</td><td>Hostname/IP where the simulator runs</td></tr>
   <tr><td><code>SIMULATOR_TC_PORT</code></td><td>8001</td><td>TCP port for telecommand uplink</td></tr>
   <tr><td><code>SIMULATOR_TM_PORT</code></td><td>8002</td><td>TCP port for telemetry downlink</td></tr>
   <tr><td><code>SIMULATOR_HTTP_PORT</code></td><td>8080</td><td>HTTP port for instructor web UI</td></tr>
   <tr><td><code>SIMULATOR_SPEED</code></td><td>1.0</td><td>Simulation speed (1.0 = real-time, 10.0 = 10x)</td></tr>
 </table>
 
-<h3>5.2 MCS Settings</h3>
+<h3>6.2 MCS Settings</h3>
 <table>
   <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
   <tr><td><code>MCS_HTTP_PORT</code></td><td>9090</td><td>HTTP port for the MCS web UI</td></tr>
@@ -510,14 +744,14 @@ Machine D (Gateway):     192.168.1.103  [optional]
   <tr><td><code>MCS_TM_PORT</code></td><td>${SIMULATOR_TM_PORT}</td><td>TM port to connect to</td></tr>
 </table>
 
-<h3>5.3 Planner Settings</h3>
+<h3>6.3 Planner Settings</h3>
 <table>
   <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
   <tr><td><code>PLANNER_HTTP_PORT</code></td><td>9091</td><td>HTTP port for the planner web UI</td></tr>
-  <tr><td><code>PLANNER_REACHABLE_HOST</code></td><td>localhost</td><td>How the MCS can reach the planner (for the MCS UI's planner integration)</td></tr>
+  <tr><td><code>PLANNER_REACHABLE_HOST</code></td><td>localhost</td><td>How the MCS can reach the planner</td></tr>
 </table>
 
-<h3>5.4 Gateway Settings</h3>
+<h3>6.4 Gateway Settings</h3>
 <table>
   <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
   <tr><td><code>USE_GATEWAY</code></td><td>no</td><td>Set to "yes" to enable the gateway relay</td></tr>
@@ -527,33 +761,63 @@ Machine D (Gateway):     192.168.1.103  [optional]
   <tr><td><code>GATEWAY_UPSTREAM_PORT</code></td><td>${SIMULATOR_TM_PORT}</td><td>Upstream simulator TM port</td></tr>
 </table>
 
-<h3>5.5 Mission Configuration</h3>
+<h3>6.5 RF Simulation Settings</h3>
+<p>RF simulation is configured in <code>configs/eosat1/rfsim.yaml</code>, not in smo-env.conf.</p>
+<table>
+  <tr><th>Setting</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>mode</code></td><td>PACKET</td><td>PACKET (transparent), FRAME (CCSDS), or RF (BPSK)</td></tr>
+  <tr><td><code>ccsds.tm_frame_length</code></td><td>1115</td><td>TM frame size in bytes</td></tr>
+  <tr><td><code>ccsds.rs_enabled</code></td><td>true</td><td>Reed-Solomon RS(255,223) encoding</td></tr>
+  <tr><td><code>channel.eb_n0_db</code></td><td>10.0</td><td>Eb/N0 ratio (typ. 8&ndash;12 for S-band LEO)</td></tr>
+  <tr><td><code>channel.ber_target</code></td><td>1.0e-6</td><td>Target bit error rate</td></tr>
+  <tr><td><code>network.mcs_tm_port</code></td><td>8012</td><td>TM port exposed to MCS</td></tr>
+  <tr><td><code>network.mcs_tc_port</code></td><td>8011</td><td>TC port exposed to MCS</td></tr>
+  <tr><td><code>network.cortex_port</code></td><td>8094</td><td>Cortex web UI port</td></tr>
+</table>
+
+<h3>6.6 Mission Configuration</h3>
 <table>
   <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
   <tr><td><code>MISSION_CONFIG</code></td><td>configs/eosat1/</td><td>Path to mission configuration directory</td></tr>
 </table>
 
-<!-- ══════════════════════ 6. SINGLE MACHINE ══════════════════════ -->
-<h2 id="single">6. Single-Machine Deployment</h2>
+<h3>6.7 Environment Variable: SMO_RF_MODE</h3>
+<p>Instead of using <code>--rf</code> on the command line, you can set the environment variable:</p>
+<pre><code># Enable CCSDS framing mode
+export SMO_RF_MODE=FRAME
+./start.sh
+
+# Or enable full RF (BPSK modulation)
+export SMO_RF_MODE=RF
+./start.sh</code></pre>
+
+<!-- ══════════════════════ 7. SINGLE MACHINE ══════════════════════ -->
+<h2 id="single">7. Single-Machine Deployment</h2>
 
 <h3>Step 1: Install</h3>
-<pre><code>cd SpaceMissionSimulation
+<pre><code>cd SpaceMissionSimulator
 ./deploy/install.sh</code></pre>
 
-<h3>Step 2: Configure (optional for single machine)</h3>
+<h3>Step 2: Configure (optional)</h3>
 <p>The defaults work for single-machine deployment. No changes needed.</p>
 
 <h3>Step 3: Start</h3>
-<pre><code>./deploy/start-all.sh</code></pre>
+<pre><code># Option A: Quick start (start.sh — includes tools)
+./start.sh
+
+# Option B: Deploy scripts (start-all.sh — reads smo-env.conf)
+./deploy/start-all.sh</code></pre>
 
 <h3>Step 4: Access</h3>
-<p>Open a browser to any of these URLs:</p>
 <table>
   <tr><th>Service</th><th>URL</th></tr>
+  <tr><td>Instructor UI</td><td><code>http://localhost:8080</code></td></tr>
   <tr><td>MCS (Operator UI)</td><td><code>http://localhost:9090</code></td></tr>
   <tr><td>Planner (Standard)</td><td><code>http://localhost:9091</code></td></tr>
   <tr><td>Planner (Wide-Screen)</td><td><code>http://localhost:9091/wide</code></td></tr>
-  <tr><td>Instructor UI</td><td><code>http://localhost:8080</code></td></tr>
+  <tr><td>Delayed TM Viewer</td><td><code>http://localhost:8092</code></td></tr>
+  <tr><td>Orbit Tools</td><td><code>http://localhost:8093</code></td></tr>
+  <tr><td>Documentation</td><td><code>http://localhost:8095</code></td></tr>
 </table>
 
 <div class="info-box note">
@@ -561,22 +825,20 @@ Machine D (Gateway):     192.168.1.103  [optional]
   Other computers on the same network can access these UIs by replacing <code>localhost</code> with this machine's IP address (e.g., <code>http://192.168.1.100:9090</code>).
 </div>
 
-<!-- ══════════════════════ 7. DISTRIBUTED ══════════════════════ -->
-<h2 id="distributed">7. Distributed Deployment</h2>
+<!-- ══════════════════════ 8. DISTRIBUTED ══════════════════════ -->
+<h2 id="distributed">8. Distributed Deployment</h2>
 
 <h3>Example: Simulator on Machine A, MCS+Planner on Machine B</h3>
 
-<h4>Machine A (Simulator) — 192.168.1.100</h4>
+<h4>Machine A (Simulator) &mdash; 192.168.1.100</h4>
 <pre><code># 1. Install (simulator only)
 ./deploy/install.sh --sim-only
 
-# 2. Edit deploy/smo-env.conf — no changes needed for simulator host
-
-# 3. Start the simulator
+# 2. Start the simulator
 ./deploy/start-simulator.sh</code></pre>
 
-<h4>Machine B (MCS + Planner) — 192.168.1.101</h4>
-<pre><code># 1. Install (MCS + planner)
+<h4>Machine B (MCS + Planner) &mdash; 192.168.1.101</h4>
+<pre><code># 1. Install (full or MCS-focused)
 ./deploy/install.sh
 
 # 2. Edit deploy/smo-env.conf:
@@ -592,39 +854,20 @@ Machine D (Gateway):     192.168.1.103  [optional]
 SIMULATOR_HOST="192.168.1.100"    # Point to Machine A
 SIMULATOR_TC_PORT=8001
 SIMULATOR_TM_PORT=8002
-SIMULATOR_HTTP_PORT=8080
 
 MCS_HTTP_PORT=9090
 PLANNER_HTTP_PORT=9091
 PLANNER_REACHABLE_HOST="192.168.1.101"  # Machine B's own IP</code></pre>
-
-<h3>Example: Full 3-Machine Setup</h3>
-
-<h4>Machine A — Simulator (192.168.1.100)</h4>
-<pre><code>./deploy/install.sh --sim-only
-./deploy/start-simulator.sh</code></pre>
-
-<h4>Machine B — MCS (192.168.1.101)</h4>
-<pre><code># smo-env.conf:
-SIMULATOR_HOST="192.168.1.100"
-PLANNER_REACHABLE_HOST="192.168.1.102"
-
-./deploy/install.sh --mcs-only
-./deploy/start-mcs.sh</code></pre>
-
-<h4>Machine C — Planner (192.168.1.102)</h4>
-<pre><code>./deploy/install.sh --plan-only
-./deploy/start-planner.sh</code></pre>
 
 <div class="info-box warning">
   <strong>Important</strong>
   Each machine needs a copy of the project (or at least its package + configs + deploy directory). Use <code>./deploy/package.sh</code> to create a distributable archive, then extract it on each machine.
 </div>
 
-<!-- ══════════════════════ 8. GATEWAY ══════════════════════ -->
-<h2 id="gateway">8. Gateway (Multi-Site MCS)</h2>
+<!-- ══════════════════════ 9. GATEWAY ══════════════════════ -->
+<h2 id="gateway">9. Gateway (Multi-Site MCS)</h2>
 
-<p>The Gateway is a transparent TM/TC relay that allows multiple MCS instances to connect to a single simulator. Use it when you have operators at multiple locations.</p>
+<p>The Gateway is a transparent TM/TC relay that allows multiple MCS instances to connect to a single simulator.</p>
 
 <h3>Setup</h3>
 <pre><code># On the gateway machine — edit deploy/smo-env.conf:
@@ -643,47 +886,120 @@ USE_GATEWAY="yes"
 GATEWAY_HOST="192.168.1.103"
 GATEWAY_LISTEN_PORT=10025
 
-# The MCS start script will automatically connect to the gateway
-# instead of the simulator when USE_GATEWAY="yes"
 ./deploy/start-mcs.sh</code></pre>
 
-<!-- ══════════════════════ 9. WIDE SCREEN ══════════════════════ -->
-<h2 id="widescreen">9. Wide-Screen Planner Display (5760 &times; 1080)</h2>
+<!-- ══════════════════════ 10. RF SIM ══════════════════════ -->
+<h2 id="rfsim">10. RF Simulation Layer</h2>
 
-<p>The planner includes a special layout optimized for ultra-wide displays (e.g., triple-monitor setups at 5760 &times; 1080 resolution). It shows all panels side by side in a 5-column layout:</p>
+<p>The RF simulation bridge sits between the simulator and MCS, adding realistic CCSDS transfer framing and RF channel effects.</p>
+
+<h3>10.1 Installation</h3>
+<pre><code># Install with RF simulation support
+./deploy/install.sh --rfsim
+
+# Or install manually
+source .venv/bin/activate
+pip install -e packages/smo-rfsim</code></pre>
+
+<h3>10.2 Operating Modes</h3>
+<table>
+  <tr><th>Mode</th><th>Description</th><th>Dependencies</th></tr>
+  <tr><td><code>PACKET</code></td><td>Transparent relay — no framing or channel effects</td><td>aiohttp</td></tr>
+  <tr><td><code>FRAME</code></td><td>CCSDS Transfer Framing: TM frames (1115B, ASM, FECF), TC CLTUs (BCH 64/56), RS(255,223), BER injection</td><td>aiohttp, reedsolo</td></tr>
+  <tr><td><code>RF</code></td><td>Full BPSK modulation/demodulation via GNU Radio flowgraphs</td><td>aiohttp, reedsolo, GNU Radio 3.10+</td></tr>
+</table>
+
+<h3>10.3 Starting with RF Simulation</h3>
+<pre><code># FRAME mode (CCSDS framing, no GNU Radio needed)
+./start.sh --rf
+# or
+./start.sh --rf=FRAME
+
+# RF mode (requires GNU Radio)
+./start.sh --rf=RF
+
+# Via environment variable
+export SMO_RF_MODE=FRAME
+./start.sh</code></pre>
+
+<h3>10.4 Cortex Web UI</h3>
+<p>When the RF bridge is running, a real-time status dashboard is available at <code>http://localhost:8094</code>, showing:</p>
+<ul>
+  <li>Current Eb/N0 and BER</li>
+  <li>Frame sync state (SEARCH → VERIFY → LOCK)</li>
+  <li>Frame counters and error rates</li>
+  <li>Virtual channel utilization</li>
+</ul>
+
+<h3>10.5 Configuration</h3>
+<p>RF simulation is configured in <code>configs/eosat1/rfsim.yaml</code>. Key settings:</p>
+<pre><code># Channel quality
+channel:
+  eb_n0_db: 10.0        # Higher = cleaner signal
+  ber_target: 1.0e-6    # Target bit error rate
+  awgn_enabled: true    # Additive white Gaussian noise
+
+# CCSDS framing
+ccsds:
+  rs_enabled: true      # Reed-Solomon forward error correction
+  fecf_present: true    # Frame Error Control Field (CRC-16)</code></pre>
+
+<!-- ══════════════════════ 11. TOOLS ══════════════════════ -->
+<h2 id="tools">11. Auxiliary Tools</h2>
+
+<p>The <code>tools/</code> directory contains standalone utilities. These are started automatically by <code>start.sh</code> but can also be run independently.</p>
+
+<h3>11.1 Delayed TM Viewer (port 8092)</h3>
+<pre><code># Automatically started by start.sh, or run manually:
+source .venv/bin/activate
+python tools/delayed_tm_viewer.py --port 8092 --dumps workspace/dumps</code></pre>
+<p>Provides a web UI for browsing stored TM dump files from <code>workspace/dumps/</code>.</p>
+
+<h3>11.2 Orbit Tools (port 8093)</h3>
+<pre><code># Requires: sgp4, numpy, aiohttp
+source .venv/bin/activate
+python tools/orbit_tools.py --serve --port 8093</code></pre>
+<p>Converts TLE data and state vectors into TC commands for orbit uploads.</p>
+
+<h3>11.3 Documentation Viewer (port 8095)</h3>
+<pre><code>source .venv/bin/activate
+python tools/doc_viewer.py --port 8095 --docs configs/eosat1</code></pre>
+<p>Serves the mission manual and documentation as browsable HTML.</p>
+
+<h3>11.4 Other Tools</h3>
+<table>
+  <tr><th>Tool</th><th>Description</th><th>Usage</th></tr>
+  <tr><td><code>tm_report.py</code></td><td>Generate TM parameter reports</td><td><code>python tools/tm_report.py</code></td></tr>
+  <tr><td><code>procedure_audit.py</code></td><td>Audit procedure files for completeness</td><td><code>python tools/procedure_audit.py</code></td></tr>
+  <tr><td><code>generate_xtce.py</code></td><td>Generate XTCE telemetry database</td><td><code>python tools/generate_xtce.py</code></td></tr>
+  <tr><td><code>generate_smdl.py</code></td><td>Generate SMP2 model description</td><td><code>python tools/generate_smdl.py</code></td></tr>
+</table>
+
+<!-- ══════════════════════ 12. WIDE SCREEN ══════════════════════ -->
+<h2 id="widescreen">12. Wide-Screen Planner Display (5760 &times; 1080)</h2>
+
+<p>The planner includes a layout optimized for ultra-wide displays (triple-monitor 5760 &times; 1080):</p>
 
 <div class="arch-diagram">
 ┌──────────────────┬─────────────┬───────────┬───────────┬────────────┐
 │                  │   CONTACT   │ ACTIVITY  │  POWER &  │  IMAGING   │
 │    GROUND TRACK  │  WINDOWS    │ SCHEDULE  │   DATA    │  TARGETS   │
-│    MAP (Leaflet) │  24h Timeline│           │  BUDGET   │            │
+│    MAP (SVG)     │  24h Timeline│           │  BUDGET   │            │
 │                  │  + Table    │           │  Charts   │  + Opps    │
 │   ~1920px wide   │  ~1200px    │  ~860px   │  ~860px   │  ~920px    │
 └──────────────────┴─────────────┴───────────┴───────────┴────────────┘
 </div>
 
-<h3>Accessing the Wide-Screen UI</h3>
 <pre><code># Standard planner:
 http://&lt;planner-host&gt;:9091
 
 # Wide-screen planner (5760×1080):
 http://&lt;planner-host&gt;:9091/wide</code></pre>
 
-<div class="info-box note">
-  <strong>Display Setup</strong>
-  For the best experience on a 5760&times;1080 display:
-  <ul style="margin-top:8px;">
-    <li>Use Chrome or Firefox in full-screen mode (F11)</li>
-    <li>Set browser zoom to 100%</li>
-    <li>The layout uses CSS flexbox and adapts to the available width</li>
-    <li>It also works on standard screens but panels will be narrower</li>
-  </ul>
-</div>
+<!-- ══════════════════════ 13. REMOTE ACCESS ══════════════════════ -->
+<h2 id="remote">13. Remote Browser Access</h2>
 
-<!-- ══════════════════════ 10. REMOTE ACCESS ══════════════════════ -->
-<h2 id="remote">10. Remote Browser Access</h2>
-
-<p>All web UIs (MCS, Planner, Instructor) bind to <code>0.0.0.0</code> by default, meaning they accept connections from any network interface. Any browser on the same network can connect.</p>
+<p>All web UIs bind to <code>0.0.0.0</code> by default, accepting connections from any network interface.</p>
 
 <h3>Finding Your IP Address</h3>
 <pre><code># macOS
@@ -692,28 +1008,17 @@ ipconfig getifaddr en1        # Ethernet
 
 # Linux
 hostname -I | awk '{print $1}'
-# or
-ip addr show | grep "inet " | grep -v 127.0.0.1
 
 # Windows
 ipconfig | findstr "IPv4"</code></pre>
-
-<h3>Connecting from Other Machines</h3>
-<p>Replace <code>localhost</code> with the host machine's IP address:</p>
-<pre><code># If MCS is running on 192.168.1.101:
-http://192.168.1.101:9090          # MCS
-http://192.168.1.101:9090          # (any browser on the network)
-
-# Multiple operators can connect simultaneously
-# Each selects their operator position in the MCS UI</code></pre>
 
 <div class="info-box note">
   <strong>Multiple Operators</strong>
   The MCS supports 6 simultaneous operator positions: Captain, EPS, AOCS, OBDH, TTC, and Payload. Each browser session selects a position from the dropdown. Position-based access control restricts which commands each operator can send.
 </div>
 
-<!-- ══════════════════════ 11. FIREWALL ══════════════════════ -->
-<h2 id="firewall">11. Firewall &amp; Network</h2>
+<!-- ══════════════════════ 14. FIREWALL ══════════════════════ -->
+<h2 id="firewall">14. Firewall &amp; Network</h2>
 
 <h3>Required Ports</h3>
 <table>
@@ -724,36 +1029,36 @@ http://192.168.1.101:9090          # (any browser on the network)
   <tr><td>MCS</td><td>9090</td><td>TCP</td><td>Inbound</td><td>Operator web UI + WebSocket</td></tr>
   <tr><td>Planner</td><td>9091</td><td>TCP</td><td>Inbound</td><td>Planner web UI</td></tr>
   <tr><td>Gateway</td><td>10025</td><td>TCP</td><td>Inbound</td><td>MCS relay connections</td></tr>
+  <tr><td>RF Bridge</td><td>8011</td><td>TCP</td><td>Inbound</td><td>TC from MCS (via bridge)</td></tr>
+  <tr><td>RF Bridge</td><td>8012</td><td>TCP</td><td>Inbound</td><td>TM to MCS (via bridge)</td></tr>
+  <tr><td>RF Bridge</td><td>8094</td><td>TCP</td><td>Inbound</td><td>Cortex web UI</td></tr>
+  <tr><td>Tools</td><td>8092-8095</td><td>TCP</td><td>Inbound</td><td>Auxiliary tool web UIs</td></tr>
 </table>
 
 <h3>macOS Firewall</h3>
 <pre><code># macOS will prompt "Allow incoming connections" when each service starts.
 # Click "Allow" for each.
-# Or add exceptions in System Preferences → Security → Firewall → Options</code></pre>
+# Or add exceptions in System Settings → Network → Firewall → Options</code></pre>
 
 <h3>Linux (UFW)</h3>
-<pre><code># Simulator machine
-sudo ufw allow 8001/tcp
-sudo ufw allow 8002/tcp
-sudo ufw allow 8080/tcp
+<pre><code># All ports (single machine)
+sudo ufw allow 8001/tcp   # Simulator TC
+sudo ufw allow 8002/tcp   # Simulator TM
+sudo ufw allow 8080/tcp   # Instructor UI
+sudo ufw allow 9090/tcp   # MCS
+sudo ufw allow 9091/tcp   # Planner
+sudo ufw allow 8092:8095/tcp  # Tools
 
-# MCS machine
-sudo ufw allow 9090/tcp
-
-# Planner machine
-sudo ufw allow 9091/tcp
-
-# Gateway machine (if used)
-sudo ufw allow 10025/tcp</code></pre>
+# Or per-machine as appropriate</code></pre>
 
 <h3>Linux (firewalld)</h3>
 <pre><code>sudo firewall-cmd --permanent --add-port=9090/tcp
 sudo firewall-cmd --reload</code></pre>
 
-<!-- ══════════════════════ 12. PACKAGING ══════════════════════ -->
-<h2 id="packaging">12. Packaging for Distribution</h2>
+<!-- ══════════════════════ 15. PACKAGING ══════════════════════ -->
+<h2 id="packaging">15. Packaging for Distribution</h2>
 
-<p>To create a clean distributable archive for deployment on other machines:</p>
+<p>Create a clean archive for deployment on other machines (no internet required at the target):</p>
 
 <pre><code># Create the package
 ./deploy/package.sh
@@ -761,23 +1066,16 @@ sudo firewall-cmd --reload</code></pre>
 # Or with a custom name
 ./deploy/package.sh --name eosat1-training
 
-# Output: smo-suite-20260330-143000.tar.gz</code></pre>
+# Output: smo-suite-20260515-143000.tar.gz</code></pre>
 
 <h3>What's Included</h3>
 <ul>
-  <li>All 5 source packages (smo-common, smo-simulator, smo-mcs, smo-planner, smo-gateway)</li>
-  <li>Mission configuration (configs/eosat1/)</li>
-  <li>All 64 procedures, 28 scenarios, 11 manual sections</li>
-  <li>Deployment scripts and this installation manual</li>
-  <li>Test suite (996 tests)</li>
-  <li>Documentation</li>
-</ul>
-
-<h3>What's NOT Included</h3>
-<ul>
-  <li>Python virtual environment (.venv) — recreated by install.sh</li>
-  <li>SQLite TM archives (data/*.db)</li>
-  <li>Build artifacts (__pycache__, *.egg-info)</li>
+  <li>All 6 source packages (smo-common, smo-simulator, smo-mcs, smo-planner, smo-gateway, smo-rfsim)</li>
+  <li>Mission configuration (configs/eosat1/) — 64 procedures, 28 scenarios, 17 manual sections</li>
+  <li>Deployment scripts (deploy/) and this installation manual</li>
+  <li>Tools directory (tools/)</li>
+  <li>Test suite (1000+ tests)</li>
+  <li>Vendor assets (offline web UI dependencies)</li>
 </ul>
 
 <h3>Deploying on a Target Machine</h3>
@@ -792,138 +1090,223 @@ cd smo-suite-*
 # 3. Install
 ./deploy/install.sh
 
-# 4. Configure
+# 4. Configure (if distributed)
 vi deploy/smo-env.conf
 
 # 5. Run
-./deploy/start-all.sh</code></pre>
+./start.sh</code></pre>
 
-<!-- ══════════════════════ 13. COMPONENTS ══════════════════════ -->
-<h2 id="components">13. Component Reference</h2>
+<h3>Offline Installation with Pre-built Wheels</h3>
+<p>For machines with no internet access:</p>
+<pre><code># On a machine WITH internet — build wheels
+source .venv/bin/activate
+mkdir -p wheels
+pip download -d wheels/ \
+    pydantic pyyaml sgp4 numpy aiohttp reedsolo \
+    pytest pytest-asyncio hatchling
 
-<h3>13.1 Simulator</h3>
-<p>The spacecraft simulator implements a full PUS-C service stack (Services 1, 3, 5, 6, 8, 9, 11, 12, 15, 17, 19, 20) with pluggable subsystem models for EPS, AOCS, TCS, OBDH, TTC, and Payload.</p>
+# Copy the wheels/ directory into the project root
+# Then on the target machine:
+./deploy/install.sh --offline</code></pre>
+
+<!-- ══════════════════════ 16. TESTING ══════════════════════ -->
+<h2 id="testing">16. Running Tests</h2>
+
+<pre><code># Install test dependencies
+./deploy/install.sh --dev
+# Or manually:
+source .venv/bin/activate
+pip install pytest pytest-asyncio
+
+# Run all tests
+pytest tests/ -v
+
+# Run specific test suites
+pytest tests/test_common/ -v         # Common library tests
+pytest tests/test_simulator/ -v      # Simulator tests
+pytest tests/test_mcs/ -v            # MCS tests
+pytest tests/test_planner/ -v        # Planner tests
+pytest tests/test_gateway/ -v        # Gateway tests
+pytest tests/test_integration/ -v    # Integration tests
+pytest tests/test_rfsim/ -v          # RF simulation tests (118 tests)
+
+# Run a single test file
+pytest tests/test_simulator/test_eps_enhanced.py -v
+
+# Run with output
+pytest tests/ -v -s</code></pre>
+
+<div class="info-box note">
+  <strong>Test Count</strong>
+  The full test suite contains 1000+ tests. Most tests run without any external services. Integration tests may take longer as they spin up full engine instances.
+</div>
+
+<!-- ══════════════════════ 17. COMPONENTS ══════════════════════ -->
+<h2 id="components">17. Component Reference</h2>
+
+<h3>17.1 Simulator</h3>
+<p>PUS-C service stack: Services 1, 3, 5, 6, 8, 9, 11, 12, 15, 17, 19, 20.</p>
 <ul>
   <li><strong>Entry point:</strong> <code>smo-simulator --config configs/eosat1/ [--speed 1.0]</code></li>
   <li><strong>Instructor UI:</strong> Inject failures, run scenarios, set breakpoints, control sim speed</li>
-  <li><strong>Subsystems:</strong> 6-panel solar array, dual magnetometers, 6 CSS heads, 2 star cameras, battery-heater thermal, multispectral payload (4 bands)</li>
+  <li><strong>Subsystems:</strong> 6-panel solar array, dual magnetometers, 6 CSS heads, 2 star cameras, battery-heater thermal, multispectral payload (4 bands: 443/560/665/865 nm)</li>
   <li><strong>State machines:</strong> Separation (7 phases), bootloader, transponder command channel</li>
 </ul>
 
-<h3>13.2 MCS (Mission Control System)</h3>
+<h3>17.2 MCS (Mission Control System)</h3>
 <p>WCAG 2.1 AA-compliant web UI with 6 operator positions and 11 subsystem tabs.</p>
 <ul>
   <li><strong>Entry point:</strong> <code>smo-mcs --config configs/eosat1/ --connect &lt;host&gt;:&lt;port&gt; --port 9090</code></li>
   <li><strong>Tabs:</strong> Overview, EPS, AOCS, TCS, OBDH, TTC, Payload, Commanding, PUS, Procedures, Manual</li>
-  <li><strong>Features:</strong> Real-time telemetry via WebSocket, SVG block diagrams, Chart.js trending, alarm journal, procedure execution, GO/NO-GO coordination, world map, stored TM playback</li>
-  <li><strong>Archive:</strong> SQLite-backed TM archive for historical parameter queries</li>
+  <li><strong>Features:</strong> Real-time TM via WebSocket, SVG block diagrams, Chart.js trending, alarm journal (S5/S12), procedure execution, GO/NO-GO coordination, world map, stored TM playback (S15), contact timeline (24h, dual ground station)</li>
 </ul>
 
-<h3>13.3 Planner</h3>
-<p>Mission planning with orbit prediction using SGP4 propagation.</p>
+<h3>17.3 Planner</h3>
+<p>Mission planning with SGP4 orbit propagation.</p>
 <ul>
   <li><strong>Entry point:</strong> <code>smo-planner --config configs/eosat1/ --port 9091</code></li>
-  <li><strong>Standard UI:</strong> <code>http://host:9091/</code> — map + contacts + schedule (stacked)</li>
-  <li><strong>Wide-screen UI:</strong> <code>http://host:9091/wide</code> — 5 columns side by side (5760&times;1080)</li>
-  <li><strong>Features:</strong> Contact window prediction, pass-based scheduling, conflict detection, power budget (SoC prediction), data budget (downlink capacity), imaging target planner (7 ocean current targets)</li>
+  <li><strong>Features:</strong> Contact window prediction (Iqaluit + Troll ground stations), pass-based scheduling with conflict detection, power budget (SoC prediction), data budget (downlink capacity), imaging target planner (7 ocean current targets)</li>
 </ul>
 
-<h3>13.4 Gateway</h3>
-<p>Transparent bidirectional TM/TC relay for multi-site deployments.</p>
+<h3>17.4 Gateway</h3>
 <ul>
   <li><strong>Entry point:</strong> <code>smo-gateway --upstream &lt;host&gt;:&lt;port&gt; --listen 0.0.0.0:10025</code></li>
   <li><strong>TM:</strong> Fans out to all connected downstream clients</li>
   <li><strong>TC:</strong> Forwards from any downstream client to the upstream simulator</li>
 </ul>
 
-<h3>13.5 Mission Configuration (EOSAT-1)</h3>
+<h3>17.5 RF Simulation Bridge</h3>
+<ul>
+  <li><strong>Entry point:</strong> <code>smo-rfsim --config configs/eosat1/rfsim.yaml --mode FRAME [--cortex-web]</code></li>
+  <li><strong>CCSDS Transfer Framing:</strong> TM frames (1115B, ASM, FECF), TC CLTUs (BCH 64/56)</li>
+  <li><strong>Channel coding:</strong> RS(255,223) via reedsolo, rate-1/2 K=7 convolutional + Viterbi</li>
+  <li><strong>Channel model:</strong> Eb/N0-based BER injection, AWGN, Doppler, path loss</li>
+  <li><strong>Frame sync:</strong> 3-state ASM correlator (SEARCH→VERIFY→LOCK) with flywheel</li>
+  <li><strong>VC multiplexer:</strong> VC0 (RT HK), VC1 (playback), VC7 (idle)</li>
+</ul>
+
+<h3>17.6 Mission Configuration (EOSAT-1)</h3>
 <table>
   <tr><th>Category</th><th>Count</th><th>Location</th></tr>
   <tr><td>Subsystem configs</td><td>7 YAML files</td><td>configs/eosat1/subsystems/</td></tr>
-  <tr><td>Procedures</td><td>64 files</td><td>configs/eosat1/procedures/</td></tr>
+  <tr><td>Procedures</td><td>64 files (5 categories)</td><td>configs/eosat1/procedures/</td></tr>
   <tr><td>Failure scenarios</td><td>28 files</td><td>configs/eosat1/scenarios/</td></tr>
-  <tr><td>Manual sections</td><td>11 files</td><td>configs/eosat1/manual/</td></tr>
-  <tr><td>Operator positions</td><td>6 roles</td><td>configs/eosat1/mcs/positions/</td></tr>
-  <tr><td>Activity types</td><td>7 types</td><td>configs/eosat1/planning/</td></tr>
+  <tr><td>Manual sections</td><td>17 files</td><td>configs/eosat1/manual/</td></tr>
+  <tr><td>Operator positions</td><td>6 roles</td><td>configs/eosat1/mcs/</td></tr>
   <tr><td>Imaging targets</td><td>7 targets</td><td>configs/eosat1/planning/</td></tr>
 </table>
 
-<!-- ══════════════════════ 14. TROUBLESHOOTING ══════════════════════ -->
-<h2 id="troubleshooting">14. Troubleshooting</h2>
+<h3>Python Dependencies</h3>
+<table>
+  <tr><th>Package</th><th>Min Version</th><th>Installed Version</th><th>Used By</th></tr>
+  <tr><td>pydantic</td><td>&ge; 2.0</td><td>2.12.5</td><td>smo-common (config schemas, validation)</td></tr>
+  <tr><td>pyyaml</td><td>&ge; 6.0</td><td>6.0.3</td><td>smo-common (YAML config loading)</td></tr>
+  <tr><td>sgp4</td><td>&ge; 2.20</td><td>2.25</td><td>smo-common (TLE orbit propagation)</td></tr>
+  <tr><td>numpy</td><td>&ge; 1.24</td><td>2.4.3</td><td>smo-common (orbit math, vector operations)</td></tr>
+  <tr><td>aiohttp</td><td>&ge; 3.9</td><td>3.13.3</td><td>All servers (HTTP/WebSocket)</td></tr>
+  <tr><td>reedsolo</td><td>&ge; 1.7</td><td>1.7.0</td><td>smo-rfsim (Reed-Solomon FEC)</td></tr>
+  <tr><td>pytest</td><td>&ge; 7.0</td><td>9.0.3</td><td>Test runner (dev only)</td></tr>
+  <tr><td>pytest-asyncio</td><td>&ge; 0.21</td><td>latest</td><td>Async test support (dev only)</td></tr>
+</table>
 
-<h3>14.1 "Command not found: smo-simulator"</h3>
+<!-- ══════════════════════ 18. TROUBLESHOOTING ══════════════════════ -->
+<h2 id="troubleshooting">18. Troubleshooting</h2>
+
+<h3>18.1 "Command not found: smo-simulator"</h3>
 <pre><code># Make sure the virtual environment is activated:
 source .venv/bin/activate
 
 # Re-install the package:
 pip install -e packages/smo-common -e packages/smo-simulator</code></pre>
 
-<h3>14.2 "Address already in use"</h3>
-<pre><code># Another process is using the port. Find and kill it:
+<h3>18.2 "Address already in use"</h3>
+<pre><code># Another process is using the port. Find and stop it:
 lsof -i :8080    # macOS/Linux
-# or
-netstat -tlnp | grep 8080   # Linux
-
-# Kill the process:
 kill &lt;PID&gt;
 
 # Or change the port in deploy/smo-env.conf</code></pre>
 
-<h3>14.3 MCS cannot connect to Simulator</h3>
+<h3>18.3 MCS cannot connect to Simulator</h3>
 <ul>
   <li>Verify the simulator is running: <code>curl http://&lt;sim-host&gt;:8080/api/state</code></li>
-  <li>Check that <code>SIMULATOR_HOST</code> in smo-env.conf is correct</li>
-  <li>Check firewall rules (ports 8001, 8002 must be open on the simulator machine)</li>
+  <li>Check <code>SIMULATOR_HOST</code> in smo-env.conf</li>
+  <li>Check firewall rules (ports 8001, 8002 must be open)</li>
   <li>Try <code>telnet &lt;sim-host&gt; 8002</code> to verify TCP connectivity</li>
 </ul>
 
-<h3>14.4 Browser shows "WebSocket connection failed"</h3>
+<h3>18.4 "WebSocket connection failed"</h3>
 <ul>
-  <li>The MCS will fall back to HTTP polling automatically</li>
-  <li>Check that you're using the correct host/port in the browser URL</li>
-  <li>Corporate proxies may block WebSocket — try direct network access</li>
+  <li>The MCS falls back to HTTP polling automatically</li>
+  <li>Corporate proxies may block WebSocket &mdash; try direct network access</li>
 </ul>
 
-<h3>14.5 Planner shows "SIMULATED" instead of "LIVE"</h3>
-<ul>
-  <li>The planner needs time (a few seconds) to compute initial contact windows</li>
-  <li>Check the planner log output for errors</li>
-  <li>Verify the TLE data in configs/eosat1/orbit.yaml is valid</li>
-</ul>
-
-<h3>14.6 Wide-screen planner doesn't fill the screen</h3>
-<ul>
-  <li>Make sure the browser is in full-screen mode (F11)</li>
-  <li>Set browser zoom to 100% (Ctrl+0 / Cmd+0)</li>
-  <li>The layout adapts to available width — it works best at 5760px but scales to other widths</li>
-</ul>
-
-<h3>14.7 Python version error</h3>
+<h3>18.5 Python version error</h3>
 <pre><code># If you get "requires-python >= 3.11" errors:
 python3 --version   # Must be 3.11+
 
-# Install Python 3.11 specifically:
-# macOS:  brew install python@3.11
-# Ubuntu: sudo apt install python3.11 python3.11-venv
-
-# Then recreate the venv:
+# Recreate the venv with the right Python:
 rm -rf .venv
 python3.11 -m venv .venv
 ./deploy/install.sh</code></pre>
 
-<h3>14.8 Running Tests</h3>
-<pre><code>source .venv/bin/activate
-pip install pytest pytest-asyncio
-pytest tests/ -v   # All 996 tests</code></pre>
+<h3>18.6 "ModuleNotFoundError: No module named 'venv'"</h3>
+<pre><code># Ubuntu/Debian: install the venv module separately
+sudo apt install python3.11-venv
 
-<!-- ══════════════════════ 15. FILES ══════════════════════ -->
-<h2 id="files">15. File Reference</h2>
+# Then retry the installation</code></pre>
+
+<h3>18.7 pip install fails with build errors</h3>
+<pre><code># Upgrade build tools first:
+source .venv/bin/activate
+pip install --upgrade pip setuptools wheel
+
+# Then retry:
+pip install -e packages/smo-common</code></pre>
+
+<h3>18.8 Vendor assets / UI looks broken</h3>
+<pre><code># Fix vendor symlinks:
+bash fix_vendor_symlinks.sh
+
+# If vendor/ directory is missing, the UI will still work
+# but will use fallback styling</code></pre>
+
+<h3>18.9 RF Bridge: "reedsolo not found"</h3>
+<pre><code>source .venv/bin/activate
+pip install reedsolo>=1.7</code></pre>
+
+<h3>18.10 Tests fail with import errors</h3>
+<pre><code># Make sure all packages are installed:
+source .venv/bin/activate
+pip install -e packages/smo-common
+pip install -e packages/smo-simulator -e packages/smo-mcs
+pip install -e packages/smo-planner -e packages/smo-gateway
+pip install -e packages/smo-rfsim
+pip install pytest pytest-asyncio</code></pre>
+
+<h3>18.11 Wide-screen planner doesn't fill the screen</h3>
+<ul>
+  <li>Use full-screen mode (F11)</li>
+  <li>Set browser zoom to 100% (Ctrl+0 / Cmd+0)</li>
+  <li>The layout adapts to available width</li>
+</ul>
+
+<!-- ══════════════════════ 19. FILES ══════════════════════ -->
+<h2 id="files">19. File Reference</h2>
+
+<h3>Project Root</h3>
+<table>
+  <tr><th>File</th><th>Purpose</th></tr>
+  <tr><td><code>start.sh</code></td><td>Quick-start script — starts all services + tools. Supports <code>--rf</code></td></tr>
+  <tr><td><code>fix_vendor_symlinks.sh</code></td><td>Fix vendor asset symlinks for web UIs</td></tr>
+  <tr><td><code>pyproject.toml</code></td><td>Root project metadata</td></tr>
+  <tr><td><code>.gitignore</code></td><td>Git ignore rules</td></tr>
+</table>
 
 <h3>Deployment Directory (deploy/)</h3>
 <table>
   <tr><th>File</th><th>Purpose</th></tr>
-  <tr><td><code>smo-env.conf</code></td><td>Network configuration (IPs, ports) — edit this</td></tr>
-  <tr><td><code>install.sh</code></td><td>Clean installation (venv, packages, verification)</td></tr>
+  <tr><td><code>install.sh</code></td><td>Full installation script with verification</td></tr>
+  <tr><td><code>smo-env.conf</code></td><td>Network configuration (IPs, ports) &mdash; edit this for distributed setups</td></tr>
   <tr><td><code>start-all.sh</code></td><td>Start all components on this machine</td></tr>
   <tr><td><code>start-simulator.sh</code></td><td>Start simulator only</td></tr>
   <tr><td><code>start-mcs.sh</code></td><td>Start MCS only</td></tr>
@@ -941,17 +1324,39 @@ pytest tests/ -v   # All 996 tests</code></pre>
   <tr><td><code>smo-mcs</code></td><td>Mission Control System</td><td><code>smo-mcs</code></td></tr>
   <tr><td><code>smo-planner</code></td><td>Mission Planning Tool</td><td><code>smo-planner</code></td></tr>
   <tr><td><code>smo-gateway</code></td><td>TM/TC Relay Gateway</td><td><code>smo-gateway</code></td></tr>
+  <tr><td><code>smo-rfsim</code></td><td>RF Simulation Bridge</td><td><code>smo-rfsim</code></td></tr>
 </table>
 
-<h3>Python Dependencies</h3>
+<h3>Configuration (configs/eosat1/)</h3>
 <table>
-  <tr><th>Package</th><th>Version</th><th>Used By</th></tr>
-  <tr><td>pydantic</td><td>&ge; 2.0</td><td>smo-common (config schemas)</td></tr>
-  <tr><td>pyyaml</td><td>&ge; 6.0</td><td>smo-common (YAML config loading)</td></tr>
-  <tr><td>sgp4</td><td>&ge; 2.20</td><td>smo-common (TLE orbit propagation)</td></tr>
-  <tr><td>numpy</td><td>&ge; 1.24</td><td>smo-common (orbit math)</td></tr>
-  <tr><td>aiohttp</td><td>&ge; 3.9</td><td>All servers (HTTP/WebSocket)</td></tr>
+  <tr><th>Path</th><th>Contents</th></tr>
+  <tr><td><code>mission.yaml</code></td><td>Top-level mission definition</td></tr>
+  <tr><td><code>subsystems/</code></td><td>EPS, AOCS, TCS, OBDH, TTC, Payload YAML configs</td></tr>
+  <tr><td><code>procedures/</code></td><td>64 procedure files (LEOP, commissioning, nominal, contingency, emergency)</td></tr>
+  <tr><td><code>scenarios/</code></td><td>28 failure/training scenario files</td></tr>
+  <tr><td><code>manual/</code></td><td>17 operations manual sections</td></tr>
+  <tr><td><code>mcs/</code></td><td>Operator position definitions</td></tr>
+  <tr><td><code>planning/</code></td><td>Activity types, imaging targets</td></tr>
+  <tr><td><code>rfsim.yaml</code></td><td>RF simulation configuration</td></tr>
 </table>
+
+<!-- ══════════════════════ 20. UNINSTALL ══════════════════════ -->
+<h2 id="uninstall">20. Uninstallation</h2>
+
+<p>The SMO Suite installs everything locally within the project directory. To remove:</p>
+
+<pre><code># Remove the virtual environment (all Python packages)
+rm -rf .venv
+rm -rf .venv-rfsim  # if present
+
+# Remove runtime data
+rm -rf workspace/
+
+# Remove the entire project
+cd ..
+rm -rf SpaceMissionSimulator</code></pre>
+
+<p>No system-wide files are modified. No root/admin privileges are needed for installation or removal.</p>
 
 <!-- ══════════════════════ FOOTER ══════════════════════ -->
 <div class="doc-footer">
