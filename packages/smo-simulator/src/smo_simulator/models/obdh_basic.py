@@ -224,9 +224,10 @@ class OBDHBasicModel(SubsystemModel):
                 ),
             )
 
-        # Watchdog (only in application mode)
-        if s.sw_image == SW_APPLICATION:
-            if s.watchdog_armed and s.mode == 0:
+        # Watchdog (only in application mode AND when armed)
+        if s.sw_image == SW_APPLICATION and s.watchdog_armed:
+            if s.mode == 0:
+                # Safe mode: hold timer at zero (watchdog doesn't fire in safe)
                 s.watchdog_timer = 0
             else:
                 s.watchdog_timer += 1
@@ -234,7 +235,7 @@ class OBDHBasicModel(SubsystemModel):
                     self._event_to_emit = (0x0303, "WATCHDOG_TIMEOUT")
                     self._reboot(REBOOT_WATCHDOG)
         else:
-            # Boot loader doesn't arm watchdog
+            # Bootloader or watchdog disabled: timer stays at zero
             s.watchdog_timer = 0
 
         # Phase 4: SEU simulation (South Atlantic Anomaly model)
