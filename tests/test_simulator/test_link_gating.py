@@ -79,8 +79,10 @@ class TestTTCLinkGating:
         model = make_ttc_model()
         params = {}
         orbit = make_orbit_state(in_contact=True)
-        # Lock acquisition: carrier(2s) + bit(5s) + frame(10s) — need 11 ticks
-        for _ in range(11):
+        # Lock acquisition: carrier(2s) + bit(5s) + frame(10s) at high rate,
+        # but default data rate is low (1000 bps) → rate_factor=3.0 →
+        # carrier(6s) + bit(15s) + frame(30s) — need 31 ticks
+        for _ in range(31):
             model.tick(1.0, orbit, params)
         assert params[0x0501] == 2  # link_status = LOCKED
 
@@ -89,8 +91,8 @@ class TestTTCLinkGating:
         model = make_ttc_model()
         params = {0x05FF: 1}  # override active
         orbit = make_orbit_state(in_contact=False)  # no orbital contact
-        # Lock acquisition needs time even with override
-        for _ in range(11):
+        # Lock acquisition needs time even with override (30s at low rate)
+        for _ in range(31):
             model.tick(1.0, orbit, params)
         assert params[0x0501] == 2  # link locked via override
 

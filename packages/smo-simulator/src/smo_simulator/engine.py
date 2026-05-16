@@ -748,15 +748,9 @@ class SimulationEngine:
         while self.running:
             dt_sim = dt_real * self.speed
 
-            # Process queues
+            # Process instructor commands first (may set override flags
+            # needed by orbit/subsystem logic below).
             self._drain_instr_queue()
-            self._drain_tc_queue()
-
-            # Execute time-tagged commands from scheduler
-            current_cuc = self._get_cuc_time()
-            due_tcs = self._tc_scheduler.tick(current_cuc)
-            for tc_pkt in due_tcs:
-                self._dispatch_tc(tc_pkt)
 
             # Advance orbit
             orbit_state = self.orbit.advance(dt_sim)
@@ -789,6 +783,19 @@ class SimulationEngine:
                     model.tick(dt_sim, orbit_state, self.params)
                 except Exception as e:
                     logger.warning("Subsystem %s tick error: %s", name, e)
+
+            # Process TCs AFTER subsystem ticks so that param 0x0501
+            # (TTC link status) is current when _enqueue_tm() checks
+            # downlink_active.  Previously TCs were drained before
+            # subsystem ticks, causing S1 ACKs to be silently dropped
+            # because downlink_active read stale link-status values.
+            self._drain_tc_queue()
+
+            # Execute time-tagged commands from scheduler
+            current_cuc = self._get_cuc_time()
+            due_tcs = self._tc_scheduler.tick(current_cuc)
+            for tc_pkt in due_tcs:
+                self._dispatch_tc(tc_pkt)
 
             # Cross-subsystem coupling
             eps = self.subsystems.get("eps")

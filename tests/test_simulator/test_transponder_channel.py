@@ -280,10 +280,12 @@ class TestLinkMarginDeployment:
         params_d = {}
         orbit = make_orbit_state(in_contact=True, range_km=1000.0, elevation=30.0)
 
-        # Collect multiple samples to average out noise
+        # Collect multiple samples to average out noise.
+        # Frame sync takes 30s at low rate (rate_factor=3.0), so we
+        # need >30 ticks before frame_sync=True and margins appear.
         margins_stowed = []
         margins_deployed = []
-        for _ in range(15):
+        for _ in range(45):
             model_stowed.tick(1.0, orbit, params_s)
             model_deployed.tick(1.0, orbit, params_d)
             if model_stowed._state.frame_sync and model_deployed._state.frame_sync:
