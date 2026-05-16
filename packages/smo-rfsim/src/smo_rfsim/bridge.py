@@ -257,6 +257,13 @@ class RFSimBridge:
                         else:
                             logger.debug("TM packet received but no LOS — TX stays off")
                     last_packet_time = asyncio.get_event_loop().time()
+                    # Flow control: if TX queue is > 80% full, yield to let
+                    # it drain before pushing more. Prevents queue overflow
+                    # during TM bursts.
+                    qd = self._pipeline._tm_packet_queue.qsize()
+                    qmax = self._pipeline._tm_packet_queue.maxsize
+                    if qd > qmax * 0.8:
+                        await asyncio.sleep(0.05)  # brief back-pressure
                     self._pipeline.enqueue_tm_packet(packet)
                 elif self.mode == RFSimMode.FRAME:
                     await self._process_tm_frame_mode(packet)
