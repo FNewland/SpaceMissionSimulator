@@ -571,8 +571,8 @@ class PayloadBasicModel(SubsystemModel):
                         'subsystem': 'payload',
                         'description': name
                     })
-                except:
-                    pass
+                except Exception:
+                    pass  # event queue full or format error
 
         # Write params
         p = self._param_ids

@@ -684,8 +684,8 @@ class TTCBasicModel(SubsystemModel):
                         'subsystem': 'ttc',
                         'description': evt['description']
                     })
-                except:
-                    pass
+                except Exception:
+                    pass  # event queue full or format error
 
     def get_telemetry(self) -> dict[int, float]:
         return {

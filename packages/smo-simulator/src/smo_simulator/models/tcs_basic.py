@@ -348,7 +348,7 @@ class TCSBasicModel(SubsystemModel):
         for event in events:
             try:
                 self._engine.event_queue.put_nowait(event)
-            except:
+            except Exception:
                 pass  # Queue full, skip event
 
     def tick(self, dt: float, orbit_state: Any, shared_params: dict[int, float]) -> None:

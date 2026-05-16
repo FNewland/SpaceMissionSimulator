@@ -356,8 +356,8 @@ class OBDHBasicModel(SubsystemModel):
                         'subsystem': 'obdh',
                         'description': evt_name
                     })
-                except:
-                    pass
+                except Exception:
+                    pass  # event queue full or format error
 
         # Write params
         p = self._param_ids
