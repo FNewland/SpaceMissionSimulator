@@ -1,0 +1,38 @@
+# RF Simulation Bridge Configuration — EOSAT-1
+# Set SMO_RF_MODE=FRAME or SMO_RF_MODE=RF to activate, or override via CLI
+
+mode: PACKET   # PACKET | FRAME | RF
+
+ccsds:
+  tm_frame_length: 1115    # bytes (CCSDS 132.0-B-3 standard)
+  scid: 1                  # Spacecraft ID
+  vc_realtime: 0           # VC0 = realtime housekeeping
+  vc_playback: 1           # VC1 = stored TM playback
+  vc_idle: 7               # VC7 = idle fill
+  fecf_present: true       # Frame Error Control Field (CRC-16)
+  rs_enabled: true         # Reed-Solomon RS(255,223)
+  convolutional_enabled: false  # Disabled: pure-Python Viterbi too slow (~5s/frame). RS-only provides adequate FEC. Enable when using GNU Radio C++ Viterbi.
+
+channel:
+  eb_n0_db: 10.0           # Eb/N0 in dB (typ. 8-12 for S-band LEO)
+  ber_target: 1.0e-6       # Target BER for bit-flip injection
+  path_loss_db: 150.0      # Free-space path loss at 450 km
+  doppler_hz: 0.0          # Doppler shift (updated from orbit model)
+  delay_ms: 3.0            # One-way propagation delay (450 km / c)
+  awgn_enabled: true
+
+network:
+  # Upstream (simulator)
+  sim_tm_host: "127.0.0.1"
+  sim_tm_port: 8002
+  sim_tc_host: "127.0.0.1"
+  sim_tc_port: 8001
+  sim_ws_url: "ws://127.0.0.1:8080/ws"
+  # Downstream (MCS)
+  mcs_tm_port: 8012
+  mcs_tc_port: 8011
+  mcs_bind: "0.0.0.0"
+  # Radio web UI
+  radio_port: 8094
+  # ZMQ PUB port for raw baseband sample stream (SatHack, gr-satellites, etc.)
+  zmq_samples_port: 5555
