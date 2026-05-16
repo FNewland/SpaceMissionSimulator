@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="OBDH" Creator="EOSAT-1 SMDL Generator" Date="2026-04-19" Version="1.0">
+  <Description>SMP2 model catalogue for OBDH subsystem</Description>
+  <Type Name="UInt8" Uuid="4e73fc8f-c4b0-5788-a75e-634a28fbbdd8" xsi:type="Integer" Size="1" Signed="false"/>
+  <Type Name="UInt16" Uuid="a3adba6a-8630-5a9d-a78b-683cf4e4fd19" xsi:type="Integer" Size="2" Signed="false"/>
+  <Type Name="UInt32" Uuid="7bab3621-cc69-53f7-9a2f-17c323ade941" xsi:type="Integer" Size="4" Signed="false"/>
+  <Type Name="Float32" Uuid="3f678a6b-cc1c-510f-ae1a-fbf521c99168" xsi:type="Float" Size="4"/>
+  <Type xsi:type="Bool" Name="Bool" Uuid="457e4b59-7222-5e93-a9ce-46491ef32978"/>
+  <Model Name="OBDH_Model" Uuid="6a8c1322-384d-5784-bc5c-4efe59ebc82e">
+    <Description>OBDH subsystem simulation model</Description>
+    <Field Name="obdh_mode" Uuid="81028a37-59a4-5105-ac04-43c9edd43ae7" Type="UInt8" Kind="Output" View="true"/>
+    <Field Name="obdh_temp" Uuid="c4cbe5e2-fba6-5d1b-adad-c9c4699d79fc" Type="Float32" Kind="Output" View="true">
+      <Description>[C]</Description>
+    </Field>
+    <Field Name="obdh_cpu_load" Uuid="9ffa2df7-d0ab-5462-8000-dee95944809e" Type="UInt16" Kind="Output" View="true">
+      <Description>[%]</Description>
+    </Field>
+    <Field Name="obdh_mmm_used" Uuid="067d18bf-e56b-5027-b7bb-d2b1e726bdf7" Type="UInt16" Kind="Output" View="true">
+      <Description>[%]</Description>
+    </Field>
+    <Field Name="obdh_tc_rx_count" Uuid="8cceb43d-975d-5922-b518-56511f5c9074" Type="UInt32" Kind="Output" View="true"/>
+    <Field Name="obdh_tc_acc_count" Uuid="11706509-2fdd-55bd-ae16-519691f0f69c" Type="UInt32" Kind="Output" View="true"/>
+    <Field Name="obdh_tc_rej_count" Uuid="bfcbd318-b31e-5a89-9408-54aa9c19c7aa" Type="UInt16" Kind="Output" View="true"/>
+    <Field Name="obdh_tm_pkt_count" Uuid="0fb03477-a5a9-535e-b5b7-1e57540915a5" Type="UInt32" Kind="Output" View="true"/>
+    <Field Name="obdh_uptime" Uuid="1a0005ac-5d98-586a-b3ae-7d32c785a508" Type="UInt32" Kind="Output" View="true">
+      <Description>[s]</Description>
+    </Field>
+    <Field Name="obdh_obc_time" Uuid="62fecff0-b5d6-5957-a4f5-0ae7b9909430" Type="UInt32" Kind="Output" View="true">
+      <Description>Onboard CUC time (seconds since epoch) [s]</Description>
+    </Field>
+    <Field Name="obdh_reboot_count" Uuid="e3923487-7e6d-5b38-a485-3e3e7411d0be" Type="UInt16" Kind="Output" View="true"/>
+    <Field Name="obdh_sw_version" Uuid="25609e1f-41de-55a3-81bd-8c8408e51570" Type="Float32" Kind="Output" View="true">
+      <Description>Software version</Description>
+    </Field>
+    <Field Name="obdh_active_obc" Uuid="6c613f7b-758a-54f8-9dc3-1ef9b38156c0" Type="UInt8" Kind="Output" View="true">
+      <Description>Active OBC unit (0=A, 1=B)</Description>
+    </Field>
+    <Field Name="obdh_obc_b_status" Uuid="7ccfce1e-3324-5fed-add8-548a1e417224" Type="UInt8" Kind="Output" View="true">
+      <Description>Backup OBC status (0=OFF, 1=STANDBY)</Description>
+    </Field>
+    <Field Name="obdh_active_bus" Uuid="708d9720-ddd6-52cf-888d-2e4799aa15d9" Type="UInt8" Kind="Output" View="true">
+      <Description>Active CAN bus (0=A, 1=B)</Description>
+    </Field>
+    <Field Name="obdh_bus_a_status" Uuid="4dc7f9d4-acb9-52e4-b693-ea6df174668c" Type="UInt8" Kind="Output" View="true">
+      <Description>Bus A status (0=OK, 1=ERROR)</Description>
+    </Field>
+    <Field Name="obdh_bus_b_status" Uuid="3570bd9a-fe2a-5876-8097-f936d8376126" Type="UInt8" Kind="Output" View="true">
+      <Description>Bus B status (0=OK, 1=ERROR)</Description>
+    </Field>
+    <Field Name="obdh_sw_image" Uuid="d6beeffb-b750-5bda-ab0e-a5a501782af7" Type="UInt8" Kind="Output" View="true">
+      <Description>Running image (0=bootloader, 1=application)</Description>
+    </Field>
+    <Field Name="obdh_hktm_buf_fill" Uuid="a8187a2d-b9cd-5301-9cdf-44325a376582" Type="UInt16" Kind="Output" View="true">
+      <Description>HK/TM buffer fill level [%]</Description>
+    </Field>
+    <Field Name="obdh_event_buf_fill" Uuid="cb46fec5-9b8e-5a9c-b358-ee04d4bfc132" Type="UInt16" Kind="Output" View="true">
+      <Description>Event buffer fill level [%]</Description>
+    </Field>
+    <Field Name="obdh_alarm_buf_fill" Uuid="37f7f79b-de84-5307-8cef-7851f3a999c5" Type="UInt16" Kind="Output" View="true">
+      <Description>Alarm buffer fill level [%]</Description>
+    </Field>
+    <Field Name="obdh_last_reboot_cause" Uuid="be29b8aa-0d1a-5864-9bd1-a93f32f972b2" Type="Float32" Kind="Output" View="true">
+      <Description>Last reboot cause (0=none,1=watchdog,2=memory,3=switchover,4=commanded)</Description>
+    </Field>
+    <Field Name="obdh_boot_count_a" Uuid="c889b69b-5be5-52d2-b365-db41bd560b05" Type="Float32" Kind="Output" View="true">
+      <Description>Total boot count for OBC-A</Description>
+    </Field>
+    <Field Name="obdh_boot_count_b" Uuid="75f3d35b-bddc-5b67-bc40-01492b200451" Type="Float32" Kind="Output" View="true">
+      <Description>Total boot count for OBC-B</Description>
+    </Field>
+    <Field Name="obdh_seu_count" Uuid="9369c52c-cf92-5e95-baeb-42c5675cb3ca" Type="UInt16" Kind="Output" View="true">
+      <Description>Single-event upset counter</Description>
+    </Field>
+    <Field Name="obdh_scrub_progress" Uuid="9a5a530b-3a5a-5b4e-9279-7111a7ba6e7e" Type="UInt16" Kind="Output" View="true">
+      <Description>Memory scrub progress [%]</Description>
+    </Field>
+    <Field Name="obdh_task_count" Uuid="f4c1493d-d58f-5e6b-909c-1afeefdf8d1d" Type="UInt8" Kind="Output" View="true">
+      <Description>Active OS task count</Description>
+    </Field>
+    <Field Name="obdh_stack_usage" Uuid="5dda399f-6471-57b9-8eea-2df234c33242" Type="UInt16" Kind="Output" View="true">
+      <Description>Stack memory usage [%]</Description>
+    </Field>
+    <Field Name="obdh_heap_usage" Uuid="cf056ffb-f71d-54bd-85ae-4bef943715de" Type="UInt16" Kind="Output" View="true">
+      <Description>Heap memory usage [%]</Description>
+    </Field>
+    <Field Name="obdh_mem_errors" Uuid="df3554bc-3929-5af6-ad07-708699a339bc" Type="UInt16" Kind="Output" View="true">
+      <Description>Memory error count (correctable + uncorrectable)</Description>
+    </Field>
+    <Field Name="obdh_storage_fill" Uuid="0cfd0ccb-2820-5a46-8327-ff9b2f1677de" Type="Float32" Kind="Output" View="true">
+      <Description>Onboard storage fill percentage [%]</Description>
+    </Field>
+    <Field Name="obdh_can_bus_status" Uuid="12826e84-5880-5af9-abe6-33932befbc40" Type="Float32" Kind="Output" View="true">
+      <Description>CAN bus status (0=offline, 1=nominal, 2=degraded)</Description>
+    </Field>
+    <Field Name="tc_OBC_SET_MODE_mode" Uuid="4ca74105-1a9e-5e26-9d50-5805631673dc" Type="UInt8" Kind="Input">
+      <Description>0=nominal, 1=safe, 2=emergency</Description>
+    </Field>
+    <Field Name="tc_OBC_SELECT_BUS_bus" Uuid="0eceba47-bef6-5944-8601-63eae9c106b1" Type="UInt8" Kind="Input">
+      <Description>0=Bus A, 1=Bus B</Description>
+    </Field>
+    <Field Name="tc_OBC_BOOT_INHIBIT_inhibit" Uuid="586abcf1-64c3-5888-9325-21ab9db2bf59" Type="UInt8" Kind="Input">
+      <Description>0=allow auto-boot, 1=inhibit</Description>
+    </Field>
+    <Field Name="tc_OBC_SET_WATCHDOG_PERIOD_period_ticks" Uuid="dbf49813-ce63-55e1-8843-0b22c60e2de3" Type="UInt16" Kind="Input">
+      <Description>Watchdog period in ticks (1-1000)</Description>
+    </Field>
+    <Field Name="tc_EPS_DEPLOY_WING_wing" Uuid="f70e54a6-a087-5750-b9fa-0a0fa04cbfa2" Type="UInt8" Kind="Input">
+      <Description>0=+Y, 1=-Y, 2=both</Description>
+    </Field>
+    <EntryPoint Name="Step" Uuid="cbab163c-f182-5a00-bd6b-80157ba31467">
+      <Description>Main simulation step</Description>
+    </EntryPoint>
+    <EntryPoint Name="UpdateScheduler" Uuid="d79fd013-9864-50c9-8cf3-82eb343a5a2d">
+      <Description>UpdateScheduler</Description>
+    </EntryPoint>
+    <EntryPoint Name="UpdateMonitoring" Uuid="a2aac769-5f85-5f6e-b831-adb72c19e8a6">
+      <Description>UpdateMonitoring</Description>
+    </EntryPoint>
+    <EventSource Name="OBDH CPU Load High_WARNING" Uuid="db91d143-0d5d-5d1f-bcd3-81e39e45dca6">
+      <Description>WARNING alarm for OBDH CPU Load High</Description>
+    </EventSource>
+    <EventSource Name="OBDH Memory Usage High_WARNING" Uuid="be910025-cfda-5fc8-b369-79adaaf85496">
+      <Description>WARNING alarm for OBDH Memory Usage High</Description>
+    </EventSource>
+    <EventSource Name="OBDH Excessive Reboots_ALARM" Uuid="a0414b45-0790-5cf3-bedc-a6c62eb7caa7">
+      <Description>ALARM alarm for OBDH Excessive Reboots</Description>
+    </EventSource>
+    <EventSource Name="OBDH Memory Errors_WARNING" Uuid="6abe120c-b8e0-5f3a-a814-753b77c19974">
+      <Description>WARNING alarm for OBDH Memory Errors</Description>
+    </EventSource>
+  </Model>
+</Catalogue>

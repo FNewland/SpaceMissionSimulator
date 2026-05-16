@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="TCS" Creator="EOSAT-1 SMDL Generator" Date="2026-04-19" Version="1.0">
+  <Description>SMP2 model catalogue for TCS subsystem</Description>
+  <Type Name="UInt8" Uuid="d34e4c59-80ab-5b96-ba66-a437b3642d60" xsi:type="Integer" Size="1" Signed="false"/>
+  <Type Name="UInt16" Uuid="c89f8923-d36b-59fe-9443-00c81cb94841" xsi:type="Integer" Size="2" Signed="false"/>
+  <Type Name="Float32" Uuid="5df06116-3404-5220-b28d-37719f27bdd3" xsi:type="Float" Size="4"/>
+  <Type Name="Int16" Uuid="250664ae-15b5-552d-a550-4ac3e109c5c8" xsi:type="Integer" Size="2" Signed="true"/>
+  <Type xsi:type="Bool" Name="Bool" Uuid="f106d168-1b74-5cc1-9d68-9900c5a9e1ad"/>
+  <Model Name="TCS_Model" Uuid="137dbba5-b717-5cb4-9c9b-0adbbb5c8f36">
+    <Description>TCS subsystem simulation model</Description>
+    <Field Name="tcs_temp_panel_px" Uuid="2b95d354-df1a-5332-84a5-b7d53cd8acc3" Type="Int16" Kind="Output" View="true">
+      <Description>[C]</Description>
+    </Field>
+    <Field Name="tcs_temp_panel_mx" Uuid="e7d871c2-ea23-590e-9a25-c2c423ffaf1c" Type="Int16" Kind="Output" View="true">
+      <Description>[C]</Description>
+    </Field>
+    <Field Name="tcs_temp_panel_py" Uuid="b8df59c9-d14e-5edf-92ee-8d2144a70022" Type="Int16" Kind="Output" View="true">
+      <Description>[C]</Description>
+    </Field>
+    <Field Name="tcs_temp_panel_my" Uuid="93fa0131-6297-5aa3-9617-9203ad36bbda" Type="Int16" Kind="Output" View="true">
+      <Description>[C]</Description>
+    </Field>
+    <Field Name="tcs_temp_panel_pz" Uuid="9d697fcd-5792-5e55-800b-fc4a75b1fb2d" Type="Int16" Kind="Output" View="true">
+      <Description>[C]</Description>
+    </Field>
+    <Field Name="tcs_temp_panel_mz" Uuid="c2577a81-36c7-5cb5-b88b-bed1dc8de8a5" Type="Int16" Kind="Output" View="true">
+      <Description>[C]</Description>
+    </Field>
+    <Field Name="tcs_temp_obc" Uuid="8fc184b3-cb87-59f6-ae69-f2541322b17b" Type="Int16" Kind="Output" View="true">
+      <Description>[C]</Description>
+    </Field>
+    <Field Name="tcs_temp_battery" Uuid="296bf87e-ffb8-5292-9f77-d93fa99d83f6" Type="Int16" Kind="Output" View="true">
+      <Description>[C]</Description>
+    </Field>
+    <Field Name="tcs_temp_fpa" Uuid="16d86dbd-8a50-5b94-8b91-e48b3efba2ef" Type="Int16" Kind="Output" View="true">
+      <Description>[C]</Description>
+    </Field>
+    <Field Name="tcs_htr_battery" Uuid="c19abab6-2170-51f4-958a-e2c18fea75bd" Type="UInt8" Kind="Output" View="true"/>
+    <Field Name="tcs_htr_obc" Uuid="c0c45cc7-5430-5775-9832-bf2880a50626" Type="UInt8" Kind="Output" View="true"/>
+    <Field Name="tcs_cooler_fpa" Uuid="1b7e3832-6d88-5909-8064-cd81c53cf1b8" Type="UInt8" Kind="Output" View="true"/>
+    <Field Name="tcs_htr_duty_battery" Uuid="f719aae1-343e-5a6f-9dac-794b7b25c441" Type="UInt16" Kind="Output" View="true">
+      <Description>Battery heater duty cycle [%]</Description>
+    </Field>
+    <Field Name="tcs_htr_duty_obc" Uuid="7e8891bb-2821-54f6-994e-c3c78e9f7744" Type="UInt16" Kind="Output" View="true">
+      <Description>OBC heater duty cycle [%]</Description>
+    </Field>
+    <Field Name="tcs_htr_total_power" Uuid="bb90765f-68ac-5cc6-81fa-6b5f11708a85" Type="UInt16" Kind="Output" View="true">
+      <Description>Total heater power consumption [W]</Description>
+    </Field>
+    <Field Name="tcs_temp_panel_px_ilm" Uuid="7bba5920-a150-58e0-a261-1f63e7f6196b" Type="Float32" Kind="Output" View="true">
+      <Description>+X panel temperature (illumination-coupled) [C]</Description>
+    </Field>
+    <Field Name="tcs_temp_panel_mx_ilm" Uuid="4a90f84c-dbbf-5121-b860-3ab78c747a4d" Type="Float32" Kind="Output" View="true">
+      <Description>-X panel temperature (illumination-coupled) [C]</Description>
+    </Field>
+    <Field Name="tcs_temp_panel_py_ilm" Uuid="f47bd1b5-6cd9-58d2-8e09-295da6c24d7f" Type="Float32" Kind="Output" View="true">
+      <Description>+Y panel temperature (illumination-coupled) [C]</Description>
+    </Field>
+    <Field Name="tcs_temp_panel_my_ilm" Uuid="8ac5f516-0b3f-5171-b895-9a540737da86" Type="Float32" Kind="Output" View="true">
+      <Description>-Y panel temperature (illumination-coupled) [C]</Description>
+    </Field>
+    <Field Name="tcs_temp_panel_pz_ilm" Uuid="03b3eaa8-c4ae-5923-9895-4057afca1a98" Type="Float32" Kind="Output" View="true">
+      <Description>+Z panel temperature (illumination-coupled) [C]</Description>
+    </Field>
+    <Field Name="tcs_temp_panel_mz_ilm" Uuid="7db7a6a1-b364-5d86-812b-223888b6f6fc" Type="Float32" Kind="Output" View="true">
+      <Description>-Z panel temperature (illumination-coupled) [C]</Description>
+    </Field>
+    <Field Name="tcs_decontamination_active" Uuid="23bc1e8a-667b-532d-b89c-73b75114553d" Type="UInt8" Kind="Output" View="true">
+      <Description>Decontamination heating active (0=no, 1=yes)</Description>
+    </Field>
+    <Field Name="tcs_thermal_gradient" Uuid="f4447fee-a5ad-5803-9eb4-c74c86d6474d" Type="Int16" Kind="Output" View="true">
+      <Description>Thermal gradient (max-min temperature between all zones) [C]</Description>
+    </Field>
+    <Field Name="tcs_htr_duty_z1" Uuid="586a0b97-64da-533f-b1c1-549f86d627b4" Type="Float32" Kind="Output" View="true">
+      <Description>Heater zone 1 duty cycle [%]</Description>
+    </Field>
+    <Field Name="tcs_htr_duty_z2" Uuid="83c00928-7cba-536a-9901-209da8ec7b3f" Type="Float32" Kind="Output" View="true">
+      <Description>Heater zone 2 duty cycle [%]</Description>
+    </Field>
+    <Field Name="tcs_htr_duty_z3" Uuid="dbf63aa6-efcf-594b-b835-9e7fb59d4d73" Type="Float32" Kind="Output" View="true">
+      <Description>Heater zone 3 duty cycle [%]</Description>
+    </Field>
+    <Field Name="tcs_htr_duty_z4" Uuid="270e3fae-d08a-5953-b445-35fe619f160f" Type="Float32" Kind="Output" View="true">
+      <Description>Heater zone 4 duty cycle [%]</Description>
+    </Field>
+    <Field Name="tcs_htr_duty_z5" Uuid="a3ed4da0-12b2-5931-ae61-a68cc9aa8e2d" Type="Float32" Kind="Output" View="true">
+      <Description>Heater zone 5 duty cycle [%]</Description>
+    </Field>
+    <Field Name="tcs_htr_duty_z6" Uuid="3cdfe2a7-6680-5847-8e02-ef5cf4b6855f" Type="Float32" Kind="Output" View="true">
+      <Description>Heater zone 6 duty cycle [%]</Description>
+    </Field>
+    <Field Name="tcs_htr_duty_total" Uuid="2564f1b4-c1a7-5812-b206-1fbdd78e6122" Type="Float32" Kind="Output" View="true">
+      <Description>Total heater duty cycle [%]</Description>
+    </Field>
+    <Field Name="tcs_setpoint_bat" Uuid="70c7c1d6-c52f-5e70-9839-d40d7e2dc109" Type="Float32" Kind="Output" View="true">
+      <Description>Battery heater setpoint [C]</Description>
+    </Field>
+    <Field Name="tcs_setpoint_obc" Uuid="e06d01a4-80a1-5cbc-a448-66d70ce0db5b" Type="Float32" Kind="Output" View="true">
+      <Description>OBC heater setpoint [C]</Description>
+    </Field>
+    <Field Name="tcs_temp_radiator_n" Uuid="875422b2-9c2e-5d63-afd0-fb89d13976af" Type="Float32" Kind="Output" View="true">
+      <Description>Radiator North temp [C]</Description>
+    </Field>
+    <Field Name="tcs_temp_radiator_s" Uuid="e6d1942e-7349-5b8b-b60c-d733e7a4f1ed" Type="Float32" Kind="Output" View="true">
+      <Description>Radiator South temp [C]</Description>
+    </Field>
+    <Field Name="tc_HEATER_BATTERY_True" Uuid="0ed72bfb-1f12-5220-a3ae-f2a8c7f70a57" Type="UInt8" Kind="Input">
+      <Description>0=off, 1=on</Description>
+    </Field>
+    <Field Name="tc_HEATER_OBC_True" Uuid="12affc36-9bd0-520a-83b3-93dd6b7f230b" Type="UInt8" Kind="Input">
+      <Description>0=off, 1=on</Description>
+    </Field>
+    <Field Name="tc_HEATER_THRUSTER_True" Uuid="cade2875-554f-5b32-85fb-e01153c6582c" Type="UInt8" Kind="Input">
+      <Description>0=off, 1=on</Description>
+    </Field>
+    <Field Name="tc_FPA_COOLER_True" Uuid="8e07eb34-5a4c-55b6-a9ed-903ff428a54d" Type="UInt8" Kind="Input">
+      <Description>0=off, 1=on</Description>
+    </Field>
+    <Field Name="tc_HEATER_SET_SETPOINT_circuit" Uuid="380639af-81f7-500e-8cd5-2bea1f60f5e0" Type="UInt8" Kind="Input">
+      <Description>0=battery, 1=obc, 2=thruster</Description>
+    </Field>
+    <Field Name="tc_HEATER_SET_SETPOINT_on_temp" Uuid="3e52dac1-7bca-52b8-858f-c8876ef477b5" Type="Float32" Kind="Input">
+      <Description>Thermostat ON temperature (C)</Description>
+    </Field>
+    <Field Name="tc_HEATER_SET_SETPOINT_off_temp" Uuid="55ffa452-386f-5824-abd0-195e19292734" Type="Float32" Kind="Input">
+      <Description>Thermostat OFF temperature (C)</Description>
+    </Field>
+    <Field Name="tc_HEATER_AUTO_MODE_circuit" Uuid="3a710578-2e5d-5b7b-9fb5-bb2ca0871056" Type="UInt8" Kind="Input">
+      <Description>0=battery, 1=obc, 2=thruster</Description>
+    </Field>
+    <Field Name="tc_TCS_SET_HEATER_DUTY_LIMIT_circuit" Uuid="c5581951-bde3-5dd6-8dfd-dcdb8514d034" Type="UInt8" Kind="Input">
+      <Description>0=battery, 1=obc, 2=thruster</Description>
+    </Field>
+    <Field Name="tc_TCS_SET_HEATER_DUTY_LIMIT_max_duty_pct" Uuid="1bdde4eb-d4a8-54cd-9734-884d64ec9399" Type="UInt8" Kind="Input">
+      <Description>Maximum duty cycle percentage (0-100)</Description>
+    </Field>
+    <Field Name="tc_TCS_DECONTAMINATION_START_target_temp_c" Uuid="48d86492-b906-53d8-8770-056ce602dd0e" Type="Float32" Kind="Input">
+      <Description>Target FPA temperature for decontamination (typically +50C)</Description>
+    </Field>
+    <EntryPoint Name="Step" Uuid="5164d576-ffa2-5d0b-a77d-43faf438223e">
+      <Description>Main simulation step</Description>
+    </EntryPoint>
+    <EntryPoint Name="UpdateThermal" Uuid="e33fd18c-bc8b-53ef-a43e-ebb7370c234d">
+      <Description>UpdateThermal</Description>
+    </EntryPoint>
+    <EntryPoint Name="UpdateHeaters" Uuid="e0c4ebc9-4ada-57ac-94d8-3cfb5fe60226">
+      <Description>UpdateHeaters</Description>
+    </EntryPoint>
+    <EventSource Name="TCS FPA Temperature High_WARNING" Uuid="d9a5242c-2d0e-5871-8701-5724ec6e876b">
+      <Description>WARNING alarm for TCS FPA Temperature High</Description>
+    </EventSource>
+    <EventSource Name="TCS FPA Temperature Low_WARNING" Uuid="a5d0af55-4af2-5a0b-be1e-7598ea253156">
+      <Description>WARNING alarm for TCS FPA Temperature Low</Description>
+    </EventSource>
+    <EventSource Name="TCS Battery Overtemp_WARNING" Uuid="08913bc4-1749-5ed9-8ac5-544edfecf37f">
+      <Description>WARNING alarm for TCS Battery Overtemp</Description>
+    </EventSource>
+    <EventSource Name="TCS OBC Overtemp_ALARM" Uuid="e7419e6a-406e-54e3-9ef0-a1c78d776812">
+      <Description>ALARM alarm for TCS OBC Overtemp</Description>
+    </EventSource>
+    <EventSource Name="TCS Heater Power Limit_WARNING" Uuid="b342d0e8-3308-518e-821b-759c967988ec">
+      <Description>WARNING alarm for TCS Heater Power Limit</Description>
+    </EventSource>
+  </Model>
+</Catalogue>

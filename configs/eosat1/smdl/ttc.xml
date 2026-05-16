@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="TTC" Creator="EOSAT-1 SMDL Generator" Date="2026-04-19" Version="1.0">
+  <Description>SMP2 model catalogue for TTC subsystem</Description>
+  <Type Name="UInt8" Uuid="ab46787a-5742-5d41-9471-82b8d26b3826" xsi:type="Integer" Size="1" Signed="false"/>
+  <Type Name="UInt16" Uuid="00ba295b-550c-5551-b87d-d604e30c7592" xsi:type="Integer" Size="2" Signed="false"/>
+  <Type Name="UInt32" Uuid="3ff57304-eec7-55a9-b311-fb5118666868" xsi:type="Integer" Size="4" Signed="false"/>
+  <Type Name="Float32" Uuid="62c59c80-74a6-57d6-9619-b0a5ac2a4fb6" xsi:type="Float" Size="4"/>
+  <Type Name="Int16" Uuid="d51af51d-08bf-56dd-90b4-23a013784245" xsi:type="Integer" Size="2" Signed="true"/>
+  <Type Name="Int32" Uuid="73c55cef-3375-5fdd-9ba3-e1f666d58f8c" xsi:type="Integer" Size="4" Signed="true"/>
+  <Type xsi:type="Bool" Name="Bool" Uuid="48c7f3dc-fa6b-524c-beac-cf92ef8da299"/>
+  <Model Name="TTC_Model" Uuid="d5e6f4e2-77f0-5a2f-aa20-a6ed5464e55c">
+    <Description>TTC subsystem simulation model</Description>
+    <Field Name="ttc_mode" Uuid="8f5bb849-45e7-5143-a30e-8f5ce0579ef1" Type="UInt8" Kind="Output" View="true"/>
+    <Field Name="ttc_link_status" Uuid="e9e6357b-f16e-54ef-bcc3-83d61507eb52" Type="UInt8" Kind="Output" View="true"/>
+    <Field Name="ttc_rssi" Uuid="af92ee2e-3960-52a1-96d2-0dc8cfc1410c" Type="Int16" Kind="Output" View="true">
+      <Description>[dBm]</Description>
+    </Field>
+    <Field Name="ttc_link_margin" Uuid="28c0962f-0bb7-559b-bd65-cdcacf307dd7" Type="Int16" Kind="Output" View="true">
+      <Description>[dB]</Description>
+    </Field>
+    <Field Name="ttc_tm_data_rate" Uuid="9daa0594-4459-5a14-a4a7-5e968a032f21" Type="UInt32" Kind="Output" View="true">
+      <Description>[bps]</Description>
+    </Field>
+    <Field Name="ttc_xpdr_temp" Uuid="54465546-b34f-5c54-bda6-0e28850f3493" Type="Int16" Kind="Output" View="true">
+      <Description>[C]</Description>
+    </Field>
+    <Field Name="ttc_ranging_status" Uuid="e87245ca-90af-5f71-9f12-62dc116f7df9" Type="UInt8" Kind="Output" View="true">
+      <Description>Ranging active (0=no, 1=yes)</Description>
+    </Field>
+    <Field Name="ttc_range_km" Uuid="1a81ce85-3dd3-5356-a517-1b03619d07f0" Type="UInt32" Kind="Output" View="true">
+      <Description>[km]</Description>
+    </Field>
+    <Field Name="ttc_contact_elevation" Uuid="687c1bc0-2c03-54ff-a6bf-612d781f3806" Type="Int16" Kind="Output" View="true">
+      <Description>[deg]</Description>
+    </Field>
+    <Field Name="ttc_ber" Uuid="24948380-9cfd-5c2b-853e-e88ae653d71c" Type="Int16" Kind="Output" View="true">
+      <Description>Bit error rate (log10 scale, e.g. -6 = 1e-6)</Description>
+    </Field>
+    <Field Name="ttc_tx_fwd_power" Uuid="b6d9e5ac-7a86-5c4e-86ec-b11ab253f0b3" Type="Int16" Kind="Output" View="true">
+      <Description>Transmit forward power [dBm]</Description>
+    </Field>
+    <Field Name="ttc_pa_temp" Uuid="3314bf5c-2444-5021-a701-36084b9c0509" Type="Int16" Kind="Output" View="true">
+      <Description>Power amplifier temperature [C]</Description>
+    </Field>
+    <Field Name="ttc_carrier_lock" Uuid="02f1ba88-fecf-57da-b865-a2f2e4b5dff1" Type="UInt8" Kind="Output" View="true">
+      <Description>Carrier lock (0=no, 1=yes)</Description>
+    </Field>
+    <Field Name="ttc_bit_sync" Uuid="dc2c90eb-db28-56d9-9469-78d939784da4" Type="UInt8" Kind="Output" View="true">
+      <Description>Bit sync (0=no, 1=yes)</Description>
+    </Field>
+    <Field Name="ttc_frame_sync" Uuid="6fe346f0-56d9-55c5-9ceb-1d78c9360cc7" Type="UInt8" Kind="Output" View="true">
+      <Description>Frame sync (0=no, 1=yes)</Description>
+    </Field>
+    <Field Name="ttc_cmd_rx_count" Uuid="4ac56d91-fe1b-50d4-92ca-88c26700cafb" Type="UInt32" Kind="Output" View="true">
+      <Description>Total received command counter</Description>
+    </Field>
+    <Field Name="ttc_pa_on" Uuid="379b1cb0-7a37-5f29-b461-a907af812f09" Type="UInt8" Kind="Output" View="true">
+      <Description>PA status (0=off, 1=on)</Description>
+    </Field>
+    <Field Name="ttc_eb_n0" Uuid="1a6594cb-b74d-555d-bc30-04eb096cb723" Type="Int16" Kind="Output" View="true">
+      <Description>Energy per bit to noise density [dB]</Description>
+    </Field>
+    <Field Name="ttc_agc_level" Uuid="6f35683e-e817-5503-a2a4-1a9039ee9568" Type="Int16" Kind="Output" View="true">
+      <Description>Automatic gain control level [dB]</Description>
+    </Field>
+    <Field Name="ttc_doppler_hz" Uuid="02c2b9b1-32f8-5c1f-837e-a093d37249f9" Type="Int32" Kind="Output" View="true">
+      <Description>Doppler shift on downlink [Hz]</Description>
+    </Field>
+    <Field Name="ttc_range_rate" Uuid="1dc59367-38de-567d-909d-db78ef23bc7d" Type="Int16" Kind="Output" View="true">
+      <Description>Range rate to ground station [m/s]</Description>
+    </Field>
+    <Field Name="ttc_cmd_auth_status" Uuid="729a1bdc-da5f-5117-be52-ec4b4ae5b690" Type="UInt8" Kind="Output" View="true">
+      <Description>Command authentication (0=disabled, 1=enabled, 2=locked)</Description>
+    </Field>
+    <Field Name="ttc_total_bytes_tx" Uuid="12984c7d-98ce-5c6a-9915-45e4189a2c49" Type="UInt32" Kind="Output" View="true">
+      <Description>Total bytes transmitted this pass [B]</Description>
+    </Field>
+    <Field Name="ttc_total_bytes_rx" Uuid="04ffdbe4-8538-563d-a6ea-269827865c5f" Type="UInt32" Kind="Output" View="true">
+      <Description>Total bytes received this pass [B]</Description>
+    </Field>
+    <Field Name="ttc_antenna_deployed" Uuid="c65d6b72-1383-5d4b-ae13-23e727e84a0f" Type="UInt8" Kind="Output" View="true">
+      <Description>Antenna deployment status (0=stowed, 1=deployed)</Description>
+    </Field>
+    <Field Name="ttc_beacon_mode" Uuid="3e347990-406d-5472-b1c5-d8b4303adac4" Type="UInt8" Kind="Output" View="true">
+      <Description>Beacon mode active (0=no, 1=yes)</Description>
+    </Field>
+    <Field Name="ttc_cmd_decode_timer" Uuid="5689306f-cd85-5798-90ea-bc135b8308f0" Type="UInt16" Kind="Output" View="true">
+      <Description>Dedicated command channel timer (15 min countdown) [s]</Description>
+    </Field>
+    <Field Name="ttc_antenna_deployment_ready" Uuid="64c2fad3-2c76-579b-80f9-9f4ec0f1846f" Type="Float32" Kind="Output" View="true">
+      <Description>Antenna deployment ready (pyro continuity OK; 0=fault, 1=ready)</Description>
+    </Field>
+    <Field Name="ttc_antenna_deployment_sensor" Uuid="91d368aa-24a9-54d8-a930-4893defa6475" Type="Float32" Kind="Output" View="true">
+      <Description>Antenna deployment sensor status (0=unknown, 1=stowed, 2=deployed, 3=partial/jammed)</Description>
+    </Field>
+    <Field Name="ttc_modulation_mode" Uuid="19826d69-92f0-5463-ba31-d68611ada04a" Type="Float32" Kind="Output" View="true">
+      <Description>Modulation scheme (0=BPSK, 1=QPSK, 2=8PSK, 3=OQPSK)</Description>
+    </Field>
+    <Field Name="ttc_active_gs" Uuid="948b7ba0-81b4-577d-afb4-8b32929f3f1b" Type="Float32" Kind="Output" View="true">
+      <Description>Active ground station index</Description>
+    </Field>
+    <Field Name="ttc_gs_equipment_status" Uuid="48c9892d-6b71-555f-8e34-1f843988676f" Type="Float32" Kind="Output" View="true">
+      <Description>GS equipment status bitmask (antenna/LNA/TX/upconverter)</Description>
+    </Field>
+    <Field Name="ttc_pa_backup_temp" Uuid="c6bf5077-9e60-5a6b-acea-a6a708a79e77" Type="Float32" Kind="Output" View="true">
+      <Description>Backup power amplifier temperature [C]</Description>
+    </Field>
+    <Field Name="tc_TTC_SET_DATA_RATE_rate" Uuid="f1bdaa6a-aedb-5041-829a-5cbddae03e57" Type="UInt8" Kind="Input">
+      <Description>0=low(1kbps), 1=high(64kbps)</Description>
+    </Field>
+    <Field Name="tc_TTC_SET_TX_POWER_level" Uuid="8e5330e9-c10e-5025-8d51-585390d510b5" Type="UInt8" Kind="Input">
+      <Description>0=low(1W), 1=nominal(5W), 2=high(8W)</Description>
+    </Field>
+    <Field Name="tc_TTC_SET_BEACON_MODE_True" Uuid="b5de1f0e-50a8-5606-91f8-0a64c0fcf033" Type="UInt8" Kind="Input">
+      <Description>0=off, 1=on</Description>
+    </Field>
+    <Field Name="tc_TTC_SET_UL_FREQ_freq_mhz" Uuid="d7430918-6160-599a-a577-fdfc77c36a16" Type="Float32" Kind="Input">
+      <Description>Uplink frequency in MHz (2000-2100)</Description>
+    </Field>
+    <Field Name="tc_TTC_SET_DL_FREQ_freq_mhz" Uuid="b2d15c9b-2892-5d3a-bb4e-e1614fcedeec" Type="Float32" Kind="Input">
+      <Description>Downlink frequency in MHz (8400-8500)</Description>
+    </Field>
+    <Field Name="tc_TTC_SET_MODULATION_mode" Uuid="ccdfbd38-0f40-5992-9336-471079ed0666" Type="UInt8" Kind="Input">
+      <Description>0=BPSK (1 bit/sym, most robust), 1=QPSK (2 bit/sym), 2=8PSK (3 bit/sym, needs +3.6 dB), 3=OQPSK (2 bit/sym, offset timing)</Description>
+    </Field>
+    <Field Name="tc_TTC_SET_RX_GAIN_agc_db" Uuid="af521aa2-d030-5e08-87d1-fbb63626d3a3" Type="Float32" Kind="Input">
+      <Description>AGC target in dB (-100 to 0)</Description>
+    </Field>
+    <Field Name="tc_TTC_SET_COHERENT_MODE_True" Uuid="17b9b89e-b4c1-5d32-aa88-31fef1ba3ad4" Type="UInt8" Kind="Input">
+      <Description>0=off (non-coherent), 1=on (coherent)</Description>
+    </Field>
+    <EntryPoint Name="Step" Uuid="4c5b072b-fe42-5d27-9c99-c7d4e9e85f73">
+      <Description>Main simulation step</Description>
+    </EntryPoint>
+    <EntryPoint Name="UpdateLink" Uuid="b3021b36-93fc-5da7-8e2d-1647417c89c5">
+      <Description>UpdateLink</Description>
+    </EntryPoint>
+    <EntryPoint Name="UpdateTransponder" Uuid="de91f22d-399e-526f-982f-ee59af506758">
+      <Description>UpdateTransponder</Description>
+    </EntryPoint>
+    <EventSource Name="TTC RSSI Low_WARNING" Uuid="3c01b9b0-8439-5202-9e55-3bf7df18e842">
+      <Description>WARNING alarm for TTC RSSI Low</Description>
+    </EventSource>
+    <EventSource Name="TTC Link Margin Critical_ALARM" Uuid="8cbf6a7c-15e4-5de4-84a9-4eafda6b69f1">
+      <Description>ALARM alarm for TTC Link Margin Critical</Description>
+    </EventSource>
+    <EventSource Name="TTC Eb/N0 Low_WARNING" Uuid="01b34234-e81b-5f29-a343-98c977d1b9b7">
+      <Description>WARNING alarm for TTC Eb/N0 Low</Description>
+    </EventSource>
+    <EventSource Name="TTC PA Overtemp_ALARM" Uuid="d62baf8c-fedc-5723-8479-07d66b38853f">
+      <Description>ALARM alarm for TTC PA Overtemp</Description>
+    </EventSource>
+    <EventSource Name="TTC Bit Error Rate High_WARNING" Uuid="d1cd5036-8ab1-5ea5-b466-100219ce4fa2">
+      <Description>WARNING alarm for TTC Bit Error Rate High</Description>
+    </EventSource>
+  </Model>
+</Catalogue>
