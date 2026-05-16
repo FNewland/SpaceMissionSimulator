@@ -124,19 +124,15 @@ class TestPipelineDiagnostics:
             coord.enqueue_tm_packet(pkt)
             time.sleep(0.15)  # let TX generate frames
 
-        # Wait for recovery
+        # Wait for recovery using batch drain
         recovered = []
         deadline = time.monotonic() + 15.0
-        loop = asyncio.new_event_loop()
         while len(recovered) < N and time.monotonic() < deadline:
-            try:
-                pkt = loop.run_until_complete(
-                    asyncio.wait_for(coord.get_recovered_packet(), timeout=1.0))
-                if pkt:
-                    recovered.append(pkt)
-            except (asyncio.TimeoutError, Exception):
-                pass
-        loop.close()
+            batch = coord.drain_recovered_packets()
+            if batch:
+                recovered.extend(batch)
+            else:
+                time.sleep(0.2)
 
         coord.stop()
 
@@ -386,22 +382,18 @@ class TestNominalModeSustained:
             time.sleep(0.1)
 
         # Wait for recovery
+        # Wait for recovery using batch drain with retries
         recovered = []
+        empty_rounds = 0
         deadline = time.monotonic() + 20.0
-        loop = asyncio.new_event_loop()
-        while time.monotonic() < deadline:
-            try:
-                pkt = loop.run_until_complete(
-                    asyncio.wait_for(coord.get_recovered_packet(), timeout=0.5))
-                if pkt:
-                    recovered.append(pkt)
-                else:
-                    # No more packets and we've waited
-                    if time.monotonic() > deadline - 15.0:
-                        break
-            except (asyncio.TimeoutError, Exception):
-                break
-        loop.close()
+        while time.monotonic() < deadline and empty_rounds < 5:
+            batch = coord.drain_recovered_packets()
+            if batch:
+                recovered.extend(batch)
+                empty_rounds = 0
+            else:
+                empty_rounds += 1
+                time.sleep(0.3)
         coord.stop()
 
         diag = coord.get_diagnostics()

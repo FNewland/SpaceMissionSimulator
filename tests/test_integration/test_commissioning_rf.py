@@ -111,21 +111,26 @@ def _drain_tm_to_pipeline(engine, coord):
 
 
 def _recover_packets(coord, timeout=3.0):
-    """Recover all available packets from the RF pipeline."""
+    """Recover all available packets from the RF pipeline.
+
+    Uses batch drain first (fast, no async overhead), then falls back
+    to blocking get for any remaining in-flight packets.
+    """
     recovered = []
     deadline = time.monotonic() + timeout
-    loop = asyncio.new_event_loop()
     while time.monotonic() < deadline:
-        try:
-            pkt = loop.run_until_complete(
-                asyncio.wait_for(coord.get_recovered_packet(), timeout=0.3))
-            if pkt:
-                recovered.append(pkt)
-            else:
-                break
-        except (asyncio.TimeoutError, Exception):
-            break
-    loop.close()
+        # Batch drain: grab everything available immediately
+        batch = coord.drain_recovered_packets()
+        if batch:
+            recovered.extend(batch)
+            continue  # check for more immediately
+        # Nothing available — wait briefly for pipeline to produce more
+        time.sleep(0.2)
+        batch = coord.drain_recovered_packets()
+        if batch:
+            recovered.extend(batch)
+        else:
+            break  # no more coming
     return recovered
 
 
