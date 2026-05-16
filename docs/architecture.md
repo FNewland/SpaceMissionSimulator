@@ -1,525 +1,240 @@
-# Space Mission Operations Suite — Architecture
+# SMO Platform Architecture
 
-## Overview
-The SMO suite consists of 4 main tools plus shared infrastructure:
-
-1. **Spacecraft Simulator** (`smo-simulator`) — config-driven spacecraft simulation
-2. **Mission Control System** (`smo-mcs`) — operator displays and commanding
-3. **Mission Planning Tool** (`smo-planner`) — orbit prediction and scheduling
-4. **Network Gateway** (`smo-gateway`) — TM/TC relay for distributed deployment
-
-## Shared Infrastructure
-- **Common Library** (`smo-common`) — protocol, config schemas, orbit utilities
-- **EOSAT-1 Config** (`configs/eosat1/`) — complete mission configuration
-
-## Key Design Principles
-- **Config-driven**: All spacecraft parameters, displays, and behaviors defined in YAML
-- **Plugin architecture**: Subsystem models loaded via Python entry points
-- **ECSS PUS-C compliant**: Standard space packet protocol throughout
-- **Distributed-ready**: Gateway enables multi-machine deployment
-- **Autonomous Operations**: S12/S19 framework for monitoring and event-triggered responses
-- **Full FDIR Support**: Fault detection, isolation, recovery with cascading autonomy
-
-## Network Architecture
-```
-Single machine:  [Simulator] <-TCP-> [MCS] <-WebSocket-> [Browser]
-Distributed:     [Simulator] <-TCP-> [Gateway] <-TCP-> [MCS instances]
-```
-
-## Technology Stack
-- Python 3.11+, Pydantic v2, aiohttp, asyncio, sgp4, numpy
+**Document ID:** EOSAT1-AR-001
+**Issue:** 2.0
+**Date:** 2026-05-16
 
 ---
 
-## PUS Service Coverage
+## 1. System Overview
 
-The simulator implements the following ECSS PUS-C services:
-
-| Service | Name | Status | Notes |
-|---------|------|--------|-------|
-| **S1** | Request Verification | Complete | Full lifecycle: accepted, exec_start, progress, completed, failed |
-| **S3** | Housekeeping | Complete | 6 data structures (HK_AOCS, HK_EPS, HK_TCS, HK_TTC, HK_OBDH, HK_Payload) |
-| **S5** | Event Reporting | Complete | 120+ events defined, selectively enabled per subsystem |
-| **S6** | Memory Management | Partial | Load/dump/check implemented (simplified, no real memory model) |
-| **S8** | Function Management | Complete | 50+ functions implemented across all subsystems |
-| **S9** | Time Management | Complete | OBDH time sync and TTC timestamp correlation |
-| **S11** | Activity Scheduling | Complete | TC scheduling with timing constraints |
-| **S12** | On-Board Monitoring | Complete | 25+ monitoring rules with absolute/delta checks |
-| **S13** | Large Data Transfer | Complete | Payload image downlink with block retrieval |
-| **S15** | TM Storage | Complete | 4-store circular/linear buffer model with S15.2/3/4/5 |
-| **S17** | Connection Test | Basic | AOS/LOS signals and NOOP echo test |
-| **S19** | Event-Action | Complete | 20+ rules for autonomous fault response and power management |
-| **S20** | Parameter Management | Complete | Gain/offset updates, telecommand parameter injection |
-
----
-
-## Subsystem Implementation Status
-
-### 1. AOCS (Attitude & Orbit Control System)
-
-**Physics Models:**
-- Quaternion-based attitude dynamics with momentum exchange
-- 4-wheel reaction wheel system: 0-5500 RPM with bearing thermal degradation
-- Dual redundant star trackers (multi-star acquisition)
-- 6-head coarse sun sensor array (composite sun vector)
-- Dual magnetometers (primary/redundant) with B-dot control
-- GPS receiver with 2D/3D/3D+velocity fix modes
-- Gyroscope assembly with bias drift modeling
-
-**Operational Modes (9 total):**
-- Off, Safe Boot, Detumble (B-dot), Coarse Sun Pointing, Nominal Nadir
-- Fine Point (star tracker lock), Slew (attitude maneuver), Desaturation, Eclipse Propagate
-
-**Telemetry Parameters:** 45+ HK parameters (quaternion, rates, wheel speeds/temps, magnetometer, GPS, CSS, attitude error)
-
-**S8 Commands:** 16 functions
-- Mode control, wheel enable/disable, desaturation, ST1/ST2 power, magnetometer/ST selection
-- **NEW**: SLEW_TO (quaternion slew with rate control), CHECK_MOMENTUM, BEGIN_ACQUISITION (automated sequence)
-- **NEW**: GYRO_CALIBRATION (bias reset), RW_RAMP_DOWN (graceful spindown), SET_DEADBAND
-
-**S12 Rules:** 5 rules
-- Reaction wheel overspeed (per wheel, >5000 RPM)
-- Total momentum saturation (>90% of max)
-- Attitude error high (>1.0 degree)
-- Star tracker blind detection (status > 2)
-
-**S19 Rules:** 5 rules
-- Momentum saturation → Trigger desaturation
-- ST1 blind → Switch to ST2
-- ST2 blind → ST fallback
-- Attitude error high → Safe mode
-- RW overspeed → Disable specific wheel
-
-**Critical New Features (April 2026):**
-- Automated slew command execution with quaternion targeting
-- Momentum status checking and warning generation
-- Attitude acquisition sequence automation
-- Gyro bias calibration capability
-
----
-
-### 2. EPS (Electrical Power System)
-
-**Physics Models:**
-- Battery pack (SoC, thermal model, cycle tracking, health degradation)
-- 6 body-mounted solar panels (attitude-coupled, aging degradation)
-- Power distribution unit with switchable load lines
-- 3-stage load shedding (priority-based)
-- Bus voltage regulation and overcurrent protection
-- Charge regulator and power margin computation
-
-**Bus Architecture:**
-- Main bus (28V nominal), PDM with 8 power lines (OBC/TTC_RX/TTC_TX/Payload/FPA/Heater_Bat/Heater_OBC/AOCS)
-- Overcurrent trip thresholds per line
-- Separation timer for deployment phase
-
-**Telemetry Parameters:** 35+ HK parameters (battery SoC/temp/voltage, solar currents, bus voltage, load states, per-line currents)
-
-**S8 Commands:** 10 functions
-- Payload mode (off/standby/imaging), TTC mode, thermal heater control
-- **NEW**: Load line switching (EPS_SWITCH_LOAD), Battery heater setpoint, Charge rate override
-- **NEW**: Solar array drive control, Emergency load shed, Bus isolation
-
-**S12 Rules:** 8 rules
-- Battery SoC < 20% (warning)
-- Battery SoC < 10% (critical)
-- Bus voltage < 27V (warning), < 25V (critical)
-- Battery current overcurrent (>15A)
-- Battery temperature high (>45°C), low (<-5°C)
-- Solar array degradation (low current during sunlit)
-
-**S19 Rules:** 4 rules
-- Bus undervoltage → Payload off (load shedding)
-- Battery SoC critical → FPA cooler off
-- Battery SoC critical → Payload power off
-- Battery overtemp → TTC TX off (reduce power)
-
-**Critical New Features (April 2026):**
-- S12/S19 framework fully configured (8+4 rules)
-- Per-line current telemetry and switching control
-- Battery health percentage tracking
-- Load shedding stage status in telemetry
-- Power margin computation (gen - cons)
-
----
-
-### 3. TCS (Thermal Control System)
-
-**Physics Models:**
-- 10-zone lumped-mass thermal model
-- Conduction between adjacent zones
-- Solar heating and IR radiation
-- Eclipse coupling (zero solar, reduced albedo)
-- Heater thermostat control with setpoint override
-- Temperature-dependent component performance
-
-**Controlled Heaters:**
-- Battery pack heater
-- OBC electronics heater
-- Decontamination heating sequence capability
-
-**Telemetry Parameters:** 14+ HK parameters (zone temps: battery, OBC, FPA, structure panels, radiator)
-
-**S8 Commands:** 4 functions
-- Heater on/off, thermal mode selection
-- **NEW**: Heater setpoint adjustment, Decontamination sequence, Cooler control, Thermal zone priority
-
-**S12 Rules:** 8 rules
-- Zone overtemp warning/alarm (per zone, configurable thresholds)
-- Zone undertemp warning/alarm (per zone)
-- FPA operational range (−3°C to −15°C)
-- Thermal runaway detection (dT/dt > threshold)
-
-**S19 Rules:** 3 rules
-- FPA overtemp → Payload off
-- Battery overtemp → Transponder TX off
-- OBC overtemp → OBC safe mode
-
-**Critical New Features (April 2026):**
-- S12/S19 rules fully wired (8+3 rules)
-- Decontamination heater command support
-- FPA thermal readiness events generated
-- Thermal zone monitoring with per-zone alarms
-
----
-
-### 4. TT&C (Telemetry, Tracking & Command)
-
-**Physics Models:**
-- Dual transponder (primary/redundant) with mode switching
-- Friis free-space path loss link budget
-- Eb/N0 to BER mapping (BPSK modulation)
-- Lock acquisition sequence: carrier → bit → frame with realistic delays
-- Power amplifier thermal model (overtemp shutdown at 65°C)
-- Doppler shift estimation and correction
-- AGC and receiver signal strength monitoring
-
-**Link States:**
-- Carrier lock/unlock, bit sync, frame sync, ranging acquisition
-
-**Telemetry Parameters:** 22+ HK parameters (link margin, BER, RSSI, AGC, PA temp, Doppler, bytes TX/RX)
-
-**S8 Commands:** 9 functions
-- Mode selection, PA control, antenna deploy, beacon mode
-- **NEW**: Frequency selection (UL/DL bands), Modulation mode (BPSK/QPSK)
-- **NEW**: Receiver gain control, Ranging start/stop, Coherent/non-coherent mode
-
-**S12 Rules:** 4 rules
-- Link margin warning (Eb/N0 < 6 dB)
-- Link margin critical (Eb/N0 < 3 dB)
-- PA overtemp warning (>55°C)
-- BER threshold exceeded (>1e-5)
-
-**S19 Rules:** 3 rules
-- Link margin critical → Increase TX power
-- PA overtemp → PA shutdown
-- High BER → Increase TX power
-
-**Critical New Features (April 2026):**
-- Frequency selection command support
-- Modulation mode control (BPSK/QPSK)
-- Receiver AGC gain setpoint command
-- TTC event generation fully active (carrier, sync, link margin, PA thermal)
-- Ground station pass planning integration
-
----
-
-### 5. OBDH (On-Board Data Handling)
-
-**System Architecture:**
-- Dual OBC (primary/redundant) with cold standby and watchdog-triggered switchover
-- Dual CAN bus with mode selection
-- Boot loader and application software partitions
-- TC scheduler (S11) with absolute/relative time control
-- 4-store TM storage with circular and linear modes
-- Memory scrubber for single-event upset mitigation
-
-**Telemetry Parameters:** 30+ HK parameters (OBC mode, CPU load, memory usage, CAN status, store occupancy)
-
-**S8 Commands:** 8 functions
-- Mode selection, watchdog config, bus selection
-- **NEW**: Diagnostic functions, Boot loader control, Memory scrub, Event filter management
-
-**S12 Rules:** 5 rules
-- OBC CPU load high (>80%)
-- Memory error threshold exceeded
-- Watchdog trigger count high
-- TC queue overflow (S11 scheduler full)
-- TM store overflow (S15 storage full)
-
-**S19 Rules:** 4 rules
-- OBC reboot → Acknowledge (informational)
-- Excessive reboots → Switch CAN bus
-- Memory errors → Trigger memory scrub
-- CPU overload → Safe mode transition
-
-**Critical New Features (April 2026):**
-- S1 verification complete (acceptance + execution start/progress/completion reports)
-- S5 event generation wired to boot failures, watchdog, memory errors
-- S12/S19 full integration (5+4 rules)
-- Diagnostic command support
-- Event filter management (selective event reporting)
-
----
-
-### 6. Payload (Imaging Instrument)
-
-**Physics Models:**
-- Focal plane array (FPA) thermal dynamics with active cooler
-- Multi-spectral bands (4 bands, 10-bit radiometric)
-- Scene-dependent SNR modeling with temperature coupling
-- Image compression with entropy-based ratio estimation
-- Memory segment failure detection
-- Calibration lamp and sequence automation
-
-**Imaging Subsystem:**
-- Scene geometry relative to orbit ground track
-- Compression algorithm efficiency tracking
-- Image metadata with checksum verification
-- 7 ocean current target support in planner
-
-**Telemetry Parameters:** 25+ HK parameters (FPA temp, cooler status, storage used/available, compression ratio, SNR per band)
-
-**S8 Commands:** 8 functions
-- Mode control, capture (imaging), download, delete, band config
-- **NEW**: Integration time per band, Gain/offset adjust, Cooler setpoint, Calibration sequence
-
-**S12 Rules:** 6 rules
-- FPA overtemp (>-3°C)
-- FPA undertemp (<-15°C)
-- Storage capacity (>90%, >95%)
-- SNR degraded (<25 dB)
-- Compression ratio anomaly
-- Cooler health check
-
-**S19 Rules:** 3 rules
-- Storage full → Stop imaging
-- FPA overtemp → Payload standby
-- Checksum errors → Verify data (diagnostic)
-
-**S13 Large Data Transfer:**
-- Full implementation for efficient image downlink
-- Block retrieval with CRC checking
-- Transfer session management
-- Incremental download capability
-
-**Critical New Features (April 2026):**
-- S13 complete implementation for payload data downlink
-- Calibration sequence automation (S8 command)
-- Per-band integration time control
-- S12/S19 rules fully configured (6+3 rules)
-- FPA thermal readiness signals
-
----
-
-### 7. FDIR (Fault Detection, Isolation & Recovery)
-
-**Fault Models:**
-- Equipment-level: reaction wheel seizure, star tracker blinding, cooler failure, transmitter PA shutdown
-- Subsystem-level: power bus loss, thermal zone overtemp, momentum saturation
-- System-level: safe mode entry, load shedding cascade, procedure invocation
-
-**Recovery Procedures:**
-- 51 procedures defined across nominal, contingency, emergency, LEOP, commissioning phases
-- Load shedding stages (1/2/3) with priority sequencing
-- Safe mode recovery with attitude acquisition
-- Thermal runaway response
-
-**Monitoring & Autonomy:**
-- S12: Threshold monitoring on 25+ critical parameters
-- S19: 20+ event-action rules for autonomous response
-- Cascading failures: EPS fault → load shed → AOCS safe mode → Payload off
-
-**MCS Integration:**
-- FDIR alarm summary display
-- Rule status and violation history
-- Procedure invocation from operator console
-- Load shedding stage visibility
-
-**Critical New Features (April 2026):**
-- S12 rules configured (25+ monitoring definitions)
-- S19 rules configured (20+ event-action rules)
-- Cross-subsystem cascading FDIR (EPS → AOCS → Payload)
-- Automated load shedding with stage transitions
-- Procedure status display in MCS
-- Event generation wired to all fault detection paths
-
----
-
-## MCS (Mission Control System) Displays
-
-**System Overview Display:**
-- Real-time spacecraft attitude quaternion (body frame visualization)
-- Orbit position (Earth-centered inertial, ground track)
-- Solar beta angle and eclipse status
-- Spacecraft phase (pre-sep, LEOP, commissioning, nominal)
-
-**Power Budget Monitor:**
-- Battery SoC, voltage, temperature with history trending
-- Solar array output per panel (sunlit integration)
-- Power consumption per subsystem (load breakdown)
-- Power margin (generation - consumption)
-- Load shedding stage indicator
-
-**FDIR Alarm Panel:**
-- Active S12 violations (monitored parameter limits)
-- S19 event-action triggers (autonomous response log)
-- Procedure execution status and history
-- Recommendation panel (suggested recovery actions)
-
-**Contact Schedule Display:**
-- Ground station visibility predictions (AOS/LOS windows)
-- Link margin forecast vs. range
-- Downlink data volume estimations
-- Pass details: elevation, slant range, Doppler shift
-
-**Procedure Status Panel:**
-- Active procedures with step-by-step progress
-- Scheduled procedures (S11 TC activities)
-- Procedure performance metrics (success rate, typical duration)
-- Manual procedure invocation interface
-
-**Telecommand Interface:**
-- Per-subsystem command palette (S8 functions)
-- Command parameter builder with validation
-- Execution history with command echoes
-- S1 verification report display
-
-**Event & Alert Monitor:**
-- Real-time event stream (S5 packets)
-- Event filtering by subsystem/severity
-- Event statistics and trends
-- Alert log with acknowledgment tracking
-
----
-
-## Planning Integration
-
-**Constraint Enforcement:**
-- Power budget: SoC limits and DoD constraints for activity scheduling
-- AOCS: Slew time estimation, momentum headroom, pointing accuracy requirements
-- Thermal: Duty cycling constraints, eclipse thermal modeling
-- Data volume: Payload downlink capacity and storage limits
-
-**Activity Types:**
-- Imaging pass (5+ target opportunities per orbit)
-- Data download to ground station
-- Safe mode recovery procedures
-- Payload maintenance (calibration, cooler diagnostics)
-- System health checks
-
-**Automated Scheduling:**
-- Ground station contact windows from TLE propagation
-- Power-feasible activity scheduling (respecting load shedding stages)
-- Thermal constraint integration for imaging windows
-- Data volume backpressure (pause imaging if storage > 95%)
-
----
-
-## Configuration Structure
+The Space Mission Operations (SMO) platform simulates a complete ground segment for the EOSAT-1 6U multispectral imaging cubesat. It consists of 7 services communicating via TCP sockets and WebSockets.
 
 ```
-configs/eosat1/
-├── mission.yaml              # Orbit, spacecraft phase
-├── orbit.yaml                # TLE, propagation parameters
-├── subsystems/
-│   ├── aocs.yaml             # AOCS modes, control gains
-│   ├── eps.yaml              # Power lines, battery model, load shed stages
-│   ├── tcs.yaml              # Thermal zones, heater setpoints
-│   ├── ttc.yaml              # Transponder config, link parameters
-│   ├── obdh.yaml             # OBC redundancy, memory layout
-│   ├── payload.yaml          # FPA thermal, imaging bands
-│   ├── fdir.yaml             # Fault injection, FDIR rules
-│   └── memory_map.yaml       # Memory layout for S6
-├── commands/
-│   └── tc_catalog.yaml       # 50+ S8 functions
-├── events/
-│   └── event_catalog.yaml    # 120+ events with severity
-├── telemetry/
-│   ├── hk_structures.yaml    # HK packet layouts
-│   └── parameters.yaml       # 120+ telemetry parameters with IDs
-├── monitoring/
-│   ├── s12_definitions.yaml  # 25+ monitoring rules
-│   └── s19_rules.yaml        # 20+ event-action rules
-├── fdir/
-│   ├── fault_propagation.yaml
-│   ├── procedures/           # 51 procedure YAML files
-│   └── load_shed_*.yaml      # Load shedding sequences
-└── planning/
-    ├── ground_stations.yaml  # GS locations, antennas
-    ├── imaging_targets.yaml  # 7 ocean current targets
-    └── activity_types.yaml   # Imaging, download, maintenance
+┌──────────────────────────────────────────────────────────────┐
+│                    OPERATOR WORKSTATIONS                     │
+│  ┌─────────┐ ┌─────────┐ ┌──────────┐ ┌──────────────────┐ │
+│  │  MCS    │ │ Planner │ │ Delayed  │ │ Orbit   │ Radio  │ │
+│  │  :9090  │ │  :9091  │ │ TM :8092 │ │ :8093   │ :8094  │ │
+│  └────┬────┘ └────┬────┘ └────┬─────┘ └───┬────┘└───┬────┘ │
+└───────┼──────────┼─────────┼──────────┼──────────┼─────────┘
+        │          │         │          │          │
+  TC:8011│TM:8012   │         │          │          │
+        │          │         │          │          │
+┌───────┴──────────┴─────────┴──────────┴──────────┴─────────┐
+│                    RF BRIDGE (optional)                      │
+│                    smo-rfsim :8011/8012/8094                 │
+│  TC:8001 ↕ TM:8002     TX → Channel → RX pipeline          │
+└───────┬──────────────────────────────────────────────────────┘
+        │
+  TC:8001│TM:8002  WS:8080
+        │
+┌───────┴──────────────────────────────────────────────────────┐
+│                 SPACECRAFT SIMULATOR                         │
+│                 smo-simulator :8001/8002/8080                │
+│  ┌─────┐ ┌──────┐ ┌──────┐ ┌─────┐ ┌─────┐ ┌───────┐      │
+│  │ EPS │ │ AOCS │ │ OBDH │ │ TTC │ │ TCS │ │Payload│      │
+│  └─────┘ └──────┘ └──────┘ └─────┘ └─────┘ └───────┘      │
+│  SimulationEngine + ServiceDispatcher + FailureManager       │
+└──────────────────────────────────────────────────────────────┘
 ```
 
----
+## 2. Packages
 
-## Operational Readiness (April 2026)
+| Package | Purpose | Port(s) | Dependencies |
+|---------|---------|---------|-------------|
+| **smo-common** | Shared library: ECSS protocol, config loading, orbit math | N/A | numpy |
+| **smo-simulator** | Spacecraft simulation engine, 6 subsystem models | TC:8001, TM:8002, HTTP:8080 | smo-common, aiohttp |
+| **smo-mcs** | Mission Control System — operator UI | HTTP:9090 | smo-common, aiohttp |
+| **smo-rfsim** | RF simulation bridge — CCSDS framing, signal processing | TC:8011, TM:8012, Radio:8094 | smo-common, aiohttp, reedsolo |
+| **smo-planner** | Mission planning — pass scheduling, budgets | HTTP:9091 | smo-common, aiohttp, sgp4 |
+| **smo-gateway** | TM/TC relay for multi-site deployments | TCP:10025 | smo-common |
 
-**Complete (100%):**
-- All 6 subsystem physics models with realistic fidelity
-- 50+ S8 commands across all subsystems
-- 120+ telemetry parameters with dynamic updates
-- 120+ events with severity levels and subsystem categorization
-- S1 verification (full lifecycle)
-- S3 housekeeping with multi-structure support
-- S5 event reporting and selective enable/disable
-- S11 TC scheduling with timing constraints
-- S12 monitoring (25+ rules, all major thresholds covered)
-- S13 large data transfer (payload downlink)
-- S15 telemetry storage (4-store model, circular/linear)
-- S19 event-action (20+ autonomous response rules)
-- FDIR cascading (EPS fault → load shed → AOCS safe mode)
-- MCS with 7+ operational displays
-- Planning integration with power/AOCS/thermal constraints
+## 3. Data Flows
 
-**Partial (>80%):**
-- S6 memory management (dump/load work, no real memory model)
-- Ground station pass planning (TLE propagation works, schedule display pending)
+### 3.1 TM Downlink (Spacecraft → Ground)
 
-**Known Limitations:**
-- Service 2 (device access) not implemented (all low-level control via S8 functions)
-- Service 18 (procedures) defined but not automatically invoked
-- Atmospheric loss model not included (rain attenuation, gaseous absorption)
+```
+Engine._emit_hk_packets()
+  → engine._enqueue_tm(pkt)     [checks downlink_active]
+    → engine.tm_queue             [maxsize=2000]
+      → server._tm_broadcast_loop()  [drain + TCP send, 2s drain timeout]
+        → bridge._relay_tm()       [reads from TCP 8002]
+          → pipeline.enqueue_tm_packet()
+            → SpacecraftTX           [VC mux, RS encode, ASM, BPSK mod]
+              → SampleBuffer[tx→ch]  [max_depth=128]
+                → ChannelStage       [Eb/N0, AWGN, Doppler]
+                  → SampleBuffer[ch→rx] [max_depth=128]
+                    → GroundStationRX   [demod, frame sync, RS decode]
+                      → _on_packet_recovered()
+                        → _recovered_queue   [maxsize=500]
+                          → bridge._relay_recovered_tm()  [batch drain]
+                            → _broadcast_tm()  [TCP to MCS :8012]
+                              → MCS._tm_receive_loop()
+                                → _process_tm()
+                                  → _param_cache update
+```
 
----
+### 3.2 TC Uplink (Ground → Spacecraft)
 
-## Performance Characteristics
+```
+MCS UI command builder
+  → POST /api/pus-command
+    → build_tc_packet()
+      → MCS._tc_forward() [TCP to bridge :8011 or sim :8001]
+        → sim.tc_queue     [maxsize=500]
+          → engine._drain_tc_queue()
+            → engine._dispatch_tc()
+              → uplink_active check
+              → bootloader allowlist check
+              → power gate check (EPS line + subsystem mode)
+              → S1.1 acceptance ACK
+              → dispatcher.dispatch(service, subtype, data)
+              → S1.7 completion ACK (or S1.8 failure)
+```
 
-**Simulation Speed:**
-- Real-time or faster on standard hardware
-- Typical frame rate: 10 Hz with full physics
+### 3.3 Diagnostic Counters
 
-**Timing Accuracy:**
-- 1 ms absolute clock resolution
-- Attitude propagation: 1° radians per 1 sec time step
-- Thermal transient response: τ = 100-500 s per zone
+Every handoff point has a persistent counter (no silent drops):
 
-**Scalability:**
-- Single process: up to 8 simultaneous MCS clients
-- Gateway: enables distributed multi-site deployment
-- TM telemetry rate: 1-100 Hz configurable per structure
+| Counter | Location | What it counts |
+|---------|----------|----------------|
+| `engine.tm_packets_enqueued` | engine.py | Packets entering tm_queue |
+| `engine.tm_queue_drops` | engine.py | Packets dropped (queue full) |
+| `server.tm_packets_broadcast` | server.py | Packets sent to TCP clients |
+| `bridge._tm_packets_relayed` | bridge.py | Packets received from sim |
+| `bridge._tm_packets_delivered` | bridge.py | Packets sent to MCS clients |
+| `pipeline.tx_packet_drops` | tx_chain.py | TX queue full drops |
+| `pipeline.tx/rx_buffer_overflows` | sample_buffer.py | Sample buffer overflows |
+| `pipeline.rx_good/bad_frames` | rx_chain.py | Frame decode results |
+| `pipeline.rx_rs/fecf_failures` | rx_chain.py | FEC failure breakdown |
+| `pipeline.rx_flywheel_misses` | rx_chain.py | Frame sync misses |
+| `pipeline.recovered_queue_drops` | coordinator.py | Recovery queue full |
+| `mcs.tm_packets_received` | server.py | Packets processed by MCS |
 
----
+Access all pipeline counters: `coordinator.get_diagnostics()`.
 
-## Development Notes
+## 4. Simulator Engine
 
-**Adding New Commands:**
-1. Define S8 function in `tc_catalog.yaml`
-2. Implement handler in subsystem model's `dispatch_s8_function()`
-3. Add event generation if autonomous action
+### 4.1 Tick Loop Order
 
-**Adding New Events:**
-1. Define in `event_catalog.yaml` with unique ID
-2. Emit via `tm_builder.emit_event()` in subsystem tick()
-3. Configure S12 rules and S19 actions as needed
+```
+while self.running:
+    1. _drain_instr_queue()        # Instructor commands
+    2. orbit.advance(dt_sim)       # Orbital mechanics
+    3. _tick_spacecraft_phase()    # Phase state machine (0→6)
+    4. _tick_auto_tx_hold()        # TX hold-down timer (15 min)
+    5. subsystem.tick() × 6        # EPS, AOCS, OBDH, TTC, TCS, Payload
+    6. _tick_s12_monitoring()      # Parameter limit checks
+    7. _tick_fdir()                # Fault detection/isolation/recovery
+    8. _check_subsystem_events()   # Edge-triggered events
+    9. _check_transitions()        # AOS/LOS transitions
+   10. _emit_hk_packets()         # Periodic HK emission
+   11. _tick_dump_emission()      # S15 paced TM dump
+   12. _drain_tc_queue()          # TC processing (AFTER subsystem ticks)
+   13. _failure_manager.tick()    # Failure timing
+```
 
-**Adding S12/S19 Rules:**
-1. Define in `s12_definitions.yaml` and `s19_rules.yaml`
-2. Rules auto-loaded at engine startup
-3. Violations auto-checked and actions auto-triggered each tick
+**Key:** TCs are drained AFTER subsystem ticks (step 12) so `downlink_active` reads current link status when generating S1.1 ACKs.
 
-**Cross-subsystem Integration:**
-- FDIR engine monitors all subsystems for cascading failures
-- EPS load shedding triggered by voltage/SoC events
-- AOCS safe mode triggered by attitude, momentum, or power events
-- Thermal constraints respected in planning module
+### 4.2 Spacecraft Phases
+
+| Phase | Name | Active Subsystems | HK SIDs | Transition |
+|-------|------|-------------------|---------|------------|
+| 0 | PRE_SEPARATION | None | None | Separation bolt → 1 |
+| 1 | SEPARATION_TIMER | EPS, TTC, OBDH | None | 30 min timer → 2 |
+| 2 | INITIAL_POWER_ON | EPS, TTC, OBDH | None | Immediate → 3 |
+| 3 | BOOTLOADER_OPS | EPS, TTC, OBDH, TCS | SID 11 (beacon) | OBC_BOOT_APP (S8.1 func=55) → 4 |
+| 4 | LEOP | All | All SIDs | Manual → 5 |
+| 5 | COMMISSIONING | All | All SIDs | Manual → 6 |
+| 6 | NOMINAL | All | All SIDs | — |
+
+### 4.3 Power Gating
+
+Commands rejected at acceptance (S1.2) if target subsystem's EPS power line is OFF:
+
+| func_id range | Power line | Subsystem mode gate |
+|---------------|-----------|---------------------|
+| 0-15 | aocs_wheels | AOCS mode > 0 (except set_mode, enable/disable) |
+| 26-39 | payload | Payload mode > 0 (except set_mode) |
+| 63-78 | ttc_tx | None (line gate only) |
+| 16-25, 40-62, 80-82 | None | None (always allowed) |
+
+### 4.4 HK Telemetry
+
+| SID | Name | Interval | Params | Power-gated |
+|-----|------|----------|--------|-------------|
+| 1 | EPS | 1.0s | 51 | No |
+| 2 | AOCS | 4.0s | 67 | aocs_wheels |
+| 3 | TCS | 60.0s | 17 | No |
+| 4 | Platform | 8.0s | 26 | No |
+| 5 | Payload | 8.0s | 23 | payload |
+| 6 | TTC | 8.0s | 27 | No |
+| 11 | Beacon | 30.0s | 7 | No (bootloader-safe) |
+
+## 5. RF Simulation Layer
+
+### 5.1 Operating Modes
+
+| Mode | Processing | Use case |
+|------|-----------|----------|
+| PACKET | Transparent relay | Development, quick testing |
+| FRAME | CCSDS Transfer Framing + BER injection | Ground segment training |
+| RF | Full BPSK modulation/demodulation + FEC | Realistic RF chain testing |
+
+### 5.2 Frame Synchronizer
+
+- Three-state: SEARCH → VERIFY (3 consecutive) → LOCK
+- Detects both normal ASM (`0x1ACFFC1D`) and inverted (`0xE53003E2`) for 180° BPSK ambiguity
+- ±2 byte alignment window in LOCK state (demodulator timing drift)
+- Flywheel: 4 misses → LOCK loss
+- Buffer capped at 10× frame length (memory safety)
+
+### 5.3 Packet Extraction
+
+Uses First Header Pointer (FHP) from TM frame header for resynchronization after frame loss. The builder tracks packet-start offsets, and the parser uses FHP to align extraction. Reassembly buffer capped at 5× data zone length.
+
+## 6. Failure Injection (42 modes)
+
+- **AOCS** (12): rw_seizure/bearing, gyro_bias, st_blind/failure, css/mag/mtq failures
+- **EPS** (8): solar degradation, battery/bus faults, overcurrent, load shedding
+- **TTC** (14): transponder failures, BER/PA/uplink issues, 7× ground segment faults
+- **OBDH** (9): watchdog/crash, memory errors, bus failure, bootloader stuck
+- **Payload** (5): cooler/FPA degradation, image corruption, memory faults
+- **TCS** (7): heater failures (stuck on/open circuit), cooler, thermal anomalies
+
+## 7. Memory Safety
+
+All data structures are bounded (fixes applied 2026-05-16):
+
+| Structure | Max size | Eviction |
+|-----------|---------|----------|
+| tm_queue | 2000 packets | Drop + log |
+| _recovered_queue | 500 packets | Drop + log |
+| Sample buffers | 128 chunks | Drop oldest |
+| Image catalog | 1000 entries | FIFO eviction |
+| Dump pending | 5000 packets | Truncate + log |
+| S13 transfers | Auto-cleaned | Removed on completion |
+| Handover log | 500 entries | deque rotation |
+| Procedure log | 500 entries | Tail truncation |
+| Frame sync buffer | 10× frame length | Head truncation |
+| Reassembly buffer | 5× data zone | Clear on overflow |
+
+## 8. Test Suite (~1200 tests)
+
+| Suite | Tests | Runtime | What it covers |
+|-------|-------|---------|----------------|
+| Unit (sim/rfsim/common/mcs) | ~932 | ~15s | All subsystems, protocol, UI |
+| Acceptance (RF pipeline) | ~240 | ~3 min | Every command/service/failure through RF |
+| Integration (diagnostics) | ~9 | ~8s | Pipeline counters, nominal mode |
+| E2E Browser (Playwright) | ~35 | ~35 min | Full LEOP+commissioning through MCS UI |
+| Memory profiling | 2 | ~2s | Sustained load, bounded structures |
+
+## 9. Configuration Reference
+
+See `configs/eosat1/` for all YAML configuration. Key files:
+- `mission.yaml` — spacecraft identity, APID, bootloader settings
+- `orbit.yaml` — TLE, ground stations, orbital parameters
+- `rfsim.yaml` — RF bridge mode, CCSDS framing, channel model
+- `telemetry/hk_structures.yaml` — 7 SIDs, 218 parameters
+- `procedures/procedure_index.yaml` — 57 procedures across 5 categories
