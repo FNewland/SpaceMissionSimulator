@@ -310,6 +310,12 @@ class TMFrameParser:
 
     def _extract_from_buffer(self) -> list[bytes]:
         """Extract complete CCSDS packets from the reassembly buffer."""
+        # Cap reassembly buffer to prevent unbounded growth from corrupted data
+        if len(self._reassembly_buffer) > self.data_zone_length * 5:
+            logger.warning("Reassembly buffer overflow (%d bytes), clearing",
+                           len(self._reassembly_buffer))
+            self._reassembly_buffer.clear()
+            return []
         packets = []
         while len(self._reassembly_buffer) >= 7:
             data_length = struct.unpack('>H', self._reassembly_buffer[4:6])[0]

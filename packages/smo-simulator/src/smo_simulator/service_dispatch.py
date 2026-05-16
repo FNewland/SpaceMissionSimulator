@@ -1085,8 +1085,7 @@ class ServiceDispatcher:
                 self._s13_transfers = {}
 
             if transfer_id in self._s13_transfers:
-                xfer = self._s13_transfers[transfer_id]
-                xfer['status'] = 'COMPLETE'
+                xfer = self._s13_transfers.pop(transfer_id)
                 logger.info("S13 transfer %d complete (scene %d)",
                            transfer_id, xfer['scene_id'])
 

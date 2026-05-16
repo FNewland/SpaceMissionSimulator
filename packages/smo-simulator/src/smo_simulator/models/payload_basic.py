@@ -708,6 +708,9 @@ class PayloadBasicModel(SubsystemModel):
                 "segment": seg,
             }
             s.image_catalog.append(img)
+            # Cap catalog to prevent unbounded memory growth
+            if len(s.image_catalog) > 1000:
+                s.image_catalog.pop(0)  # evict oldest
             s.image_count += 1
             s.mem_used_mb += stored_size
             s.store_used_pct = min(

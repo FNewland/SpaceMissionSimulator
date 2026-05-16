@@ -375,6 +375,9 @@ class ProcedureRunner:
             "detail": detail,
         }
         self._execution_log.append(entry)
+        # Cap log to prevent unbounded growth during long procedures
+        if len(self._execution_log) > 500:
+            self._execution_log = self._execution_log[-500:]
         logger.info("ProcRunner [step %d] %s: %s", self.current_step, action, detail)
 
 

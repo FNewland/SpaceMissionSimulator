@@ -1296,7 +1296,13 @@ class SimulationEngine:
         packets = self._tm_storage.start_dump(store_id)
         if not packets:
             return 0
+        # Cap dump queue to prevent unbounded memory growth
+        MAX_DUMP_PENDING = 5000
         for pkt in packets:
+            if len(self._dump_pending) >= MAX_DUMP_PENDING:
+                logger.warning("Dump queue full (%d), discarding remaining packets",
+                               MAX_DUMP_PENDING)
+                break
             self._dump_pending.append((pkt, store_id))
         self._dump_active_stores.add(store_id)
 
