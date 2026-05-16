@@ -131,13 +131,42 @@ canvas { width:100% !important; height:100% !important; }
     <canvas id="constellation" width="500" height="360" style="width:100%;height:180px;display:block;background:#0a0e14;"></canvas>
   </div>
 
-  <!-- Ground Equipment Status -->
+  <!-- Spectrum Analyzer -->
   <div class="panel two-col">
-    <h2>Ground Equipment Status</h2>
+    <h2>Spectrum Analyzer (Baseband)</h2>
+    <div class="chart-container"><canvas id="spectrum-chart"></canvas></div>
+  </div>
+
+  <!-- Eye Diagram -->
+  <div class="panel">
+    <h2>Eye Diagram</h2>
+    <canvas id="eye-diagram" width="400" height="300" style="width:100%;height:150px;display:block;background:#0a0e14;"></canvas>
+  </div>
+
+  <!-- Link Budget -->
+  <div class="panel">
+    <h2>Link Budget</h2>
+    <div class="row"><span class="label">EIRP</span><span id="lb-eirp" class="value">-- dBW</span></div>
+    <div class="row"><span class="label">FSPL</span><span id="lb-fspl" class="value">-- dB</span></div>
+    <div class="row"><span class="label">C/N0</span><span id="lb-cn0" class="value">-- dBHz</span></div>
+    <div class="row"><span class="label">Coding Gain</span><span id="lb-coding" class="value">-- dB</span></div>
+    <div class="row"><span class="label">Frequency</span><span id="lb-freq" class="value">-- MHz</span></div>
+    <div class="row"><span class="label">Bandwidth</span><span id="lb-bw" class="value">-- kHz</span></div>
+  </div>
+
+  <!-- Channel Model Status -->
+  <div class="panel">
+    <h2>Channel Model</h2>
+    <div class="row"><span class="label">Phase Noise</span><span id="ch-phasenoise" class="value">OFF</span></div>
+    <div class="row"><span class="label">Fading</span><span id="ch-fading" class="value">OFF</span></div>
+    <div class="row"><span class="label">Fading K</span><span id="ch-fading-k" class="value">-- dB</span></div>
+    <div class="row"><span class="label">Interferers</span><span id="ch-interferers" class="value">0</span></div>
+  </div>
+
+  <!-- Ground Equipment Status -->
+  <div class="panel">
+    <h2>Ground Equipment</h2>
     <div class="row"><span class="label">GS Eb/N0 Penalty</span><span id="gs-penalty" class="value">0.0 dB</span></div>
-    <div style="font-size:11px;color:var(--dim);margin-top:4px;">
-      Displays degradation from ground station RF chain (LNA, antenna tracking, feed, HPA, reference oscillator, RFI).
-    </div>
   </div>
 </div>
 <div id="status-bar">Connecting...</div>
@@ -325,6 +354,31 @@ function connect() {
     const gsEl = document.getElementById('gs-penalty');
     gsEl.textContent = (gsPen > 0 ? '-' : '') + gsPen.toFixed(1) + ' dB';
     gsEl.style.color = gsPen > 3 ? 'var(--red)' : gsPen > 0 ? 'var(--yellow)' : 'var(--green)';
+    // Link budget
+    const setTxt = (id, v) => { const e = document.getElementById(id); if(e) e.textContent = v; };
+    setTxt('lb-eirp', (d.eirp_dbw || 0).toFixed(1) + ' dBW');
+    setTxt('lb-fspl', (d.fspl_db || 0).toFixed(1) + ' dB');
+    setTxt('lb-cn0', (d.cn0_dbhz || 0).toFixed(1) + ' dBHz');
+    setTxt('lb-coding', (d.coding_gain_db || 0).toFixed(1) + ' dB');
+    setTxt('lb-freq', ((d.frequency_hz || 437e6) / 1e6).toFixed(3) + ' MHz');
+    setTxt('lb-bw', ((d.bandwidth_hz || 0) / 1e3).toFixed(1) + ' kHz');
+
+    // Channel model
+    setTxt('ch-phasenoise', d.phase_noise_enabled ? 'ON' : 'OFF');
+    setTxt('ch-fading', d.fading_enabled ? 'ON (K=' + (d.fading_k_db||10).toFixed(0) + ' dB)' : 'OFF');
+    setTxt('ch-fading-k', (d.fading_k_db || 10).toFixed(1) + ' dB');
+    setTxt('ch-interferers', '' + (d.n_interferers || 0));
+
+    // Spectrum analyzer
+    if (d.spectrum_db && d.spectrum_db.length > 4) {
+      drawSpectrum(d.spectrum_db, d.spectrum_freq_range_hz || 256000);
+    }
+
+    // Eye diagram
+    if (d.eye_i && d.eye_i.length > 4) {
+      drawEyeDiagram(d.eye_i, d.eye_q || []);
+    }
+
     document.getElementById('status-bar').textContent = 'Last update: ' + new Date(d.timestamp * 1000).toLocaleTimeString();
   };
   ws.onclose = function() {
@@ -341,8 +395,104 @@ const IDEAL_CONSTELLATIONS = {
   1: [[0.707,0.707],[-0.707,0.707],[-0.707,-0.707],[0.707,-0.707]],  // QPSK
   2: [[1,0],[0.707,0.707],[0,1],[-0.707,0.707],[-1,0],[-0.707,-0.707],[0,-1],[0.707,-0.707]],  // 8PSK
   3: [[0.707,0.707],[-0.707,0.707],[-0.707,-0.707],[0.707,-0.707]],  // OQPSK
+  4: [],  // 16-APSK (generated below)
+  5: [[0.707,0.707],[-0.707,0.707],[-0.707,-0.707],[0.707,-0.707]],  // π/4-DQPSK (same base)
+  6: [[-1,0],[1,0]],  // GMSK (CPM, shows as ring)
+  7: [[-1,0],[1,0]],  // GFSK
 };
-const MOD_NAMES = {0:'BPSK',1:'QPSK',2:'8PSK',3:'OQPSK'};
+// Generate 16-APSK constellation points
+(function() {
+  const r1=1, r2=2.7, pts=[];
+  for(let k=0;k<4;k++) pts.push([r1*Math.cos(Math.PI/4+k*Math.PI/2),r1*Math.sin(Math.PI/4+k*Math.PI/2)]);
+  for(let k=0;k<12;k++) pts.push([r2*Math.cos(Math.PI/12+k*Math.PI/6),r2*Math.sin(Math.PI/12+k*Math.PI/6)]);
+  const norm=Math.sqrt((4*r1*r1+12*r2*r2)/16);
+  IDEAL_CONSTELLATIONS[4]=pts.map(p=>[p[0]/norm,p[1]/norm]);
+})();
+const MOD_NAMES = {0:'BPSK',1:'QPSK',2:'8PSK',3:'OQPSK',4:'16-APSK',5:'π/4-DQPSK',6:'GMSK',7:'GFSK'};
+
+// Spectrum analyzer chart
+const specChart = new MiniChart('spectrum-chart', {
+  keys: ['spec'], maxPoints: 128,
+  colors: { spec: '#4fc3f7' },
+  labels: { spec: 'Power (dB)' },
+  yMin: -40, yMax: 10
+});
+
+function drawSpectrum(specDb, freqRange) {
+  // Feed spectrum data as individual points
+  const c = document.getElementById('spectrum-chart');
+  if (!c) return;
+  const ctx = c.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const w = c.clientWidth, h = c.clientHeight;
+  c.width = w * dpr; c.height = h * dpr;
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, h);
+
+  // Y range
+  let yMin = -40, yMax = 10;
+  ctx.strokeStyle = '#1e2a36'; ctx.lineWidth = 0.5;
+  for (let i=0;i<=4;i++) {
+    const y = h - (i/4)*h;
+    ctx.beginPath(); ctx.moveTo(30,y); ctx.lineTo(w,y); ctx.stroke();
+    ctx.fillStyle='#6b7d8d'; ctx.font='9px monospace';
+    ctx.fillText((yMin+(i/4)*(yMax-yMin)).toFixed(0)+' dB', 0, y+3);
+  }
+
+  // Draw spectrum
+  ctx.strokeStyle = '#4fc3f7'; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let i=0;i<specDb.length;i++) {
+    const x = 30 + (i/(specDb.length-1)) * (w-35);
+    const y = h - ((specDb[i]-yMin)/(yMax-yMin)) * h;
+    i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+
+  // Frequency labels
+  ctx.fillStyle='#6b7d8d'; ctx.font='8px monospace';
+  ctx.fillText('-' + (freqRange/2e3).toFixed(0) + 'kHz', 30, h-2);
+  ctx.fillText('+' + (freqRange/2e3).toFixed(0) + 'kHz', w-45, h-2);
+  ctx.fillText('0', w/2, h-2);
+}
+
+function drawEyeDiagram(eyeI, eyeQ) {
+  const c = document.getElementById('eye-diagram');
+  if (!c) return;
+  const ctx = c.getContext('2d');
+  const w = c.width, h = c.height;
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = '#0a0e14';
+  ctx.fillRect(0, 0, w, h);
+
+  // Grid
+  ctx.strokeStyle = '#1e2a36'; ctx.lineWidth = 0.5;
+  ctx.beginPath(); ctx.moveTo(0,h/2); ctx.lineTo(w,h/2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(w/2,0); ctx.lineTo(w/2,h); ctx.stroke();
+
+  // Draw I-channel eye traces (green)
+  if (eyeI.length < 4) return;
+  const period = 16; // 2× symbol period at SPS=8
+  const nTraces = Math.min(30, Math.floor(eyeI.length / period));
+  const scale = h / 4;
+
+  ctx.strokeStyle = 'rgba(79,195,247,0.3)'; ctx.lineWidth = 1;
+  for (let t=0; t<nTraces; t++) {
+    ctx.beginPath();
+    for (let i=0; i<period && t*period+i<eyeI.length; i++) {
+      const x = (i/period) * w;
+      const y = h/2 - eyeI[t*period + i] * scale;
+      i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+  }
+
+  // Labels
+  ctx.fillStyle = '#6b7d8d'; ctx.font = '9px monospace';
+  ctx.fillText('I-channel', 5, 12);
+  ctx.fillText('+1', w-18, h/2-scale+5);
+  ctx.fillText('-1', w-18, h/2+scale+5);
+}
 
 function drawConstellation(samples, modulation) {
   const c = document.getElementById('constellation');
