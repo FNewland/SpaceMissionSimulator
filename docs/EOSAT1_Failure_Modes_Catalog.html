@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EOSAT-1 Failure Modes Catalog</title>
+<style>
+@page { size: A4; margin: 20mm; }
+@media print { body { font-size: 9pt; } .no-break { page-break-inside: avoid; } }
+:root { --primary: #1a365d; --accent: #2b6cb0; --light: #ebf4ff; --border: #bee3f8; --text: #2d3748; --muted: #718096; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; color: var(--text); line-height: 1.5; max-width: 210mm; margin: 0 auto; padding: 20mm; }
+h1 { color: var(--primary); font-size: 22pt; border-bottom: 3px solid var(--accent); padding-bottom: 8px; margin-bottom: 4px; }
+h2 { color: var(--primary); font-size: 14pt; margin-top: 24px; margin-bottom: 8px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+h3 { color: var(--accent); font-size: 11pt; margin-top: 16px; margin-bottom: 4px; }
+h4 { color: var(--text); font-size: 10pt; margin-top: 12px; margin-bottom: 2px; }
+p, li { font-size: 10pt; margin-bottom: 4px; }
+.subtitle { color: var(--muted); font-size: 10pt; margin-bottom: 16px; }
+.doc-id { display: flex; justify-content: space-between; font-size: 9pt; color: var(--muted); margin-bottom: 20px; }
+table { width: 100%; border-collapse: collapse; margin: 8px 0 16px 0; font-size: 9pt; }
+th { background: var(--primary); color: white; padding: 6px 8px; text-align: left; font-weight: 600; }
+td { padding: 5px 8px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+tr:nth-child(even) { background: #f7fafc; }
+.cascade-box { background: #fff5f5; border: 1px solid #feb2b2; border-radius: 6px; padding: 10px 14px; margin: 8px 0; font-size: 9pt; }
+.cascade-box strong { color: #c53030; }
+.chain { background: var(--light); border: 1px solid var(--border); border-radius: 6px; padding: 10px 14px; margin: 8px 0; font-family: 'Courier New', monospace; font-size: 8.5pt; white-space: pre-wrap; }
+.summary-box { background: #f0fff4; border: 1px solid #9ae6b4; border-radius: 6px; padding: 10px 14px; margin: 8px 0; }
+svg text { font-family: 'Segoe UI', system-ui, sans-serif; }
+.count-badge { display: inline-block; background: var(--accent); color: white; border-radius: 10px; padding: 1px 8px; font-size: 9pt; font-weight: 600; margin-left: 6px; }
+.severity-high { color: #c53030; font-weight: 600; }
+.severity-med { color: #c05621; font-weight: 600; }
+.severity-low { color: #2f855a; font-weight: 600; }
+.footer { margin-top: 30px; padding-top: 10px; border-top: 1px solid #e2e8f0; font-size: 8pt; color: var(--muted); text-align: center; }
+</style>
+</head>
+<body>
+
+<h1>EOSAT-1 Failure Modes Catalog</h1>
+<p class="subtitle">Injectable Failure Modes, Effects, and Cascading Chains</p>
+<div class="doc-id">
+  <span>Document: EOSAT1-FM-CAT-001 | Issue 1.0</span>
+  <span>Date: 2026-05-16</span>
+  <span>Classification: UNCLASSIFIED</span>
+</div>
+
+<!-- ═══ OVERVIEW DIAGRAM ═══ -->
+<h2>1. System Overview</h2>
+<p>The EOSAT-1 simulator implements <strong>42 injectable failure modes</strong> across 6 subsystems, with autonomous fault detection (FDIR), on-board monitoring (S12), and event-action rules (S19) that create realistic cascading failure chains.</p>
+
+<svg viewBox="0 0 700 280" style="width:100%;max-width:700px;margin:12px auto;display:block">
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#2b6cb0"/></marker>
+  </defs>
+  <!-- Subsystem boxes -->
+  <rect x="10" y="20" width="100" height="50" rx="6" fill="#ebf4ff" stroke="#2b6cb0" stroke-width="1.5"/>
+  <text x="60" y="40" text-anchor="middle" font-size="10" font-weight="600" fill="#1a365d">AOCS</text>
+  <text x="60" y="55" text-anchor="middle" font-size="8" fill="#718096">12 failures</text>
+
+  <rect x="130" y="20" width="100" height="50" rx="6" fill="#ebf4ff" stroke="#2b6cb0" stroke-width="1.5"/>
+  <text x="180" y="40" text-anchor="middle" font-size="10" font-weight="600" fill="#1a365d">EPS</text>
+  <text x="180" y="55" text-anchor="middle" font-size="8" fill="#718096">8 failures</text>
+
+  <rect x="250" y="20" width="100" height="50" rx="6" fill="#ebf4ff" stroke="#2b6cb0" stroke-width="1.5"/>
+  <text x="300" y="40" text-anchor="middle" font-size="10" font-weight="600" fill="#1a365d">TTC</text>
+  <text x="300" y="55" text-anchor="middle" font-size="8" fill="#718096">14 failures</text>
+
+  <rect x="370" y="20" width="100" height="50" rx="6" fill="#ebf4ff" stroke="#2b6cb0" stroke-width="1.5"/>
+  <text x="420" y="40" text-anchor="middle" font-size="10" font-weight="600" fill="#1a365d">OBDH</text>
+  <text x="420" y="55" text-anchor="middle" font-size="8" fill="#718096">9 failures</text>
+
+  <rect x="490" y="20" width="100" height="50" rx="6" fill="#ebf4ff" stroke="#2b6cb0" stroke-width="1.5"/>
+  <text x="540" y="40" text-anchor="middle" font-size="10" font-weight="600" fill="#1a365d">Payload</text>
+  <text x="540" y="55" text-anchor="middle" font-size="8" fill="#718096">5 failures</text>
+
+  <rect x="610" y="20" width="80" height="50" rx="6" fill="#ebf4ff" stroke="#2b6cb0" stroke-width="1.5"/>
+  <text x="650" y="40" text-anchor="middle" font-size="10" font-weight="600" fill="#1a365d">TCS</text>
+  <text x="650" y="55" text-anchor="middle" font-size="8" fill="#718096">7 failures</text>
+
+  <!-- FDIR/S12/S19 block -->
+  <rect x="150" y="100" width="400" height="40" rx="6" fill="#fff5f5" stroke="#c53030" stroke-width="1.5"/>
+  <text x="350" y="118" text-anchor="middle" font-size="10" font-weight="600" fill="#c53030">FDIR + S12 Monitoring + S19 Event-Action Rules</text>
+  <text x="350" y="132" text-anchor="middle" font-size="8" fill="#718096">Autonomous detection → mode transitions → load shedding → cascading recovery</text>
+
+  <!-- Arrows from subsystems to FDIR -->
+  <line x1="60" y1="70" x2="200" y2="100" stroke="#2b6cb0" stroke-width="1" marker-end="url(#arr)"/>
+  <line x1="180" y1="70" x2="250" y2="100" stroke="#2b6cb0" stroke-width="1" marker-end="url(#arr)"/>
+  <line x1="300" y1="70" x2="350" y2="100" stroke="#2b6cb0" stroke-width="1" marker-end="url(#arr)"/>
+  <line x1="420" y1="70" x2="420" y2="100" stroke="#2b6cb0" stroke-width="1" marker-end="url(#arr)"/>
+  <line x1="540" y1="70" x2="480" y2="100" stroke="#2b6cb0" stroke-width="1" marker-end="url(#arr)"/>
+  <line x1="650" y1="70" x2="520" y2="100" stroke="#2b6cb0" stroke-width="1" marker-end="url(#arr)"/>
+
+  <!-- Cascade chains -->
+  <rect x="50" y="170" width="180" height="90" rx="6" fill="#fff5f5" stroke="#feb2b2" stroke-width="1"/>
+  <text x="140" y="190" text-anchor="middle" font-size="9" font-weight="600" fill="#c53030">Power Cascade</text>
+  <text x="140" y="205" text-anchor="middle" font-size="7.5" fill="#718096">Solar loss → SoC drop</text>
+  <text x="140" y="218" text-anchor="middle" font-size="7.5" fill="#718096">→ Load shed stages 1-3</text>
+  <text x="140" y="231" text-anchor="middle" font-size="7.5" fill="#718096">→ Payload/TTC/AOCS off</text>
+  <text x="140" y="248" text-anchor="middle" font-size="7.5" fill="#718096">→ Eclipse mode only</text>
+
+  <rect x="260" y="170" width="180" height="90" rx="6" fill="#fff5f5" stroke="#feb2b2" stroke-width="1"/>
+  <text x="350" y="190" text-anchor="middle" font-size="9" font-weight="600" fill="#c53030">Attitude Cascade</text>
+  <text x="350" y="205" text-anchor="middle" font-size="7.5" fill="#718096">Multi-wheel seizure</text>
+  <text x="350" y="218" text-anchor="middle" font-size="7.5" fill="#718096">→ Fine-point lost</text>
+  <text x="350" y="231" text-anchor="middle" font-size="7.5" fill="#718096">→ Imaging impossible</text>
+  <text x="350" y="248" text-anchor="middle" font-size="7.5" fill="#718096">→ Coarse sun only</text>
+
+  <rect x="470" y="170" width="180" height="90" rx="6" fill="#fff5f5" stroke="#feb2b2" stroke-width="1"/>
+  <text x="560" y="190" text-anchor="middle" font-size="9" font-weight="600" fill="#c53030">OBC Reboot Cascade</text>
+  <text x="560" y="205" text-anchor="middle" font-size="7.5" fill="#718096">OBC crash / memory error</text>
+  <text x="560" y="218" text-anchor="middle" font-size="7.5" fill="#718096">→ Bootloader revert</text>
+  <text x="560" y="231" text-anchor="middle" font-size="7.5" fill="#718096">→ App SW unavailable</text>
+  <text x="560" y="248" text-anchor="middle" font-size="7.5" fill="#718096">→ Beacon-only mode</text>
+
+  <!-- Arrows from FDIR to cascades -->
+  <line x1="250" y1="140" x2="140" y2="170" stroke="#c53030" stroke-width="1" marker-end="url(#arr)" stroke-dasharray="4,2"/>
+  <line x1="350" y1="140" x2="350" y2="170" stroke="#c53030" stroke-width="1" marker-end="url(#arr)" stroke-dasharray="4,2"/>
+  <line x1="450" y1="140" x2="560" y2="170" stroke="#c53030" stroke-width="1" marker-end="url(#arr)" stroke-dasharray="4,2"/>
+</svg>
+
+<!-- ═══ FAILURE TABLES ═══ -->
+
+<h2>2. AOCS Failures <span class="count-badge">12</span></h2>
+<p>File: <code>smo_simulator/models/aocs_basic.py</code></p>
+
+<table>
+<tr><th>Failure</th><th>Parameters</th><th>Immediate Effect</th><th>Cascading</th></tr>
+<tr><td><strong>rw_bearing</strong></td><td>wheel (0-3), magnitude</td><td>Bearing degradation; wheel disabled if mag ≥ 0.95</td><td class="severity-med">If &lt;3 wheels → COARSE_SUN mode</td></tr>
+<tr><td><strong>rw_seizure</strong></td><td>wheel (0-3)</td><td>Wheel speed → 0, disabled</td><td class="severity-high">Multi-wheel → FINE_POINT lost → imaging impossible</td></tr>
+<tr><td><strong>gyro_bias</strong></td><td>axis (0-2), bias (deg/s)</td><td>Constant rate bias on gyro</td><td class="severity-med">Attitude error grows → S19 rule 2004 safe mode</td></tr>
+<tr><td><strong>st_blind</strong></td><td>unit, magnitude</td><td>Tracker status → BLIND</td><td class="severity-med">FINE_POINT → NOMINAL fallback; random gyro bias injected</td></tr>
+<tr><td><strong>st_failure</strong></td><td>unit (1-2)</td><td>Tracker status → FAILED, num_stars=0</td><td class="severity-high">Permanent; combined with CSS loss → DETUMBLE only</td></tr>
+<tr><td><strong>css_failure</strong></td><td>—</td><td>css_valid = False</td><td class="severity-high">Sun vector lost; COARSE_SUN mode blocked</td></tr>
+<tr><td><strong>mag_failure</strong></td><td>—</td><td>mag_valid = False</td><td class="severity-med">Desaturation degraded (no magnetic field reference)</td></tr>
+<tr><td><strong>mtq_failure</strong></td><td>axis (x/y/z)</td><td>Single MTQ axis disabled</td><td class="severity-low">Desaturation effectiveness reduced ~33%</td></tr>
+<tr><td><strong>mag_a_fail</strong></td><td>—</td><td>MAG-A failed</td><td class="severity-low">Switch to MAG-B; both → mag_failure cascade</td></tr>
+<tr><td><strong>mag_b_fail</strong></td><td>—</td><td>MAG-B failed</td><td class="severity-low">Switch to MAG-A; both → mag_failure cascade</td></tr>
+<tr><td><strong>css_head_fail</strong></td><td>face (px/mx/py/my/pz/mz)</td><td>Single CSS head disabled</td><td class="severity-low">Reduced sun vector accuracy; multiple → css_failure</td></tr>
+<tr><td><strong>multi_wheel_failure</strong></td><td>wheels (list)</td><td>2+ wheels disabled simultaneously</td><td class="severity-high">Forces COARSE_SUN; eliminates fine-pointing</td></tr>
+</table>
+
+<h2>3. EPS Failures <span class="count-badge">8</span></h2>
+<p>File: <code>smo_simulator/models/eps_basic.py</code></p>
+
+<table>
+<tr><th>Failure</th><th>Parameters</th><th>Immediate Effect</th><th>Cascading</th></tr>
+<tr><td><strong>solar_array_partial</strong></td><td>array (A/B), magnitude</td><td>Array power reduced</td><td class="severity-med">SoC drops → may trigger load shedding</td></tr>
+<tr><td><strong>bat_cell</strong></td><td>magnitude</td><td>Battery cell failure flag</td><td class="severity-med">Capacity loss → faster SoC decline under load</td></tr>
+<tr><td><strong>bus_short</strong></td><td>magnitude</td><td>Bus short flag</td><td class="severity-high">Overcurrent protection trips multiple lines</td></tr>
+<tr><td><strong>overcurrent</strong></td><td>line_index (0-7), magnitude</td><td>OC injection on power line</td><td class="severity-high">Line trips → subsystem power loss</td></tr>
+<tr><td><strong>undervoltage</strong></td><td>magnitude</td><td>SoC reduced by mag×10%</td><td class="severity-high">Progressive load shedding: Payload→TTC→AOCS</td></tr>
+<tr><td><strong>overvoltage</strong></td><td>magnitude</td><td>OV threshold lowered</td><td class="severity-med">May trigger widespread power line trips</td></tr>
+<tr><td><strong>solar_panel_loss</strong></td><td>face, magnitude</td><td>Single body panel degraded</td><td class="severity-low">Power reduction; compounds with other panels</td></tr>
+<tr><td><strong>solar_array_total_loss</strong></td><td>—</td><td>All panels + arrays → 0 power</td><td class="severity-high">Battery-only → catastrophic load shedding → eclipse mode</td></tr>
+</table>
+
+<h2>4. TTC Failures <span class="count-badge">14</span></h2>
+<p>File: <code>smo_simulator/models/ttc_basic.py</code></p>
+
+<table>
+<tr><th>Failure</th><th>Parameters</th><th>Immediate Effect</th><th>Cascading</th></tr>
+<tr><td><strong>primary_failure</strong></td><td>magnitude</td><td>Primary transponder dead</td><td class="severity-high">Link lost until redundant switchover</td></tr>
+<tr><td><strong>redundant_failure</strong></td><td>magnitude</td><td>Redundant transponder dead</td><td class="severity-high">Combined → total comms loss</td></tr>
+<tr><td><strong>high_ber</strong></td><td>magnitude (dB offset)</td><td>Eb/N0 reduced</td><td class="severity-med">Frame sync loss risk; S19 rule 4003 TX power increase</td></tr>
+<tr><td><strong>pa_overheat</strong></td><td>magnitude (heat watts)</td><td>PA temperature rising</td><td class="severity-high">Auto-shutdown at 70°C → downlink lost</td></tr>
+<tr><td><strong>uplink_loss</strong></td><td>—</td><td>carrier_lock = False</td><td class="severity-high">No command acceptance; spacecraft autonomous only</td></tr>
+<tr><td><strong>receiver_degrade</strong></td><td>magnitude (dB NF)</td><td>Noise figure increase</td><td class="severity-med">Lock acquisition delays; eventual uplink loss</td></tr>
+<tr><td><strong>antenna_deploy_failed</strong></td><td>—</td><td>Antenna stowed, sensor jammed</td><td class="severity-high">20-30 dB link budget loss; effective comms loss</td></tr>
+<tr><td colspan="4" style="background:#f7fafc;font-style:italic">Ground segment failures (7): gs_lna_degradation, gs_antenna_mispoint, gs_feed_loss, gs_rfi_interference, gs_hpa_degradation, gs_ref_osc_drift, gs_tracking_loss — each injects dB loss into ground link budget; cumulative; no spacecraft-side cascade</td></tr>
+</table>
+
+<h2>5. OBDH Failures <span class="count-badge">9</span></h2>
+<p>File: <code>smo_simulator/models/obdh_basic.py</code></p>
+
+<table>
+<tr><th>Failure</th><th>Parameters</th><th>Immediate Effect</th><th>Cascading</th></tr>
+<tr><td><strong>watchdog_reset</strong></td><td>—</td><td>Arms watchdog at period</td><td class="severity-high">Timeout → reboot → bootloader → phase regression</td></tr>
+<tr><td><strong>memory_errors</strong></td><td>count</td><td>EDAC error count increment</td><td class="severity-med">S19 rule 5003 → memory scrub</td></tr>
+<tr><td><strong>cpu_spike</strong></td><td>load (%)</td><td>CPU baseline raised</td><td class="severity-med">S19 rule 5004 → safe mode if threshold exceeded</td></tr>
+<tr><td><strong>obc_crash</strong></td><td>—</td><td>Immediate reboot</td><td class="severity-high">Bootloader → phase regression → beacon-only HK</td></tr>
+<tr><td><strong>bus_failure</strong></td><td>bus (A/B)</td><td>CAN bus status → FAILED</td><td class="severity-med">S19 rule 5002 → switch to redundant bus</td></tr>
+<tr><td><strong>boot_image_corrupt</strong></td><td>—</td><td>CRC check will fail</td><td class="severity-high">Reboot → stuck in bootloader indefinitely</td></tr>
+<tr><td><strong>memory_corruption</strong></td><td>count</td><td>Uncorrectable EDAC + reboot</td><td class="severity-high">Same as obc_crash + memory error events</td></tr>
+<tr><td><strong>memory_segment_fail</strong></td><td>segment (0-3)</td><td>Segment marked bad</td><td class="severity-med">Reduced storage capacity; affects payload imaging</td></tr>
+<tr><td><strong>stuck_in_bootloader</strong></td><td>—</td><td>Boot inhibit + image corrupt</td><td class="severity-high">Locked in bootloader; operator recovery required</td></tr>
+</table>
+
+<h2>6. Payload Failures <span class="count-badge">5</span></h2>
+<p>File: <code>smo_simulator/models/payload_basic.py</code></p>
+
+<table>
+<tr><th>Failure</th><th>Parameters</th><th>Immediate Effect</th><th>Cascading</th></tr>
+<tr><td><strong>cooler_failure</strong></td><td>magnitude</td><td>FPA cooler disabled</td><td class="severity-high">FPA temp rises → S19 rule 6002 → payload off</td></tr>
+<tr><td><strong>fpa_degraded</strong></td><td>magnitude</td><td>Error probability 2×</td><td class="severity-med">Image quality loss; combined with cooler → severe</td></tr>
+<tr><td><strong>image_corrupt</strong></td><td>count</td><td>Next N images corrupted</td><td class="severity-low">Data loss; storage waste</td></tr>
+<tr><td><strong>memory_segment_fail</strong></td><td>segment</td><td>Segment marked bad</td><td class="severity-med">Storage capacity reduced → S19 rule 6001 if full</td></tr>
+<tr><td><strong>ccd_line_dropout</strong></td><td>magnitude</td><td>Error probability 3×</td><td class="severity-med">Combined with fpa_degraded → most images unusable</td></tr>
+</table>
+
+<h2>7. TCS Failures <span class="count-badge">7</span></h2>
+<p>File: <code>smo_simulator/models/tcs_basic.py</code></p>
+
+<table>
+<tr><th>Failure</th><th>Parameters</th><th>Immediate Effect</th><th>Cascading</th></tr>
+<tr><td><strong>heater_failure</strong></td><td>circuit, magnitude</td><td>Heater disabled</td><td class="severity-med">Zone cools; battery heater → EPS capacity loss</td></tr>
+<tr><td><strong>cooler_failure</strong></td><td>magnitude</td><td>FPA cooler disabled</td><td class="severity-high">FPA warms → payload off cascade</td></tr>
+<tr><td><strong>obc_thermal</strong></td><td>heat_w</td><td>OBC heat injection</td><td class="severity-high">OBC + battery overtemp → S19 rules 3002/3003</td></tr>
+<tr><td><strong>sensor_drift</strong></td><td>zone, magnitude</td><td>Temp sensor offset</td><td class="severity-med">False alarms; operator confusion</td></tr>
+<tr><td><strong>heater_stuck_on</strong></td><td>circuit</td><td>Heater always ON</td><td class="severity-high">Zone overheats → thermal runaway possible</td></tr>
+<tr><td><strong>heater_open_circuit</strong></td><td>circuit</td><td>Heater draws no power</td><td class="severity-med">Zone cools uncontrollably</td></tr>
+<tr><td><strong>temp_anomaly</strong></td><td>zone, offset_c</td><td>Immediate temp offset</td><td class="severity-med">False overtemp alarm → cascading subsystem shutdown</td></tr>
+</table>
+
+<!-- ═══ CASCADING CHAINS ═══ -->
+
+<h2>8. Cascading Failure Chains</h2>
+<p>Six critical cascading chains have been identified where a single failure propagates across multiple subsystems:</p>
+
+<h3>Chain 1: Solar Array Total Loss → Catastrophic Load Shedding</h3>
+<div class="chain">solar_array_total_loss
+  → power_gen = 0W (no solar input)
+    → bat_soc drops ~2%/min under load
+      → SoC &lt; 30%: LOAD_SHED_STAGE_1 → Payload OFF
+        → SoC &lt; 20%: LOAD_SHED_STAGE_2 → TTC TX OFF, AOCS wheels OFF
+          → SoC &lt; 10%: LOAD_SHED_STAGE_3 → All non-essential OFF
+            → AOCS forced to MODE_ECLIPSE (gyro-only propagation)
+              → Spacecraft in safe/beacon mode until solar recovery</div>
+
+<h3>Chain 2: Multi-Wheel Seizure → Attitude Control Loss</h3>
+<div class="chain">rw_seizure[wheel=0] + rw_seizure[wheel=1]
+  → active_wheels &lt; 3
+    → MODE_FINE_POINT → MODE_NOMINAL (fallback)
+      → MODE_NOMINAL → MODE_COARSE_SUN (if &lt;3 wheels)
+        → Fine-resolution imaging impossible
+          → Payload mode forced to STANDBY
+            → Mission science capability lost</div>
+
+<h3>Chain 3: OBC Crash → Bootloader Revert</h3>
+<div class="chain">obc_crash OR memory_corruption
+  → _reboot(REBOOT_WATCHDOG)
+    → sw_image = SW_BOOTLOADER
+      → engine._tick_spacecraft_phase detects sw_image=0
+        → _enter_bootloader_mode()
+          → Phase → BOOTLOADER_OPS (phase 3)
+            → All HK SIDs disabled (except SID 11 beacon)
+              → Application commands rejected
+                → If boot_image_corrupt: STUCK indefinitely</div>
+
+<h3>Chain 4: Thermal Overtemp → Multi-Subsystem Shutdown</h3>
+<div class="chain">obc_thermal[30W] + cooler_failure
+  → OBC temp rises → battery temp rises (thermal coupling)
+    → S12 param 0x0407 (bat_temp) exceeds limit
+      → S19 rule 3002 → S8 func 12 (transponder TX off)
+        → Downlink lost
+    → S12 param 0x0406 (obc_temp) exceeds limit
+      → S19 rule 3003 → S8 func 40 (OBDH safe mode)
+        → Limited operations only</div>
+
+<h3>Chain 5: Uplink Loss → Autonomous-Only Operation</h3>
+<div class="chain">uplink_loss OR antenna_deploy_failed
+  → carrier_lock = False
+    → RX_available = False → No TC acceptance
+      → Operator cannot send commands
+        → S12/S19 autonomous rules still function
+          → Spacecraft enters safe mode autonomously
+            → Recovery requires physical link restoration</div>
+
+<h3>Chain 6: Sensor Cascade → Attitude Degradation</h3>
+<div class="chain">st_failure[unit=1] + css_failure
+  → st_valid = False, css_valid = False
+    → MODE_FINE_POINT → MODE_NOMINAL (line 685-687)
+      → MODE_COARSE_SUN blocked (css_valid required)
+        → Gyro-only propagation; drift accumulates
+          → att_error exceeds S12 threshold
+            → S19 rule 2004 → AOCS safe mode
+              → Fine-pointing and imaging lost</div>
+
+<!-- ═══ FDIR INTEGRATION ═══ -->
+
+<h2>9. FDIR Integration</h2>
+
+<div class="summary-box">
+<strong>Three-Level Response:</strong>
+<ul style="margin-top:4px">
+<li><strong>Level 1 (Warning):</strong> S5 event generated, no mode change</li>
+<li><strong>Level 2 (Alert):</strong> Forces spacecraft to SAFE mode if currently NOMINAL</li>
+<li><strong>Level 3 (Critical):</strong> Forces spacecraft to EMERGENCY mode immediately</li>
+</ul>
+</div>
+
+<h3>Key S19 Event-Action Rules</h3>
+<table>
+<tr><th>Rule</th><th>Trigger</th><th>Action</th><th>Subsystem</th></tr>
+<tr><td>1001</td><td>Bus undervoltage</td><td>Payload OFF</td><td>EPS → Payload</td></tr>
+<tr><td>1002-1003</td><td>SoC critical (&lt;20%)</td><td>FPA cooler OFF, Payload OFF</td><td>EPS → TCS/Payload</td></tr>
+<tr><td>2001</td><td>Momentum saturation</td><td>Desaturate wheels</td><td>AOCS</td></tr>
+<tr><td>2002-2003</td><td>ST1/ST2 failure</td><td>Switch tracker</td><td>AOCS</td></tr>
+<tr><td>2004</td><td>Attitude error high</td><td>AOCS safe mode</td><td>AOCS</td></tr>
+<tr><td>3001</td><td>FPA overtemp</td><td>Payload OFF</td><td>TCS → Payload</td></tr>
+<tr><td>3002</td><td>Battery overtemp</td><td>TTC TX OFF</td><td>TCS → TTC</td></tr>
+<tr><td>3003</td><td>OBC overtemp</td><td>OBDH safe mode</td><td>TCS → OBDH</td></tr>
+<tr><td>4002</td><td>PA overtemp</td><td>PA OFF</td><td>TTC</td></tr>
+<tr><td>5001</td><td>OBC reboot</td><td>Acknowledge</td><td>OBDH</td></tr>
+<tr><td>5002</td><td>Excessive reboots</td><td>Switch CAN bus</td><td>OBDH</td></tr>
+<tr><td>6001</td><td>Storage full</td><td>Imaging OFF</td><td>Payload</td></tr>
+</table>
+
+<!-- ═══ LOAD SHEDDING ═══ -->
+
+<h2>10. Autonomous Load Shedding</h2>
+
+<svg viewBox="0 0 600 120" style="width:100%;max-width:600px;margin:12px auto;display:block">
+  <rect x="10" y="10" width="130" height="40" rx="4" fill="#c6f6d5" stroke="#38a169"/>
+  <text x="75" y="35" text-anchor="middle" font-size="9" font-weight="600">NOMINAL</text>
+
+  <line x1="140" y1="30" x2="175" y2="30" stroke="#718096" marker-end="url(#arr)"/>
+  <text x="157" y="22" text-anchor="middle" font-size="7" fill="#718096">SoC&lt;30%</text>
+
+  <rect x="175" y="10" width="130" height="40" rx="4" fill="#fefcbf" stroke="#d69e2e"/>
+  <text x="240" y="28" text-anchor="middle" font-size="8" font-weight="600">STAGE 1</text>
+  <text x="240" y="42" text-anchor="middle" font-size="7" fill="#718096">Payload OFF</text>
+
+  <line x1="305" y1="30" x2="340" y2="30" stroke="#718096" marker-end="url(#arr)"/>
+  <text x="322" y="22" text-anchor="middle" font-size="7" fill="#718096">SoC&lt;20%</text>
+
+  <rect x="340" y="10" width="130" height="40" rx="4" fill="#fed7d7" stroke="#e53e3e"/>
+  <text x="405" y="28" text-anchor="middle" font-size="8" font-weight="600">STAGE 2</text>
+  <text x="405" y="42" text-anchor="middle" font-size="7" fill="#718096">+TTC TX, AOCS OFF</text>
+
+  <line x1="470" y1="30" x2="505" y2="30" stroke="#718096" marker-end="url(#arr)"/>
+  <text x="487" y="22" text-anchor="middle" font-size="7" fill="#718096">SoC&lt;10%</text>
+
+  <rect x="505" y="10" width="85" height="40" rx="4" fill="#c53030" stroke="#742a2a"/>
+  <text x="547" y="28" text-anchor="middle" font-size="8" font-weight="600" fill="white">STAGE 3</text>
+  <text x="547" y="42" text-anchor="middle" font-size="7" fill="#fed7d7">All OFF</text>
+
+  <text x="10" y="75" font-size="8" fill="#718096">Load shed order: Payload → FPA Cooler → TTC TX → AOCS Wheels</text>
+  <text x="10" y="90" font-size="8" fill="#718096">Always-on: OBC, TTC RX (dedicated PDM), EPS controller</text>
+  <text x="10" y="105" font-size="8" fill="#718096">Recovery: Automatic when solar power restores SoC above thresholds</text>
+</svg>
+
+<div class="footer">
+  EOSAT1-FM-CAT-001 Issue 1.0 | SMO Space Mission Simulator | Content generated with AI assistance
+</div>
+
+</body>
+</html>
