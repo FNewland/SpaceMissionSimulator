@@ -44,7 +44,7 @@ class PipelineCoordinator:
         symbol_rate = getattr(pc, 'symbol_rate', 32000.0) if pc else 32000.0
         sps = getattr(pc, 'sps', 8) if pc else 8
         rolloff = getattr(pc, 'rrc_rolloff', 0.35) if pc else 0.35
-        buf_depth = getattr(pc, 'sample_buffer_depth', 32) if pc else 32
+        buf_depth = getattr(pc, 'sample_buffer_depth', 128) if pc else 128
         modulation = getattr(pc, 'modulation', 0) if pc else 0
 
         # Sample buffers between stages
@@ -141,7 +141,8 @@ class PipelineCoordinator:
         try:
             self._recovered_queue.put_nowait(packet)
         except queue.Full:
-            pass
+            logger.warning("Recovered packet dropped: queue full (%d)",
+                           self._recovered_queue.maxsize)
 
     async def get_recovered_packet(self) -> Optional[bytes]:
         """Async get a recovered packet for forwarding to MCS."""
@@ -268,4 +269,8 @@ class PipelineCoordinator:
             "idle_frames": self._tx.idle_frames,
             "tx_buffer_depth": self._tx_to_channel.depth,
             "rx_buffer_depth": self._channel_to_rx.depth,
+            "tx_buffer_overflows": self._tx_to_channel.overflow_count,
+            "rx_buffer_overflows": self._channel_to_rx.overflow_count,
+            "tm_queue_depth": self._tm_packet_queue.qsize(),
+            "recovered_queue_depth": self._recovered_queue.qsize(),
         }
