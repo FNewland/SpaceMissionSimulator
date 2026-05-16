@@ -94,12 +94,12 @@ fi
 
 # ── Find Python 3.11+ ──
 find_python() {
-    for cmd in python3.13 python3.12 python3.11 python3; do
+    for cmd in python3.13 python3.12 python3.11 python3.10 python3; do
         if command -v $cmd &>/dev/null; then
             ver=$($cmd -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
             major=$(echo "$ver" | cut -d. -f1)
             minor=$(echo "$ver" | cut -d. -f2)
-            if [ "$major" -ge 3 ] && [ "$minor" -ge 11 ]; then
+            if [ "$major" -ge 3 ] && [ "$minor" -ge 10 ]; then
                 echo "$cmd"
                 return 0
             fi
@@ -109,9 +109,9 @@ find_python() {
 }
 
 PYTHON=$(find_python) || {
-    log_fail "Python 3.11+ not found"
+    log_fail "Python 3.10+ not found"
     echo ""
-    echo -e "${RED}Python 3.11 or newer is required.${NC}"
+    echo -e "${RED}Python 3.10 or newer is required.${NC}"
     echo ""
     echo "Install Python for your platform:"
     echo ""
@@ -315,6 +315,11 @@ fi
 if $INSTALL_DEV; then
     pip install -q pytest pytest-asyncio 2>/dev/null && log_ok "Test deps (pytest, pytest-asyncio)" \
         || log_warn "Could not install test deps"
+    pip install -q playwright pytest-playwright 2>/dev/null && {
+        log_ok "Browser test deps (playwright, pytest-playwright)"
+        playwright install chromium 2>/dev/null && log_ok "Chromium browser installed" \
+            || log_warn "Chromium install failed (run: playwright install chromium)"
+    } || log_warn "Could not install browser test deps"
 fi
 
 # ── Step 5: Fix vendor symlinks ──

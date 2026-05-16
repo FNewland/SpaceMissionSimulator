@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "smo-planner"
 version = "0.1.0"
 description = "SMO Mission Planning Tool"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
     "smo-common",
     "aiohttp>=3.9",
