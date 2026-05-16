@@ -108,13 +108,17 @@ class GroundStationRX(threading.Thread):
         return self.bad_frames / total
 
     def reconfigure(self, modulation: int):
-        """Change modulation scheme (resets PLL/clock state).
+        """Change modulation scheme (resets PLL/clock and frame sync state).
 
-        Also resets the frame synchronizer — its buffer contains bytes
-        demodulated under the old modulation which would prevent lock.
+        Only resets if the modulation actually changed — repeated calls
+        with the same value are no-ops so we don't destroy an active
+        frame sync lock.
         """
+        if modulation == self._demod._modulation:
+            return
         self._demod.set_modulation(modulation)
-        # Reset frame sync so it doesn't try to correlate old garbage
+        # Reset frame sync — its buffer contains bytes demodulated
+        # under the old modulation which would prevent lock.
         self._frame_sync = FrameSynchronizer(frame_length=self._coded_frame_length)
 
     def run(self):
