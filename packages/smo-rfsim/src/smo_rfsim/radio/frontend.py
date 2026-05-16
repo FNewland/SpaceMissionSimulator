@@ -59,6 +59,24 @@ class RadioStatus:
     iq_samples: list[list[float]] = field(default_factory=list)
     # Ground segment Eb/N0 penalty from RF chain degradation (dB)
     gs_penalty_db: float = 0.0
+    # Channel model status
+    frequency_hz: float = 437.0e6
+    bandwidth_hz: float = 0.0
+    phase_noise_enabled: bool = False
+    fading_enabled: bool = False
+    fading_k_db: float = 10.0
+    n_interferers: int = 0
+    # Link budget breakdown
+    eirp_dbw: float = 0.0
+    fspl_db: float = 0.0
+    cn0_dbhz: float = 0.0
+    coding_gain_db: float = 6.0
+    # Spectrum data (FFT magnitudes for display)
+    spectrum_db: list[float] = field(default_factory=list)
+    spectrum_freq_range_hz: float = 0.0
+    # Eye diagram samples (symbol-aligned for display)
+    eye_i: list[float] = field(default_factory=list)
+    eye_q: list[float] = field(default_factory=list)
     # Timestamp
     timestamp: float = 0.0
 
@@ -113,7 +131,10 @@ class RadioFrontend:
         3: [(0.707, 0.707), (-0.707, 0.707),
             (-0.707, -0.707), (0.707, -0.707)],  # OQPSK
     }
-    _MOD_NAMES = {0: "BPSK", 1: "QPSK", 2: "8PSK", 3: "OQPSK"}
+    _MOD_NAMES = {
+        0: "BPSK", 1: "QPSK", 2: "8PSK", 3: "OQPSK",
+        4: "16-APSK", 5: "π/4-DQPSK", 6: "GMSK", 7: "GFSK",
+    }
 
     def __init__(self):
         self.status = RadioStatus()
@@ -155,6 +176,53 @@ class RadioFrontend:
 
     def update_gs_penalty(self, penalty_db: float):
         self.status.gs_penalty_db = penalty_db
+
+    def update_channel_status(self, channel_status: dict):
+        """Update channel model fields from SpaceLinkChannel.get_status()."""
+        self.status.frequency_hz = channel_status.get("frequency_hz", 437e6)
+        self.status.phase_noise_enabled = channel_status.get("phase_noise_enabled", False)
+        self.status.fading_enabled = channel_status.get("fading_enabled", False)
+        self.status.fading_k_db = channel_status.get("fading_k_factor_db", 10.0)
+        self.status.n_interferers = channel_status.get("n_interferers", 0)
+        self.status.bandwidth_hz = channel_status.get("sample_rate", 0) / 2.0
+
+    def update_link_budget(self, budget: dict):
+        """Update link budget breakdown from LinkBudget.compute()."""
+        self.status.eirp_dbw = budget.get("eirp_dbw", 0.0)
+        self.status.fspl_db = budget.get("fspl_db", 0.0)
+        self.status.cn0_dbhz = budget.get("cn0_dbhz", 0.0)
+        self.status.coding_gain_db = budget.get("coding_gain_db", 6.0)
+
+    def update_spectrum(self, samples, max_points: int = 128):
+        """Compute and store spectrum (FFT magnitude) from baseband samples."""
+        import numpy as np
+        if samples is None or len(samples) < 64:
+            return
+        # Use last N samples for FFT
+        n = min(len(samples), 512)
+        s = np.array(samples[-n:])
+        fft = np.fft.fftshift(np.fft.fft(s * np.hanning(n)))
+        mag_db = 20.0 * np.log10(np.abs(fft) + 1e-10)
+        # Downsample to max_points
+        step = max(1, len(mag_db) // max_points)
+        self.status.spectrum_db = [round(float(x), 1)
+                                    for x in mag_db[::step][:max_points]]
+        self.status.spectrum_freq_range_hz = self.status.bandwidth_hz * 2
+
+    def update_eye_diagram(self, symbols, sps: int = 8, traces: int = 20):
+        """Store symbol-aligned samples for eye diagram display."""
+        import numpy as np
+        if symbols is None or len(symbols) < sps * 3:
+            return
+        # Take last N symbol periods, fold at 2× symbol period
+        period = sps * 2
+        n_periods = min(traces, len(symbols) // period)
+        if n_periods < 2:
+            return
+        start = len(symbols) - n_periods * period
+        eye_data = np.array(symbols[start:start + n_periods * period])
+        self.status.eye_i = [round(float(x), 3) for x in eye_data.real[:period * traces]]
+        self.status.eye_q = [round(float(x), 3) for x in eye_data.imag[:period * traces]]
 
     def snapshot(self) -> RadioStatus:
         """Return current status. I/Q samples are set by the bridge from
