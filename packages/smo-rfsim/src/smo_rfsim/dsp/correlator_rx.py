@@ -68,6 +68,8 @@ class CorrelatorRX:
         # Coarse Doppler pre-compensation (set externally from sim state)
         self._doppler_hz = 0.0
         self._doppler_phase = 0.0
+        # Bit buffer: carries trailing bits that don't fill a complete byte
+        self._bit_buffer = np.array([], dtype=np.uint8)
         # Fine PLL for residual phase/frequency after Doppler pre-comp
         self._phase = 0.0
         self._freq = 0.0
@@ -103,8 +105,9 @@ class CorrelatorRX:
         self.clock_locked = False
         # Clear stale constellation points
         self.constellation_points = []
-        # Flush residual samples (demodulated under old modulation)
+        # Flush residual samples and bit buffer (demodulated under old modulation)
         self._residual = np.array([], dtype=np.complex64)
+        self._bit_buffer = np.array([], dtype=np.uint8)
 
     def demodulate(self, samples: np.ndarray) -> bytes:
         """Demodulate BPSK samples to bytes using matched filter + downsample."""
@@ -204,13 +207,21 @@ class CorrelatorRX:
         self.constellation_points = list(symbols[-128:])
 
         # 6. Symbol-to-bits mapping (modulation-dependent)
-        bits = self._symbols_to_bits(symbols)
+        new_bits = self._symbols_to_bits(symbols)
 
-        # 7. Pack bits into bytes
-        n_bytes = len(bits) // 8
+        # 7. Pack bits into bytes, carrying partial bits across calls
+        # Prepend any leftover bits from the previous call
+        if len(self._bit_buffer) > 0:
+            all_bits = np.concatenate([self._bit_buffer, new_bits])
+        else:
+            all_bits = new_bits
+        n_bytes = len(all_bits) // 8
         if n_bytes == 0:
+            self._bit_buffer = all_bits  # save for next call
             return b''
-        bits = bits[:n_bytes * 8]
+        # Pack complete bytes, save remainder
+        bits = all_bits[:n_bytes * 8]
+        self._bit_buffer = all_bits[n_bytes * 8:]  # carry trailing bits
         byte_array = np.packbits(bits)
         result = bytes(byte_array)
 

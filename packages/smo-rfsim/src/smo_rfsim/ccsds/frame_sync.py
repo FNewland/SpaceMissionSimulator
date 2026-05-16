@@ -33,7 +33,7 @@ class FrameSynchronizer:
     """
 
     def __init__(self, frame_length: int = 1115, max_bit_errors: int = 3,
-                 verify_count: int = 3, flywheel_count: int = 4):
+                 verify_count: int = 3, flywheel_count: int = 8):
         self.frame_length_with_asm = frame_length + ASM_LENGTH
         self.frame_length = frame_length
         self.max_bit_errors = max_bit_errors
