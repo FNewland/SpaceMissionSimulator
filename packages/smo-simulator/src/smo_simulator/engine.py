@@ -1469,7 +1469,8 @@ class SimulationEngine:
             try:
                 self.tm_queue.put_nowait(pkt)
             except queue.Full:
-                pass
+                logger.warning("TM queue full (%d) — packet dropped",
+                               self.tm_queue.maxsize)
         # Route to onboard storage regardless of contact — but ONLY when the
         # nominal OBSW is running. The bootloader has no PUS-C S15 storage
         # service, so nothing should accumulate in HK/Event/Science/Alarm
