@@ -200,7 +200,17 @@ class CorrelatorRX:
             else:
                 self._energy_avg = 0.5 * self._energy_avg + 0.5 * snr_est
             # SNR > 3 (~5 dB) indicates real signal, not just noise
-            self.carrier_locked = self._energy_avg > 3.0
+            snr_ok = self._energy_avg > 3.0
+
+            # Modulation validation: check that the I/Q power distribution
+            # matches the configured modulation. Prevents false lock when
+            # the wrong modulation is configured (e.g., QPSK PLL locks on
+            # BPSK with zero phase error because BPSK has no Q component).
+            mod_valid = True
+            if snr_ok and n_symbols >= 20:
+                mod_valid = self._validate_constellation(symbols)
+
+            self.carrier_locked = snr_ok and mod_valid
             self.clock_locked = self.carrier_locked
 
         # 5. Store constellation points (after frequency correction)
@@ -288,6 +298,57 @@ class CorrelatorRX:
 
         # Fallback: BPSK
         return (symbols.real > 0).astype(np.uint8)
+
+    def _validate_constellation(self, symbols: np.ndarray) -> bool:
+        """Check that demodulated symbols match the configured modulation.
+
+        Prevents false lock when the wrong modulation is configured.
+        Uses I/Q power ratio to distinguish modulation orders:
+        - BPSK: energy concentrated on real axis (I >> Q)
+        - QPSK/OQPSK: balanced I and Q energy
+        - 8PSK: balanced with uniform phase distribution
+        - GMSK/GFSK: constant envelope (ring pattern)
+
+        Returns False if the constellation clearly doesn't match,
+        which causes the lock detector to report unlocked.
+        """
+        if len(symbols) < 20:
+            return True
+
+        i_power = np.mean(symbols.real ** 2)
+        q_power = np.mean(symbols.imag ** 2) + 1e-10
+        iq_ratio = i_power / q_power
+
+        if self._modulation == 0:  # BPSK: expect I >> Q
+            if iq_ratio < 2.0:
+                # Too much Q energy for BPSK — likely QPSK or higher
+                logger.debug("Constellation mismatch: BPSK config but I/Q ratio=%.1f "
+                             "(expect >2.0)", iq_ratio)
+                return False
+
+        elif self._modulation in (1, 3):  # QPSK/OQPSK: expect balanced I ≈ Q
+            if iq_ratio > 5.0 or iq_ratio < 0.2:
+                # Too imbalanced — likely BPSK (all on I axis)
+                logger.debug("Constellation mismatch: QPSK config but I/Q ratio=%.1f "
+                             "(expect 0.2-5.0)", iq_ratio)
+                return False
+
+        elif self._modulation == 2:  # 8PSK: expect balanced
+            if iq_ratio > 3.0 or iq_ratio < 0.33:
+                logger.debug("Constellation mismatch: 8PSK config but I/Q ratio=%.1f",
+                             iq_ratio)
+                return False
+
+        elif self._modulation in (6, 7):  # GMSK/GFSK: constant envelope
+            amp_var = np.var(np.abs(symbols))
+            amp_mean = np.mean(np.abs(symbols)) + 1e-10
+            if amp_var / (amp_mean ** 2) > 0.3:
+                # Too much amplitude variation for constant-envelope CPM
+                logger.debug("Constellation mismatch: GMSK config but amplitude "
+                             "variation too high")
+                return False
+
+        return True
 
     def get_constellation_iq(self, max_points: int = 128) -> list[list[float]]:
         """Return recent I/Q symbol samples for display."""
