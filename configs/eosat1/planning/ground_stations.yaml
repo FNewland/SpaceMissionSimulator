@@ -1,3 +1,6 @@
+# EOSAT-1 Ground Station Configuration — S-band
+# Canonical source: mission.yaml specifies S-band.
+# Frequencies per CCSDS 401.0-B for near-Earth S-band links.
 ground_stations:
   - name: Iqaluit
     lat_deg: 63.747
@@ -5,19 +8,19 @@ ground_stations:
     alt_km: 0.034
     min_elevation_deg: 5.0
     antenna_diameter_m: 9.0
-    band: UHF
+    band: S-band
     g_t_db: 20.0
     tx_power_w: 200.0
-    tx_freq_mhz: 449.0
-    rx_freq_mhz: 401.5
+    tx_freq_mhz: 2025.0    # S-band uplink (2025-2110 MHz)
+    rx_freq_mhz: 2200.0    # S-band downlink (2200-2290 MHz)
   - name: Troll
     lat_deg: -72.012
     lon_deg: 2.535
     alt_km: 1.275
     min_elevation_deg: 5.0
     antenna_diameter_m: 7.3
-    band: UHF
+    band: S-band
     g_t_db: 18.5
     tx_power_w: 200.0
-    tx_freq_mhz: 449.0
-    rx_freq_mhz: 401.5
+    tx_freq_mhz: 2025.0    # S-band uplink
+    rx_freq_mhz: 2200.0    # S-band downlink

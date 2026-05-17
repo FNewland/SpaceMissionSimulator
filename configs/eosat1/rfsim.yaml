@@ -16,9 +16,10 @@ ccsds:
 channel:
   eb_n0_db: 10.0           # Eb/N0 in dB (typ. 8-12 for S-band LEO)
   ber_target: 1.0e-6       # Target BER for bit-flip injection
-  path_loss_db: 150.0      # Free-space path loss at 450 km
+  frequency_hz: 2200.0e6   # S-band downlink center frequency (Hz)
+  path_loss_db: 169.0      # Free-space path loss at 450 km, 2200 MHz
   doppler_hz: 0.0          # Doppler shift (updated from orbit model)
-  delay_ms: 3.0            # One-way propagation delay (450 km / c)
+  delay_ms: 1.5            # One-way propagation delay (450 km / c)
   awgn_enabled: true
 
 network:

@@ -1,0 +1,34 @@
+# EOSAT-1 AOCS Mode Codes — Single Source of Truth
+# Referenced by: role_analysis docs, commissioning procedures, simulator code
+# Simulator: packages/smo-simulator/src/smo_simulator/models/aocs_basic.py
+#
+# This file is canonical. All other documents must match these codes.
+
+modes:
+  0:
+    name: "OFF"
+    description: "No attitude control. Sensors and actuators powered down."
+  1:
+    name: "SAFE_BOOT"
+    description: "Post-boot stabilization. Gyro propagation only, no actuation."
+  2:
+    name: "DETUMBLE"
+    description: "Gyro + magnetorquer rate damping. Reduces body rates to <1°/s."
+  3:
+    name: "COARSE_SUN"
+    description: "Sun-pointing via coarse sun sensors. Prerequisite for nominal."
+  4:
+    name: "NOMINAL"
+    description: "Fine-pointing using reaction wheels + star tracker. Imaging capable."
+  5:
+    name: "FINE_POINT"
+    description: "High-precision 3-axis pointing. Requires all sensors healthy."
+  6:
+    name: "SLEW"
+    description: "Quaternion slew manoeuvre between attitudes."
+  7:
+    name: "DESAT"
+    description: "Momentum desaturation via magnetorquers."
+  8:
+    name: "ECLIPSE"
+    description: "Eclipse hold. Gyro-only propagation, minimal power consumption."
