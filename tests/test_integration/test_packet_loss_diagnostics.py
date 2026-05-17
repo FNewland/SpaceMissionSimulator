@@ -165,6 +165,7 @@ class TestPipelineDiagnostics:
             "tx_packet_drops", "tx_buffer_overflows", "rx_buffer_overflows",
             "rx_good_frames", "rx_bad_frames", "rx_rs_failures",
             "rx_fecf_failures", "rx_packets_recovered", "rx_flywheel_misses",
+            "rx_phase_nudges", "rx_mod_searches", "rx_pll_resets",
             "recovered_queue_drops", "tm_queue_depth", "recovered_queue_depth",
         }
         assert set(diag.keys()) == expected_keys

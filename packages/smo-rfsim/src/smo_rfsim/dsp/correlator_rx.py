@@ -83,6 +83,38 @@ class CorrelatorRX:
         """Set the known Doppler frequency for pre-compensation."""
         self._doppler_hz = doppler_hz
 
+    def nudge_phase(self, delta_rad: float):
+        """Apply an instantaneous phase offset to the PLL.
+
+        Used by the carrier auto-search: if frame sync can't find ASMs
+        despite carrier lock, the PLL may be settled on a phase ambiguity
+        that the ASM-based resolver missed. A discrete nudge forces the
+        PLL to re-converge from a different starting point.
+        """
+        self._phase = (self._phase + delta_rad) % (2 * math.pi)
+        # Flush byte-level state — symbols demodulated before the nudge
+        # are under the old phase and would corrupt frame sync
+        self._bit_buffer = np.array([], dtype=np.uint8)
+        self._residual = np.array([], dtype=np.complex64)
+
+    def reset_acquisition(self):
+        """Full PLL reset — forces carrier re-acquisition from scratch.
+
+        Stronger than nudge_phase: zeroes the frequency integrator and
+        the lock detector so the loop has to re-pull-in. Used when frame
+        sync drops from LOCK to SEARCH, indicating the demodulated byte
+        stream has become unusable despite the PLL reporting 'locked'.
+        """
+        self._phase = 0.0
+        self._freq = 0.0
+        self._energy_avg = 0.0
+        self.carrier_locked = False
+        self.clock_locked = False
+        self._bit_buffer = np.array([], dtype=np.uint8)
+        self._residual = np.array([], dtype=np.complex64)
+        self.constellation_points = []
+        logger.info("PLL: full acquisition reset")
+
     def set_modulation(self, modulation: int):
         """Change the modulation scheme, resetting acquisition state.
 

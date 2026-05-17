@@ -7,12 +7,28 @@ and ECSS packet extraction.
 
 The constellation tap, lock indicators, and BER all come from the
 actual signal processing — not from formulas or synthetic data.
+
+Includes two automatic recovery mechanisms:
+
+  **Carrier auto-search** — if the PLL reports carrier lock but frame
+  sync remains stuck in SEARCH for several seconds, the demodulated
+  byte stream is not producing valid ASMs.  The receiver cycles through
+  phase rotations (to resolve PSK ambiguity the ASM resolver missed)
+  and, if that fails, tries adjacent modulation schemes.  Once frame
+  sync acquires, the search stops.
+
+  **Frame-to-carrier feedback** — if frame sync drops from LOCK back
+  to SEARCH (flywheel exhausted), the PLL is reset to force a clean
+  re-acquisition rather than continuing to free-run on a stale phase/
+  frequency estimate.
 """
 
 import logging
+import math
 import queue
 import struct
 import threading
+import time
 from typing import Callable, Optional
 
 import numpy as np
@@ -80,6 +96,22 @@ class GroundStationRX(threading.Thread):
         self.fecf_failures = 0
         self._lock = threading.Lock()
 
+        # ── Carrier auto-search state ──
+        # Phase nudge rotations to try for each modulation order
+        self._modulation = modulation
+        self._sps = sps
+        self._rolloff = rolloff
+        self._search_active = False
+        self._search_deadline = 0.0        # monotonic time to next nudge
+        self._search_phase_idx = 0         # index into phase rotation list
+        self._search_mod_idx = 0           # index into modulation candidate list
+        self._carrier_lock_since = 0.0     # when carrier first locked
+        self._demod_active_since = 0.0     # when demod first produced bytes
+        self._last_frame_sync_state = SyncState.SEARCH
+        self.phase_nudges = 0              # count of nudges applied
+        self.mod_searches = 0              # count of modulation trials
+        self.pll_resets = 0                # count of frame→carrier resets
+
     @property
     def carrier_locked(self) -> bool:
         return self._demod.carrier_locked
@@ -137,11 +169,40 @@ class GroundStationRX(threading.Thread):
         finally:
             self._running = False
 
+    # ── Auto-search configuration ──
+    # Seconds with carrier lock but no frame sync before trying nudges
+    _SEARCH_PATIENCE_S = 3.0
+    # Seconds with no lock at all (despite signal) before trying mods
+    _BLIND_PATIENCE_S = 5.0
+    # Seconds to dwell on each phase rotation before trying the next
+    _NUDGE_DWELL_S = 1.5
+    # Seconds to dwell on each modulation candidate
+    _MOD_DWELL_S = 2.5
+    # Adjacent modulations to try (ordered by commonality)
+    _MOD_CANDIDATES = [0, 1, 3, 2]  # BPSK, QPSK, OQPSK, 8PSK
+
+    def _phase_rotations(self) -> list[float]:
+        """Return candidate phase rotations for the current modulation."""
+        mod = self._demod._modulation
+        if mod == 0:       # BPSK: 180°
+            return [math.pi]
+        elif mod in (1, 3): # QPSK/OQPSK: 90°, 180°, 270°
+            return [math.pi / 2, math.pi, 3 * math.pi / 2]
+        elif mod == 2:      # 8PSK: 45° increments
+            return [k * math.pi / 4 for k in range(1, 8)]
+        return [math.pi]    # default: try inversion
+
     def _run_loop(self):
+        self._demod_byte_count = 0
+        self._carrier_lock_since = 0.0
+        prev_frame_state = SyncState.SEARCH
+
         while self._running:
             try:
                 samples = self._input.get(timeout=0.1)
             except queue.Empty:
+                # Even when idle, run the auto-search timer checks
+                self._check_auto_search()
                 continue
 
             # 1. Demodulate: AGC → matched filter → Costas PLL → M&M → bit decisions
@@ -149,8 +210,12 @@ class GroundStationRX(threading.Thread):
             if not recovered_bytes:
                 continue
 
+            # Track that the demod is producing bytes (signal present)
+            if self._demod_active_since == 0.0:
+                self._demod_active_since = time.monotonic()
+
             # Log demod output periodically for diagnostics
-            self._demod_byte_count = getattr(self, '_demod_byte_count', 0) + len(recovered_bytes)
+            self._demod_byte_count += len(recovered_bytes)
             if self._demod_byte_count % 10000 < len(recovered_bytes):
                 logger.info("RX demod: %d total bytes, carrier=%s, frame_sync=%s",
                             self._demod_byte_count,
@@ -167,6 +232,148 @@ class GroundStationRX(threading.Thread):
                     logger.warning("RX frame processing error: %s", e)
                     with self._lock:
                         self.bad_frames += 1
+
+            # ── Frame-to-carrier feedback ──
+            # If frame sync just dropped from LOCK to SEARCH, the
+            # demodulated stream has become unusable.  Reset the PLL
+            # to force a clean re-acquisition instead of letting it
+            # free-run on a stale estimate.
+            cur_state = self._frame_sync.state
+            if prev_frame_state == SyncState.LOCK and cur_state == SyncState.SEARCH:
+                logger.warning("Frame sync lost LOCK → SEARCH, resetting PLL "
+                               "for re-acquisition")
+                self._demod.reset_acquisition()
+                self._frame_sync = FrameSynchronizer(
+                    frame_length=self._coded_frame_length)
+                self.pll_resets += 1
+                self._search_active = False
+                self._carrier_lock_since = 0.0
+            prev_frame_state = cur_state
+
+            # ── Carrier auto-search ──
+            self._check_auto_search()
+
+    def _check_auto_search(self):
+        """Carrier auto-search: nudge phase or try adjacent modulations.
+
+        Called every iteration of the run loop.  Two trigger paths:
+
+        **Path A — carrier locked, no frame sync** (phase ambiguity):
+          After _SEARCH_PATIENCE_S seconds, cycle through phase rotations
+          for the current modulation, then try adjacent modulations.
+
+        **Path B — no lock at all despite signal** (wrong modulation):
+          The PLL can't lock because the modulation order is wrong (e.g.
+          QPSK configured but BPSK transmitted). After _BLIND_PATIENCE_S
+          seconds of demod producing bytes with neither carrier nor frame
+          lock, skip phase nudges and go straight to modulation search.
+
+        In both paths, if a change produces frame sync (VERIFY or LOCK),
+        the search stops.
+        """
+        now = time.monotonic()
+        fs = self._frame_sync.state
+
+        # ── Happy path: frame sync is working ──
+        if fs in (SyncState.LOCK, SyncState.VERIFY):
+            if self._search_active:
+                logger.info("Auto-search: frame sync acquired (%s), "
+                            "search cancelled after %d nudges, %d mod trials",
+                            fs.value, self.phase_nudges, self.mod_searches)
+                self._search_active = False
+            self._carrier_lock_since = 0.0
+            self._demod_active_since = 0.0
+            return
+
+        # ── Determine which trigger path applies ──
+        has_carrier = self._demod.carrier_locked
+        has_signal = self._demod_active_since > 0.0
+
+        if has_carrier:
+            # Path A: carrier locked but no frame sync
+            if self._carrier_lock_since == 0.0:
+                self._carrier_lock_since = now
+            patience = self._SEARCH_PATIENCE_S
+            trigger_time = self._carrier_lock_since
+            skip_phase_nudges = False
+        elif has_signal:
+            # Path B: signal present but no carrier lock at all
+            patience = self._BLIND_PATIENCE_S
+            trigger_time = self._demod_active_since
+            skip_phase_nudges = True   # phase nudges are pointless without carrier
+        else:
+            # No signal — nothing to search
+            self._carrier_lock_since = 0.0
+            self._search_active = False
+            return
+
+        waiting_for = now - trigger_time
+        if waiting_for < patience:
+            return  # give the normal path more time
+
+        # ── Start or continue auto-search ──
+        if not self._search_active:
+            if skip_phase_nudges:
+                logger.info("Auto-search: signal present for %.1fs but no "
+                            "carrier lock — trying modulation search",
+                            waiting_for)
+                # Jump past phase nudges
+                self._search_phase_idx = 999
+            else:
+                logger.info("Auto-search: carrier locked for %.1fs but frame "
+                            "sync stuck in %s — starting phase search",
+                            waiting_for, fs.value)
+                self._search_phase_idx = 0
+            self._search_active = True
+            self._search_mod_idx = 0
+            self._search_deadline = now  # try first action immediately
+
+        if now < self._search_deadline:
+            return  # dwell period not elapsed yet
+
+        # ── Phase A: try phase rotations on current modulation ──
+        rotations = self._phase_rotations()
+        if self._search_phase_idx < len(rotations):
+            rot = rotations[self._search_phase_idx]
+            logger.info("Auto-search: phase nudge %.0f° (attempt %d/%d)",
+                        math.degrees(rot), self._search_phase_idx + 1,
+                        len(rotations))
+            self._demod.nudge_phase(rot)
+            # Clear frame sync buffer — old bytes are from old phase
+            self._frame_sync = FrameSynchronizer(
+                frame_length=self._coded_frame_length)
+            self._search_phase_idx += 1
+            self._search_deadline = now + self._NUDGE_DWELL_S
+            self.phase_nudges += 1
+            return
+
+        # ── Phase B: try adjacent modulation schemes ──
+        candidates = [m for m in self._MOD_CANDIDATES
+                      if m != self._demod._modulation]
+        if self._search_mod_idx < len(candidates):
+            new_mod = candidates[self._search_mod_idx]
+            from ..dsp.modulator import MOD_NAMES
+            logger.info("Auto-search: trying modulation %s (attempt %d/%d)",
+                        MOD_NAMES.get(new_mod, str(new_mod)),
+                        self._search_mod_idx + 1, len(candidates))
+            self._demod.set_modulation(new_mod)
+            self._frame_sync = FrameSynchronizer(
+                frame_length=self._coded_frame_length)
+            self._search_mod_idx += 1
+            self._search_deadline = now + self._MOD_DWELL_S
+            self.mod_searches += 1
+            return
+
+        # ── All candidates exhausted — reset PLL and start over ──
+        logger.warning("Auto-search: all phase rotations and modulation "
+                       "candidates exhausted — resetting PLL and restarting")
+        self._demod.reset_acquisition()
+        self._frame_sync = FrameSynchronizer(
+            frame_length=self._coded_frame_length)
+        self._search_active = False
+        self._carrier_lock_since = 0.0
+        self._demod_active_since = 0.0
+        self.pll_resets += 1
 
     def _process_frame(self, raw_frame: bytes) -> None:
         """Process a synchronized frame through FEC decoding and packet extraction."""
