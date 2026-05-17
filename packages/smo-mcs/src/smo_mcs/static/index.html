@@ -3869,6 +3869,23 @@ function updateOverview() {
   setText('ov-pld-fpa', pf(pld, 'fpa_temp', 1, 'C'));
   setText('ov-pld-imgs', p(pld, 'image_count', '--'));
   setText('ov-pld-store', pf(pld, 'store_used_pct', 1, '%'));
+  // Per-subsystem staleness indicators
+  const staleness = state.subsystem_staleness || {};
+  const staleMap = {eps:'ov-eps-tag', aocs:'ov-aocs-tag', tcs:'ov-tcs-tag',
+                    obdh:'ov-obdh-tag', ttc:'ov-ttc-tag', payload:'ov-pld-tag'};
+  for (const [sub, tagId] of Object.entries(staleMap)) {
+    const el = document.getElementById(tagId);
+    if (!el) continue;
+    const age = staleness[sub];
+    if (age == null || age > 30) {
+      el.textContent = 'STALE'; el.className = 'tag stale';
+    } else if (age > 10) {
+      el.textContent = 'LAG'; el.className = 'tag warn';
+    } else {
+      el.textContent = 'NOM'; el.className = 'tag nominal';
+    }
+  }
+
   updateOverviewSVG();
 }
 
