@@ -1,4 +1,4 @@
-# PROC-EPS-NOM-001: Coordinated EPS/TCS/AOCS Eclipse Transition
+# NOM-010: Eclipse Transition
 
 **Category:** Nominal
 **Position Lead:** Power & Thermal (EPS/TCS)
@@ -91,7 +91,7 @@ tracker updates (star tracker may lose tracking in Earth shadow).
 **Verify:** `eps.bat_soc` (0x0101) — monitor discharge rate, record SoC every 5 min
 **Verify:** `eps.bat_current` (0x0109) is negative (battery discharging)
 **Action:** If bus voltage drops below 27.0 V, proceed to load shedding per
-PROC-EPS-OFF-002 (Undervoltage Load Shedding).
+CTG-001 (Undervoltage Load Shedding).
 **GO/NO-GO:** Bus voltage stable above 27.0 V — continue monitoring.
 
 ### Step 6: Monitor Thermal Conditions During Eclipse
@@ -101,7 +101,7 @@ PROC-EPS-OFF-002 (Undervoltage Load Shedding).
 **Verify:** `tcs.htr_battery` (0x040A) — heater cycling as expected
 **Verify:** `tcs.htr_obc` (0x040B) — heater cycling as expected
 **Action:** If any temperature approaches lower limit, verify heater is ON. If heater
-is not responding, follow PROC-TCS-OFF-001 (Thermal Runaway Emergency) for heater
+is not responding, follow EMG-006 (Thermal Runaway Emergency) for heater
 diagnostics.
 **GO/NO-GO:** All temperatures within limits — continue monitoring.
 
@@ -134,16 +134,16 @@ diagnostics.
 - [ ] All subsystems returned to nominal configuration post-eclipse
 
 ## Contingency
-- If bus voltage drops below 27.0 V during eclipse: Execute PROC-EPS-OFF-002
+- If bus voltage drops below 27.0 V during eclipse: Execute CTG-001
   (Undervoltage Load Shedding) — shed loads in priority order.
 - If battery SoC drops below 30% during eclipse: Shed payload and cooler loads
-  immediately. If SoC drops below 20%, execute PROC-EPS-OFF-002.
+  immediately. If SoC drops below 20%, execute CTG-001.
 - If heater fails to activate and temperature drops toward lower limit: Command manual
   heater ON. If no response, consider shedding heater power line and accepting
   temperature exceedance until eclipse exit.
 - If AOCS does not transition to eclipse propagation mode: Maintain current mode.
   Monitor attitude error closely. If attitude error exceeds 5 deg, execute
-  PROC-AOCS-OFF-001 or safe mode entry.
+  CTG-008 or safe mode entry.
 - If power generation does not resume after eclipse exit: Verify solar array orientation.
   Check `eps.sa_a_current` and `eps.sa_b_current`. If both near zero, suspect array or
   AOCS attitude issue. Execute AOCS sun-pointing mode recovery.

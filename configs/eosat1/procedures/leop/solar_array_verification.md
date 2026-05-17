@@ -1,4 +1,4 @@
-# LEOP-003: Solar Array and Wing Deployment Verification
+# LEOP-004: Solar Array Verification
 **Subsystem:** EPS / Structure
 **Phase:** LEOP
 **Revision:** 2.0

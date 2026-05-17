@@ -1,4 +1,4 @@
-# COM-005: AOCS Sensor Calibration
+# COM-003: AOCS Sensor Calibration
 **Subsystem:** AOCS
 **Phase:** COMMISSIONING
 **Revision:** 1.0

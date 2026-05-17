@@ -1,4 +1,4 @@
-# PROC-TTC-OFF-003: Ground Station Antenna Failure Response
+# CTG-020: Ground Station Antenna Failure
 
 **Category:** Contingency
 **Position Lead:** TT&C
@@ -57,8 +57,8 @@ shortened contact window.
 **Note:** A 30 dB signal drop with a healthy spacecraft strongly indicates a ground
 station equipment failure (antenna drive failure, LNA failure, or feed fault).
 **GO/NO-GO:** Ground station equipment failure confirmed (or strongly suspected) —
-proceed to Step 2. If spacecraft-side suspected, follow PROC-TTC-OFF-002 or
-PROC-TTC-LINK-LOSS instead.
+proceed to Step 2. If spacecraft-side suspected, follow CTG-019 or
+CTG-003 instead.
 
 ### Step 2: Attempt Local Ground Station Recovery
 **Action:** Check if the antenna can be reset or re-pointed:
@@ -143,7 +143,7 @@ in safe autonomous state.
 - If the failure is ambiguous (cannot confirm ground vs spacecraft): Send blind
   commands via the degraded station: `CONNECTION_TEST` (S17.1) and `HK_REQUEST(sid=5)`.
   If no response to multiple blind commands and an alternate station also shows no
-  signal, the problem may be spacecraft-side. Follow PROC-TTC-LINK-LOSS.
+  signal, the problem may be spacecraft-side. Follow CTG-003.
 - If alternate station is not available for > 6 hours: Verify the spacecraft
   autonomous safe mode timer. If the 24-hour no-contact timer will expire before
   next contact, the spacecraft will enter autonomous safe mode. Plan recovery

@@ -1,4 +1,4 @@
-# PROC-TTC-OFF-001: BER Anomaly Investigation
+# CTG-014: BER Anomaly
 
 **Category:** Contingency
 **Position Lead:** TT&C
@@ -85,7 +85,7 @@ atmospheric attenuation and low gain. Wait for higher elevation before declaring
 `TTC_SET_TX_POWER(level=0)` (func_id 55) — set to low power (1 W)
 **Verify:** `ttc.pa_temp` (0x050F) stabilizing
 **Verify:** `ttc.ber` (0x050C) — check if BER improves with cooler PA
-**Note:** If PA overheating persists, follow PROC-TCS-OFF-001 for thermal investigation
+**Note:** If PA overheating persists, follow EMG-006 for thermal investigation
 of the transponder zone.
 **GO/NO-GO:** If BER improved, continue monitoring. If not, proceed to Step 4.
 
@@ -135,7 +135,7 @@ configuration.
 - If link is lost during transponder switchover: Ground station should sweep for signal
   on new transponder frequency. Wait up to 60 s for re-acquisition. If no link after
   60 s, attempt to switch back: `TTC_SWITCH_PRIMARY` (func_id 50). If still no link,
-  follow PROC-TTC-LINK-LOSS.
+  follow CTG-003.
 - If both transponders show degraded BER: Suspect antenna or feed network issue. Reduce
   to minimum data rate, increase TX power to high: `TTC_SET_TX_POWER(level=2)`.
   Escalate to engineering team.

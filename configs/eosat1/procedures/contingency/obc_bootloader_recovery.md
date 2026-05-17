@@ -1,4 +1,4 @@
-# PROC-OBDH-OFF-002: OBC Bootloader Recovery
+# CTG-021: OBC Bootloader Recovery
 
 **Category:** Contingency
 **Position Lead:** FDIR / Systems
@@ -217,7 +217,7 @@ If neither option succeeds, escalate to EMG-003.
 - If backup OBC also fails to boot application: Both application images may be
   corrupt. This requires a double memory reload — one per OBC unit. Coordinate with
   ground software team and plan multi-contact upload campaign.
-- If AOCS reverted to DETUMBLE after OBC reboot: Execute CON-002 (AOCS Anomaly
+- If AOCS reverted to DETUMBLE after OBC reboot: Execute CTG-005 (AOCS Anomaly
   Recovery) to restore pointing after OBC is confirmed stable.
 - If memory check reveals corruption in the bootloader region: Do NOT attempt to
   write to the bootloader region. Switch to redundant OBC. Bootloader corruption

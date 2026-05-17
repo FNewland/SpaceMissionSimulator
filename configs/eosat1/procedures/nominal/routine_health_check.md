@@ -1,4 +1,4 @@
-# PROC-NOM-006: Routine Housekeeping Assessment
+# NOM-009: Routine Health Check
 **Subsystem:** ALL
 **Phase:** NOMINAL
 **Revision:** 1.0
@@ -49,7 +49,7 @@ and serves as the primary tool for early anomaly detection and trend analysis.
 **Verify:** |`aocs.rw3_speed`| (0x0209) < 5000 RPM
 **Verify:** |`aocs.rw4_speed`| (0x020A) < 5000 RPM
 **Trend:** Compare wheel speeds with previous pass. Monotonic increase indicates
-  insufficient desaturation --- schedule PROC-NOM-004.
+  insufficient desaturation --- schedule NOM-005.
 **Flag:** If any wheel > 4500 RPM, recommend immediate desaturation.
 
 ### Step 4 --- TCS Health Assessment

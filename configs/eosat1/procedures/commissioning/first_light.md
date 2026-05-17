@@ -1,4 +1,4 @@
-# COM-103: First Light Acquisition
+# COM-012: First Light
 **Subsystem:** Payload / AOCS
 **Phase:** COMMISSIONING
 **Revision:** 1.0

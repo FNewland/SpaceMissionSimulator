@@ -1,4 +1,4 @@
-# COM-003: OBDH Checkout
+# COM-007: OBDH Checkout
 **Subsystem:** OBDH
 **Phase:** COMMISSIONING
 **Revision:** 1.0

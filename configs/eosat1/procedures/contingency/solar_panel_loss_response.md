@@ -1,4 +1,4 @@
-# CON-020: Solar Panel Degradation/Loss Response
+# CTG-024: Solar Panel Loss Response
 **Subsystem:** EPS
 **Phase:** CONTINGENCY
 **Revision:** 1.0
@@ -84,7 +84,7 @@ attitude) will naturally show ~0 A and should not be flagged.
 **Verify:** `aocs.mode` (0x020F) = 3 (NADIR_POINT) or 2 (SAFE_POINT)
 **Verify:** `aocs.att_error` (0x0217) < 2.0 deg — confirms attitude is nominal
 **Action:** If `aocs.att_error` > 5.0 deg, the power shortfall may be caused by
-poor solar array illumination due to attitude error. Execute CON-002 (AOCS Anomaly
+poor solar array illumination due to attitude error. Execute CTG-005 (AOCS Anomaly
 Recovery) first, then return to this procedure at Step 1.
 **Verify:** `aocs.rate_roll` (0x0204) < 0.1 deg/s — no unexpected rotation
 **Verify:** `aocs.rate_pitch` (0x0205) < 0.1 deg/s
@@ -178,7 +178,7 @@ complete.
   cycling failure, or wiring degradation. Accelerate mission data downlink and
   plan for end-of-mission contingency.
 - If `eps.bat_soc` drops below 20% during investigation: Interrupt this procedure
-  and execute CON-001 (Undervoltage Load Shed) or CON-019 (Progressive Load Shed).
+  and execute CTG-002 (Undervoltage Load Shed) or CTG-023 (Progressive Load Shed).
 - If attitude error was the cause and persists: The solar array shortfall is a
   symptom, not the root cause. Focus on AOCS recovery first.
 - If per-panel telemetry is inconsistent (e.g., illuminated face shows 0 A but

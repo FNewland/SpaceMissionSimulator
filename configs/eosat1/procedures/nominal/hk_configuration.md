@@ -1,4 +1,4 @@
-# PROC-NOM-004: Housekeeping Telemetry Configuration
+# NOM-005: HK Configuration
 **Subsystem:** OBDH / Housekeeping
 **Phase:** NOMINAL
 **Revision:** 1.0

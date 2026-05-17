@@ -1,4 +1,4 @@
-# PROC-AOCS-OFF-001: Star Tracker Failure Response
+# CTG-008: Star Tracker Failure
 
 **Category:** Contingency
 **Position Lead:** Flight Dynamics (AOCS)
@@ -124,7 +124,7 @@ for star tracker recovery planning.
   acquire stars. If still BLIND after two attempts, proceed to Step 5.
 - If attitude error exceeds 5 deg during switchover: FDIR may trigger safe mode
   automatically. If FDIR triggers, allow autonomous safe mode entry. Then follow
-  CON-002 (EPS Safe Mode Recovery) for nominal restoration after ST2 is operational.
+  CTG-005 (EPS Safe Mode Recovery) for nominal restoration after ST2 is operational.
 - If both star trackers fail and CSS is also invalid (eclipse): AOCS has no attitude
   reference. Command `AOCS_SET_MODE(mode=2)` for DETUMBLE using magnetorquers.
   Wait for sunlit phase for CSS acquisition. This is a mission-critical anomaly —

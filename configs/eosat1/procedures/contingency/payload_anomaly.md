@@ -1,4 +1,4 @@
-# CON-003: Payload Thermal/FPA Anomaly Recovery
+# CTG-006: Payload Anomaly
 **Subsystem:** Payload / TCS
 **Phase:** CONTINGENCY
 **Revision:** 1.0
@@ -60,8 +60,8 @@ damage above +25 deg-C.
 
 ## Off-Nominal Handling
 - If FPA temp exceeds +10 deg-C at any step: Command `PAYLOAD_SET_MODE(mode=0)` immediately and flag for hardware review — do not re-attempt restart without ground authorisation
-- If cooler fails to activate in Step 3: Maintain payload OFF, execute CON-006 (Thermal Limit Exceedance) for zone assessment
-- If EPS SoC drops below 20% during cooldown: Execute CON-002 (EPS Safe Mode Recovery) — cooler power may be interrupted
+- If cooler fails to activate in Step 3: Maintain payload OFF, execute CTG-004 (Thermal Limit Exceedance) for zone assessment
+- If EPS SoC drops below 20% during cooldown: Execute CTG-005 (EPS Safe Mode Recovery) — cooler power may be interrupted
 - If payload and TCS FPA sensors disagree by > 5 deg-C: Suspect sensor failure, use the lower reading for safety decisions
 
 ## Post-Conditions

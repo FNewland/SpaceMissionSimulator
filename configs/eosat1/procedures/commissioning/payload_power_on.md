@@ -1,4 +1,4 @@
-# COM-101: Payload Power-On Sequence
+# COM-009: Payload Power On
 **Subsystem:** Payload / EPS
 **Phase:** COMMISSIONING
 **Revision:** 1.0

@@ -1,4 +1,4 @@
-# LEOP-005: Initial Orbit Determination
+# LEOP-003: Initial Orbit Determination
 **Subsystem:** AOCS / Flight Dynamics
 **Phase:** LEOP
 **Revision:** 1.0

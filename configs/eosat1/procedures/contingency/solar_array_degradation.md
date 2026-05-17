@@ -1,4 +1,4 @@
-# CON-008: Solar Array Degradation Response
+# CTG-009: Solar Array Degradation
 **Subsystem:** EPS
 **Phase:** CONTINGENCY
 **Revision:** 1.0
@@ -40,7 +40,7 @@ power budget throughout each orbit.
 **TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 25)
 **Verify:** `aocs.mode` (0x020F) = 3 (NADIR_POINT) or 2 (SAFE_POINT)
 **Verify:** `aocs.att_error` (0x0217) < 2.0 deg — large attitude error could reduce array illumination
-**Action:** If attitude error > 5 deg, execute CON-001 first, then reassess array performance
+**Action:** If attitude error > 5 deg, execute CTG-002 first, then reassess array performance
 **GO/NO-GO:** Attitude confirmed nominal — degradation is intrinsic to array hardware or environment
 
 ### Step 4 — Recalculate Power Budget
@@ -77,9 +77,9 @@ power budget throughout each orbit.
 **GO/NO-GO:** Monitoring plan established and operations plan adjusted — recovery complete
 
 ## Off-Nominal Handling
-- If both arrays drop below 0.2A during sunlit phase: Suspect total array failure or severe attitude error — execute CON-002 (EPS Safe Mode Recovery) immediately
-- If SoC drops below 20% during this procedure: Interrupt and execute CON-002
-- If attitude error is the root cause: Execute CON-001, then re-enter this procedure at Step 1
+- If both arrays drop below 0.2A during sunlit phase: Suspect total array failure or severe attitude error — execute CTG-005 (EPS Safe Mode Recovery) immediately
+- If SoC drops below 20% during this procedure: Interrupt and execute CTG-005
+- If attitude error is the root cause: Execute CTG-002, then re-enter this procedure at Step 1
 - If degradation is progressive (> 5% per day): Accelerate mission data downlink priorities, plan reduced-power mission profile
 
 ## Post-Conditions

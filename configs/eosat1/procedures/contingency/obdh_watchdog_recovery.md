@@ -1,4 +1,4 @@
-# CON-005: OBC Watchdog Reset Recovery
+# CTG-010: OBDH Watchdog Recovery
 **Subsystem:** OBDH
 **Phase:** CONTINGENCY
 **Revision:** 1.0
@@ -77,7 +77,7 @@ assesses whether the root cause is transient or systemic.
 - If OBC reboots again during this procedure: Command `OBC_SET_MODE(mode=1)` for SAFE, abort procedure, and escalate to ground software team for code review
 - If `obdh.reboot_count` (0x030A) increments by > 3 within 1 hour: Suspect boot loop — command `OBC_SET_MODE(mode=2)` for EMERGENCY and execute EMG-003
 - If CPU load remains > 90% post-reboot: Command `SET_PARAM(param_id=obdh.task_shed, value=1)` to disable non-critical background tasks
-- If AOCS reverted to DETUMBLE after OBC reset: Execute CON-001 to restore pointing after OBC is confirmed stable
+- If AOCS reverted to DETUMBLE after OBC reset: Execute CTG-002 to restore pointing after OBC is confirmed stable
 
 ## Post-Conditions
 - [ ] `obdh.mode` (0x0300) = 0 (NOMINAL)

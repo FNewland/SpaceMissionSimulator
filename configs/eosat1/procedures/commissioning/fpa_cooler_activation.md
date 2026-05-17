@@ -1,4 +1,4 @@
-# COM-102: FPA Cooler Activation
+# COM-010: FPA Cooler Activation
 **Subsystem:** Payload / TCS
 **Phase:** COMMISSIONING
 **Revision:** 1.0

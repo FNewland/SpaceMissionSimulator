@@ -1,4 +1,4 @@
-# PROC-EPS-OFF-003: Battery Cell Failure
+# CTG-013: Battery Cell Failure
 
 **Category:** Contingency
 **Position Lead:** Power & Thermal (EPS/TCS)
@@ -73,7 +73,7 @@ cell voltage (~3.6 V nominal for Li-ion).
   - Immediately reduce charge/discharge current by shedding loads.
   - Disable battery heater: `HEATER_BATTERY(on=0)` (func_id 30)
   - Monitor temperature closely (every 30 s).
-  - If temperature exceeds 50 C, execute EMERGENCY mode per PROC-TCS-OFF-001.
+  - If temperature exceeds 50 C, execute EMERGENCY mode per EMG-006.
 - If battery temperature is within 0 to 35 C: Thermal condition is currently safe.
   Continue with capacity assessment.
 **Verify:** `tcs.htr_battery` (0x040A) — if heater is ON and battery is warm, disable it
@@ -126,7 +126,7 @@ but still protects against dangerously low temperatures.
 **Verify:** `eps.bat_temp` (0x0102) — remains within 0 to 40 C
 **Verify:** `eps.bus_voltage` (0x0105) — remains > 26.5 V
 **Action:** If `eps.bus_voltage` drops below 26.5 V during eclipse: Execute additional
-load shedding per PROC-EPS-OFF-002 (Undervoltage Load Shedding).
+load shedding per CTG-001 (Undervoltage Load Shedding).
 **Action:** After eclipse exit, verify:
 - `eps.power_gen` (0x0107) > 25 W (charging resumes)
 - `eps.bat_soc` (0x0101) trending upward
@@ -162,7 +162,7 @@ load shedding per PROC-EPS-OFF-002 (Undervoltage Load Shedding).
 ## Contingency
 - If battery temperature exceeds 45 C at any point: Risk of thermal runaway. Disable
   battery heater immediately. Shed all non-essential loads. If temperature exceeds
-  50 C, command `OBC_SET_MODE(mode=2)` for EMERGENCY. Follow PROC-TCS-OFF-001.
+  50 C, command `OBC_SET_MODE(mode=2)` for EMERGENCY. Follow EMG-006.
 - If battery voltage drops below 22.0 V: Risk of deep discharge and permanent damage.
   Immediately shed all loads except OBC and TTC RX. Command EMERGENCY mode.
 - If battery SoC cannot be maintained above 20% through a full orbit: The battery

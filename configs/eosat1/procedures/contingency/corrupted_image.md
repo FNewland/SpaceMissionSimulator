@@ -1,4 +1,4 @@
-# PROC-PLI-OFF-001: Corrupted Image Handling
+# CTG-015: Corrupted Image Recovery
 
 **Category:** Contingency
 **Position Lead:** Payload Operations
@@ -91,7 +91,7 @@ setpoint, operational threshold -25 C)
 **Verify:** `payload.store_used` (0x0604) — record storage usage
 **Action:** If `payload.mem_segments_bad` > 0:
 - Memory segment failure is a possible cause of corruption.
-- Follow PROC-PLI-OFF-002 (Memory Segment Failure) to identify and mark the bad
+- Follow CTG-016 (Memory Segment Failure) to identify and mark the bad
   segment before continuing.
 **Action:** If `payload.mem_segments_bad` = 0 and FPA is cold:
 - The corruption is likely a transient event (single event upset, radiation hit).
@@ -142,6 +142,6 @@ where N is the scene ID and L is the required number of CCD lines.
   cooler is commanded ON, suspect cooler hardware failure. Escalate.
 - If multiple images are corrupted: Check if all corrupted images map to the same memory
   region. If so, likely a localized memory failure — mark the segment as bad per
-  PROC-PLI-OFF-002.
+  CTG-016.
 - If imaging window has passed and re-capture is not possible: Log the lost scene.
   Coordinate with mission planning to schedule re-acquisition on a future pass.

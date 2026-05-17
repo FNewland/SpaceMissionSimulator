@@ -1,4 +1,4 @@
-# PROC-EMG-003: Critical Power Emergency
+# EMG-002: Total Power Failure
 **Subsystem:** EPS
 **Phase:** EMERGENCY
 **Revision:** 1.0
@@ -70,7 +70,7 @@ generation rate to 1/60s, disables non-essential data recording.
 **Verify:** `aocs.mode` (0x020F) = SAFE_POINT (2) within 5s.
 **Verify:** `aocs.att_error` (0x0217) < 10.0 deg within 15 minutes.
 **Monitor:** `eps.power_gen` (0x0107) --- expect increase as solar arrays achieve sun-pointing.
-**Critical:** If AOCS unavailable (rates > 2 deg/s), execute PROC-EMG-002 Step 2 first.
+**Critical:** If AOCS unavailable (rates > 2 deg/s), execute EMG-005 Step 2 first.
 **GO/NO-GO:** Solar arrays illuminated --- `eps.sa_a_current` (0x0103) > 0.3A and `eps.sa_b_current` (0x0104) > 0.3A.
 
 ### Step 5 --- Monitor Power Recovery (First Sunlit Phase)
@@ -107,7 +107,7 @@ under-voltage protection will disconnect non-essential buses automatically.
 **TC:** `HEATER_CONTROL(circuit=obc, on=true)` (Service 8, Subtype 7) --- restore OBC heater first.
 **Verify:** `eps.power_cons` (0x0106) increase < 10W after heater enable.
 **Verify:** Spacecraft remains power-positive after heater restore.
-**Next:** When SoC > 40%, transition to PROC-EMG-004 for staged recovery to nominal.
+**Next:** When SoC > 40%, transition to EMG-001 for staged recovery to nominal.
 **GO/NO-GO:** SoC > 30% stable, power-positive maintained with OBC heater restored.
 
 ## Recovery Staging Thresholds
@@ -134,7 +134,7 @@ under-voltage protection will disconnect non-essential buses automatically.
 - [ ] Battery temperature within nominal range: `tcs.temp_battery` (0x0407) between -5 degC and +35 degC
 - [ ] Root cause of power emergency identified or investigation ongoing
 - [ ] Staged recovery plan agreed with Flight Director for load restoration
-- [ ] Transition to PROC-EMG-004 when SoC > 40% for return to nominal operations
+- [ ] Transition to EMG-001 when SoC > 40% for return to nominal operations
 
 ## Recovery Path — Re-Powering Shed Loads
 After this procedure has stabilised the bus and the root cause is understood, **any subsystems whose power lines were de-energised during load shed must be brought back up in the controlled order defined by LEOP-007 (Sequential Power-On)**. Do **not** simply re-enable lines ad-hoc: LEOP-007 enforces the correct subsystem→line→mode sequencing, the inrush spacing, the thermal pre-conditioning of the OBC/battery heaters, and the AOCS/payload set_mode exemptions to the two-stage TC power gate. Cross-reference: `configs/eosat1/procedures/leop/sequential_power_on.md` (PROC-LEOP-007).

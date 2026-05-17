@@ -1,4 +1,4 @@
-# PROC-NOM-003: Science Data Downlink
+# NOM-003: Data Downlink
 **Subsystem:** PAYLOAD / TTC
 **Phase:** NOMINAL
 **Revision:** 1.0
@@ -11,7 +11,7 @@ into PLAYBACK mode, monitors the transfer progress, and returns the payload to
 STANDBY after the downlink session completes or the LOS approaches.
 
 ## Prerequisites
-- [ ] PROC-NOM-001 Pass Startup completed with all-GO declaration
+- [ ] NOM-001 Pass Startup completed with all-GO declaration
 - [ ] TTC link established: `ttc.link_status` (0x0501) = 1
 - [ ] Link margin confirmed: `ttc.link_margin` (0x0503) > 3.0 dB
 - [ ] Payload in STANDBY mode: `payload.mode` (0x0600) = 1

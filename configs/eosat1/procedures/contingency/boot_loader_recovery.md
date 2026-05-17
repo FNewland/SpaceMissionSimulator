@@ -1,4 +1,4 @@
-# PROC-OBC-OFF-001: Boot Loader Recovery
+# CTG-018: Boot Loader Recovery
 
 **Category:** Contingency
 **Position Lead:** FDIR / Systems
@@ -165,7 +165,7 @@ image size and uplink data rate).
 ## Contingency
 - If application fails to boot after memory reload: The OBC hardware may be damaged.
   Consider switching to redundant OBC: `OBC_SWITCH_UNIT` (func_id 43) per
-  PROC-OBC-OFF-003. The current OBC is non-recoverable from ground.
+  CTG-011. The current OBC is non-recoverable from ground.
 - If memory load fails (uplink errors): Verify TTC link quality. Retry the failed
   blocks. Consider using low data rate for more reliable uplink if errors persist.
 - If OBC enters a boot loop (repeated reboots): Immediately command

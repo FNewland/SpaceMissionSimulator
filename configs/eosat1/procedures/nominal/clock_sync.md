@@ -1,4 +1,4 @@
-# PROC-NOM-005: Spacecraft Clock Synchronization
+# NOM-008: Clock Synchronisation
 **Subsystem:** OBDH
 **Phase:** NOMINAL
 **Revision:** 1.0
@@ -12,7 +12,7 @@ and correct execution of time-tagged command sequences. This procedure is
 executed during each AOS window when clock drift exceeds the correction threshold.
 
 ## Prerequisites
-- [ ] PROC-NOM-001 Pass Startup completed with all-GO declaration
+- [ ] NOM-001 Pass Startup completed with all-GO declaration
 - [ ] TTC link established: `ttc.link_status` (0x0501) = 1
 - [ ] Ground station time reference synchronized to UTC (stratum-1 or GPS)
 - [ ] No time-tagged command sequences executing onboard during update window

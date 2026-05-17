@@ -72,7 +72,7 @@ range (epoch year +/- 1 year) and re-compute.
 **Verify:** |delta_residual| < 1.0 s (initial LEOP accuracy threshold)
 **Verify:** `obdh.mode` (0x0300) unchanged --- OBC was not disrupted by time step
 **Note:** For LEOP, sub-second accuracy is sufficient. Fine synchronisation (< 0.1 s)
-will be performed during nominal operations via PROC-NOM-005 (clock_sync.md).
+will be performed during nominal operations via NOM-006 (clock_sync.md).
 **GO/NO-GO:** Residual delta within 1.0 s. Time synchronisation successful.
 
 ### Step 6 --- Request Confirmation Time Report and Validate Rate

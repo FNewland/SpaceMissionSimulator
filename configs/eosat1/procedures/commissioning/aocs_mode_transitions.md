@@ -1,4 +1,4 @@
-# COM-007: AOCS Mode Transition Testing
+# COM-005: AOCS Mode Transitions
 **Subsystem:** AOCS
 **Phase:** COMMISSIONING
 **Revision:** 1.0

@@ -1,4 +1,4 @@
-# PROC-NOM-005: Software Patch Upload
+# NOM-006: Software Upload
 **Subsystem:** OBDH / Memory Management
 **Phase:** NOMINAL
 **Revision:** 1.0

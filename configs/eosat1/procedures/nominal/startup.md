@@ -1,4 +1,4 @@
-# PROC-NOM-001: Ground Pass Startup Sequence
+# NOM-001: Pass Startup
 **Subsystem:** ALL
 **Phase:** NOMINAL
 **Revision:** 1.0
@@ -23,14 +23,14 @@ every scheduled ground contact.
 **Verify:** `obdh.mode` (0x0300) = 0 (NOMINAL) within 10 s
 **Verify:** `obdh.cpu_load` (0x0302) < 80 % within 10 s
 **Verify:** `obdh.uptime` (0x0308) consistent with last known value
-**GO/NO-GO:** If `obdh.mode` != 0, abort pass and execute CONT-010 OBC Recovery.
+**GO/NO-GO:** If `obdh.mode` != 0, abort pass and execute CTG-010 OBC Recovery.
 
 ### Step 2 --- Verify EPS Health
 **TC:** `HK_REQUEST` SID=1 (Service 3, Subtype 25) --- request EPS housekeeping
 **Verify:** `eps.bat_soc` (0x0101) > 50 % within 10 s
 **Verify:** `eps.bus_voltage` (0x0105) > 27.0 V within 10 s
 **Verify:** `eps.power_gen` (0x0107) > `eps.power_cons` (0x0106) (positive power margin)
-**GO/NO-GO:** If SoC < 50 % or bus voltage < 27 V, execute CONT-001 EPS Safe Mode
+**GO/NO-GO:** If SoC < 50 % or bus voltage < 27 V, execute CTG-001 EPS Safe Mode
 procedure. Do NOT proceed with payload operations.
 
 ### Step 3 --- Verify AOCS Pointing
@@ -41,7 +41,7 @@ procedure. Do NOT proceed with payload operations.
 **Verify:** `aocs.rate_pitch` (0x0205) < 0.05 deg/s
 **Verify:** `aocs.rate_yaw` (0x0206) < 0.05 deg/s
 **GO/NO-GO:** If attitude error > 1 deg or any rate > 0.1 deg/s, hold and
-evaluate. Consider executing PROC-NOM-004 momentum management before continuing.
+evaluate. Consider executing NOM-007 momentum management before continuing.
 
 ### Step 4 --- Establish TTC Link
 **TC:** `TTC_SWITCH_PRIMARY` (Service 8, Subtype 1) --- activate primary transponder
@@ -66,7 +66,7 @@ and repeat verification. If redundant also fails, declare TTC anomaly.
 **Verify:** `payload.mode` (0x0600) = 1 (STANDBY) within 20 s
 **Verify:** `tcs.temp_fpa` (0x0408) trending downward (cooler active)
 **Verify:** `payload.store_used` (0x0604) < 90 % (sufficient storage)
-**Note:** Do NOT proceed to IMAGING until FPA temp < -10 C (see PROC-NOM-002).
+**Note:** Do NOT proceed to IMAGING until FPA temp < -10 C (see NOM-002).
 
 ### Step 7 --- Pass Readiness Declaration
 **GO/NO-GO Gate --- Flight Director Poll:**
@@ -81,8 +81,8 @@ and repeat verification. If redundant also fails, declare TTC anomaly.
 execute the relevant off-nominal procedure before continuing.
 
 ## Off-Nominal Handling
-- If `eps.bat_soc` < 30 %: Immediately execute CONT-001 EPS Safe Mode Recovery.
-- If `aocs.mode` = 2 (SAFE): Execute CONT-002 AOCS Anomaly Recovery.
+- If `eps.bat_soc` < 30 %: Immediately execute CTG-001 EPS Safe Mode Recovery.
+- If `aocs.mode` = 2 (SAFE): Execute CTG-002 AOCS Anomaly Recovery.
 - If TTC primary and redundant both fail: Declare loss of comm; wait for next pass.
 - If `obdh.cpu_load` > 90 %: Investigate runaway process; consider OBC reset.
 - If any HK packet not received: Re-request once; if still missing, flag subsystem.

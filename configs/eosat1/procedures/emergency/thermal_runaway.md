@@ -1,4 +1,4 @@
-# PROC-TCS-OFF-001: Thermal Runaway Emergency
+# EMG-006: Thermal Runaway
 
 **Category:** Emergency
 **Position Lead:** Power & Thermal (EPS/TCS)
@@ -167,7 +167,7 @@ or accept a cold soak on that zone).
     `OBC_SET_MODE(mode=2)` for EMERGENCY. Shed ALL loads to stop battery discharge
     heat generation.
   - OBC: > 70 C — risk of processor damage. Consider OBC switchover to redundant unit
-    per PROC-OBC-OFF-003.
+    per CTG-011.
   - Thruster: > design limit — risk of propellant issues if present.
 - If power line shed does not stop the temperature rise: The heat source is not the
   heater. Check if the zone is sun-facing (solar heating). Check if adjacent equipment

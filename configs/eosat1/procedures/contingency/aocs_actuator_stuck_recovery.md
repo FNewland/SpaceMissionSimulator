@@ -1,4 +1,4 @@
-# CON-022: Reaction Wheel Stuck/Seizure Recovery
+# CTG-026: AOCS Actuator Stuck Recovery
 **Subsystem:** AOCS
 **Phase:** CONTINGENCY
 **Revision:** 1.0
@@ -23,7 +23,7 @@ control with any three operational wheels at slightly relaxed pointing accuracy.
 - [ ] At least three reaction wheels were functional prior to the seizure event
 - [ ] TT&C link active — `ttc.link_status` (0x0501) = 1
 - [ ] Flight Director notified of AOCS anomaly
-- [ ] Procedure CON-007 (Reaction Wheel Anomaly) reviewed for reference
+- [ ] Procedure CTG-007 (Reaction Wheel Anomaly) reviewed for reference
 
 ## Required Telemetry
 | Parameter | ID | Expected Value |
@@ -79,7 +79,7 @@ to confirm seizure diagnosis.
 the control loop tries to command the unresponsive wheel.
 **GO/NO-GO:** Exactly one wheel identified as stuck (speed frozen + temperature
 rising). Note the wheel index (0-3 = RW-1 through RW-4). If multiple wheels are
-stuck, escalate to CON-002 Step 7 (multi-wheel failure).
+stuck, escalate to CTG-005 Step 7 (multi-wheel failure).
 
 ### Step 2: Disable the Stuck Wheel
 **Action:** Disable the seized wheel to remove it from the control loop:
@@ -205,7 +205,7 @@ ops confirmed as permanent configuration.
 ## Off-Nominal Handling
 - If a second wheel fails during this procedure: Command `AOCS_SET_MODE(mode=1)`
   (DETUMBLE) immediately. Two-wheel control does not provide three-axis pointing.
-  Escalate to CON-002 Step 7 and EMG-005 (Loss of Attitude). This is mission-critical.
+  Escalate to CTG-005 Step 7 and EMG-005 (Loss of Attitude). This is mission-critical.
 - If attitude error exceeds 10 deg during wheel disable: Command
   `AOCS_SET_MODE(mode=2)` (COARSE_SUN) immediately. Wait for rates to stabilise
   below 0.5 deg/s before attempting three-wheel mode.

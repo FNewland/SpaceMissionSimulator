@@ -1,4 +1,4 @@
-# CON-001: AOCS Anomaly Recovery
+# CTG-002: AOCS Anomaly Recovery
 **Subsystem:** AOCS
 **Phase:** CONTINGENCY
 **Revision:** 1.0
@@ -15,7 +15,7 @@ safety margins.
 - [ ] Spacecraft is in an active pass with valid telemetry downlink
 - [ ] AOCS telemetry frame (SID 2) is being received at >= 1 Hz
 - [ ] Flight Dynamics team is on console and confirming orbit/attitude predictions
-- [ ] Procedure CON-002 (EPS Safe Mode Recovery) is available for cross-reference
+- [ ] Procedure CTG-005 (EPS Safe Mode Recovery) is available for cross-reference
 
 ## Procedure Steps
 
@@ -65,8 +65,8 @@ safety margins.
 ## Off-Nominal Handling
 - If attitude error exceeds 15 deg at any step: Immediately command `AOCS_SET_MODE(mode=1)` for DETUMBLE
 - If two or more reaction wheels are flagged: Execute Step 7 directly and notify Flight Dynamics
-- If EPS bus voltage drops below 26.5V during recovery: Execute CON-002 (EPS Safe Mode Recovery)
-- If star tracker remains blinded after DETUMBLE: Execute CON-007 for wheel assessment, plan ground intervention
+- If EPS bus voltage drops below 26.5V during recovery: Execute CTG-005 (EPS Safe Mode Recovery)
+- If star tracker remains blinded after DETUMBLE: Execute CTG-007 for wheel assessment, plan ground intervention
 
 ## Post-Conditions
 - [ ] `aocs.mode` (0x020F) = 4 (NOMINAL) or 2 (DETUMBLE) if escalated

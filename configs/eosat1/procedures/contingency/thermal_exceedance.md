@@ -1,4 +1,4 @@
-# CON-006: Thermal Limit Exceedance Recovery
+# CTG-004: Thermal Exceedance
 **Subsystem:** TCS
 **Phase:** CONTINGENCY
 **Revision:** 1.0
@@ -70,14 +70,14 @@ for hot cases), and monitors the temperature trend until the zone returns within
 **TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 25)
 **Verify:** All zone temperatures within nominal (green) range
 **Action:** If heaters were enabled for cold case, set to automatic thermostat mode via `SET_PARAM(param_id=tcs.htr_<zone>_auto, value=1)`
-**Action:** If loads were shed for hot case, re-enable per CON-002 load restoration sequence
+**Action:** If loads were shed for hot case, re-enable per CTG-005 load restoration sequence
 **GO/NO-GO:** All temperatures nominal and operations restored — recovery complete
 
 ## Off-Nominal Handling
 - If battery temperature exceeds +45 deg-C (red limit): Command `OBC_SET_MODE(mode=2)` for EMERGENCY — execute EMG-002
 - If OBC temperature exceeds +60 deg-C: Command `OBC_SET_MODE(mode=1)` for SAFE immediately
 - If heater circuit fails to activate: Suspect heater hardware failure, log anomaly, adjust attitude for passive thermal control
-- If multiple zones simultaneously exceed limits: Suspect orbital geometry change or AOCS anomaly — check `aocs.mode` (0x020F) and execute CON-001 if attitude is off-nominal
+- If multiple zones simultaneously exceed limits: Suspect orbital geometry change or AOCS anomaly — check `aocs.mode` (0x020F) and execute CTG-002 if attitude is off-nominal
 
 ## Post-Conditions
 - [ ] All thermal zones within nominal (green) limits

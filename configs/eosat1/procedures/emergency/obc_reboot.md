@@ -1,4 +1,4 @@
-# PROC-EMG-003: Emergency OBC Reboot
+# EMG-003: OBC Reboot
 **Subsystem:** OBDH
 **Phase:** EMERGENCY
 **Revision:** 1.0
@@ -145,7 +145,7 @@ unit. Escalate to OBDH engineer for investigation.
   - Subsystem communication status
   - Any unexpected behaviour during boot
 **Action:** If the original anomaly was caused by a software defect, schedule a software
-investigation and potential patch upload (PROC-NOM-005).
+investigation and potential patch upload (NOM-006).
 **Action:** If the anomaly was caused by a single-event upset (SEU), log the SEU count
 and monitor for recurrence.
 **GO/NO-GO:** OBC in NOMINAL mode. Reboot recovery complete.
@@ -173,7 +173,7 @@ and monitor for recurrence.
 3. **TC:** `FUNC_PERFORM` func_id=42 (Service 8, Subtype 1) --- reboot from alternate bank.
 4. Wait 90 s and verify `obdh.sw_image` (0x0311) = 1 (application).
 5. If successful: the primary image bank is likely corrupted. Schedule a software re-upload
-   to the failed bank via PROC-NOM-005 when conditions permit.
+   to the failed bank via NOM-006 when conditions permit.
 6. If both banks fail: the OBC will remain in bootloader. Basic commanding is available
    but housekeeping and autonomy are limited. Escalate for anomaly resolution.
 

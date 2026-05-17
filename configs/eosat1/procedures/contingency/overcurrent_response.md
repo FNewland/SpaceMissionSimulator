@@ -1,4 +1,4 @@
-# PROC-EPS-OFF-001: Overcurrent Response
+# CTG-012: Overcurrent Response
 
 **Category:** Contingency
 **Position Lead:** Power & Thermal (EPS/TCS)

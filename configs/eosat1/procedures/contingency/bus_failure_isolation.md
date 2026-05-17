@@ -1,4 +1,4 @@
-# PROC-OBDH-OFF-003: CAN Bus Failure Detection and Isolation
+# CTG-022: CAN Bus Failure Isolation
 
 **Category:** Contingency
 **Position Lead:** FDIR / Systems
@@ -173,7 +173,7 @@ back to without engineering team approval and analysis.
   individually.
 - If OBC does not respond to the bus select command: OBC may be in a degraded
   state. Attempt `OBC_REBOOT` (func_id 42) as a last resort. If OBC is
-  unresponsive, follow PROC-OBC-OFF-003 (OBC Redundancy Switchover).
+  unresponsive, follow CTG-011 (OBC Redundancy Switchover).
 - If a subsystem mode changed during switchover (e.g., AOCS went to SAFE or
   DETUMBLE): The brief bus interruption may have triggered a subsystem timeout.
   After confirming bus stability, restore the affected subsystem to its
