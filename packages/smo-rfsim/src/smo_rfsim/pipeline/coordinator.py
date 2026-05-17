@@ -196,6 +196,12 @@ class PipelineCoordinator:
         # Channel (uplink has its own Eb/N0 — ground HPA is strong)
         impaired = self._tc_channel.process(samples)
 
+        # Reset demodulator for each independent command — TC commands
+        # are not a continuous stream; each CLTU is freshly modulated
+        # starting from phase 0. Stale PLL state from the previous
+        # command would cause phase misalignment.
+        self._tc_demodulator.reset()
+
         # Demodulate
         recovered = self._tc_demodulator.demodulate(impaired)
 
@@ -317,6 +323,9 @@ class PipelineCoordinator:
             "rx_fecf_failures": self._rx.fecf_failures,
             "rx_packets_recovered": self._rx.packets_recovered,
             "rx_flywheel_misses": self._rx.flywheel_misses,
+            "rx_phase_nudges": self._rx.phase_nudges,
+            "rx_mod_searches": self._rx.mod_searches,
+            "rx_pll_resets": self._rx.pll_resets,
             "recovered_queue_drops": self._recovered_queue_drops,
             "tm_queue_depth": self._tm_packet_queue.qsize(),
             "recovered_queue_depth": self._recovered_queue.qsize(),

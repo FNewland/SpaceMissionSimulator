@@ -66,6 +66,21 @@ class Demodulator:
         self.clock_locked = False
         self._lock_detector = 0.0
 
+    def reset(self):
+        """Reset all acquisition state for a new independent signal.
+
+        Call this before demodulating a signal that is not a continuation
+        of the previous one (e.g., each TC command is independently
+        modulated and starts from phase 0).
+        """
+        self._phase = 0.0
+        self._freq = 0.0
+        self._mu = 0.0
+        self._omega = float(self.sps)
+        self._agc_gain = 1.0
+        self._last_sample = 0 + 0j
+        self._lock_detector = 0.0
+
     def set_modulation(self, modulation: int):
         self.modulation = modulation
         self._bps = BITS_PER_SYMBOL.get(modulation, 1)

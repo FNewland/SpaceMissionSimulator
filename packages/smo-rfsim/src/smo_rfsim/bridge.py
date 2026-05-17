@@ -293,33 +293,36 @@ class RFSimBridge:
     async def _relay_recovered_tm(self):
         """RF mode: relay packets recovered by the RX pipeline to MCS clients.
 
-        Uses batch drain to avoid the per-packet async/executor overhead
-        of get_recovered_packet(). Falls back to the blocking get when
-        the queue is empty so we don't spin.
+        Uses non-blocking batch drain on a short poll cycle. This avoids
+        run_in_executor which can interact poorly with asyncio task
+        scheduling and cause the relay loop to stall.
         """
         _relay_loops = 0
+        _total_forwarded = 0
         while self._running:
             _relay_loops += 1
-            if _relay_loops % 100 == 1:
-                logger.info("Relay loop #%d, queue=%d, rx_good=%d, rx_recovered=%d",
-                            _relay_loops,
-                            self._pipeline._recovered_queue.qsize(),
-                            self._pipeline._rx.good_frames,
-                            self._pipeline._rx.packets_recovered)
-            # Batch drain: grab everything available without blocking
+            if _relay_loops % 50 == 1:
+                diag = self._pipeline.get_diagnostics()
+                logger.info("Relay loop #%d: forwarded=%d, rx_good=%d, "
+                            "rx_recovered=%d, frame_sync=%s, carrier=%s",
+                            _relay_loops, _total_forwarded,
+                            diag["rx_good_frames"],
+                            diag["rx_packets_recovered"],
+                            self._pipeline._rx.frame_sync_state.value,
+                            self._pipeline.carrier_locked)
+            # Non-blocking batch drain
             batch = self._pipeline.drain_recovered_packets()
             if batch:
                 logger.info("Relay: forwarding %d recovered packets to %d MCS clients",
                             len(batch), len(self._mcs_clients_tm))
                 for packet in batch:
                     await self._broadcast_tm(packet)
+                _total_forwarded += len(batch)
             else:
-                # Queue empty — wait for next packet (blocking, avoids spin)
-                packet = await self._pipeline.get_recovered_packet()
-                if packet is not None:
-                    logger.debug("Relay: forwarding 1 recovered packet to %d MCS clients",
-                                 len(self._mcs_clients_tm))
-                    await self._broadcast_tm(packet)
+                # No packets — short sleep to avoid spin while yielding
+                # to other asyncio tasks. 50ms gives ~20 polls/sec which
+                # is responsive enough for TM at 1-10 packets/sec.
+                await asyncio.sleep(0.05)
 
     async def _process_tm_frame_mode(self, packet: bytes):
         """FRAME mode: byte-level CCSDS framing (no real signal processing)."""
