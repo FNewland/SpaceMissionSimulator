@@ -206,12 +206,22 @@ class CorrelatorRX:
             # matches the configured modulation. Prevents false lock when
             # the wrong modulation is configured (e.g., QPSK PLL locks on
             # BPSK with zero phase error because BPSK has no Q component).
+            #
+            # IMPORTANT: only validate AFTER sustained SNR lock, not during
+            # acquisition. During PLL convergence the symbols rotate in
+            # the I/Q plane and the ratio is ~1.0 regardless of modulation.
             mod_valid = True
-            if snr_ok and n_symbols >= 20:
+            if snr_ok and self._energy_avg > 6.0 and n_symbols >= 20:
                 mod_valid = self._validate_constellation(symbols)
 
-            self.carrier_locked = snr_ok and mod_valid
-            self.clock_locked = self.carrier_locked
+            self.carrier_locked = snr_ok
+            self.clock_locked = snr_ok
+            # If modulation mismatch detected after sustained lock,
+            # log but don't prevent frame sync — let the operator see
+            # the constellation and decide
+            if not mod_valid and snr_ok:
+                logger.info("Constellation may not match configured modulation "
+                            "(I/Q ratio check failed)")
 
         # 5. Store constellation points (after frequency correction)
         self.constellation_points = list(symbols[-128:])
