@@ -73,7 +73,11 @@ class SimulatorServer:
                 packet = await read_framed_packet(reader)
                 if packet is None:
                     break
-                self.engine.tc_queue.put_nowait(packet)
+                try:
+                    self.engine.tc_queue.put_nowait(packet)
+                except Exception:
+                    logger.warning("TC queue full — command dropped (queue=%d)",
+                                   self.engine.tc_queue.maxsize)
         except Exception as e:
             logger.debug("TC client error: %s", e)
         finally:

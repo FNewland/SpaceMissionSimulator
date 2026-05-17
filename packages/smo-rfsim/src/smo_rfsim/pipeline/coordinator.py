@@ -184,7 +184,7 @@ class PipelineCoordinator:
         CLTU encode → modulate → channel → demodulate → CLTU decode.
         """
         if not self._link_in_view:
-            logger.debug("TC dropped: spacecraft not in view")
+            logger.info("TC uplink blocked: spacecraft not in view")
             return None
 
         # CLTU encode
@@ -201,9 +201,11 @@ class PipelineCoordinator:
 
         # CLTU decode
         if not recovered:
+            logger.info("TC uplink: demodulation produced no bytes")
             return None
         decoded = decode_cltu(recovered, correct_errors=True)
         if decoded is None:
+            logger.info("TC uplink: CLTU decode failed (CRC error)")
             return None
         return decoded[:len(tc_packet)]
 

@@ -971,6 +971,8 @@ class SimulationEngine:
         from smo_common.protocol.ecss_packet import decommutate_packet
         pkt = decommutate_packet(raw)
         if pkt is None or pkt.secondary is None:
+            logger.warning("TC dropped: malformed packet (%d bytes, cannot decommutate)",
+                           len(raw))
             return
         obdh = self.subsystems.get("obdh")
         if obdh and hasattr(obdh, 'record_tc_received'):
@@ -1475,6 +1477,18 @@ class SimulationEngine:
 
     def _enqueue_tm(self, pkt: bytes) -> None:
         # Only downlink TM when RF link is active (orbit contact + transponder OK)
+        if not self.downlink_active:
+            # TM silently dropped — log for S1 verification packets so the
+            # operator understands why commands appear to vanish
+            if len(pkt) > 13:
+                try:
+                    from smo_common.protocol.ecss_packet import decommutate_packet as _decom
+                    _p = _decom(pkt)
+                    if _p and _p.secondary and _p.secondary.service == 1:
+                        logger.debug("S1.%d verification dropped (downlink inactive)",
+                                     _p.secondary.subtype)
+                except Exception:
+                    pass
         if self.downlink_active:
             try:
                 self.tm_queue.put_nowait(pkt)
