@@ -244,18 +244,14 @@ class RFSimBridge:
                 if self.mode == RFSimMode.PACKET:
                     await self._broadcast_tm(packet)
                 elif self.mode == RFSimMode.RF and self._pipeline:
-                    # Enable TX if not already on AND we have line of sight.
-                    # The sim's downlink_active gate means receiving a packet
-                    # here proves the sim thinks the link is up. But the
-                    # bridge's _sim_ws_feedback may have already set
-                    # _link_in_view=False (LOS), in which case we should
-                    # not re-enable TX — the packet is a stale remnant.
+                    # Receiving a TM packet from the sim proves the downlink
+                    # is active. If TX isn't on yet (WS feedback hasn't
+                    # arrived), enable it now — the sim wouldn't send TM
+                    # unless downlink_active is True.
                     if not self._pipeline._tx._transmitting:
-                        if self._pipeline._link_in_view:
-                            logger.info("TM packet received — enabling pipeline TX")
-                            self._pipeline.set_transmitting(True)
-                        else:
-                            logger.debug("TM packet received but no LOS — TX stays off")
+                        self._pipeline.set_link_in_view(True)
+                        self._pipeline.set_transmitting(True)
+                        logger.info("TM packet received — enabling TX (continuous carrier)")
                     last_packet_time = asyncio.get_event_loop().time()
                     # Flow control: if TX queue is > 80% full, yield to let
                     # it drain before pushing more. Prevents queue overflow
@@ -465,7 +461,20 @@ class RFSimBridge:
         # Driven by contact state (orbital geometry or pass override).
         in_contact = state.get("in_contact") or state.get("override_passes")
         if in_contact is not None and self._pipeline:
+            was_in_view = self._pipeline._link_in_view
             self._pipeline.set_link_in_view(bool(in_contact))
+
+            # Continuous carrier: when the spacecraft is in view AND the
+            # PA is on, the transceiver produces a continuous modulated
+            # carrier at the configured data rate. Data frames carry TM
+            # packets when available; idle frames fill the gaps. The ground
+            # station locks onto this carrier — it doesn't need data frames.
+            #
+            # Enable TX whenever in view. The TX thread generates idle
+            # frames when no data is queued, maintaining the carrier.
+            if bool(in_contact) and not self._pipeline._tx._transmitting:
+                logger.info("Link in view — enabling continuous TX carrier")
+                self._pipeline.set_transmitting(True)
 
         # Transmitter state: the spacecraft PA produces a carrier whenever
         # it's powered on and the spacecraft is in view. The link_status
