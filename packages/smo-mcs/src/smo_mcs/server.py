@@ -118,6 +118,7 @@ class MCSServer:
         self._param_cache_lock = asyncio.Lock()
         self._last_tm_frame_ts: Optional[float] = None  # epoch time of last received TM frame
         self.tm_packets_received: int = 0
+        self._storage_status: list[dict] = []
 
         # Wire up the real HK decoder. Two prior fix passes left _process_tm
         # only logging packet metadata into a debug dict; the param cache was
@@ -766,6 +767,31 @@ class MCSServer:
                     except Exception:
                         pass
 
+        # Parse S15.14 storage status reports and update cached store counts
+        if pkt.secondary.service == 15 and pkt.secondary.subtype == 14:
+            try:
+                data = pkt.data_field
+                if len(data) >= 1:
+                    n_stores = data[0]
+                    offset = 1
+                    stores = []
+                    for _ in range(n_stores):
+                        if offset + 5 <= len(data):
+                            sid = data[offset]
+                            count = struct.unpack('>H', data[offset+1:offset+3])[0]
+                            capacity = struct.unpack('>H', data[offset+3:offset+5])[0]
+                            enabled = bool(data[offset+5]) if offset + 6 <= len(data) else True
+                            stores.append({
+                                "id": sid, "count": count,
+                                "capacity": capacity, "enabled": enabled,
+                            })
+                            offset += 6
+                    info["storage_status"] = stores
+                    async with self._param_cache_lock:
+                        self._storage_status = stores
+            except Exception:
+                pass
+
         # Broadcast to WebSocket clients
         msg = json.dumps({"type": "tm", "packet": info})
         async with self._ws_lock:
@@ -837,6 +863,11 @@ class MCSServer:
                 # time from ground clock, contact from orbital geometry.
                 data.update(self._compute_orbital_state())
                 data.update(self._compute_time_state())
+
+                # Include S15 storage status if available
+                async with self._param_cache_lock:
+                    if self._storage_status:
+                        data["storage_status"] = self._storage_status
 
                 self._latest_state = data
                 msg = json.dumps({
