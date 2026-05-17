@@ -864,6 +864,20 @@ class MCSServer:
                 data.update(self._compute_orbital_state())
                 data.update(self._compute_time_state())
 
+                # Per-subsystem staleness (age of newest param in each group)
+                subsystem_staleness = {}
+                for pid, entry in cache.items():
+                    meta = self._param_meta.get(pid)
+                    if not meta:
+                        continue
+                    sub = meta["subsystem"] or "other"
+                    param_age = now - entry.get("last_update_ts", 0)
+                    if sub not in subsystem_staleness or param_age < subsystem_staleness[sub]:
+                        subsystem_staleness[sub] = param_age
+                data["subsystem_staleness"] = {
+                    k: round(v, 1) for k, v in subsystem_staleness.items()
+                }
+
                 # Include S15 storage status if available
                 async with self._param_cache_lock:
                     if self._storage_status:
