@@ -275,6 +275,7 @@ structures:
   - sid: 11
     name: Beacon
     interval_s: 30.0
+    # 6 parameters — matches bootloader emission (canonical per SPACECDF_RECONCILE item 8)
     parameters:
       - { param_id: 0x0100, pack_format: H, scale: 100 }    # bat_voltage
       - { param_id: 0x0101, pack_format: H, scale: 100 }    # bat_soc
@@ -282,4 +283,3 @@ structures:
       - { param_id: 0x030A, pack_format: H, scale: 1 }      # reboot_count
       - { param_id: 0x0311, pack_format: B, scale: 1 }      # sw_image
       - { param_id: 0x030C, pack_format: B, scale: 1 }      # active_obc
-      - { param_id: 0x0129, pack_format: B, scale: 1 }      # spacecraft_phase (canonical id, matches engine + tests)
