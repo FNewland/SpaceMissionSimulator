@@ -1,4 +1,4 @@
-# PROC-EMG-001: Loss of Communication Recovery
+# EMG-004: Loss of Communication
 **Subsystem:** TT&C / Ground Segment
 **Phase:** EMERGENCY
 **Revision:** 1.0
@@ -30,7 +30,7 @@ with decision gates at 6h, 12h, 24h, and 48h elapsed time since last contact.
 **Sequence:** Schedule uplink attempts on every visible pass (min elevation 5 deg) across
 Svalbard, Troll, Inuvik, and O'Higgins in priority order based on maximum elevation.
 **Verify:** `ttc.rssi` (0x0502) > -125 dBm and `ttc.link_status` (0x0501) = 2 (LOCKED) within 30s of AOS.
-**GO/NO-GO:** If telemetry received on any station, exit emergency and transition to PROC-EMG-004 assessment. If no response after full ground station rotation, proceed to Step 3.
+**GO/NO-GO:** If telemetry received on any station, exit emergency and transition to EMG-001 assessment. If no response after full ground station rotation, proceed to Step 3.
 
 ### Step 3 --- Blind Command on Primary Transponder
 **TC:** `TTC_SWITCH_PRIMARY` (Service 8, Subtype 1) --- blind, repeated 3x with 10s spacing.
@@ -61,7 +61,7 @@ stations with optimal geometry.
 **TC:** Alternate between `TTC_SWITCH_PRIMARY` and `TTC_SWITCH_REDUNDANT` on successive passes.
 **TC:** `OBC_SET_MODE(mode=2)` (Service 8, Subtype 3) --- blind emergency mode command.
 **Verify:** Any downlink signal within pass window.
-**GO/NO-GO:** If contact restored, proceed to PROC-EMG-004 for safe mode recovery.
+**GO/NO-GO:** If contact restored, proceed to EMG-001 for safe mode recovery.
 
 ### Step 7 --- Emergency Network Escalation (24h Threshold)
 **Action:** Request support from partner agency ground stations (ESA ESTRACK, NASA NEN).
@@ -99,4 +99,4 @@ power-positive conditions resume (sunlit orbit phase with favourable beta angle)
 - [ ] `ttc.link_status` (0x0501) = 2 (LOCKED) with stable `ttc.rssi` (0x0502) > -120 dBm
 - [ ] Full housekeeping dump (all SIDs 1--6) received and reviewed
 - [ ] Root cause of communication loss identified or investigation initiated
-- [ ] Transition to PROC-EMG-004 for staged recovery if spacecraft was in autonomous safe mode
+- [ ] Transition to EMG-001 for staged recovery if spacecraft was in autonomous safe mode

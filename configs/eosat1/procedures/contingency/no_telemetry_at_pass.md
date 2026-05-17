@@ -1,4 +1,4 @@
-# PROC-TTC-OFF-002: No Telemetry at Pass Start
+# CTG-019: No Telemetry at Pass Start
 
 **Category:** Contingency
 **Position Lead:** TT&C
@@ -169,7 +169,7 @@ signal after all RF chain checks, proceed to Step 7 (escalation).
   mechanism may have failed (burn-wire did not fire, antenna stuck). This is a
   permanent hardware failure. Rely on stub antenna with reduced link budget.
 - If OBC is found in SAFE or EMERGENCY mode after link restoration: Execute
-  CON-005 (OBDH Watchdog Recovery) or CON-010 as appropriate before resuming
+  CTG-010 (OBDH Watchdog Recovery) or CTG-010 as appropriate before resuming
   nominal operations.
 - If signal is intermittent (toggling on/off): Suspect attitude issue causing
   antenna null pattern. Request AOCS telemetry: check `aocs.att_error` (0x0217)

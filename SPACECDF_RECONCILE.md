@@ -227,9 +227,9 @@ two ticket-and-banner items for delivery before August 2026.
 | 4. Orbit numerics | LOW | `orbit.yaml` | 30 min | **VERIFIED** — 450 km, 98° already correct |
 | 5. Mission band | HIGH | `mission.yaml` (S-band) | Half-day (touches rfsim) | **FIXED** — ground_stations + rfsim updated |
 | 6. Ground stations | HIGH | Iqaluit + Troll only | 2 hours | **VERIFIED** — only 2 stations configured |
-| 7. Procedure internal IDs | LOW | `procedure_index.yaml` | Half-day mechanical | Open |
+| 7. Procedure internal IDs | LOW | `procedure_index.yaml` | Half-day mechanical | **FIXED** — 56 headings corrected |
 | 8. SID 11 parameter count | LOW | Bootloader code | 1 hour | **FIXED** — trimmed to 6 params |
-| 9. CTG-002 cross-refs | LOW | Index | 1 hour | Open |
+| 9. CTG-002 cross-refs | LOW | Index | 1 hour | **FIXED** — all CONT-/CON-/PROC- prefixes → canonical |
 | 10. MCS UI gaps | FEATURE | n/a — backlog | Multi-week | Open |
 
 Total reconciliation: roughly 4–5 days of engineering effort for items 1–9. Item 10

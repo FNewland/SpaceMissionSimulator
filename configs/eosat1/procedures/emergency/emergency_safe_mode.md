@@ -1,4 +1,4 @@
-# PROC-EMG-004: Emergency Safe Mode Entry and Recovery
+# EMG-001: Emergency Safe Mode
 **Subsystem:** OBDH / All Subsystems
 **Phase:** EMERGENCY
 **Revision:** 1.0
@@ -53,7 +53,7 @@ disables all scheduled operations, and enables survival-only power distribution.
 **If SAFE_POINT:** Verify `aocs.att_error` (0x0217) < 10 deg. Proceed to Step 4.
 **If DETUMBLE:** Monitor rates. If all rates < 0.1 deg/s, command SAFE_POINT:
 **TC:** `AOCS_SET_MODE(mode=2)` (Service 8, Subtype 4) --- SAFE_POINT.
-**If tumbling (rates > 2 deg/s):** Execute PROC-EMG-002 before continuing.
+**If tumbling (rates > 2 deg/s):** Execute EMG-005 before continuing.
 **If AOCS OFF:** Command detumble first:
 **TC:** `AOCS_SET_MODE(mode=1)` (Service 8, Subtype 4) --- DETUMBLE.
 **GO/NO-GO:** AOCS in SAFE_POINT or actively detumbling with rates decreasing.
@@ -65,7 +65,7 @@ disables all scheduled operations, and enables survival-only power distribution.
 **Verify:** `eps.power_gen` (0x0107) > `eps.power_cons` (0x0106) --- power-positive.
 **Verify:** `eps.bat_soc` (0x0101) --- record value and start trend tracking.
 **TC:** `HEATER_CONTROL(circuit=battery, on=true)` (Service 8, Subtype 7) --- ensure battery thermostat active.
-**GO/NO-GO:** Power-positive state confirmed. If not, execute PROC-EMG-003.
+**GO/NO-GO:** Power-positive state confirmed. If not, execute EMG-002.
 
 ### Step 5 --- Establish Stable Communication
 **Verify:** `ttc.link_status` (0x0501) = LOCKED.
@@ -73,7 +73,7 @@ disables all scheduled operations, and enables survival-only power distribution.
 **Verify:** `ttc.mode` (0x0500) = NOMINAL or SAFE.
 **Action:** If link marginal, schedule subsequent passes at high-elevation (> 20 deg) ground stations only.
 **TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 1) --- TT&C subsystem housekeeping.
-**GO/NO-GO:** Two-way communication stable. If unstable, reference PROC-EMG-001.
+**GO/NO-GO:** Two-way communication stable. If unstable, reference EMG-004.
 
 ### Step 6 --- Full Housekeeping Assessment
 **TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 1) --- EPS HK.
@@ -146,7 +146,7 @@ disables all scheduled operations, and enables survival-only power distribution.
 ## Off-Nominal Handling
 - If OBC does not accept mode commands: attempt OBC reset via `HK_REQUEST(sid=3)` diagnostic, then re-command. If persistent, spacecraft remains in autonomous emergency mode until next OBC reboot cycle.
 - If multiple wheels failed during anomaly: remain in SAFE_POINT indefinitely. Nadir pointing requires minimum 3 wheels. Plan reduced-capability operations.
-- If SoC does not reach 30% within 10 orbits: possible solar array degradation. Reassess power budget for long-term reduced operations. Reference PROC-EMG-003.
+- If SoC does not reach 30% within 10 orbits: possible solar array degradation. Reassess power budget for long-term reduced operations. Reference EMG-002.
 - If new anomaly occurs during recovery: halt recovery, return to Step 7 stabilisation hold, re-assess before continuing.
 - If `obdh.reboot_count` (0x030A) continues incrementing: suspect OBC hardware fault. Maintain emergency mode, reduce commanding to minimum, plan OBC memory patch or cold redundancy switch if available.
 

@@ -1,4 +1,4 @@
-# PROC-NOM-004: Reaction Wheel Momentum Unloading
+# NOM-007: Momentum Management
 **Subsystem:** AOCS
 **Phase:** NOMINAL
 **Revision:** 1.0
@@ -12,7 +12,7 @@ saturation and subsequent loss of fine attitude control. Desaturation is
 routinely performed once per orbit or as indicated by trending data.
 
 ## Prerequisites
-- [ ] PROC-NOM-001 Pass Startup completed (or autonomous execution if out of contact)
+- [ ] NOM-001 Pass Startup completed (or autonomous execution if out of contact)
 - [ ] AOCS in NADIR_POINT mode: `aocs.mode` (0x020F) = 0
 - [ ] No imaging session in progress: `payload.mode` (0x0600) != 2
 - [ ] EPS battery SoC > 40 %: `eps.bat_soc` (0x0101) > 40

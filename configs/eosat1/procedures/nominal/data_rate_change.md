@@ -1,4 +1,4 @@
-# PROC-TTC-NOM-001: TTC Data Rate Change
+# NOM-011: Data Rate Change
 
 **Category:** Nominal
 **Position Lead:** TT&C
@@ -89,10 +89,10 @@ at low rate. Consider waiting for higher elevation before retrying.
 ## Contingency
 - If carrier lock is lost during rate change: Wait 15 s for automatic re-acquisition.
   If not recovered, command rate back to LOW: `TTC_SET_DATA_RATE(rate=0)`. If still
-  no lock, escalate to PROC-TTC-OFF-001 (BER Anomaly Investigation).
+  no lock, escalate to CTG-014 (BER Anomaly Investigation).
 - If BER exceeds -5 at new rate: Immediately revert to previous rate using
   `TTC_SET_DATA_RATE`. Verify BER returns to acceptable levels. Log anomaly.
 - If bit/frame sync not acquired within 30 s: Revert to previous rate. If sync still
-  not acquired, check transponder health — follow PROC-TTC-OFF-001.
+  not acquired, check transponder health — follow CTG-014.
 - If contact is about to end (< 1 min remaining): Do NOT attempt rate change. Wait
   for next contact.

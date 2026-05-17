@@ -1,4 +1,4 @@
-# PROC-EMG-002: Loss of Attitude Control
+# EMG-005: Loss of Attitude
 **Subsystem:** AOCS
 **Phase:** EMERGENCY
 **Revision:** 1.0
@@ -14,7 +14,7 @@ passes (~35 min max eclipse, minimum survival SoC = 10%).
 ## Prerequisites
 - [ ] Telemetry confirms `aocs.rate_roll` (0x0204), `aocs.rate_pitch` (0x0205), or `aocs.rate_yaw` (0x0206) > 2.0 deg/s
 - [ ] Communication link active --- `ttc.link_status` (0x0501) = LOCKED
-- [ ] Current `eps.bat_soc` (0x0101) > 20% (if below 20%, execute PROC-EMG-003 in parallel)
+- [ ] Current `eps.bat_soc` (0x0101) > 20% (if below 20%, execute EMG-002 in parallel)
 - [ ] AOCS engineering telemetry enabled (SID 2)
 - [ ] Flight Dynamics team on console with real-time attitude estimation
 
@@ -51,7 +51,7 @@ investigation. Detumble mode uses magnetorquers only and does not require wheels
 **Expected:** Angular rates should decrease by approximately 50% per orbit under B-dot control.
 **Verify:** All axes rates < 1.0 deg/s by end of first orbit.
 **Critical:** Track `eps.bat_soc` (0x0101) throughout --- if SoC drops below 15% at any point,
-immediately execute PROC-EMG-003 Step 1 (minimum survival load shed).
+immediately execute EMG-002 Step 1 (minimum survival load shed).
 **GO/NO-GO:** Rates trending downward on all three axes.
 
 ### Step 5 --- Monitor Rate Reduction (Orbit 2)
@@ -84,12 +84,12 @@ continue detumble for one additional orbit before proceeding.
 **Verify:** `eps.sa_a_current` (0x0103) and `eps.sa_b_current` (0x0104) both > 0.5A (both arrays illuminated).
 **TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 1) --- confirm full EPS state.
 **Duration:** Maintain SAFE_POINT for minimum 2 orbits before any recovery actions.
-**GO/NO-GO:** Power-positive state confirmed. Proceed to PROC-EMG-004 for staged recovery to nominal.
+**GO/NO-GO:** Power-positive state confirmed. Proceed to EMG-001 for staged recovery to nominal.
 
 ## Timing Constraints
 | Condition | Threshold | Action |
 |---|---|---|
-| Battery SoC during tumble | < 15% | Execute PROC-EMG-003 in parallel |
+| Battery SoC during tumble | < 15% | Execute EMG-002 in parallel |
 | Eclipse entry while rates > 1 deg/s | ~35 min to depletion | Priority: reduce rate before eclipse |
 | Detumble not converging (rates constant after 2 orbits) | ~190 min | Investigate magnetorquer failure, consider wheel-based backup |
 | Sun acquisition timeout | > 20 min at att_error > 10 deg | Re-command SAFE_POINT, check sun sensor data |
@@ -108,4 +108,4 @@ continue detumble for one additional orbit before proceeding.
 - [ ] `eps.bat_soc` (0x0101) > 20% and trending upward
 - [ ] Reaction wheel status assessed --- minimum 3 of 4 operational
 - [ ] Root cause of attitude loss under investigation
-- [ ] Transition to PROC-EMG-004 for staged recovery to nominal operations
+- [ ] Transition to EMG-001 for staged recovery to nominal operations

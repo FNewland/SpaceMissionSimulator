@@ -1,4 +1,4 @@
-# PROC-OBC-OFF-002: CAN Bus Failure Switchover
+# CTG-017: Bus Failure Switchover
 
 **Category:** Contingency
 **Position Lead:** FDIR / Systems
@@ -129,7 +129,7 @@ Any failure of the remaining bus is mission-critical.
   interface has failed independently.
 - If OBC does not respond to the bus select command: The OBC may be in a degraded state.
   Attempt `OBC_REBOOT` (func_id 42) as a last resort. If OBC is unresponsive, follow
-  PROC-OBC-OFF-003 (OBC Redundancy Switchover).
+  CTG-011 (OBC Redundancy Switchover).
 - If a subsystem mode changed during switchover (e.g., AOCS went to safe mode): The
   brief bus interruption may have triggered a subsystem-level timeout. Restore the
   affected subsystem to its pre-switchover mode after verifying bus stability.

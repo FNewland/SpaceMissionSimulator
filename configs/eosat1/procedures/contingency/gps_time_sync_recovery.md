@@ -1,4 +1,4 @@
-# PROC-CON-011: GPS Time Synchronisation and AOCS Recovery
+# CTG-027: GPS Time Synchronisation and AOCS Recovery
 
 **Category:** Contingency
 **Position Lead:** OBDH
@@ -165,4 +165,4 @@ Reference: LEOP-004, Phase 11 — Fine Attitude Lock and Payload Commissioning.
 ## References
 - LEOP-004: AOCS Commissioning Walkthrough, Phase 9 (Initial Rate Damping) and Phase 11 (Fine Attitude Lock)
 - Data dictionary for GPS receiver, OBDH, and AOCS subsystems
-- PROC-EMG-002: AOCS Safe Mode Recovery (if AOCS re-commissioning fails)
+- EMG-005: AOCS Safe Mode Recovery (if AOCS re-commissioning fails)

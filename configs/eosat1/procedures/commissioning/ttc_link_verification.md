@@ -1,4 +1,4 @@
-# COM-004: TT&C Link Budget Verification
+# COM-006: TTC Link Verification
 **Subsystem:** TT&C
 **Phase:** COMMISSIONING
 **Revision:** 1.0

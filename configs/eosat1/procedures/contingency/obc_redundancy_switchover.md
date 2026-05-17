@@ -1,4 +1,4 @@
-# PROC-OBC-OFF-003: OBC Redundancy Switchover
+# CTG-011: OBC Redundancy Switchover
 
 **Category:** Contingency
 **Position Lead:** FDIR / Systems
@@ -143,12 +143,12 @@ OBC redundancy. Any failure of OBC-B is mission-critical.
   be in a boot loop. Try `OBC_BOOT_INHIBIT(inhibit=1)` (func_id 46) to stop
   auto-boot cycling, then `OBC_BOOT_APP` manually.
 - If `obdh.sw_image` remains 0 (stuck in bootloader): Application image may be corrupt.
-  Follow PROC-OBC-OFF-001 (Boot Loader Recovery) for memory check and recovery.
+  Follow CTG-018 (Boot Loader Recovery) for memory check and recovery.
 - If OBC-B boots but immediately enters repeated reboots: Command `OBC_BOOT_INHIBIT
   (inhibit=1)` to stay in bootloader. Investigate from bootloader. May need to upload
   fresh application image via `MEM_LOAD`.
 - If subsystems do not resume HK after OBC-B boots: CAN bus may also be affected.
-  Follow PROC-OBC-OFF-002 (CAN Bus Failure Switchover) to check and switch bus.
+  Follow CTG-017 (CAN Bus Failure Switchover) to check and switch bus.
 - If it is not possible to switch to OBC-B (command rejected or `obc_b_status` = 0):
   OBC-B may not be in STANDBY or may have a hardware fault. Attempt to recover OBC-A
   using `OBC_REBOOT` (func_id 42). If OBC-A also cannot recover, this is a

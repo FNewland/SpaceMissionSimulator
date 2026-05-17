@@ -1,4 +1,4 @@
-# CON-007: Reaction Wheel Bearing/Speed Anomaly Recovery
+# CTG-007: Reaction Wheel Anomaly
 **Subsystem:** AOCS
 **Phase:** CONTINGENCY
 **Revision:** 1.0
@@ -16,7 +16,7 @@ plan for potential wheel recovery.
 - [ ] AOCS telemetry (SID 2) is being received at >= 1 Hz
 - [ ] At least three reaction wheels are confirmed functional prior to anomaly
 - [ ] Flight Dynamics has current momentum state estimate
-- [ ] Procedure CON-001 (AOCS Anomaly Recovery) has been reviewed for escalation paths
+- [ ] Procedure CTG-002 (AOCS Anomaly Recovery) has been reviewed for escalation paths
 
 ## Procedure Steps
 
@@ -28,7 +28,7 @@ plan for potential wheel recovery.
 **Verify:** `aocs.rw4_speed` (0x020A) — record value and rate of change
 **Verify:** `aocs.rw1_temp` (0x0218), `aocs.rw2_temp` (0x0219), `aocs.rw3_temp` (0x021A), `aocs.rw4_temp` (0x021B)
 **Action:** Flag any wheel with: speed oscillation > +/-500 rpm/10s, speed > 6500 rpm, or temp > 60 deg-C
-**GO/NO-GO:** Exactly one wheel is anomalous — proceed. If multiple wheels anomalous, escalate to CON-001 Step 7.
+**GO/NO-GO:** Exactly one wheel is anomalous — proceed. If multiple wheels anomalous, escalate to CTG-002 Step 7.
 
 ### Step 2 — Disable the Anomalous Wheel
 **TC:** `AOCS_DISABLE_WHEEL(wheel_idx=N)` (Service 8, Subtype 1, func_id 2)
@@ -75,7 +75,7 @@ plan for potential wheel recovery.
 **GO/NO-GO:** If recovery successful, restore four-wheel config via `SET_PARAM(param_id=aocs.wheel_config, value=4)`. If recovery fails, maintain three-wheel ops.
 
 ## Off-Nominal Handling
-- If a second wheel fails during this procedure: Command `AOCS_SET_MODE(mode=2)` for DETUMBLE immediately and execute CON-001 Step 7
+- If a second wheel fails during this procedure: Command `AOCS_SET_MODE(mode=2)` for DETUMBLE immediately and execute CTG-002 Step 7
 - If attitude error exceeds 10 deg during wheel disable: Command `AOCS_SET_MODE(mode=2)` for DETUMBLE until rates stabilise
 - If desaturation is ineffective (wheels still > 4000 rpm): Plan extended magnetic torquer desaturation over next 3 orbits
 - If three-wheel pointing error exceeds 3 deg: Reduce payload imaging requirements and notify mission planning

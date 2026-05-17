@@ -1,4 +1,4 @@
-# PROC-NOM-002: Imaging Session Execution
+# NOM-002: Imaging Session
 **Subsystem:** PAYLOAD / AOCS / TCS
 **Phase:** NOMINAL
 **Revision:** 1.0
@@ -11,7 +11,7 @@ payload to STANDBY upon completion. Fine pointing performance and focal plane
 thermal conditions must be confirmed before imaging begins.
 
 ## Prerequisites
-- [ ] PROC-NOM-001 Pass Startup completed with all-GO declaration
+- [ ] NOM-001 Pass Startup completed with all-GO declaration
 - [ ] Payload in STANDBY mode (`payload.mode` (0x0600) = 1)
 - [ ] Target scene parameters uploaded to onboard scheduler
 - [ ] AOCS in NADIR_POINT mode (`aocs.mode` (0x020F) = 0)
@@ -42,7 +42,7 @@ temperature is not decreasing, check cooler status and abort if necessary.
 **Verify:** `payload.store_used` (0x0604) < 90 % within 5 s
 **Note:** Record current `payload.image_count` (0x0605) as baseline value N0.
 **GO/NO-GO:** If storage >= 90 %, abort imaging. Schedule data downlink first
-(PROC-NOM-003) to free storage before retrying.
+(NOM-003) to free storage before retrying.
 
 ### Step 4 --- Command Imaging Mode
 **TC:** `PAYLOAD_SET_MODE` mode=2 (Service 8, Subtype 1) --- command IMAGING

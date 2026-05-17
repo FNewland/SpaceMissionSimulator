@@ -1,4 +1,4 @@
-# CON-021: ADCS Sensor Failure Detection and Recovery
+# CTG-025: AOCS Sensor Loss Recovery
 **Subsystem:** AOCS
 **Phase:** CONTINGENCY
 **Revision:** 1.0
@@ -23,8 +23,8 @@ must be evaluated after each recovery action.
 - [ ] TT&C link active — `ttc.link_status` (0x0501) = 1
 - [ ] Flight Director notified of attitude sensor anomaly
 - [ ] Spacecraft bus power is nominal — `eps.bus_voltage` (0x0105) > 27.0 V
-- [ ] Procedure CON-002 (AOCS Anomaly Recovery) has been reviewed for escalation paths
-- [ ] Procedure CON-008 (Star Tracker Failure) has been reviewed for ST-specific steps
+- [ ] Procedure CTG-005 (AOCS Anomaly Recovery) has been reviewed for escalation paths
+- [ ] Procedure CTG-009 (Star Tracker Failure) has been reviewed for ST-specific steps
 
 ## Required Telemetry
 | Parameter | ID | Expected Value |
@@ -251,7 +251,7 @@ NOMINAL, notify Flight Director and mission planning of reduced capability.
   acquire sun vector if heads are functional. Command `AOCS_SET_MODE(mode=2)` in
   advance so DETUMBLE engages automatically when mag data returns.
 - If attitude error exceeds 10 deg during sensor switching: FDIR may trigger
-  autonomous safe mode. Allow safe mode entry, then recover using CON-002
+  autonomous safe mode. Allow safe mode entry, then recover using CTG-005
   (AOCS Anomaly Recovery).
 - If power budget does not support redundant sensor power-on: Check
   `eps.bat_soc` (0x0101). If < 40%, do not power both star trackers simultaneously.

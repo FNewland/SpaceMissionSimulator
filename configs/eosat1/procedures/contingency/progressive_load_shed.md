@@ -1,4 +1,4 @@
-# CON-019: Progressive Load Shedding During Extended Eclipse
+# CTG-023: Progressive Load Shed
 **Subsystem:** EPS
 **Phase:** CONTINGENCY
 **Revision:** 1.0
@@ -12,7 +12,7 @@ battery life and prevent deep discharge damage. Once eclipse ends and battery be
 recovering, loads are restored in reverse priority order with stability verification
 at each step.
 
-This procedure differs from CON-001 (Undervoltage Load Shed) in that it is triggered
+This procedure differs from CTG-002 (Undervoltage Load Shed) in that it is triggered
 by declining SoC rather than a voltage threshold, and includes explicit GO/NO-GO
 checkpoints at each shedding level to allow the Flight Director to make informed
 decisions about the pace and depth of load shedding.
@@ -215,7 +215,7 @@ threshold + 10% margin.
   or manoeuvre error.
 - If power does not recover after eclipse exit: Suspect solar array failure. Check
   per-panel currents `eps.sa_px_current` (0x012B) through `eps.sa_mz_current`
-  (0x0130). If all near zero, escalate to CON-008 (Solar Array Degradation Response).
+  (0x0130). If all near zero, escalate to CTG-009 (Solar Array Degradation Response).
 - If loads cannot be restored without SoC declining again: The spacecraft may be
   in a persistent negative power budget. Reduce operational duty cycle, disable
   payload imaging, and operate in power-conservation mode. Coordinate with mission

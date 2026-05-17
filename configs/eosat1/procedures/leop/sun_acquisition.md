@@ -1,4 +1,4 @@
-# LEOP-004: Sun Acquisition & Rate Damping
+# LEOP-005: Sun Acquisition
 **Subsystem:** AOCS
 **Phase:** LEOP
 **Revision:** 1.0

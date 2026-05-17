@@ -1,4 +1,4 @@
-# PROC-EPS-OFF-002: Undervoltage Load Shedding
+# CTG-001: Under-Voltage Load Shed
 
 **Category:** Contingency
 **Position Lead:** Power & Thermal (EPS/TCS)

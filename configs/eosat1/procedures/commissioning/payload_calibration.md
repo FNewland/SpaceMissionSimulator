@@ -1,4 +1,4 @@
-# COM-104: Payload Radiometric Calibration
+# COM-011: Payload Calibration
 **Subsystem:** Payload
 **Phase:** COMMISSIONING
 **Revision:** 1.0

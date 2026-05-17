@@ -1,4 +1,4 @@
-# COM-006: Reaction Wheel Commissioning
+# COM-004: AOCS Actuator Checkout
 **Subsystem:** AOCS
 **Phase:** COMMISSIONING
 **Revision:** 1.0

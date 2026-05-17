@@ -1,4 +1,4 @@
-# CON-002: EPS Safe Mode Recovery
+# CTG-005: EPS Safe Mode
 **Subsystem:** EPS
 **Phase:** CONTINGENCY
 **Revision:** 1.0
@@ -44,7 +44,7 @@ above 40% SoC.
 **Verify:** `eps.sa_a_current` (0x0103) — record value (expected > 0.5A in sunlight)
 **Verify:** `eps.sa_b_current` (0x0104) — record value (expected > 0.5A in sunlight)
 **Verify:** `eps.power_gen` (0x0107) — record value (expected > 25W in sunlight, > 45W at optimal incidence)
-**GO/NO-GO:** If both SA currents are < 0.2A during confirmed sunlit phase, suspect array failure — escalate to CON-008. Otherwise proceed.
+**GO/NO-GO:** If both SA currents are < 0.2A during confirmed sunlit phase, suspect array failure — escalate to CTG-009. Otherwise proceed.
 
 ### Step 5 — Monitor Battery Recovery During Sunlit Phase
 **TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 25) — repeat every 60s
@@ -76,7 +76,7 @@ above 40% SoC.
 ## Off-Nominal Handling
 - If SoC drops below 10% at any step: Command `OBC_SET_MODE(mode=2)` for EMERGENCY, execute EMG-002
 - If battery temperature exceeds 45 deg-C during charge: Command `HEATER_CONTROL(circuit=battery, on=false)` and reduce charge rate via `SET_PARAM(param_id=eps.charge_limit, value=0.5)`
-- If solar array output remains < 0.2A for full sunlit pass: Execute CON-008 (Solar Array Degradation)
+- If solar array output remains < 0.2A for full sunlit pass: Execute CTG-009 (Solar Array Degradation)
 - If bus voltage drops below 25.0V: Execute EMG-002 immediately
 
 ## Post-Conditions
