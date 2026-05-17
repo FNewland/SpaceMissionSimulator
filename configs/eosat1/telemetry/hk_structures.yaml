@@ -274,7 +274,7 @@ structures:
 
   - sid: 11
     name: Beacon
-    interval_s: 30.0
+    interval_s: 10.0
     # 6 parameters — matches bootloader emission (canonical per SPACECDF_RECONCILE item 8)
     parameters:
       - { param_id: 0x0100, pack_format: H, scale: 100 }    # bat_voltage
