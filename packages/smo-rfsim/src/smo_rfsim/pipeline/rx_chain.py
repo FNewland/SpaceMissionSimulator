@@ -149,6 +149,14 @@ class GroundStationRX(threading.Thread):
             if not recovered_bytes:
                 continue
 
+            # Log demod output periodically for diagnostics
+            self._demod_byte_count = getattr(self, '_demod_byte_count', 0) + len(recovered_bytes)
+            if self._demod_byte_count % 10000 < len(recovered_bytes):
+                logger.info("RX demod: %d total bytes, carrier=%s, frame_sync=%s",
+                            self._demod_byte_count,
+                            self._demod.carrier_locked,
+                            self._frame_sync.state.value)
+
             # 2. Feed into frame synchronizer (ASM correlation on recovered bytes)
             raw_frames = self._frame_sync.feed(recovered_bytes)
 

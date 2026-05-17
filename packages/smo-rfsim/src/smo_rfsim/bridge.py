@@ -241,6 +241,8 @@ class RFSimBridge:
                     logger.warning("Spacecraft TM connection lost")
                     break
 
+                logger.info("Relay: received %d-byte TM packet from sim", len(packet))
+
                 if self.mode == RFSimMode.PACKET:
                     await self._broadcast_tm(packet)
                 elif self.mode == RFSimMode.RF and self._pipeline:
@@ -295,16 +297,28 @@ class RFSimBridge:
         of get_recovered_packet(). Falls back to the blocking get when
         the queue is empty so we don't spin.
         """
+        _relay_loops = 0
         while self._running:
+            _relay_loops += 1
+            if _relay_loops % 100 == 1:
+                logger.info("Relay loop #%d, queue=%d, rx_good=%d, rx_recovered=%d",
+                            _relay_loops,
+                            self._pipeline._recovered_queue.qsize(),
+                            self._pipeline._rx.good_frames,
+                            self._pipeline._rx.packets_recovered)
             # Batch drain: grab everything available without blocking
             batch = self._pipeline.drain_recovered_packets()
             if batch:
+                logger.info("Relay: forwarding %d recovered packets to %d MCS clients",
+                            len(batch), len(self._mcs_clients_tm))
                 for packet in batch:
                     await self._broadcast_tm(packet)
             else:
                 # Queue empty — wait for next packet (blocking, avoids spin)
                 packet = await self._pipeline.get_recovered_packet()
                 if packet is not None:
+                    logger.debug("Relay: forwarding 1 recovered packet to %d MCS clients",
+                                 len(self._mcs_clients_tm))
                     await self._broadcast_tm(packet)
 
     async def _process_tm_frame_mode(self, packet: bytes):

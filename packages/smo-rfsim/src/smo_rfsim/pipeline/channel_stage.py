@@ -114,6 +114,7 @@ class ChannelStage(threading.Thread):
             if self._link_active:
                 impaired = self._channel.process(samples)
             else:
+                logger.debug("Channel: link not active, replacing %d samples with noise", len(samples))
                 n = len(samples)
                 noise = (self._rng.normal(0, 0.3, n) +
                          1j * self._rng.normal(0, 0.3, n)).astype(np.complex64)

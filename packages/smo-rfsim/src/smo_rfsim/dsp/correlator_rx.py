@@ -155,15 +155,22 @@ class CorrelatorRX:
             corrected = raw_symbols[k] * np.exp(-1j * self._phase)
             symbols[k] = corrected
             # Phase error detector (modulation-dependent)
+            # Use atan2-based detectors for robust convergence at all
+            # initial phase offsets. The classic sign(I)*Q detector has
+            # zero-crossings at ±90° where the PLL stalls.
             if self._modulation in (0, ):  # BPSK
-                phase_err = corrected.imag * np.sign(corrected.real)
+                # Squared BPSK: raises signal to 2nd power to remove
+                # modulation, then extract phase error. Converges from
+                # any initial phase offset (no zero-crossing stall).
+                sq = corrected ** 2
+                phase_err = 0.5 * math.atan2(sq.imag, sq.real)
             elif self._modulation in (1, 3):  # QPSK / OQPSK
-                phase_err = (np.sign(corrected.real) * corrected.imag
-                             - np.sign(corrected.imag) * corrected.real)
-            else:  # 8PSK — decision-directed
-                angle = np.angle(corrected)
-                nearest = round(angle / (math.pi / 4)) * (math.pi / 4)
-                phase_err = angle - nearest
+                # 4th power for QPSK
+                sq = corrected ** 4
+                phase_err = 0.25 * math.atan2(sq.imag, sq.real)
+            else:  # 8PSK — M-th power
+                sq = corrected ** 8
+                phase_err = 0.125 * math.atan2(sq.imag, sq.real)
             # 2nd order loop update
             self._freq += self._beta * phase_err
             self._phase += self._freq + self._alpha * phase_err
