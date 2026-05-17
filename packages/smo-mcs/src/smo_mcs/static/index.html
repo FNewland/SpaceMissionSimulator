@@ -3808,6 +3808,23 @@ function updateUI() {
   updateEclipseCountdown();
   updateLoadShedIndicator();
   updateContingencyBanner();
+  updateStorageStatus();
+}
+
+function updateStorageStatus() {
+  // Update S15 store counts from state broadcast (populated by S15.14 responses)
+  const stores = state.storage_status;
+  if (!stores || !Array.isArray(stores)) return;
+  for (const s of stores) {
+    const countEl = document.getElementById('s15-count-' + s.id);
+    const fillEl = document.getElementById('s15-fill-' + s.id);
+    if (countEl) countEl.textContent = s.count;
+    if (fillEl && s.capacity > 0) {
+      const pct = Math.min(100, (s.count / s.capacity) * 100);
+      fillEl.style.width = pct + '%';
+      fillEl.className = 'gauge-fill ' + (pct > 90 ? 'crit' : pct > 70 ? 'warn' : 'nom');
+    }
+  }
 }
 
 // ===== OVERVIEW TAB =====
@@ -5106,6 +5123,8 @@ function loadMemoryMap() {
 
 // --- S15 Storage ---
 function s15GetStatus() { sendPusCmd(15, 13, '', 'S15_STATUS'); }
+// Auto-refresh S15 status every 10 seconds
+setInterval(() => { if (wsConnected) s15GetStatus(); }, 10000);
 function s15Enable(id) { sendPusCmd(15, 1, ('0' + id.toString(16)).slice(-2), `S15_ENABLE_${id}`); }
 function s15Disable(id) { sendPusCmd(15, 2, ('0' + id.toString(16)).slice(-2), `S15_DISABLE_${id}`); }
 function s15Dump(id) { sendPusCmd(15, 9, ('0' + id.toString(16)).slice(-2), `S15_DUMP_${id}`); }
