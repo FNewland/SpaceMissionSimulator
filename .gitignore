@@ -25,6 +25,7 @@ Thumbs.db
 # SMO workspace (runtime data)
 workspace/dumps/
 workspace/logs/
+workspace/breakpoints/
 workspace/*.json
 
 # Offline wheel cache (build locally, don't commit)

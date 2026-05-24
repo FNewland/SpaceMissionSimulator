@@ -2001,6 +2001,28 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
     addLogEntry('info', 'BRKPT', `Saved: "${name}" at tick ${bp.tick}`);
     showToast(`Breakpoint "${name}" saved`, 'success');
     renderBreakpoints();
+    // The save is processed by the engine on its next tick; re-sync the list
+    // from the engine store shortly after so it reflects server truth.
+    setTimeout(refreshBreakpoints, 1200);
+  }
+
+  // Pull the list of breakpoints the engine actually holds (defect #10) so the
+  // LOAD buttons are present on page load — not just after a same-session save —
+  // and survive reloads.
+  async function refreshBreakpoints() {
+    try {
+      const resp = await fetch('/api/breakpoints');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (Array.isArray(data)) {
+        breakpoints = data.map(b => ({
+          name: b.name,
+          tick: b.tick != null ? b.tick : (b.tick_count != null ? b.tick_count : 0),
+          time: b.sim_time || null,
+        }));
+        renderBreakpoints();
+      }
+    } catch (e) { /* endpoint unavailable — keep client-side list */ }
   }
 
   function renderBreakpoints() {
@@ -2325,6 +2347,9 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
     $('breakpoint-name').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') saveBreakpoint();
     });
+    // Populate the breakpoint list (with LOAD buttons) from the engine store
+    // on load, so previously-saved breakpoints are loadable after a reload.
+    refreshBreakpoints();
 
     // Clear log
     $('clear-log').addEventListener('click', () => {

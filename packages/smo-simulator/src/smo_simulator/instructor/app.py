@@ -25,6 +25,7 @@ def create_instructor_app(engine) -> web.Application:
     app.router.add_post("/api/command", handle_command)
     app.router.add_get("/api/scenarios", handle_scenarios)
     app.router.add_get("/api/failures", handle_failures)
+    app.router.add_get("/api/breakpoints", handle_breakpoint_list)
     app.router.add_post("/api/breakpoint/save", handle_breakpoint_save)
     app.router.add_post("/api/breakpoint/load", handle_breakpoint_load)
 
@@ -125,6 +126,24 @@ async def handle_scenarios(request):
 async def handle_failures(request):
     engine = request.app["engine"]
     return web.json_response(engine._failure_manager.active_failures())
+
+
+async def handle_breakpoint_list(request):
+    """List the breakpoints the engine currently holds (defect #10).
+
+    Lets the instructor UI render LOAD buttons for breakpoints saved earlier,
+    including across page reloads, rather than only for same-session saves.
+    """
+    engine = request.app["engine"]
+    store = getattr(engine, "_breakpoints", {}) or {}
+    out = []
+    for name, state in store.items():
+        out.append({
+            "name": name,
+            "tick": (state or {}).get("tick_count"),
+            "sim_time": (state or {}).get("sim_time"),
+        })
+    return web.json_response(out)
 
 
 async def handle_breakpoint_save(request):
