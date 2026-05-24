@@ -225,7 +225,9 @@ class SimulationEngine:
 
         # Named state breakpoints (snapshot store for instructor save/load).
         # Maps breakpoint name -> full state dict captured by BreakpointManager.
+        # Persisted to disk (workspace/breakpoints/) so they survive a sim restart.
         self._breakpoints: dict[str, dict] = {}
+        self._load_persisted_breakpoints()
 
         # Scenario engine (defect #9): instantiate and load YAML scenarios so the
         # instructor UI's scenario list / start / stop are actually functional.
@@ -1760,13 +1762,51 @@ class SimulationEngine:
             # went unnoticed. Log loudly instead so future drift is obvious.
             logger.warning("Unknown instructor command type: %r (cmd=%r)", t, cmd)
 
+    # Directory where breakpoint snapshots are persisted (relative to the sim's
+    # working dir, alongside workspace/dumps/). Survives restarts.
+    _BREAKPOINT_DIR = Path("workspace/breakpoints")
+
+    @staticmethod
+    def _safe_breakpoint_filename(name: str) -> str:
+        """Sanitise a breakpoint name into a safe .json filename."""
+        safe = "".join(c if (c.isalnum() or c in "-_.") else "_" for c in name)
+        return (safe or "breakpoint") + ".json"
+
+    def _load_persisted_breakpoints(self) -> None:
+        """Load breakpoint snapshots saved to disk in a previous run (defect #10)."""
+        import json
+        try:
+            if not self._BREAKPOINT_DIR.exists():
+                return
+            for path in sorted(self._BREAKPOINT_DIR.glob("*.json")):
+                try:
+                    with open(path) as f:
+                        state = json.load(f)
+                    name = state.get("name") or path.stem
+                    self._breakpoints[name] = state
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("Could not load persisted breakpoint %s: %s", path, e)
+            if self._breakpoints:
+                logger.info("Loaded %d persisted breakpoint(s) from %s",
+                            len(self._breakpoints), self._BREAKPOINT_DIR)
+        except Exception as e:  # noqa: BLE001 — never let this block startup
+            logger.warning("Persisted-breakpoint load skipped: %s", e)
+
     def _handle_save_breakpoint(self, cmd: dict) -> None:
-        """Capture a full state snapshot and store it under its name (defect #10)."""
+        """Capture a full state snapshot, store it by name, and persist to disk (defect #10)."""
         from smo_simulator.breakpoints import BreakpointManager
         name = cmd.get('name') or ''
         try:
-            state = BreakpointManager(self).save(name=name)
+            # Persist to disk so the breakpoint survives a sim restart; save()
+            # writes the JSON file when given a path and also returns the state.
+            path = self._BREAKPOINT_DIR / self._safe_breakpoint_filename(name) if name \
+                else None
+            state = BreakpointManager(self).save(name=name, path=path)
             self._breakpoints[state['name']] = state
+            # If the name was empty, save() generated one — persist under it now.
+            if path is None:
+                gen_path = self._BREAKPOINT_DIR / self._safe_breakpoint_filename(state['name'])
+                BreakpointManager(self).save(name=state['name'], path=gen_path)
             logger.info("Breakpoint saved: %s (tick=%s)", state['name'],
                         state.get('tick_count'))
         except Exception as e:  # noqa: BLE001 — never let a bad snapshot kill the loop
