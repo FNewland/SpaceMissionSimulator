@@ -93,6 +93,11 @@ structures:
       - { param_id: 0x0251, pack_format: H, scale: 1000 }
       - { param_id: 0x0252, pack_format: H, scale: 1000 }
       - { param_id: 0x0253, pack_format: H, scale: 1000 }
+      # RW temperatures (defect #24 — needed to observe bearing-seizure heating)
+      - { param_id: 0x0218, pack_format: h, scale: 100 }
+      - { param_id: 0x0219, pack_format: h, scale: 100 }
+      - { param_id: 0x021A, pack_format: h, scale: 100 }
+      - { param_id: 0x021B, pack_format: h, scale: 100 }
       # RW enabled flags
       - { param_id: 0x0254, pack_format: B, scale: 1 }
       - { param_id: 0x0255, pack_format: B, scale: 1 }

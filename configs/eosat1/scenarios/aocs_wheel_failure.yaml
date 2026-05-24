@@ -10,7 +10,7 @@ events:
     action: inject
     params:
       subsystem: aocs
-      failure: wheel_failure
+      failure: rw_seizure
       magnitude: 1.0
       onset: gradual
       onset_duration_s: 60

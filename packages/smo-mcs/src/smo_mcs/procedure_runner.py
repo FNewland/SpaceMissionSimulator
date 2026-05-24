@@ -253,6 +253,33 @@ class ProcedureRunner:
 
     async def _execute_step(self, idx: int, step: dict) -> bool:
         """Execute a single step. Returns True on success."""
+        # Defect #14: the Procedure Builder emits `type`-tagged steps
+        # ('wait'/'tlm_check'/'go_nogo'/'command'). Translate them to the
+        # runner's native handling so builder-authored procedures actually run
+        # (previously every builder step hit the "unknown" branch and was
+        # silently counted as PASSED).
+        step_type = step.get("type")
+        if step_type == "wait":
+            wait_s = float(step.get("seconds", step.get("wait_s", 0)))
+            self._log("Wait", f"{wait_s}s")
+            await asyncio.sleep(wait_s)
+            return True
+        if step_type == "go_nogo":
+            # Manual go/no-go gate. In an automated run we log and proceed; in
+            # step-by-step mode the runner already pauses between steps so the
+            # operator makes the call.
+            self._log("GO/NO-GO", step.get("label", "operator decision"))
+            return True
+        if step_type == "tlm_check":
+            return await self._wait_for_condition({
+                "parameter": step.get("parameter"),
+                "value": step.get("value"),
+                "operator": step.get("condition", "=="),
+                "timeout_s": step.get("timeout_s", 30),
+            })
+        if step_type == "command":
+            return await self._execute_command(idx, step)
+
         # Timed wait step
         if "wait_s" in step:
             wait_s = float(step["wait_s"])
@@ -268,9 +295,10 @@ class ProcedureRunner:
         if "service" in step:
             return await self._execute_command(idx, step)
 
-        # Unknown step type — skip
-        self._log("Unknown step type", str(step))
-        return True
+        # Defect #14: fail closed on an unrecognised step rather than reporting a
+        # false PASS — a procedure that can't run a step must not look successful.
+        self._log("Unknown step type — failing step", str(step))
+        return False
 
     async def _execute_command(self, idx: int, step: dict) -> bool:
         """Send a PUS command and optionally verify."""
@@ -305,8 +333,9 @@ class ProcedureRunner:
         """Poll telemetry until condition met or timeout."""
         param = condition.get("parameter", "")
         expected = condition.get("value")
+        operator = condition.get("operator", "==")
         timeout_s = float(condition.get("timeout_s", 30))
-        self._log("Wait for condition", f"{param} == {expected} (timeout {timeout_s}s)")
+        self._log("Wait for condition", f"{param} {operator} {expected} (timeout {timeout_s}s)")
 
         deadline = time.monotonic() + timeout_s
         poll_interval = 1.0
@@ -316,15 +345,41 @@ class ProcedureRunner:
                 return False
 
             current = self._get_tm(param)
-            if current is not None and self._values_match(current, expected):
+            if current is not None and self._compare(current, operator, expected):
                 self._log("Condition met", f"{param} = {current}")
                 return True
 
             await asyncio.sleep(poll_interval)
 
-        self._log("Condition timeout", f"{param} != {expected} after {timeout_s}s")
+        self._log("Condition timeout", f"{param} {operator} {expected} after {timeout_s}s")
         self.step_results[self.current_step]["result"] = int(StepResult.TIMEOUT)
         return False
+
+    @classmethod
+    def _compare(cls, actual: Any, operator: str, expected: Any) -> bool:
+        """Compare telemetry against an expected value with an operator.
+
+        Defect #14: the Procedure Builder's tlm_check steps carry a comparison
+        operator (>, <, >=, <=, !=, ==); previously only equality was supported.
+        """
+        op = (operator or "==").strip()
+        if op in ("==", "=", "eq"):
+            return cls._values_match(actual, expected)
+        if op in ("!=", "ne"):
+            return not cls._values_match(actual, expected)
+        try:
+            a, e = float(actual), float(expected)
+        except (TypeError, ValueError):
+            return False
+        if op in (">", "gt"):
+            return a > e
+        if op in ("<", "lt"):
+            return a < e
+        if op in (">=", "ge"):
+            return a >= e
+        if op in ("<=", "le"):
+            return a <= e
+        return cls._values_match(actual, expected)
 
     @staticmethod
     def _values_match(actual: Any, expected: Any) -> bool:

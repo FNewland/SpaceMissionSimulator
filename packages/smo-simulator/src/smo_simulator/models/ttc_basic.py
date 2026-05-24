@@ -290,7 +290,12 @@ class TTCBasicModel(SubsystemModel):
             s.range_km = orbit_state.gs_range_km
 
         # ── Lock acquisition sequence ──
-        if in_contact and s.range_km > 0:
+        # Defect #28: while the uplink is lost, hold the link unlocked so the
+        # downlink (which gates on frame_sync below) actually goes quiet — this
+        # is what produces the "no telemetry at AOS" symptom the scenario teaches.
+        # Previously uplink_lost only suppressed the command-RX counter, so the
+        # link re-locked on the next tick and telemetry kept flowing.
+        if in_contact and s.range_km > 0 and not s.uplink_lost:
             if not self._was_in_contact:
                 # AOS: reset lock sequence
                 s._lock_timer = 0.0
@@ -675,10 +680,10 @@ class TTCBasicModel(SubsystemModel):
                 "TTC event 0x%04X (%s): %s",
                 evt['event_id'], evt['severity'], evt['description']
             )
-            # Also queue to engine if available
+            # Also queue to engine if available (defect #23)
             if hasattr(self, '_engine') and self._engine:
                 try:
-                    self._engine.event_queue.put_nowait({
+                    self._engine._model_event_queue.put_nowait({
                         'event_id': evt['event_id'],
                         'severity': evt['severity'],
                         'subsystem': 'ttc',

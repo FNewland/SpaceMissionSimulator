@@ -435,9 +435,16 @@ class PlannerServer:
             return web.json_response({"error": str(e)}, status=400)
 
     async def _handle_validate_schedule(self, request):
-        """Validate the schedule for conflicts and constraint violations."""
-        contacts = self._contacts_cache if self._contacts_cache else None
-        issues = self._scheduler.validate_schedule(contacts)
+        """Validate the schedule for conflicts and constraint violations.
+
+        Defect #15: now runs the comprehensive ``validate_pass_plan`` check (time
+        overlaps, pass-boundary violations, pre-conditions, name conflicts) rather
+        than the name-conflict-only ``validate_schedule``. Pre-conditions are
+        skipped when no live telemetry is available (the planner has no telemetry
+        client), so they are reported as unevaluated rather than falsely passing.
+        """
+        contacts = self._contacts_cache if self._contacts_cache else []
+        issues = self._scheduler.validate_pass_plan(contacts, telemetry=None)
         return web.json_response({
             "valid": len(issues) == 0,
             "issues": issues,

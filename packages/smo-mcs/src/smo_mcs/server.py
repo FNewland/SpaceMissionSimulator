@@ -1945,7 +1945,9 @@ class MCSServer:
 
     async def _handle_procedure_status_display(self, request):
         """GET /api/displays/procedure-status — Procedure execution status."""
-        proc_status = self._procedure_runner.get_status()
+        # Defect #13: ProcedureRunner exposes status() (get_status() never existed),
+        # so this route raised AttributeError (HTTP 500) for any caller.
+        proc_status = self._procedure_runner.status()
         if proc_status:
             self._procedure_status_panel.set_executing_procedure(proc_status)
         return web.json_response(self._procedure_status_panel.get_display_data())

@@ -86,8 +86,9 @@ async def handle_command(request):
         # List of allowed instructor-only command types
         allowed_types = {
             "set_speed", "freeze", "resume", "inject", "clear_failure",
-            "failure_inject", "failure_clear", "override_passes", "set_phase",
-            "start_scenario", "stop_scenario", "save_breakpoint", "load_breakpoint",
+            "failure_inject", "failure_clear", "failure_clear_all", "override_passes",
+            "set_phase", "start_scenario", "stop_scenario",
+            "save_breakpoint", "load_breakpoint",
         }
 
         # Reject spacecraft telecommands (look like svc/sub/data_hex)

@@ -565,7 +565,7 @@ class PayloadBasicModel(SubsystemModel):
                         0x060C: "STORAGE_CRITICAL", 0x060D: "COMPRESSION_ERROR"
                     }
                     name = event_names.get(evt_id, "UNKNOWN")
-                    self._engine.event_queue.put_nowait({
+                    self._engine._model_event_queue.put_nowait({
                         'event_id': evt_id,
                         'severity': severity,
                         'subsystem': 'payload',

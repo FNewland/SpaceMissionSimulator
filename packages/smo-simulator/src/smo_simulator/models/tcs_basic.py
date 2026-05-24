@@ -105,6 +105,12 @@ class TCSState:
 class TCSBasicModel(SubsystemModel):
     _HEATER_POWER = {"battery": 6.0, "obc": 4.0, "thruster": 8.0}
     _THERMOSTAT = {"battery": (5.0, 1.0), "obc": (10.0, 5.0), "thruster": (8.0, 2.0)}
+    # Circuits with no physical heater on EOSAT-1 (defect #31). The thruster zone
+    # is passive (no heater), so setpoint/auto-mode commands for it can have no
+    # effect and are rejected rather than returning a false success. The battery
+    # (thermostat) and OBC (setpoint readback + manual-override flag, see #11)
+    # circuits both have real effects and are accepted.
+    _NO_HEATER_CIRCUITS = frozenset({"thruster"})
     _TAU = {"panel_px":600,"panel_mx":600,"panel_py":500,"panel_my":500,
             "panel_pz":800,"panel_mz":800,"obc":900,"battery":1200,"fpa":120,"thruster":400}
     _CAP = {"panel_px":5000,"panel_mx":5000,"panel_py":4000,"panel_my":4000,
@@ -344,10 +350,10 @@ class TCSBasicModel(SubsystemModel):
                           "description": f"FPA_THERMAL_NOT_READY: FPA {fpa_temp:.1f}C out of range"})
             s._prev_fpa_ready = False
 
-        # Dispatch all events to the engine
+        # Dispatch all events to the engine (defect #23)
         for event in events:
             try:
-                self._engine.event_queue.put_nowait(event)
+                self._engine._model_event_queue.put_nowait(event)
             except Exception:
                 pass  # Queue full, skip event
 
@@ -396,22 +402,48 @@ class TCSBasicModel(SubsystemModel):
             bat_pwr = 0.0  # Heater appears ON but provides no heat
         s.temp_battery += ((env_int-s.temp_battery)/self._TAU["battery"]+bat_pwr/self._CAP["battery"])*dt+random.gauss(0,0.02)
 
-        # --- OBC temp: manual control only (via EPS power line state) ---
-        # No thermostat — heater state is whatever the operator set via
-        # power_line_on/off commands. Read from EPS power line 6 (htr_obc).
-        s.htr_obc = bool(shared_params.get(0x0116, 0))
+        # --- OBC temp (defect #11) ---
+        # By default the OBC heater follows its EPS power line (line 6, 0x0116).
+        # If the operator has issued a direct heater command (S8 func 41, which
+        # sets htr_obc_manual), honour that commanded state instead of blindly
+        # overwriting it every tick — but the heater can only actually energise
+        # if its EPS line has power. This mirrors the battery-circuit logic and
+        # stops func 41 from reporting success while having no lasting effect.
+        obc_eps_on = bool(shared_params.get(0x0116, 0))
+        if getattr(s, "htr_obc_manual", False):
+            s.htr_obc = bool(s.htr_obc) and obc_eps_on
+        else:
+            s.htr_obc = obc_eps_on
         pwr = self._HEATER_POWER["obc"] if s.htr_obc else 0.0
         if s.htr_obc_open_circuit:
             pwr = 0.0
         s.temp_obc += ((env_int-s.temp_obc)/self._TAU["obc"]+(pwr+s.obc_internal_heat_w)/self._CAP["obc"])*dt+random.gauss(0,0.03)
 
         # --- FPA temp ---
-        cool = (self._fpa_cooler_target - 20.0) if (s.cooler_fpa and not s.cooler_failed) else 0.0
-        s.temp_fpa += (env_int+cool-s.temp_fpa)/self._TAU["fpa"]*dt+random.gauss(0,0.02)
+        if s.decontamination_active:
+            # Defect #31: decontamination bake-out actively heats the FPA toward
+            # its target temperature, overriding the cooler. Previously the
+            # command set a flag the thermal model never read, so the FPA never
+            # warmed and the procedure was untrainable.
+            s.temp_fpa += (s.decontam_fpa_target_c - s.temp_fpa) / self._TAU["fpa"] * dt \
+                + random.gauss(0, 0.02)
+        else:
+            cool = (self._fpa_cooler_target - 20.0) if (s.cooler_fpa and not s.cooler_failed) else 0.0
+            s.temp_fpa += (env_int+cool-s.temp_fpa)/self._TAU["fpa"]*dt+random.gauss(0,0.02)
 
         # --- Thruster temp: passive zone, no active heater (EOSAT-1 has no thrusters) ---
         s.htr_thruster = False  # Always off — no thruster heater on EOSAT-1
         s.temp_thruster += ((env_int-5-s.temp_thruster)/self._TAU["thruster"])*dt+random.gauss(0,0.03)
+
+        # Defect #31: enforce heater duty-cycle limits. If the measured duty for
+        # a circuit has reached its configured limit (<100%), force the heater
+        # off this tick so the duty cannot climb further. Only active when an
+        # operator has actually set a limit below 100%, so nominal behaviour is
+        # unchanged.
+        for circuit in ("battery", "obc", "thruster"):
+            limit = getattr(s, f"htr_{circuit}_duty_limit_pct", 100.0)
+            if limit < 100.0 and getattr(s, f"htr_duty_{circuit}", 0.0) >= limit:
+                setattr(s, f"htr_{circuit}", False)
 
         # Phase 4: Heater duty cycle tracking
         decay = dt / s._duty_window_s
@@ -505,6 +537,11 @@ class TCSBasicModel(SubsystemModel):
                 circuit = circuits[circuit_idx]
             else:
                 circuit = str(circuit_idx)
+            # Defect #31: the thruster zone has no heater, so a setpoint for it can
+            # never take effect — reject honestly instead of a false success.
+            if circuit in self._NO_HEATER_CIRCUITS:
+                return {"success": False,
+                        "message": f"No heater on '{circuit}' circuit — setpoint not applicable"}
             on_temp = cmd.get("on_temp")
             off_temp = cmd.get("off_temp")
             if on_temp is not None and off_temp is not None:
@@ -521,6 +558,11 @@ class TCSBasicModel(SubsystemModel):
                 circuit = circuits[circuit_idx]
             else:
                 circuit = str(circuit_idx)
+            # Defect #31: the thruster zone has no heater. Battery (thermostat) and
+            # OBC (manual-override flag, see #11) both honour auto-mode.
+            if circuit in self._NO_HEATER_CIRCUITS:
+                return {"success": False,
+                        "message": f"No heater on '{circuit}' circuit — auto-mode not applicable"}
             setattr(self._state, f"htr_{circuit}_manual", False)
             return {"success": True}
         elif command == "fpa_cooler":
