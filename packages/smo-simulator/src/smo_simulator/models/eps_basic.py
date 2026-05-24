@@ -524,11 +524,22 @@ class EPSBasicModel(SubsystemModel):
         # ── Event detection: EPS mode changes ──
         if s.eps_mode != s._prev_mode:
             events_to_generate.append((0x0100, f"EPS mode change: {s._prev_mode} -> {s.eps_mode}"))
+            # Defect #27: entering safe/emergency mode must take a real protective
+            # action — shed non-essential loads. Previously eps_mode drove no
+            # physics, so FDIR EPS-safing (and the set_eps_mode command) had no
+            # effect. Turn OFF the least-essential loads (monotonic — never powers
+            # anything on): 2 loads on safe (mode 1), all on emergency (mode 2).
+            # Loads are restored by the operator, not automatically.
+            if s.eps_mode >= 1:
+                n_shed = len(LOAD_SHED_ORDER) if s.eps_mode >= 2 else 2
+                for load_name in LOAD_SHED_ORDER[:n_shed]:
+                    s.power_lines[load_name] = False
+                s.load_shed_stage = max(s.load_shed_stage, n_shed)
 
-        # Store events in shared_params for engine to generate S5 packets
-        if events_to_generate and hasattr(self, '_engine'):
+        # Push events to the engine for S5 generation (defect #23)
+        if events_to_generate and getattr(self, '_engine', None):
             for event_id, event_desc in events_to_generate:
-                self._engine.event_queue.put((event_id, event_desc, self._get_time()))
+                self._engine._model_event_queue.put((event_id, event_desc, self._get_time()))
 
         # ── Update previous state tracking ──
         s._prev_soc = s.bat_soc_pct

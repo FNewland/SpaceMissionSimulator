@@ -31,6 +31,15 @@ logger = logging.getLogger(__name__)
 # where the bootloader has no knowledge of platform/payload telemetry.
 BOOTLOADER_BEACON_SID = 11
 
+# Map the string severity labels used by subsystem-model event code onto the
+# integer scale (1=INFO, 2=WARNING, 3=ALARM, 4=CRITICAL) used by _emit_event.
+_SEVERITY_NAME_TO_INT = {
+    "INFO": 1, "LOW": 1, "DEBUG": 1,
+    "WARNING": 2, "WARN": 2, "MEDIUM": 2,
+    "ALARM": 3, "HIGH": 3, "ERROR": 3,
+    "CRITICAL": 4, "SEVERE": 4, "FATAL": 4,
+}
+
 
 class SimulationEngine:
     """Config-driven simulation engine.
@@ -54,6 +63,12 @@ class SimulationEngine:
         self.tc_queue: queue.Queue = queue.Queue(maxsize=500)
         self.instr_queue: queue.Queue = queue.Queue(maxsize=200)
         self.event_queue: queue.Queue = queue.Queue(maxsize=500)
+        # Inbound channel for events generated *inside* subsystem models
+        # (defect #23). Models push raw events here; the run loop drains it
+        # through _emit_event so they become S5 telemetry + S19 triggers.
+        # Kept separate from event_queue (the _emit_event record buffer that
+        # test_53 drains) to avoid a re-emit feedback loop.
+        self._model_event_queue: queue.Queue = queue.Queue(maxsize=500)
 
         # Diagnostic counters
         self.tm_queue_drops: int = 0
@@ -88,6 +103,10 @@ class SimulationEngine:
             model_name = cfg.model if hasattr(cfg, 'model') else f"{name}_basic"
             try:
                 model = create_model(model_name, cfg.model_dump() if hasattr(cfg, 'model_dump') else {})
+                # Defect #23: give the model a back-reference to the engine so its
+                # event-generation code (guarded by `if self._engine`) actually
+                # runs and its events get delivered via _drain_model_events().
+                model._engine = self
                 self.subsystems[name] = model
                 logger.info("Loaded subsystem model: %s (%s)", name, model_name)
             except Exception as e:
@@ -203,6 +222,23 @@ class SimulationEngine:
             inject_fn=self._handle_failure_inject,
             clear_fn=self._handle_failure_clear,
         )
+
+        # Named state breakpoints (snapshot store for instructor save/load).
+        # Maps breakpoint name -> full state dict captured by BreakpointManager.
+        self._breakpoints: dict[str, dict] = {}
+
+        # Scenario engine (defect #9): instantiate and load YAML scenarios so the
+        # instructor UI's scenario list / start / stop are actually functional.
+        # Previously this was never created, so /api/scenarios always returned []
+        # and start_scenario/stop_scenario were silently dropped.
+        from smo_simulator.scenario_engine import ScenarioEngine
+        self._scenario_engine = ScenarioEngine(
+            failure_manager=self._failure_manager, engine=self,
+        )
+        try:
+            self._scenario_engine.load_scenarios_from_dir(self.config_dir / "scenarios")
+        except Exception as e:  # noqa: BLE001 — a bad scenario dir must not block startup
+            logger.warning("Scenario load failed: %s", e)
 
         # Service dispatcher (persistent instance for S12/S19 state)
         from smo_simulator.service_dispatch import ServiceDispatcher
@@ -400,7 +436,10 @@ class SimulationEngine:
         if obdh:
             self._fdir_callbacks["safe_mode_obc"] = lambda: obdh.handle_command({"command": "set_mode", "mode": 1})
         if eps:
-            self._fdir_callbacks["safe_mode_eps"] = lambda: eps.handle_command({"command": "set_mode", "mode": 1})
+            # Defect #27: EPS has no "set_mode" command — its mode command is
+            # "set_eps_mode". The old name silently returned success:False, so
+            # FDIR-driven EPS safing never happened.
+            self._fdir_callbacks["safe_mode_eps"] = lambda: eps.handle_command({"command": "set_eps_mode", "mode": 1})
         self._fdir_callbacks["spacecraft_emergency"] = lambda: setattr(self, 'sc_mode', 2)
 
     def _load_fault_propagation_config(self) -> None:
@@ -461,9 +500,12 @@ class SimulationEngine:
             )
 
         if ttc:
+            # Defect #27: TTC has no "power_level" command — its power command is
+            # "set_tx_power" and it reads the "power_w" key. The old name/key was
+            # silently ignored, so load-shedding never reduced TTC TX power.
             self._load_shedding.register_callback(
                 "ttc_power_level",
-                lambda val: ttc.handle_command({"command": "power_level", "value": int(val)})
+                lambda val: ttc.handle_command({"command": "set_tx_power", "power_w": float(val)})
             )
 
     def _wire_procedure_executor(self) -> None:
@@ -788,6 +830,15 @@ class SimulationEngine:
                 except Exception as e:
                     logger.warning("Subsystem %s tick error: %s", name, e)
 
+            # Scenario engine tick (defect #9): advances the active scenario so
+            # its timed/conditional events fire. No-op when no scenario is active.
+            se = getattr(self, '_scenario_engine', None)
+            if se is not None and se.is_active():
+                try:
+                    se.tick(dt_sim, self.params)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("Scenario engine tick error: %s", e)
+
             # Process TCs AFTER subsystem ticks so that param 0x0501
             # (TTC link status) is current when _enqueue_tm() checks
             # downlink_active.  Previously TCs were drained before
@@ -817,6 +868,9 @@ class SimulationEngine:
 
             # Subsystem event generation
             self._check_subsystem_events()
+
+            # Deliver events raised inside the subsystem models (defect #23).
+            self._drain_model_events()
 
             # Transitions
             self._check_transitions(orbit_state)
@@ -1041,6 +1095,22 @@ class SimulationEngine:
                     svc, sub, int(self._spacecraft_phase))
                 return
 
+        # Bus-reachability gate (defect #29): if the active CAN bus has failed,
+        # reject S8 function commands aimed at bus-attached subsystems. OBDH
+        # function commands (func 50-62, 80 — including obc_select_bus=54, the
+        # recovery action) are NOT gated, since the OBC executes them directly.
+        if svc == 8 and sub == 1 and pkt.data_field and self._obc_bus_failed():
+            func_id = pkt.data_field[0]
+            is_obdh_func = (50 <= func_id <= 62) or func_id == 80
+            if not is_obdh_func:
+                rej = self.tm_builder.build_verification_failure(
+                    pkt.primary.apid, pkt.primary.sequence_count, 0x0004)
+                self._enqueue_tm(rej)
+                if obdh and hasattr(obdh, 'record_tc_rejected'):
+                    obdh.record_tc_rejected()
+                logger.info("TC rejected — subsystem unreachable (active bus failed), func_id=%d", func_id)
+                return
+
         # Check acceptance
         accepted, error_code = self._check_tc_acceptance(svc, sub, pkt.data_field)
         if not accepted:
@@ -1122,9 +1192,37 @@ class SimulationEngine:
     # HK emission
     # ------------------------------------------------------------------
 
+    # SIDs owned by bus-attached subsystems (not the OBC itself). When the OBC's
+    # active CAN bus has failed these stop being downlinked (defect #29): SID 1
+    # EPS, 2 AOCS, 3 TCS, 5 payload, 6 TTC. SID 4 (OBC) and 11 (beacon) survive.
+    _BUS_GATED_SIDS = frozenset({1, 2, 3, 5, 6})
+
+    def _obc_bus_failed(self) -> bool:
+        """True when the OBC's *active* CAN bus has failed (defect #29).
+
+        While true, bus-attached subsystems are unreachable: their periodic HK is
+        suppressed and commands to them are rejected. The operator recovers by
+        switching the active bus (obc_select_bus), which is an OBDH command and is
+        therefore never gated.
+        """
+        obdh = self.subsystems.get("obdh")
+        st = getattr(obdh, "_state", None)
+        if st is None:
+            return False
+        try:
+            from smo_simulator.models.obdh_basic import BUS_FAILED
+        except Exception:
+            BUS_FAILED = 2
+        if getattr(st, "active_bus", 0) == 0:
+            return getattr(st, "bus_a_status", 0) == BUS_FAILED
+        return getattr(st, "bus_b_status", 0) == BUS_FAILED
+
     def _emit_hk_packets(self, dt_sim: float) -> None:
         # Bootloader HK gating: only emit minimal SIDs when in bootloader
         sw_image = int(self.params.get(0x0311, 1))
+        # Bus-reachability gate (defect #29): if the active CAN bus has failed,
+        # bus-attached subsystems can't reach the OBC, so their HK goes silent.
+        bus_blocked = self._obc_bus_failed()
         # Power gate: do not emit periodic HK from a SID whose owning EPS
         # power line is OFF. Without this, S3.25 packets keep streaming from
         # an unpowered payload/AOCS even though the on-demand S3.27 path is
@@ -1146,6 +1244,10 @@ class SimulationEngine:
             if not self._hk_enabled.get(sid, True):
                 continue
             if sw_image == 0 and sid not in (10, 11):
+                continue
+            if bus_blocked and sid in self._BUS_GATED_SIDS:
+                # Active bus failed — this subsystem is unreachable (defect #29).
+                self._hk_timers[sid] = 0.0
                 continue
             owner = sid_power_owner.get(sid)
             if owner is not None and not eps_lines.get(owner, True):
@@ -1248,6 +1350,11 @@ class SimulationEngine:
     def _emit_event(self, ev: dict) -> None:
         event_id = ev.get('event_id', 0)
         severity = ev.get('severity', 1)
+        # Subsystem models express severity as strings ('LOW'/'MEDIUM'/'HIGH'/...).
+        # Normalise to the integer scale (1=INFO, 2=WARNING, 3=ALARM, 4=CRITICAL)
+        # the rest of _emit_event (alarm-store gate, TM builder) expects.
+        if isinstance(severity, str):
+            severity = _SEVERITY_NAME_TO_INT.get(severity.strip().upper(), 1)
         description = ev.get('description', '')
 
         pkt = self.tm_builder.build_event_packet(
@@ -1272,6 +1379,36 @@ class SimulationEngine:
             # S19 event-action: trigger any matching event-action rules
             # Pass the actual event_id so S19 can match it properly
             self._dispatcher.trigger_event_action(event_id)
+
+    def _drain_model_events(self) -> None:
+        """Deliver events generated inside subsystem models (defect #23).
+
+        Models push raw events onto ``_model_event_queue`` (as dicts, or as
+        ``(event_id, description[, time])`` tuples for EPS). We normalise each to
+        the dict shape ``_emit_event`` expects and emit it, so model-internal
+        events (heater stuck-on, thermal runaway, SEU, boot/bus failure, FPA
+        readiness, etc.) become real S5 telemetry and fire S19 rules — instead of
+        being silently discarded as before.
+        """
+        while True:
+            try:
+                ev = self._model_event_queue.get_nowait()
+            except queue.Empty:
+                break
+            if isinstance(ev, (tuple, list)):
+                # EPS shape: (event_id, description, [time])
+                ev = {
+                    'event_id': ev[0] if len(ev) > 0 else 0,
+                    'description': ev[1] if len(ev) > 1 else '',
+                    'severity': 2,  # EPS pushes power-state changes — treat as WARNING
+                }
+            elif not isinstance(ev, dict):
+                logger.warning("Dropping malformed model event: %r", ev)
+                continue
+            try:
+                self._emit_event(ev)
+            except Exception as e:  # noqa: BLE001 — one bad event must not kill the loop
+                logger.warning("Failed to emit model event %r: %s", ev, e)
 
     # ------------------------------------------------------------------
     # S15 TM Storage dump pacing
@@ -1606,6 +1743,79 @@ class SimulationEngine:
                 'severity': 2,
                 'description': "Separation initiated — 30 min timer started",
             })
+        elif t == 'failure_clear_all':
+            # Clear every active injected failure (defect #12).
+            self._failure_manager.clear_all()
+        elif t == 'save_breakpoint':
+            self._handle_save_breakpoint(cmd)
+        elif t == 'load_breakpoint':
+            self._handle_load_breakpoint(cmd)
+        elif t == 'start_scenario':
+            self._handle_start_scenario(cmd)
+        elif t == 'stop_scenario':
+            self._handle_stop_scenario(cmd)
+        else:
+            # Defect #9/#10/#12 class: previously, unknown instructor command
+            # types were silently dropped here, which is how broken UI buttons
+            # went unnoticed. Log loudly instead so future drift is obvious.
+            logger.warning("Unknown instructor command type: %r (cmd=%r)", t, cmd)
+
+    def _handle_save_breakpoint(self, cmd: dict) -> None:
+        """Capture a full state snapshot and store it under its name (defect #10)."""
+        from smo_simulator.breakpoints import BreakpointManager
+        name = cmd.get('name') or ''
+        try:
+            state = BreakpointManager(self).save(name=name)
+            self._breakpoints[state['name']] = state
+            logger.info("Breakpoint saved: %s (tick=%s)", state['name'],
+                        state.get('tick_count'))
+        except Exception as e:  # noqa: BLE001 — never let a bad snapshot kill the loop
+            logger.error("Breakpoint save failed for %r: %s", name, e)
+
+    def _handle_load_breakpoint(self, cmd: dict) -> None:
+        """Restore a previously-saved snapshot by name (defect #10).
+
+        Accepts either a stored breakpoint ``name`` or an inline ``state`` dict.
+        """
+        from smo_simulator.breakpoints import BreakpointManager
+        name = cmd.get('name') or ''
+        state = cmd.get('state')
+        if state is None:
+            state = self._breakpoints.get(name)
+        if state is None:
+            logger.warning("Breakpoint load failed: no snapshot named %r", name)
+            return
+        try:
+            ok = BreakpointManager(self).load(state=state)
+            logger.info("Breakpoint load %s: %s",
+                        "succeeded" if ok else "returned False", name)
+        except Exception as e:  # noqa: BLE001
+            logger.error("Breakpoint load failed for %r: %s", name, e)
+
+    def _handle_start_scenario(self, cmd: dict) -> None:
+        """Start a training scenario by name (defect #9)."""
+        name = cmd.get('name') or cmd.get('scenario') or ''
+        se = getattr(self, '_scenario_engine', None)
+        if se is None:
+            logger.warning("start_scenario ignored: no scenario engine loaded")
+            return
+        try:
+            se.start(name)
+            logger.info("Scenario started: %s", name)
+        except Exception as e:  # noqa: BLE001
+            logger.error("start_scenario failed for %r: %s", name, e)
+
+    def _handle_stop_scenario(self, cmd: dict) -> None:
+        """Stop the active training scenario (defect #9)."""
+        se = getattr(self, '_scenario_engine', None)
+        if se is None:
+            logger.warning("stop_scenario ignored: no scenario engine loaded")
+            return
+        try:
+            se.stop()
+            logger.info("Scenario stopped")
+        except Exception as e:  # noqa: BLE001
+            logger.error("stop_scenario failed: %s", e)
 
     def configure_separation_state(self) -> None:
         """Configure spacecraft for post-separation state.

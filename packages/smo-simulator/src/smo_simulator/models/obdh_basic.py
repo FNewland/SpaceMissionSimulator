@@ -224,16 +224,25 @@ class OBDHBasicModel(SubsystemModel):
                 ),
             )
 
-        # Watchdog (only in application mode AND when armed)
+        # Watchdog (only in application mode AND when armed).
+        # Defect #30: previously the mode check was inverted vs. its comment —
+        # mode 0 is *nominal* (not safe), so the watchdog was frozen in normal
+        # flight and only ran in safe/maintenance, and an injected watchdog_reset
+        # was erased before it could fire. Correct model: the watchdog is active
+        # in nominal mode, kicked every tick by healthy software so it never
+        # times out on its own; a watchdog_reset failure forces watchdog_timer to
+        # >= watchdog_period, which is detected here and triggers a reboot.
         if s.sw_image == SW_APPLICATION and s.watchdog_armed:
             if s.mode == 0:
-                # Safe mode: hold timer at zero (watchdog doesn't fire in safe)
-                s.watchdog_timer = 0
-            else:
-                s.watchdog_timer += 1
+                # Nominal: watchdog armed and counting toward timeout.
                 if s.watchdog_timer >= s.watchdog_period:
                     self._event_to_emit = (0x0303, "WATCHDOG_TIMEOUT")
                     self._reboot(REBOOT_WATCHDOG)
+                else:
+                    s.watchdog_timer = 0  # healthy software kicks the watchdog
+            else:
+                # Safe / maintenance: watchdog held (software not running normally).
+                s.watchdog_timer = 0
         else:
             # Bootloader or watchdog disabled: timer stays at zero
             s.watchdog_timer = 0
@@ -350,7 +359,7 @@ class OBDHBasicModel(SubsystemModel):
         if hasattr(self, '_engine') and self._engine:
             for evt_id, evt_name, severity in events_to_emit:
                 try:
-                    self._engine.event_queue.put_nowait({
+                    self._engine._model_event_queue.put_nowait({
                         'event_id': evt_id,
                         'severity': severity,
                         'subsystem': 'obdh',

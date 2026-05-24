@@ -1,8 +1,12 @@
 # Defect Register — SpaceMissionSoftware
 
-Defects identified during the 2026-04-06 simulator review session. Each entry
-below has a corresponding body file in `defects/` which is used verbatim by
-`scripts/upload_and_file_defects.sh` when creating GitHub issues.
+Defects #1–8 were identified during the 2026-04-06 simulator review session.
+Defects #9–22 were identified during the 2026-05-24 "dead / unwired code" audit,
+which traced every backend capability to a UI/interface and every UI control to a
+real backend, across the live suite (`packages/smo-*`) and `tools/`. Each entry
+below (except the fileless fixed item #8) has a corresponding body file in
+`defects/` which is used verbatim by `scripts/upload_and_file_defects.sh` when
+creating GitHub issues.
 
 | #   | Severity | Status     | Title                                                                       |
 | --- | -------- | ---------- | --------------------------------------------------------------------------- |
@@ -14,6 +18,31 @@ below has a corresponding body file in `defects/` which is used verbatim by
 | 6   | Major    | Open       | MCS has no generic parameter-watch widget / no S20 client                    |
 | 7   | Minor    | Open       | Fill % > 100 should be impossible for a circular store — UI contract bug    |
 | 8   | Major    | Fixed      | Instructor display shows only ~30 params; no subsystem internals visible     |
+| 9   | Critical | Fixed      | Scenario subsystem non-functional — `ScenarioEngine` never instantiated     |
+| 10  | Critical | Fixed      | Breakpoint save/load not wired to UI — SAVE no-ops, no LOAD control          |
+| 11  | Major    | Fixed      | Heater control broken — OBC heater cmd no-ops; no heater UI affordance       |
+| 12  | Major    | Fixed      | "CLEAR ALL FAILURES" button does nothing (HTTP 403 + unhandled WS)           |
+| 13  | Major    | Partial    | MCS advanced displays unreachable (`displays.js` never loaded) + 500 crash   |
+| 14  | Major    | Partial    | MCS Procedure Builder produces unrunnable procedures; steps skipped open     |
+| 15  | Major    | Fixed      | Planner full validation unreachable — only weak name-conflict check wired    |
+| 16  | Major    | Open       | Planner backend endpoints (constraints, pass-activity, PUT, targets) no UI   |
+| 17  | Major    | Open       | smo-common orphaned PUS service parser — duplicated/diverged in MCS          |
+| 18  | Major    | Open       | RF "via GNU Radio" never invoked — entire `gnuradio/` package is dead        |
+| 19  | Major    | Open       | Radio dashboard panels (link budget/channel/spectrum/eye) show placeholders  |
+| 20  | Minor    | Open       | MCS dead/unwired code & data-shape bugs (consolidated cleanup register)      |
+| 21  | Minor    | Open       | Planner + smo-common dead/orphaned code (consolidated cleanup register)      |
+| 22  | Minor    | Open       | RFsim + gateway + tools dead/unwired code (consolidated cleanup register)    |
+| 23  | Major    | Fixed      | Subsystem-generated events never reach operator (`_engine` unset, queue undrained) |
+| 24  | Major    | Fixed      | AOCS reaction-wheel thermal signature broken (temps not in HK; no rise on seizure) |
+| 25  | Major    | Fixed      | AOCS `aocs_wheel_failure` scenario injects unhandled `wheel_failure` (no-op)  |
+| 26  | Major    | Fixed      | AOCS MAG_SELECT cannot select redundant magnetometer (Mag B)                 |
+| 27  | Major    | Fixed      | FDIR/load-shed callbacks invoke commands models don't handle (EPS safing, TTC power) |
+| 28  | Major    | Fixed      | TTC `uplink_loss` failure does not suppress the downlink                      |
+| 29  | Major    | Fixed      | OBDH bus-failure isolation is cosmetic (`is_subsystem_reachable` never consulted) |
+| 30  | Major    | Fixed      | OBDH watchdog inverted; injected watchdog reset can't fire in nominal mode    |
+| 31  | Major    | Fixed      | TCS advanced thermal commands inert (decontamination, duty-limit, setpoints)  |
+| 32  | Minor    | Open       | Subsystem dead/inert commands & state (consolidated cleanup register)         |
+| 33  | Minor    | Open       | Subsystem computed-but-unobservable telemetry (consolidated cleanup register) |
 
 Severity key:
 - **Critical** — mission cannot operate safely without this
@@ -22,3 +51,18 @@ Severity key:
 
 Fixed items are retained in the register so the associated regression tests
 and rationale are captured in the issue tracker for audit.
+
+Status note (2026-05-24 remediation pass): the **entire smo-simulator package is
+remediated** — defects #9, #10, #11, #12, #23, #24, #25, #26, #27, #28, #29, #30,
+#31 are all **Fixed**, covered by 26 regression tests in
+`tests/test_remediation_phase01.py` (full simulator + acceptance suites green:
+585 passed). Additional **Fixed**: #15 (planner validation now runs `validate_pass_plan`).
+**Partial**: #13 (procedure-status 500 crash fixed via `status()`; wiring the
+display *panels* into the live page + feeding real data remains), #14 (runner now
+executes builder `wait`/`tlm_check`/`go_nogo`/`command` steps with comparison
+operators and fails closed on unknown steps; bridging *saved custom* procedures
+into the runner's load path remains). Still **Open**: #16 (planner endpoint UI
+controls), #17 (unify PUS parser), #18, #19 (RF bridge — needs GNU Radio to test),
+#20, #21, #22, #32, #33 (cleanup registers). Remediation follows
+`REMEDIATION_PLAN.md`. Note: running the test suite needs `pytest-asyncio`
+installed (some MCS tests are async).

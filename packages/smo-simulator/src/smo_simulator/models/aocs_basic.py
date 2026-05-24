@@ -4,12 +4,15 @@ Quaternion attitude simulation, 9-mode state machine with transition guards,
 dual star trackers, CSS sun sensor, magnetorquers, reaction wheel management,
 gyro bias estimation, and comprehensive failure injection.
 """
+import logging
 import math
 import random
 from dataclasses import dataclass, field
 from typing import Any
 
 from smo_common.models.subsystem import SubsystemModel
+
+logger = logging.getLogger(__name__)
 
 _DEG = math.pi / 180.0
 _RAD = 180.0 / math.pi
@@ -863,6 +866,17 @@ class AOCSBasicModel(SubsystemModel):
                 s.rw_speed[i] *= (1.0 - 0.05 * dt)
                 s.rw_current[i] = 0.0
                 s.rw_enabled[i] = False
+                # Defect #24: a *seized* wheel (bearing degradation present) keeps
+                # generating bearing-friction heat even though it has stopped and
+                # is disabled, so its temperature rises — the signature the wheel
+                # scenarios ask the operator to detect. A cleanly-disabled healthy
+                # wheel (no degradation) just cools toward ambient. Previously this
+                # branch skipped the thermal model entirely, so a seized wheel's
+                # temperature flatlined.
+                deg = self._bearing_degradation[i]
+                heat = 0.2 * deg if deg > 0.0 else 0.0
+                cool = (s.rw_temp[i] - 20.0) / 300.0
+                s.rw_temp[i] += (heat - cool) * dt + random.gauss(0, 0.02)
                 continue
 
             s.rw_enabled[i] = True
@@ -1349,10 +1363,10 @@ class AOCSBasicModel(SubsystemModel):
                 'description': f'CSS degraded: {failed_count} heads failed'
             })
 
-        # Dispatch all events to the engine
+        # Dispatch all events to the engine (defect #23: drained via _emit_event)
         if hasattr(self, '_engine') and self._engine:
             for event in events:
-                self._engine.event_queue.put(event)
+                self._engine._model_event_queue.put(event)
 
     # ─── Command handling ────────────────────────────────────────────
 
@@ -1611,6 +1625,12 @@ class AOCSBasicModel(SubsystemModel):
             n_active = sum(1 for a in s.active_wheels if a)
             if n_active < 3:
                 self._set_mode(MODE_COARSE_SUN)
+
+        else:
+            # Defect #25: previously an unrecognised failure name fell through
+            # silently (a no-op injection), which is how aocs_wheel_failure.yaml
+            # shipped a dead scenario. Log it so naming drift is caught.
+            logger.warning("AOCS inject_failure: unknown failure type %r (no-op)", failure)
 
     def clear_failure(self, failure: str, **kw) -> None:
         s = self._state

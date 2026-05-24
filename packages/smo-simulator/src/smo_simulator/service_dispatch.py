@@ -395,6 +395,8 @@ class ServiceDispatcher:
             return self._route_obdh_cmd(func_id, data[1:])
         elif func_id in (81, 82):
             return self._route_eps_cmd(func_id, data[1:])
+        elif func_id == 83:  # EPS mode (defect #27) — set safe/emergency mode
+            return self._route_eps_cmd(func_id, data[1:])
         return []
 
     def _route_aocs_cmd(self, func_id: int, data: bytes) -> list[bytes]:
@@ -421,9 +423,13 @@ class ServiceDispatcher:
         elif func_id == 6:  # ST select
             unit = data[0] if data else 1
             aocs.handle_command({"command": "st_select", "unit": unit})
-        elif func_id == 7:  # Magnetometer select
-            on = bool(data[0]) if data else True
-            aocs.handle_command({"command": "mag_select", "on": on})
+        elif func_id == 7:  # Magnetometer select (defect #26)
+            # unit byte: 0 = primary (Mag A), 1 = redundant (Mag B). Send a
+            # concrete 'A'/'B' source string so the handler's A/B selection
+            # branch runs instead of the legacy bool path (which only set
+            # mag_valid and never actually switched the active magnetometer).
+            unit = int(data[0]) if data else 0
+            aocs.handle_command({"command": "mag_select", "source": "B" if unit else "A"})
         elif func_id == 8:  # RW set speed bias
             if len(data) >= 5:
                 wheel = data[0]
@@ -547,6 +553,11 @@ class ServiceDispatcher:
                 return self._make_error_response(result)
         elif func_id == 82:  # get wing status
             eps.handle_command({"command": "get_wing_status"})
+        elif func_id == 83:  # set EPS mode (defect #27): 0=nominal,1=safe,2=emergency
+            mode = int(data[0]) if data else 1
+            result = eps.handle_command({"command": "set_eps_mode", "mode": mode})
+            if not result.get("success"):
+                return self._make_error_response(result)
         return []
 
     def _make_error_response(self, result: dict) -> list[bytes]:
@@ -676,7 +687,10 @@ class ServiceDispatcher:
                     "duty_limit_pct": float(duty_pct),
                 })
         elif func_id == 47:  # Decontamination start (Phase 5)
-            target_temp = -50.0
+            # Defect #31: default to a positive bake-out target (the handler also
+            # defaults to +50C). The previous -50C default would have *cooled*
+            # the FPA, the opposite of a decontamination bake-out.
+            target_temp = 50.0
             if len(data) >= 4:
                 target_temp = struct.unpack('>f', data[:4])[0]
             tcs.handle_command({
@@ -752,7 +766,7 @@ class ServiceDispatcher:
                         aocs._state.mode = 1  # MODE_SAFE_BOOT
                         aocs._state.submode = 0
                         aocs._state.time_in_mode = 0.0
-                        self._engine._event_queue.append({
+                        self._engine._emit_event({
                             'event_id': 0x020F,
                             'severity': 'HIGH',
                             'description': f"AOCS forced to SAFE_BOOT: GPS time sync jump {time_jump_s:.1f}s"
