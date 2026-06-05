@@ -13,7 +13,7 @@ separation timing). This procedure establishes the initial time reference that a
 subsequent time-tagged operations, event logs, and science data depend upon.
 
 ## Prerequisites
-- [ ] LEOP-001 First Acquisition complete --- bidirectional VHF/UHF link established
+- [ ] LEOP-001 First Acquisition complete --- bidirectional S-band link established
 - [ ] TTC link locked: `ttc.link_status` (0x0501) = 1 (LOCKED)
 - [ ] Ground UTC reference available (stratum-1 NTP or GPS-disciplined clock)
 - [ ] OBC in SAFE or NOMINAL mode: `obdh.mode` (0x0300) = 0 or 1

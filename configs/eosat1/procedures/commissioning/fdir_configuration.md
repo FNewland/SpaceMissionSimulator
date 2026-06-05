@@ -15,7 +15,7 @@ spacecraft correctly enters safe mode and recovers to nominal operations.
 - [ ] OBC in NOMINAL mode
 - [ ] AOCS in SAFE_POINT mode (mode 2)
 - [ ] `eps.bat_soc` (0x0101) > 70%
-- [ ] Bidirectional VHF/UHF link active with link margin > 6 dB
+- [ ] Bidirectional S-band link active with link margin > 6 dB
 - [ ] Flight Director has approved FDIR testing (involves intentional fault injection)
 - [ ] Recovery procedure reviewed and ready
 

@@ -14,7 +14,7 @@ propulsion (if applicable). Establish baseline thermal profiles over a full orbi
 - [ ] COM-001 (EPS Checkout) completed — power budget verified
 - [ ] Spacecraft in SAFE_POINT mode with stable sun-pointing
 - [ ] Minimum one full orbit of thermal telemetry archived
-- [ ] Bidirectional VHF/UHF link active
+- [ ] Bidirectional S-band link active
 - [ ] `eps.bat_soc` (0x0101) > 60%
 
 ## Procedure Steps

@@ -19,7 +19,7 @@ and inter-band registration.
 - [ ] `eps.bat_soc` (0x0101) > 70%
 - [ ] Calibration ground site overpass predicted within current or next orbit
 - [ ] Full image downlink pass scheduled within 6 hours
-- [ ] Bidirectional VHF/UHF link active
+- [ ] Bidirectional S-band link active
 - [ ] Payload calibration engineer on console
 
 ## Procedure Steps

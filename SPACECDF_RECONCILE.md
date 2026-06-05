@@ -1,8 +1,21 @@
 # SpaceMissionSimulation — Reconciliation Items Found During SpaceCDF Week 3 Authoring
 
+> **⚠ SUPERSEDED 2026-05-19.** This document has been superseded by a
+> more comprehensive Part 2 ↔ simulator reconciliation:
+> **[`SpaceCDF/docs/PART2_SIM_RECONCILIATION.md`](../../SpaceCDF/docs/PART2_SIM_RECONCILIATION.md)**
+> (~1500 lines, structured by chapter + cross-cutting tables + prioritised
+> change lists). The newer document covers every claim in textbook
+> Part 2, identifies 27 simulator change items and 25 textbook change
+> items, and lists per-decision options. Three items below (1, 5, 6)
+> were marked "FIXED" in this document but had residual unfixed text
+> that the newer report sweeps up. **Do not act on this file alone —
+> use the newer reconciliation report as the working source of truth.**
+> This file is preserved for history only.
+
 **Owner:** Dr Franz Newland · uOttawa SEDTI
 **Created:** 2026-05-16
-**Status:** Open — fixes to be made before the SpaceCDF OrbitNorth Week 3 cohort runs in August 2026.
+**Superseded:** 2026-05-19
+**Status:** Superseded — see note above.
 **Triggering work:** Authoring of `SpaceCDF_Textbook.pdf` Part 5 (OrbitNorth Week 3) and
 `SpaceCDF_Workbook.pdf` Week 5+ worksheets, which cite this simulator as canonical source.
 

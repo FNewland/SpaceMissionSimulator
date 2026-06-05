@@ -16,7 +16,7 @@ magnetorquers.
 - [ ] Body rates < 0.05 deg/s on all axes
 - [ ] All four wheels reporting telemetry (confirmed in LEOP-002)
 - [ ] `eps.bat_soc` (0x0101) > 65%
-- [ ] Bidirectional VHF/UHF link active
+- [ ] Bidirectional S-band link active
 - [ ] Minimum 20 minutes of ground station pass remaining
 
 ## Procedure Steps

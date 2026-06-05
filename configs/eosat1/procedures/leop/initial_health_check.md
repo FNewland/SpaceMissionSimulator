@@ -1,4 +1,4 @@
-# LEOP-002: Initial Health Assessment
+# LEOP-002: Initial Health Check
 **Subsystem:** All / OBDH
 **Phase:** LEOP
 **Revision:** 1.0
@@ -12,7 +12,7 @@ values for the mission.
 
 ## Prerequisites
 - [ ] LEOP-001 (First Acquisition) completed successfully
-- [ ] Bidirectional VHF/UHF link active with link margin > 3 dB
+- [ ] Bidirectional S-band link active with link margin > 3 dB
 - [ ] On-board time synchronized
 - [ ] Minimum 8 minutes remaining in current ground station pass
 - [ ] MCS telemetry archiving confirmed active

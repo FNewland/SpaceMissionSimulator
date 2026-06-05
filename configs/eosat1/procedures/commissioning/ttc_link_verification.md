@@ -5,10 +5,10 @@
 **Approved:** Flight Operations Director
 
 ## Purpose
-Verify the VHF/UHF TT&C link performance using both primary and redundant transponders.
+Verify the S-band TT&C link performance using both primary and redundant transponders.
 Measure received signal strength (RSSI), link margin at various elevation angles, and
-confirm reliable command/telemetry exchange through all four ground stations (Svalbard,
-Troll, Inuvik, O'Higgins). Validate link budget predictions against measured values.
+confirm reliable command/telemetry exchange through both ground stations (Iqaluit and
+Troll). Validate link budget predictions against measured values.
 
 ## Prerequisites
 - [ ] COM-001 through COM-003 completed
@@ -16,7 +16,7 @@ Troll, Inuvik, O'Higgins). Validate link budget predictions against measured val
 - [ ] Spacecraft in SAFE_POINT mode with stable attitude
 - [ ] Ground station passes scheduled for at least two stations
 - [ ] Primary transponder currently active
-- [ ] Bidirectional VHF/UHF link active
+- [ ] Bidirectional S-band link active
 
 ## Procedure Steps
 
@@ -68,10 +68,8 @@ Troll, Inuvik, O'Higgins). Validate link budget predictions against measured val
 
 ### Step 7 — Multi-Station Verification (deferred passes)
 **Action:** Schedule identical link checks (Steps 1-2) during passes over remaining ground stations. Record RSSI and link margin from each.
-- Svalbard (78.2N): primary polar station — expect 2-4 passes/day
+- Iqaluit (63.7N): primary northern polar station — expect 2-4 passes/day
 - Troll (72.0S): southern polar coverage — expect 2-4 passes/day
-- Inuvik (68.4N): northern coverage backup — expect 2-3 passes/day
-- O'Higgins (63.3S): southern backup — expect 2-3 passes/day
 **Verify:** Link margin > 3 dB at 10 deg elevation from each station
 **GO/NO-GO:** All ground stations verified (may span multiple orbits)
 

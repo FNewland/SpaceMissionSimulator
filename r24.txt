@@ -1,0 +1,1 @@
+seized rises: [21.9, 23.8, 27.4] | healthy disabled stays low: 19.9

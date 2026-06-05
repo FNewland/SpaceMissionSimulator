@@ -17,7 +17,7 @@ the baseline payload state required for subsequent cooler activation and imaging
 - [ ] `eps.power_gen` (0x0107) > 40W (sunlit phase, wings deployed)
 - [ ] OBC in NOMINAL mode
 - [ ] `tcs.temp_fpa` (0x0408) in range [+5C, +25C] (ambient, pre-cooler)
-- [ ] Bidirectional VHF/UHF link active with link margin > 6 dB
+- [ ] Bidirectional S-band link active with link margin > 6 dB
 - [ ] Payload team on console
 
 ## Procedure Steps

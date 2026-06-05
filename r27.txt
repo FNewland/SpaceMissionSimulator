@@ -1,0 +1,2 @@
+safe(mode=1): {'payload': False, 'fpa_cooler': False, 'ttc_tx': True, 'aocs_wheels': True}
+emergency: {'payload': False, 'fpa_cooler': False, 'ttc_tx': False, 'aocs_wheels': False}

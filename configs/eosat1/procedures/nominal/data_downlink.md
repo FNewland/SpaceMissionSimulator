@@ -36,7 +36,7 @@ STANDBY after the downlink session completes or the LOS approaches.
 
 ### Step 3 --- Command Playback Mode
 **TC:** `SET_PARAM` param_id=0x0610, value=1 (Service 8, Subtype 1) --- set
-downlink rate to nominal (X-band high rate)
+downlink rate to nominal (S-band high rate)
 **TC:** `PAYLOAD_SET_MODE` mode=3 (Service 8, Subtype 1) --- command PLAYBACK
 **Verify:** `payload.mode` (0x0600) = 3 (PLAYBACK) within 15 s
 **Note:** Downlink timer starts. Monitor ground station frame sync indicator.

@@ -12,12 +12,12 @@ maintain sun-pointing attitude for positive power balance and thermal stability.
 
 ## Prerequisites
 - [ ] LEOP-001 (First Acquisition) completed successfully
-- [ ] LEOP-002 (Initial Health Assessment) completed — AOCS subsystem nominal
+- [ ] LEOP-002 (Initial Health Check) completed — AOCS subsystem nominal
 - [ ] LEOP-003 (Solar Array Verification) completed — arrays deployed
 - [ ] `aocs.mode` (0x020F) = 1 (DETUMBLE) confirmed
 - [ ] All four reaction wheels reporting telemetry
 - [ ] `eps.bat_soc` (0x0101) > 40% (sufficient power for AOCS operations)
-- [ ] Bidirectional VHF/UHF link active
+- [ ] Bidirectional S-band link active
 
 ## Procedure Steps
 

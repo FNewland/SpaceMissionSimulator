@@ -21,14 +21,14 @@ with decision gates at 6h, 12h, 24h, and 48h elapsed time since last contact.
 
 ### Step 1 --- Verify Ground Station Infrastructure
 **Action:** Confirm operational status of all primary ground stations.
-**Check:** Svalbard (SV1), Troll (TR1), Inuvik (IN1), O'Higgins (OH1) link status.
+**Check:** Iqaluit (IQ1), Troll (TR1) link status.
 **Verify:** Antenna pointing calibration nominal; receiver lock threshold set to minimum (-130 dBm).
 **GO/NO-GO:** At least two ground stations fully operational with clear line-of-sight for next pass.
 
 ### Step 2 --- Attempt Contact on All Available Ground Stations
 **TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 1) --- transmitted blind on each pass.
 **Sequence:** Schedule uplink attempts on every visible pass (min elevation 5 deg) across
-Svalbard, Troll, Inuvik, and O'Higgins in priority order based on maximum elevation.
+Iqaluit and Troll in priority order based on maximum elevation.
 **Verify:** `ttc.rssi` (0x0502) > -125 dBm and `ttc.link_status` (0x0501) = 2 (LOCKED) within 30s of AOS.
 **GO/NO-GO:** If telemetry received on any station, exit emergency and transition to EMG-001 assessment. If no response after full ground station rotation, proceed to Step 3.
 
@@ -57,7 +57,7 @@ increase beacon power.
 ### Step 6 --- Polar Pass Focused Campaign (12h Threshold)
 **Action:** If 12 hours elapsed since last contact, concentrate all resources on high-latitude
 stations with optimal geometry.
-**Stations:** Svalbard and Troll --- both provide near-polar pass coverage every ~95 min.
+**Stations:** Iqaluit and Troll --- both provide near-polar pass coverage every ~95 min.
 **TC:** Alternate between `TTC_SWITCH_PRIMARY` and `TTC_SWITCH_REDUNDANT` on successive passes.
 **TC:** `OBC_SET_MODE(mode=2)` (Service 8, Subtype 3) --- blind emergency mode command.
 **Verify:** Any downlink signal within pass window.
@@ -89,7 +89,7 @@ power-positive conditions resume (sunlit orbit phase with favourable beta angle)
 
 ## Off-Nominal Handling
 - If ground station hardware fault confirmed: reroute to backup antenna feed; contact station provider for emergency maintenance.
-- If spacecraft detected by radar but no RF signal: assume total transponder failure; plan uplink on VHF/UHF backup if available.
+- If spacecraft detected by radar but no RF signal: assume total transponder failure; plan uplink on S-band backup if available.
 - If telemetry received but corrupt/fragmented: reduce data rate, increase FEC coding, attempt narrow-bandwidth beacon mode.
 - If spacecraft orbit decayed significantly from predicted: re-acquire TLE from space surveillance network before next pass attempt.
 

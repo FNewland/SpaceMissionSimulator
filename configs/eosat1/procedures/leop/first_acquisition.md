@@ -17,7 +17,7 @@ application-running platform.
 
 ## Prerequisites
 - [ ] Launcher separation confirmed (launch provider telemetry)
-- [ ] Svalbard ground station antenna configured for EOSAT-1 VHF/UHF receive frequency
+- [ ] Iqaluit ground station antenna configured for EOSAT-1 S-band receive frequency
 - [ ] Predicted AOS/LOS timeline loaded into ground station schedule
 - [ ] Flight Dynamics have provided initial TLE from launch provider
 - [ ] MCS database loaded with EOSAT-1 TM/TC definitions
@@ -26,7 +26,7 @@ application-running platform.
 ## Procedure Steps
 
 ### Step 1 — Configure Ground Station Receiver and Force Pass Override
-**Action:** Command Svalbard ground station to point at predicted AOS azimuth/elevation. Enable auto-tracking on VHF/UHF downlink frequency. Set receiver bandwidth to wide acquisition mode (+/- 40 kHz Doppler window).
+**Action:** Command Iqaluit ground station to point at predicted AOS azimuth/elevation. Enable auto-tracking on S-band downlink frequency. Set receiver bandwidth to wide acquisition mode (+/- 40 kHz Doppler window).
 **Action:** In the MCS, enable **Pass Override** so the simulator treats the link as in contact regardless of orbital geometry. Cold-boot has `ttc_tx` OFF, so there is no carrier to acquire passively — the override gives the operator the assured uplink path the spacecraft autonomy is designed around.
 **Verify:** Ground station status = TRACKING_READY
 **Verify:** MCS reports `pass_override = 1` (param 0x05FF)
@@ -82,14 +82,14 @@ application-running platform.
 **GO/NO-GO:** Sufficient data collected and OBC in application image — clear to LEOP-007
 
 ## Off-Nominal Handling
-- **No S1.1 returned to CONNECTION_TEST:** the platform's auto-TX hold-down only fires on accepted TCs, so if S1.1 never arrives, either the uplink is not getting through (check pass override / ground station) or the receiver is unhealthy. Retry once. If still nothing, repoint and try Troll/Inuvik.
+- **No S1.1 returned to CONNECTION_TEST:** the platform's auto-TX hold-down only fires on accepted TCs, so if S1.1 never arrives, either the uplink is not getting through (check pass override / ground station) or the receiver is unhealthy. Retry once. If still nothing, repoint and try Troll.
 - **`obdh.sw_image` does not transition after OBC_BOOT_APP:** the boot-app countdown is 10s. Wait 30s, then re-request HK SID 4. If still 0, the application CRC is failing — escalate to OBDH engineer and consider `OBC_BOOT_INHIBIT(0)` then `OBC_REBOOT`.
 - **HK SIDs 1, 3, 4, 6 not emitting after boot_app:** verify `obdh.sw_image` actually went to 1. If yes, check that the HK scheduler is enabled for those SIDs (the bootloader-mode entry disables every SID except 11). Re-enable via `S3.5 ENABLE_HK_REPORT(sid=N)` for the missing SIDs.
 - **SET_TIME rejected with 0x0006:** the OBC may not have completed the boot-app transition yet (race with the 10s CRC window). Wait 5s and retry.
 - **Auto-TX hold-down expires before procedure complete:** any subsequent accepted TC re-arms the timer to 15 minutes, so this should not happen during a normal pass. If the operator goes 15 minutes without commanding, the link will drop — re-issue any TC to re-energise.
 
 ## Post-Conditions
-- [ ] Bidirectional VHF/UHF link established (auto-TX hold-down active)
+- [ ] Bidirectional S-band link established (auto-TX hold-down active)
 - [ ] OBC in application image (`obdh.sw_image` = 1)
 - [ ] On-board time synchronised to UTC within 1.0 s
 - [ ] EPS housekeeping confirms plausible power state

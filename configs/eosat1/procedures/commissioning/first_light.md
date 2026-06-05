@@ -18,7 +18,7 @@ initial quality assessment. This milestone confirms end-to-end imaging capabilit
 - [ ] `eps.bat_soc` (0x0101) > 70%
 - [ ] Spacecraft approaching a known calibration ground site (e.g., Libya-4, Railroad Valley)
 - [ ] On-board storage verified available (COM-101 Step 7)
-- [ ] Bidirectional VHF/UHF link active
+- [ ] Bidirectional S-band link active
 - [ ] Payload and AOCS engineers on console
 
 ## Procedure Steps
@@ -77,7 +77,7 @@ initial quality assessment. This milestone confirms end-to-end imaging capabilit
 **Action:** Request low-resolution preview thumbnail for ground assessment. Full image downlink scheduled for dedicated data dump pass.
 **TC:** `SET_PARAM(0x0634, 1)` (Service 20, Subtype 3) — generate preview thumbnail
 **Verify:** Preview generation complete within 30s via `GET_PARAM(0x0635)`
-**Action:** Downlink preview via VHF/UHF TM. Payload team assesses image for: correct geometry, spectral band presence, no dead pixels in initial inspection, reasonable scene content.
+**Action:** Downlink preview via S-band TM. Payload team assesses image for: correct geometry, spectral band presence, no dead pixels in initial inspection, reasonable scene content.
 **GO/NO-GO:** Preview image received and shows valid scene content
 
 ### Step 9 — First Light Assessment

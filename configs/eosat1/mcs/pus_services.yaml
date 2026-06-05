@@ -3,6 +3,10 @@ services:
     label: "Request Verification"
     enabled: true
     description: "TC acceptance, execution and completion reports"
+  s2:
+    label: "Device Access"
+    enabled: true
+    description: "Direct on/off control of named hardware lines. Used during commissioning and contingency; not used during nominal operations."
   s3:
     label: "Housekeeping"
     enabled: true
@@ -37,6 +41,10 @@ services:
     enabled: true
     max_definitions: 64
     description: "Parameter limit checking and out-of-limit event generation"
+  s13:
+    label: "Large Data Transfer"
+    enabled: true
+    description: "Multi-pass downlink of science data and other large payloads. The operator initiates a transfer via S13_CREATE_TRANSFER then monitors S13_TRANSFER_STATUS."
   s15:
     label: "Onboard Storage"
     enabled: true

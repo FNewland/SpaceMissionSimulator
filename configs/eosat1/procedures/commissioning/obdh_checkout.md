@@ -14,7 +14,7 @@ housekeeping generation.
 - [ ] COM-001 (EPS Checkout) and COM-002 (TCS Verification) completed
 - [ ] Spacecraft in SAFE_POINT attitude mode
 - [ ] `obdh.mode` (0x0300) = 0 (SAFE) or 1 (NOMINAL)
-- [ ] Bidirectional VHF/UHF link active
+- [ ] Bidirectional S-band link active
 - [ ] `eps.bat_soc` (0x0101) > 60%
 
 ## Procedure Steps

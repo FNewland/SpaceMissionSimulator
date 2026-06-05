@@ -15,7 +15,7 @@ requirements to confirm correct orbit insertion by the launch vehicle.
 - [ ] Spacecraft in SAFE_POINT mode with stable attitude
 - [ ] On-board time synchronized (LEOP-001 Step 5)
 - [ ] GPS receiver powered on (automatic at separation)
-- [ ] Bidirectional VHF/UHF link active
+- [ ] Bidirectional S-band link active
 - [ ] Flight Dynamics team ready with predicted TLE from launch provider
 
 ## Procedure Steps
@@ -86,7 +86,7 @@ requirements to confirm correct orbit insertion by the launch vehicle.
 - If fewer than 4 satellites tracked after 15 minutes: Check GPS antenna pointing (may be obscured by spacecraft body in current attitude). Consider rotating spacecraft if safe to do so. Use ground-based ranging as backup for orbit determination.
 - If GPS altitude outside [480, 520] km range: Verify GPS fix quality (PDOP value). If fix quality good, alert Flight Dynamics — may indicate orbit insertion error. Assess mission impact and potential orbit correction manoeuvre requirements.
 - If inclination differs from 97.4 deg by more than 0.2 deg: Flag to Flight Dynamics for assessment. Small inclination errors may be correctable; large errors may impact sun-synchronous properties and mission lifetime.
-- If GPS provides no fix after 30 minutes: Use ground-based tracking (range/range-rate from Svalbard, Troll, Inuvik, O'Higgins) for initial orbit determination. Schedule GPS receiver investigation during commissioning.
+- If GPS provides no fix after 30 minutes: Use ground-based tracking (range/range-rate from Iqaluit and Troll) for initial orbit determination. Schedule GPS receiver investigation during commissioning.
 
 ## Post-Conditions
 - [ ] GPS receiver operational with valid 3D fix

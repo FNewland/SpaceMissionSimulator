@@ -17,7 +17,7 @@ reach and maintain the operational temperature before imaging operations can beg
 - [ ] `eps.bat_soc` (0x0101) > 70% (cooler adds ~10W continuous load)
 - [ ] `eps.power_gen` (0x0107) > 40W (sunlit phase, wings deployed)
 - [ ] AOCS in SAFE_POINT (mode 2) or NOMINAL_POINT (mode 3)
-- [ ] Bidirectional VHF/UHF link active
+- [ ] Bidirectional S-band link active
 - [ ] Ground station pass covers at least 20 minutes (or multiple passes available)
 - [ ] Payload and thermal engineers on console
 

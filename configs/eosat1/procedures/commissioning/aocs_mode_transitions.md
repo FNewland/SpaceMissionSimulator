@@ -17,7 +17,7 @@ Verify autonomous safe mode reversion works correctly.
 - [ ] All four reaction wheels verified operational
 - [ ] `eps.bat_soc` (0x0101) > 65%
 - [ ] OBC in NOMINAL mode
-- [ ] Bidirectional VHF/UHF link active with link margin > 6 dB
+- [ ] Bidirectional S-band link active with link margin > 6 dB
 - [ ] Minimum 20 minutes of ground station pass remaining
 
 ## Procedure Steps

@@ -14,7 +14,7 @@ for mission operations.
 - [ ] LEOP phase completed successfully
 - [ ] Spacecraft in SAFE_POINT mode (sun-pointing)
 - [ ] At least 2 full orbits of continuous telemetry archived since LEOP completion
-- [ ] Bidirectional VHF/UHF link active with link margin > 3 dB
+- [ ] Bidirectional S-band link active with link margin > 3 dB
 - [ ] Battery SOC > 70% at start of procedure
 - [ ] No active anomalies on EPS subsystem
 

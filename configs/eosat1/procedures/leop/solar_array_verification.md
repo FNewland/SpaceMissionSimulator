@@ -14,8 +14,8 @@ against predictions for the current sun angle and orbit phase. The spacecraft ha
 
 ## Prerequisites
 - [ ] LEOP-001 (First Acquisition) completed successfully
-- [ ] LEOP-002 (Initial Health Assessment) completed — all subsystems nominal
-- [ ] Bidirectional VHF/UHF link active with link margin > 3 dB
+- [ ] LEOP-002 (Initial Health Check) completed — all subsystems nominal
+- [ ] Bidirectional S-band link active with link margin > 3 dB
 - [ ] Spacecraft in sunlit portion of orbit (preferred) or approaching eclipse exit
 - [ ] EPS telemetry confirmed available (SID 1 responsive)
 - [ ] Flight Dynamics have provided current beta angle and sun vector

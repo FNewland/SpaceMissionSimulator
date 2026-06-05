@@ -16,7 +16,7 @@ transitioning to fine-pointing mode.
 - [ ] Body rates < 0.1 deg/s on all axes
 - [ ] `eps.bat_soc` (0x0101) > 60%
 - [ ] OBC in NOMINAL mode
-- [ ] Bidirectional VHF/UHF link active
+- [ ] Bidirectional S-band link active
 - [ ] At least 15 minutes of ground station pass remaining
 
 ## Procedure Steps

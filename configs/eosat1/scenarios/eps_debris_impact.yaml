@@ -1,0 +1,375 @@
+name: "HERMES-3 Debris Impact — Alpha-7"
+difficulty: ADVANCED
+duration_s: 2400          # 40-minute contact window budget (11-min window + recovery margin)
+contact_window_s: 660     # 11-minute live contact window
+
+briefing: |
+  A debris fragment strikes HERMES-3 at T+00:00, severing 37 of 120 photovoltaic
+  cells on solar array panel SA-2B and fracturing the panel substrate. The impact
+  triggers a cascading failure across five subsystems — EPS, ADCS, TCS, COMMS, and
+  OBC — that must be stabilised within the contact window before safe mode lockout
+  at approximately T+22 min. Operators must triage correctly, sequence commands in
+  the correct order, and obtain Flight Director authorisation for all three critical
+  commands. Classification: RESTRICTED — TRAINING USE ONLY.
+
+# ─── FAILURE INJECTION SEQUENCE ──────────────────────────────────────────────
+events:
+
+  # F-1: Electrical Power Subsystem — Primary Failure
+  - time_offset_s: 0
+    action: inject
+    params:
+      subsystem: eps
+      failure: solar_array_cell_loss
+      magnitude: 0.308         # 37 of 120 cells destroyed (30.8%)
+      onset: step
+      target: SA-2B
+      annotation: "SA-2B struck — 37 cells severed, panel substrate fractured"
+
+  - time_offset_s: 0
+    action: set_parameter
+    params:
+      subsystem: eps
+      parameter: sa_total_output_w
+      value: 741               # Nominal 1250 W → 741 W (gimbal offset adds 121 W further loss)
+
+  - time_offset_s: 0
+    action: set_parameter
+    params:
+      subsystem: eps
+      parameter: bus_voltage_v
+      value: 23.1              # Nominal 28.0 V → 23.1 V (below 24.0 V minimum)
+
+  - time_offset_s: 0
+    action: set_parameter
+    params:
+      subsystem: eps
+      parameter: battery_discharge_current_a
+      value: 4.2               # Nominal 0.0 A → 4.2 A (limit 2.0 A exceeded)
+
+  - time_offset_s: 0
+    action: set_parameter
+    params:
+      subsystem: eps
+      parameter: power_margin_w
+      value: -239              # Nominal +270 W → -239 W (deficit: load 980 W > gen 741 W)
+
+  # F-2: ADCS — Degradation
+  - time_offset_s: 135        # T+02:15
+    action: inject
+    params:
+      subsystem: adcs
+      failure: gimbal_drive_fault
+      magnitude: 1.0
+      onset: step
+      target: SA-2B_gimbal
+      annotation: "Debris fragments jammed SA-2B gimbal hinge — drive over-current tripped"
+
+  - time_offset_s: 135
+    action: set_parameter
+    params:
+      subsystem: adcs
+      parameter: rw_b_speed_rpm
+      value: 5620              # Nominal ≤4500 RPM → 5620 RPM (saturation limit 6000)
+
+  - time_offset_s: 135
+    action: set_parameter
+    params:
+      subsystem: adcs
+      parameter: rw_a_speed_rpm
+      value: 2100              # Nominal 1800 → 2100 RPM (cross-axis coupling)
+
+  - time_offset_s: 135
+    action: set_parameter
+    params:
+      subsystem: adcs
+      parameter: pointing_error_deg
+      value: 0.22              # Nominal ≤0.05° → 0.22° (limit 0.25°)
+
+  - time_offset_s: 135
+    action: set_parameter
+    params:
+      subsystem: adcs
+      parameter: disturbance_torque_nm
+      value: 0.38              # Nominal ≤0.05 N·m → 0.38 N·m (limit 0.2)
+
+  - time_offset_s: 135
+    action: set_parameter
+    params:
+      subsystem: adcs
+      parameter: adcs_power_draw_w
+      value: 118               # Nominal 65 W → 118 W (RW-B near-saturation + thrusters)
+
+  # F-3: Thermal Control — Cascading Upset
+  - time_offset_s: 280        # T+04:40
+    action: inject
+    params:
+      subsystem: tcs
+      failure: heater_circuit_cut
+      magnitude: 1.0
+      onset: ramp
+      target: SA-2B_hinge_heater
+      annotation: "EPS load shed tier 1 cuts 7 heater circuits including SA-2B hinge"
+
+  - time_offset_s: 280
+    action: set_parameter
+    params:
+      subsystem: tcs
+      parameter: sa2b_hinge_temp_c
+      value: -46               # Nominal -20 °C → -46 °C (limit -40 °C; lubricant compromised)
+
+  - time_offset_s: 280
+    action: set_parameter
+    params:
+      subsystem: tcs
+      parameter: battery_temp_c
+      value: 8                 # Nominal +22 °C → +8 °C (approaching +5 °C lower bound)
+
+  - time_offset_s: 280
+    action: set_parameter
+    params:
+      subsystem: tcs
+      parameter: battery_charge_efficiency_pct
+      value: 86                # Nominal 98% → ~86% (cold cell resistance rise)
+
+  - time_offset_s: 280
+    action: set_parameter
+    params:
+      subsystem: tcs
+      parameter: active_heater_circuits
+      value: 4                 # Nominal 11/11 → 4/11 active
+
+  # F-4: Communications — Subsystem Degradation
+  - time_offset_s: 430        # T+07:10
+    action: inject
+    params:
+      subsystem: comms
+      failure: tx_power_reduction
+      magnitude: 0.6           # 5 W → 2 W (60% reduction)
+      onset: step
+      target: sband_transmitter
+      annotation: "Load shed tier 1 cuts S-band TX from 5 W to 2 W; uplink margin below minimum"
+
+  - time_offset_s: 430
+    action: set_parameter
+    params:
+      subsystem: comms
+      parameter: hga_downlink_rate_mbps
+      value: 25                # Nominal 100 Mbps → 25 Mbps
+
+  - time_offset_s: 430
+    action: set_parameter
+    params:
+      subsystem: comms
+      parameter: uplink_margin_db
+      value: 2.1               # Nominal 5.8 dB → 2.1 dB (required minimum 3.8 dB)
+
+  - time_offset_s: 430
+    action: set_parameter
+    params:
+      subsystem: comms
+      parameter: telemetry_latency_ms
+      value: 680               # Nominal 200 ms → 680 ms (OBC throttling)
+
+  - time_offset_s: 430
+    action: set_parameter
+    params:
+      subsystem: comms
+      parameter: command_accept_rate_pct
+      value: 91                # Nominal 100% → ~91% (marginal frame errors)
+
+  # F-5: OBC — Protective Shutdown
+  - time_offset_s: 660        # T+11:00
+    action: inject
+    params:
+      subsystem: obc
+      failure: pme_undervoltage_trip
+      magnitude: 1.0
+      onset: step
+      annotation: "Bus voltage crosses 21 V PME trip threshold — OBC enters EMERGENCY mode"
+
+  - time_offset_s: 660
+    action: set_parameter
+    params:
+      subsystem: obc
+      parameter: operating_mode
+      value: EMERGENCY         # Nominal NOMINAL → EMERGENCY
+
+  - time_offset_s: 660
+    action: set_parameter
+    params:
+      subsystem: obc
+      parameter: payload_computer_state
+      value: OFF               # PME non-critical load shed
+
+  - time_offset_s: 660
+    action: set_parameter
+    params:
+      subsystem: adcs
+      parameter: control_mode
+      value: THRUSTER_COARSE   # RW controller powered off; thrusters substituted
+
+  - time_offset_s: 660
+    action: set_parameter
+    params:
+      subsystem: adcs
+      parameter: propellant_consumption_g_per_min
+      value: 18                # Nominal 0 g/min → 18 g/min (thruster ADCS)
+
+  - time_offset_s: 660
+    action: set_parameter
+    params:
+      subsystem: obc
+      parameter: active_fault_flags
+      value: 7                 # SA fault, gimbal fault, undervoltage, load shed,
+                               # thermal, comms, watchdog reset ×2
+
+  # Safe mode lockout at T+22 min if no recovery
+  - time_offset_s: 1320       # T+22:00
+    action: inject
+    params:
+      subsystem: obc
+      failure: safe_mode_lockout
+      magnitude: 1.0
+      onset: step
+      condition: "battery_soc_pct < 60"
+      annotation: "Full safe mode — beacon only at 1 kbps; ground control suspended"
+
+# ─── EXPECTED OPERATOR RESPONSES ──────────────────────────────────────────────
+expected_responses:
+
+  # Step 1 — Identify Root Cause
+  - category: detect
+    step: 1
+    fd_authorisation_required: false
+    description: >
+      Identify EPS as root cause within 90 s of anomaly. Confirm SA output < 900 W
+      and bus voltage < 24 V. Issue EPS_LOADSHED_TIER2 to halt SoC decline (~140 W saved).
+    commands:
+      - EPS_LOADSHED_TIER2
+    verification: "SA discharge rate decreasing; bus voltage stabilising above 22 V"
+
+  - category: isolate
+    step: 1b
+    fd_authorisation_required: false
+    description: >
+      If battery SoC below 80%, issue EPS_BATT_DCHG_LIM 4.0 to limit
+      discharge current and protect cell chemistry.
+    commands:
+      - EPS_BATT_DCHG_LIM 4.0
+    verification: "Battery discharge current ≤ 4.0 A confirmed on HK"
+
+  # Step 2 — Isolate SA-2B Panel
+  - category: isolate
+    step: 2
+    fd_authorisation_required: true
+    description: >
+      Confirm SA-2B output < 200 W with gimbal in FAULT state. Request Flight Director
+      authorisation for EPS_SA2B_ISOL ON to electrically isolate SA-2B from bus and
+      prevent partial-short current drag on bus voltage.
+    commands:
+      - EPS_SA2B_ISOL ON
+    verification: "SA-2B isolated; bus voltage begins recovery above 23 V"
+
+  # Step 3 — Attitude Stabilisation
+  - category: recover
+    step: 3
+    fd_authorisation_required: true
+    description: >
+      If RW-B speed > 5000 RPM or pointing error > 0.20°, issue ADCS_MODE SUN_SAFE.
+      Request FD authorisation for RW_DESATURATE B. After desaturation, if pointing
+      error < 0.15°, issue ADCS_GIMBAL SA2B OPEN_LOOP 12.0.
+    commands:
+      - ADCS_MODE SUN_SAFE
+      - RW_DESATURATE B
+      - ADCS_GIMBAL SA2B OPEN_LOOP 12.0
+    verification: "RW-B speed < 4500 RPM; pointing error < 0.15°; gimbal corrected 12°"
+
+  # Step 4 — Thermal Recovery
+  - category: recover
+    step: 4
+    fd_authorisation_required: false
+    description: >
+      If SA-2B hinge temperature < -40 °C and bus voltage ≥ 23 V, enable
+      TCS_HTR SA2B_HINGE PRI and TCS_HTR BATT PRI. Monitor bus voltage —
+      shed lower-priority heater if bus drops below 22.5 V.
+    commands:
+      - TCS_HTR SA2B_HINGE PRI
+      - TCS_HTR BATT PRI
+    verification: "SA-2B hinge temperature rising above -40 °C; battery temp above +10 °C"
+
+  # Step 5 — Communication Stabilisation
+  - category: recover
+    step: 5
+    fd_authorisation_required: false
+    description: >
+      Confirm uplink margin < 3.8 dB. Restrict to critical commands only.
+      When bus voltage ≥ 24 V, issue COMMS_TX_PWR 5.0 and verify uplink
+      margin recovers above 3.8 dB before further commands.
+    commands:
+      - COMMS_TX_PWR 5.0
+    verification: "Uplink margin ≥ 3.8 dB; command accept rate returns to 100%"
+
+  # Step 6 — Full Recovery & Payload Restore
+  - category: recover
+    step: 6
+    fd_authorisation_required: true
+    description: >
+      When bus voltage ≥ 25 V sustained for 5 min AND battery SoC ≥ 80%, request FD
+      authorisation for OBC_MODE NOMINAL. Issue ADCS_MODE NADIR and restore payload
+      power in stepped 30 s intervals. Cancel all load shedding and generate anomaly report.
+    commands:
+      - OBC_MODE NOMINAL
+      - ADCS_MODE NADIR
+      - PLD_PWR ON STEP
+      - EPS_LOADSHED_NONE
+    verification: >
+      Bus voltage ≥ 25 V sustained; SoC ≥ 80%; all 7 fault flags cleared;
+      payload nominal; anomaly report initiated; debris catalogue update called
+
+# ─── SCORING ──────────────────────────────────────────────────────────────────
+scoring:
+  max_score: 36
+  pass_threshold: 30
+  conditional_pass_threshold: 24
+  criteria:
+    - id: 1
+      description: "Initial situation assessment — EPS root cause identified within 90 s"
+      weight: 3
+    - id: 2
+      description: "Command priority ordering — load shed → battery limit → isolation → attitude"
+      weight: 3
+    - id: 3
+      description: "Flight Director authorisation discipline — all 3 FD commands escalated"
+      weight: 3
+    - id: 4
+      description: "Reaction wheel desaturation timing — RW-B desaturated before 6000 RPM"
+      weight: 3
+    - id: 5
+      description: "Thermal interdependency recognition — heater deferred until bus ≥ 23 V"
+      weight: 3
+    - id: 6
+      description: "Uplink margin monitoring — margin confirmed before each critical command block"
+      weight: 3
+    - id: 7
+      description: "SA-2B open-loop gimbal command — 12° correction, pointing error < 0.15° verified"
+      weight: 3
+    - id: 8
+      description: "Payload power restoration — stepped 30 s intervals, both thresholds confirmed"
+      weight: 3
+    - id: 9
+      description: "Communication and verbal discipline — readbacks, FD updates, command log"
+      weight: 3
+    - id: 10
+      description: "Time to stable configuration — bus ≥ 25 V and SoC ≥ 80% achieved"
+      weight: 3
+    - id: 11
+      description: "Propellant conservation — RW control restored within 3 min of bus recovery"
+      weight: 3
+    - id: 12
+      description: "Post-recovery anomaly reporting — fault flags cleared, report and catalogue update"
+      weight: 3
+  outcomes:
+    qualified:        { min_score: 30, label: "Qualified — unsupervised console operations authorised" }
+    conditional_pass: { min_score: 24, label: "Conditional pass — repeat drill on criteria scoring 1" }
+    not_qualified:    { min_score: 0,  label: "Not yet qualified — full scenario re-run required" }

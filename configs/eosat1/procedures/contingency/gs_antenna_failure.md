@@ -98,7 +98,7 @@ Step 4 immediately. If no urgent need, proceed to Step 5 (replanning).
 **Action:** Contact alternate station operations:
 - Request emergency or priority booking
 - Provide spacecraft orbital elements and frequency plan
-- Confirm antenna capabilities (S/X-band, data rate support)
+- Confirm antenna capabilities (S-band, data rate support)
 **Action:** If an alternate station has a pass window within 30 minutes:
 - Prepare for handover: provide pass predictions, frequencies, pointing data
 - Confirm uplink/downlink configuration matches spacecraft settings

@@ -16,7 +16,7 @@ establish rate damping, and transition to active pointing control.
 - [ ] Body rates < 1 deg/s on all axes
 - [ ] `eps.bat_soc` (0x0101) > 60%
 - [ ] OBC in NOMINAL mode
-- [ ] Bidirectional VHF/UHF link active
+- [ ] Bidirectional S-band link active
 - [ ] At least 20 minutes of ground station pass remaining
 
 ## Procedure Steps
