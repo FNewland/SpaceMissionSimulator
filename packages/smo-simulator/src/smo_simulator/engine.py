@@ -1827,6 +1827,23 @@ class SimulationEngine:
             return
         try:
             ok = BreakpointManager(self).load(state=state)
+            if ok:
+                # Force a fresh HK burst so the operator UI / MCS see the restored
+                # values immediately rather than staying on cached, now-stale data
+                # until the natural HK interval rolls around. Push each SID's HK
+                # timer past its interval so the next tick emits.
+                for sid, interval in self._hk_intervals.items():
+                    self._hk_timers[sid] = interval + 0.001
+                # Announce the load as an S5 event so downstream consumers know
+                # the state was rewound (also a visible cue in the event log).
+                try:
+                    self._emit_event({
+                        'event_id': 0x0054,
+                        'severity': 2,
+                        'description': f"Breakpoint loaded: {name}",
+                    })
+                except Exception:
+                    pass
             logger.info("Breakpoint load %s: %s",
                         "succeeded" if ok else "returned False", name)
         except Exception as e:  # noqa: BLE001

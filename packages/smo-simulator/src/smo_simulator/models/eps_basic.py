@@ -360,7 +360,12 @@ class EPSBasicModel(SubsystemModel):
 
         line_powers["htr_bat"] = 6.0 if lines.get("htr_bat", True) else 0.0
         line_powers["htr_obc"] = 4.0 if lines.get("htr_obc", True) else 0.0
-        line_powers["aocs_wheels"] = 12.0 if lines.get("aocs_wheels", True) else 0.0
+        # AOCS reaction-wheel idle power: previously 12 W (~4 W/wheel) was
+        # unrealistically high for small-sat RW assemblies (real idle ~1.5–2 W
+        # per wheel) and produced a persistent orbit-average deficit against the
+        # ±Y deployable arrays. 6 W (3 wheels × 2 W idle) matches real hardware
+        # and closes the energy budget over a full orbit.
+        line_powers["aocs_wheels"] = 6.0 if lines.get("aocs_wheels", True) else 0.0
 
         # Apply overcurrent injection multiplier
         for line_name, mult in s.oc_inject.items():

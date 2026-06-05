@@ -4,6 +4,7 @@ Stores TM packets in onboard memory for later downlink.
 Store 1 (HK) uses circular buffer (overwrites oldest when full).
 Stores 2-4 (Event, Science, Alarm) use stop-when-full behaviour.
 """
+import base64
 import logging
 from typing import Optional
 
@@ -152,6 +153,45 @@ class OnboardTMStorage:
     def is_overflow(self, store_id: int) -> bool:
         """Check if a store has overflowed (hit capacity)."""
         return self._overflow.get(store_id, False)
+
+    def get_state(self) -> dict:
+        """Serialise the dynamic store state for a breakpoint snapshot.
+
+        Packets are base64-encoded so the snapshot is JSON-safe. Static config
+        (capacities, names, circular flags) is not serialised — it is rebuilt
+        from the store definitions on construction and restored by key here.
+        """
+        return {
+            "stores": {
+                str(sid): [base64.b64encode(bytes(p)).decode("ascii") for p in pkts]
+                for sid, pkts in self._stores.items()
+            },
+            "enabled": {str(k): v for k, v in self._enabled.items()},
+            "overflow": {str(k): v for k, v in self._overflow.items()},
+            "oldest_ts": {str(k): v for k, v in self._oldest_ts.items()},
+            "newest_ts": {str(k): v for k, v in self._newest_ts.items()},
+            "wrap_count": {str(k): v for k, v in self._wrap_count.items()},
+        }
+
+    def set_state(self, state: dict) -> None:
+        """Restore dynamic store state captured by get_state() (breakpoint load).
+
+        Only stores that already exist (i.e. are defined) are restored; unknown
+        store IDs in the snapshot are ignored.
+        """
+        if not state:
+            return
+        stores = state.get("stores", {})
+        for sid_str, pkts in stores.items():
+            sid = int(sid_str)
+            if sid in self._stores:
+                self._stores[sid] = [base64.b64decode(p) for p in pkts]
+        for attr in ("enabled", "overflow", "oldest_ts", "newest_ts", "wrap_count"):
+            target = getattr(self, f"_{attr}")
+            for k_str, v in state.get(attr, {}).items():
+                k = int(k_str)
+                if k in target:
+                    target[k] = v
 
     def get_status(self) -> list[dict]:
         """Return status of all stores."""

@@ -877,6 +877,13 @@ class MCSServer:
                 data["subsystem_staleness"] = {
                     k: round(v, 1) for k, v in subsystem_staleness.items()
                 }
+                # Per-parameter age in seconds — lets the UI mark individual
+                # telemetry cells as STALE when their last update is older than
+                # the expected HK interval, not just the subsystem as a whole.
+                data["params_age"] = {
+                    str(pid): round(now - entry.get("last_update_ts", 0), 1)
+                    for pid, entry in cache.items()
+                }
 
                 # Include S15 storage status if available
                 async with self._param_cache_lock:

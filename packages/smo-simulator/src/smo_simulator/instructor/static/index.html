@@ -1935,6 +1935,10 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
 
     addLogEntry('high', 'INJECT', `${subsystem}/${failure} mag=${magnitude.toFixed(2)} onset=${onset}`);
     showToast(`Failure injected: ${subsystem}/${failure}`, 'error');
+    // Re-poll the failure list now (don't wait up to 5 s for the next interval).
+    // Without this, a re-injected failure after a CLEAR can look like "nothing
+    // happened" until the next poll.
+    setTimeout(pollFailures, 400);
   }
 
   function renderFailures(failures) {
@@ -1974,6 +1978,7 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
     wsSend({ type: 'failure_clear', failure_id: id });
     apiPost('/api/command', { type: 'failure_clear', failure_id: id });
     addLogEntry('info', 'FAIL', `Clearing failure: ${id}`);
+    setTimeout(pollFailures, 400);  // immediate refresh, see comment in injectFailure
   };
 
   function clearAllFailures() {
@@ -1981,6 +1986,7 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
     apiPost('/api/command', { type: 'failure_clear_all' });
     addLogEntry('info', 'FAIL', 'Clearing all failures');
     showToast('All failures cleared', 'success');
+    setTimeout(pollFailures, 400);
   }
 
   // ===== BREAKPOINTS =====

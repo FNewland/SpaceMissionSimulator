@@ -164,8 +164,36 @@ class ScenarioEngine:
                 self._fm.clear(fid)
             else:
                 self._fm.clear_all()
+        elif action == "set_parameter":
+            # Drive a telemetry parameter to a specific value (e.g. force a bus
+            # voltage drop in a scenario). Numeric ``param_id`` is supported
+            # directly; symbolic ``parameter`` names without a numeric id are
+            # logged as unresolved because the scenario engine has no name→id
+            # registry. Without this branch, set_parameter events fired silently
+            # (no effect, no warning) — broken scenario authoring would look fine.
+            if self._engine is None:
+                logger.warning("Scenario set_parameter: no engine reference")
+                return
+            pid_raw = params.get("param_id")
+            value = params.get("value")
+            if pid_raw is None:
+                logger.warning(
+                    "Scenario set_parameter: symbolic 'parameter=%s' has no numeric "
+                    "param_id — skipping (use hex/decimal param_id instead)",
+                    params.get("parameter", "?"))
+                return
+            try:
+                pid = int(pid_raw, 0) if isinstance(pid_raw, str) else int(pid_raw)
+                self._engine.params[pid] = value
+                logger.info("Scenario set_parameter: 0x%04X = %r", pid, value)
+            except Exception as e:
+                logger.warning("Scenario set_parameter failed: %s", e)
         elif action == "message":
             logger.info("Scenario message: %s", params.get("text", ""))
+        else:
+            # Unrecognised action — surface it so scenario-authoring mistakes
+            # are visible. Previously these fired silently.
+            logger.warning("Scenario: unknown action %r (params=%r)", action, params)
 
     def _eval_condition(self, condition: str, params: dict) -> bool:
         """Simple condition evaluator: 'param_name op value'."""

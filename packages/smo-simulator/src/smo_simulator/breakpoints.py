@@ -38,6 +38,17 @@ class BreakpointManager:
             except Exception as e:
                 logger.warning("Failed to save state for %s: %s", sub_name, e)
 
+        # Capture the S15 onboard TM stores so a restored breakpoint has the same
+        # delayed/stored telemetry as the moment it was saved. Without this, the
+        # spacecraft state would be restored but the onboard stores (and thus what
+        # can be dumped to the delayed-TM viewer) would diverge from the snapshot.
+        tm_storage = getattr(eng, "_tm_storage", None)
+        if tm_storage is not None and hasattr(tm_storage, "get_state"):
+            try:
+                state["tm_storage"] = tm_storage.get_state()
+            except Exception as e:
+                logger.warning("Failed to save TM storage state: %s", e)
+
         if path:
             path.parent.mkdir(parents=True, exist_ok=True)
             with open(path, 'w') as f:
@@ -67,6 +78,14 @@ class BreakpointManager:
                 model = eng.subsystems.get(sub_name)
                 if model:
                     model.set_state(sub_state)
+
+            # Restore the S15 onboard TM stores so the delayed/stored telemetry
+            # matches the snapshot (see save()).
+            tm_storage = getattr(eng, "_tm_storage", None)
+            if tm_storage is not None and hasattr(tm_storage, "set_state") \
+                    and "tm_storage" in state:
+                tm_storage.set_state(state["tm_storage"])
+
             logger.info("Breakpoint loaded: %s", state.get("name", "unknown"))
             return True
         except Exception as e:

@@ -1,0 +1,119 @@
+# Corrected debris-impact scenario, adapted from the HERMES-3 / SA-2B briefing
+# to the SMO ScenarioEngine schema. Changes from the original:
+#   - subsystems renamed:  adcs→aocs, comms→ttc, obc→obdh
+#   - failure types remapped to ones the SMO models actually handle
+#   - every set_parameter now uses a numeric param_id from configs/eosat1/parameters.yaml
+#   - conditional events use numeric param ids in the condition string
+#   - briefing/expected_responses kept intact for instructor narrative continuity
+# See the design critique for why the cascade timing has also been compressed
+# relative to the original (real FDIR safes in seconds-to-minutes, not 22 min).
+
+name: "Debris Impact — HERMES-3 SA-2B (corrected)"
+difficulty: ADVANCED
+duration_s: 2400
+briefing: |
+  A debris fragment strikes HERMES-3 at T+00:00, partially severing the -Y solar
+  wing (modelled here as a step generation loss). The strike triggers a cascade
+  across EPS, AOCS, TCS, TTC and OBDH that must be stabilised within the contact
+  window before autonomous FDIR safes the spacecraft.
+  Note: real LEO MMOD events (e.g. Sentinel-1A 2016) typically lose ~5% of array
+  power and recover without operator action; this scenario deliberately compounds
+  the damage for training purposes — see the design-realism critique docx.
+
+events:
+
+  # F-1 EPS — partial -Y solar wing loss + bus voltage forced low
+  - time_offset_s: 0
+    action: inject
+    params:
+      subsystem: eps
+      failure: sa_b_fail            # remapped from solar_array_cell_loss
+      magnitude: 0.62                # severe degradation of B-side panels
+      onset: step
+
+  - time_offset_s: 0
+    action: set_parameter
+    params:
+      param_id: 0x0107               # bus_voltage (was 'bus_voltage_v')
+      value: 23.1
+
+  - time_offset_s: 0
+    action: set_parameter
+    params:
+      param_id: 0x0101               # bat_soc (kept high so we can see decline)
+      value: 78.0
+
+  # F-2 AOCS — RW bearing degradation from impact-side torque on B-wing
+  - time_offset_s: 135
+    action: inject
+    params:
+      subsystem: aocs                # was 'adcs'
+      failure: rw_bearing            # remapped from gimbal_drive_fault
+      magnitude: 0.9
+      onset: gradual
+      onset_duration_s: 30
+      wheel: 1                       # RW-B
+
+  - time_offset_s: 135
+    action: set_parameter
+    params:
+      param_id: 0x0208               # rw_speed[1] (rw_b_speed_rpm equivalent)
+      value: 5620
+
+  # F-3 TCS — heater circuit lost on load-shed (simulated as cooler failure)
+  - time_offset_s: 280
+    action: inject
+    params:
+      subsystem: tcs
+      failure: cooler_failed         # remapped from heater_circuit_cut
+      magnitude: 1.0
+      onset: step
+
+  - time_offset_s: 280
+    action: set_parameter
+    params:
+      param_id: 0x0407               # temp_battery (gradient growth)
+      value: 8.0
+
+  # F-4 TTC — degraded link (uplink_loss is the closest SMO failure type)
+  - time_offset_s: 430
+    action: inject
+    params:
+      subsystem: ttc
+      failure: uplink_loss           # remapped from tx_power_reduction
+      magnitude: 1.0
+      onset: step
+
+  # F-5 OBDH — bus failure on the primary CAN bus (matches the cascade narrative
+  # better than a fictional PME trip; recovery is obc_select_bus to bus B).
+  - time_offset_s: 660
+    action: inject
+    params:
+      subsystem: obdh                # was 'obc'
+      failure: bus_failure           # remapped from pme_undervoltage_trip
+      magnitude: 1.0
+      onset: step
+
+  # Conditional safe-mode lockout: if battery SoC falls under 60%, the engine
+  # has not yet recovered. (Uses a numeric param_id so the condition resolves.)
+  - condition: "0x0101 < 60"
+    action: inject
+    params:
+      subsystem: obdh
+      failure: watchdog_reset
+      magnitude: 1.0
+      onset: step
+
+expected_responses:
+  - category: detect
+    description: "Identify EPS as root cause within 90 s of anomaly; confirm bus < 24 V."
+  - category: isolate
+    description: "Command EPS safe mode (S8 func 83, mode 1) to shed non-essential loads."
+  - category: recover
+    description: "AOCS: monitor RW-B speed; switch to safe attitude mode if pointing degrades."
+  - category: recover
+    description: "TCS: monitor battery temperature; restore heaters when bus ≥ 23 V."
+  - category: recover
+    description: "OBDH: switch active CAN bus (S8 func 54) to restore unreachable subsystems."
+  - category: recover
+    description: "Restore TTC TX, command-mode → nominal, verify all subsystems reporting."

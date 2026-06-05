@@ -3631,6 +3631,42 @@ function param(id) {
   return v != null ? v : null;
 }
 
+// ── Per-parameter staleness helpers ────────────────────────────────────────
+// The backend exposes `state.params_age` (id → seconds since last update from
+// the spacecraft). Anything older than ~2× its HK interval should be displayed
+// as STALE rather than as a current reading.
+const _STALE_DEFAULT_S = 8.0;          // generous baseline (HK is usually 1–5 s)
+const _STALE_PER_PARAM_S = {            // tighten for high-rate / safety params
+  // examples — extend as needed:
+  // 0x0107: 4.0,  // bus voltage (1 Hz HK)
+};
+function paramAge(id) {
+  if (!state.params_age) return null;
+  const num = Number(id);
+  const key = String(num);
+  const ageStr = state.params_age[key] != null ? state.params_age[key]
+              : state.params_age['0x' + num.toString(16).toUpperCase().padStart(4, '0')];
+  return ageStr != null ? Number(ageStr) : null;
+}
+function isParamStale(id) {
+  const age = paramAge(id);
+  if (age == null) return false;        // unknown age → don't lie about freshness
+  const thr = _STALE_PER_PARAM_S[Number(id)] != null
+            ? _STALE_PER_PARAM_S[Number(id)] : _STALE_DEFAULT_S;
+  return age > thr;
+}
+// Wrap a rendered telemetry value with a STALE tag when its source data is old.
+// Use like: paramCell(0x0107, fmt(param(0x0107), 'V')).
+function paramCell(id, html) {
+  const stale = isParamStale(id);
+  const age = paramAge(id);
+  if (!stale) return html;
+  const ageStr = age != null ? ` (${age.toFixed(0)}s old)` : '';
+  return `<span class="param-stale" title="No fresh HK${ageStr}"
+                style="color: var(--status-stale); opacity: 0.65;">${html}</span>
+          <span class="tag stale" style="margin-left:4px; font-size:9px;">STALE</span>`;
+}
+
 // ===== CONTINGENCY UI UPDATES =====
 function updateEclipseCountdown() {
   const el = document.getElementById('eclipseCountdown');
@@ -5140,8 +5176,7 @@ function loadMemoryMap() {
 
 // --- S15 Storage ---
 function s15GetStatus() { sendPusCmd(15, 13, '', 'S15_STATUS'); }
-// Auto-refresh S15 status every 10 seconds
-setInterval(() => { if (wsConnected) s15GetStatus(); }, 10000);
+// S15 status polling disabled — use "Refresh Status" button or send TC(15,13) manually
 function s15Enable(id) { sendPusCmd(15, 1, ('0' + id.toString(16)).slice(-2), `S15_ENABLE_${id}`); }
 function s15Disable(id) { sendPusCmd(15, 2, ('0' + id.toString(16)).slice(-2), `S15_DISABLE_${id}`); }
 function s15Dump(id) { sendPusCmd(15, 9, ('0' + id.toString(16)).slice(-2), `S15_DUMP_${id}`); }

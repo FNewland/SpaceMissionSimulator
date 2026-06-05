@@ -34,6 +34,9 @@ rm -f .git/index.lock 2>/dev/null || true
 FILES=(
   packages/smo-simulator/src/smo_simulator/engine.py
   packages/smo-simulator/src/smo_simulator/service_dispatch.py
+  packages/smo-simulator/src/smo_simulator/scenario_engine.py
+  packages/smo-simulator/src/smo_simulator/breakpoints.py
+  packages/smo-simulator/src/smo_simulator/tm_storage.py
   packages/smo-simulator/src/smo_simulator/instructor/app.py
   packages/smo-simulator/src/smo_simulator/instructor/static/index.html
   packages/smo-simulator/src/smo_simulator/models/aocs_basic.py
@@ -44,9 +47,11 @@ FILES=(
   packages/smo-simulator/src/smo_simulator/models/ttc_basic.py
   packages/smo-mcs/src/smo_mcs/server.py
   packages/smo-mcs/src/smo_mcs/procedure_runner.py
+  packages/smo-mcs/src/smo_mcs/static/index.html
   packages/smo-planner/src/smo_planner/server.py
   configs/eosat1/telemetry/hk_structures.yaml
   configs/eosat1/scenarios/aocs_wheel_failure.yaml
+  configs/eosat1/scenarios/debris_impact_hermes3.yaml
   DEFECTS.md
   REMEDIATION_PLAN.md
   scripts/upload_and_file_defects.sh
