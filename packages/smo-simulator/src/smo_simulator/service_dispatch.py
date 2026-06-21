@@ -291,6 +291,71 @@ class ServiceDispatcher:
 
     # ─── S6 Memory Management ────────────────────────────────────────
 
+    # AOCS per-axis control-torque gain register block.
+    # A dedicated memory-mapped region (just above the Scratchpad RAM region
+    # 0x20000000-0x2003FFFF, so no collision with any region in
+    # _is_memory_readonly / _generate_memory_content):
+    #   0x20100000  torque_gain_x   IEEE-754 big-endian float32
+    #   0x20100004  torque_gain_y   IEEE-754 big-endian float32
+    #   0x20100008  torque_gain_z   IEEE-754 big-endian float32
+    # MEM_LOAD (S6.2) writes these floats into the AOCS model state; MEM_DUMP
+    # (S6.5 -> S6.6) returns the *current* gains read back from the model.
+    _AOCS_GAIN_BASE = 0x20100000
+    _AOCS_GAIN_SIZE = 12  # 3 x float32
+    _AOCS_GAIN_AXES = {0: "x", 4: "y", 8: "z"}  # offset from base -> axis
+
+    def _is_aocs_gain_region(self, addr: int, length: int = 1) -> bool:
+        """True if [addr, addr+length) lies within the AOCS gain block."""
+        base = self._AOCS_GAIN_BASE
+        return base <= addr and (addr + length) <= base + self._AOCS_GAIN_SIZE
+
+    def _aocs_gain_dump(self, addr: int, length: int) -> bytes | None:
+        """Return the live AOCS gains for a dump within the gain region.
+
+        Reads torque_gain_x/y/z from the AOCS model and packs the requested
+        byte window as big-endian float32. Returns None if the AOCS model is
+        unavailable so the caller can fall back to synthetic content.
+        """
+        aocs = self._engine.subsystems.get("aocs")
+        state = getattr(aocs, "_state", None)
+        if state is None:
+            return None
+        # Build the full 12-byte gain image, then slice the requested window.
+        image = (
+            struct.pack(">f", float(getattr(state, "torque_gain_x", 1.0)))
+            + struct.pack(">f", float(getattr(state, "torque_gain_y", 1.0)))
+            + struct.pack(">f", float(getattr(state, "torque_gain_z", 1.0)))
+        )
+        start = addr - self._AOCS_GAIN_BASE
+        return image[start:start + length]
+
+    def _aocs_gain_load(self, addr: int, payload: bytes) -> None:
+        """Write float32 gain values from a MEM_LOAD payload into the AOCS.
+
+        ``addr`` is the absolute start address inside the gain region; the
+        payload is a sequence of one or more big-endian float32 values that
+        are written into torque_gain_x/y/z by axis offset. Partial / single
+        gain writes are supported (e.g. write only +4 to change Y).
+        """
+        aocs = self._engine.subsystems.get("aocs")
+        state = getattr(aocs, "_state", None)
+        if state is None:
+            return
+        offset = addr - self._AOCS_GAIN_BASE
+        n = 0
+        while n + 4 <= len(payload):
+            rel = offset + n
+            axis = self._AOCS_GAIN_AXES.get(rel)
+            if axis is None:
+                break  # misaligned write — stop to avoid corrupting a value
+            value = struct.unpack(">f", payload[n:n + 4])[0]
+            if hasattr(aocs, "set_torque_gain"):
+                aocs.set_torque_gain(axis, value)
+            else:
+                setattr(state, f"torque_gain_{axis}", float(value))
+            logger.info("S6 MEM_LOAD AOCS torque_gain_%s = %.4f", axis, value)
+            n += 4
+
     def _crc16_ccitt(self, data: bytes) -> int:
         """Calculate CRC-16-CCITT checksum."""
         crc = 0xFFFF
@@ -343,6 +408,9 @@ class ServiceDispatcher:
                 logger.warning("S6 MEM_LOAD rejected — write to read-only region 0x%08X", addr)
                 return self.generate_s1_exec_fail(0, 0x0002)  # error code 2: write protected
             logger.info("S6 MEM_LOAD at 0x%08X, %d bytes", addr, len(payload_data))
+            # AOCS torque-gain register block: write float gains into the model.
+            if self._is_aocs_gain_region(addr, len(payload_data)):
+                self._aocs_gain_load(addr, payload_data)
             # S1.5 progress for multi-step memory load
             progress = self.generate_s1_progress(0, 1)  # step 1
             responses.extend(progress)
@@ -351,6 +419,19 @@ class ServiceDispatcher:
             addr = struct.unpack('>I', data[:4])[0]
             length = struct.unpack('>H', data[4:6])[0]
             logger.info("S6 MEM_DUMP at 0x%08X, %d bytes", addr, length)
+            # AOCS torque-gain register block: return the *live* gains read
+            # back from the AOCS model (not synthetic content).
+            if self._is_aocs_gain_region(addr, length):
+                gain_content = self._aocs_gain_dump(addr, min(length, 256))
+                if gain_content is not None:
+                    mem_data = (
+                        struct.pack('>I', addr)
+                        + struct.pack('>H', len(gain_content))
+                        + gain_content
+                    )
+                    return [self._engine.tm_builder._pack_tm(
+                        service=6, subtype=6, data=mem_data
+                    )]
             # Generate simulated memory content
             mem_content = self._generate_memory_content(addr, min(length, 256))
             mem_data = struct.pack('>I', addr) + struct.pack('>H', len(mem_content)) + mem_content
@@ -397,6 +478,39 @@ class ServiceDispatcher:
             return self._route_eps_cmd(func_id, data[1:])
         elif func_id == 83:  # EPS mode (defect #27) — set safe/emergency mode
             return self._route_eps_cmd(func_id, data[1:])
+        elif func_id in range(100, 108):
+            # Legacy quick-action funcs 100–107 from tc_catalog.yaml (MCS quick
+            # buttons). They have no fields; map each to its intended existing
+            # EPS/TCS handler (defect B: these previously fell through to []).
+            return self._route_legacy_quick_action(func_id)
+        return []
+
+    def _route_legacy_quick_action(self, func_id: int) -> list[bytes]:
+        """Route legacy MCS quick-action funcs 100–107 to existing handlers.
+
+        100/101: Solar array A ON/OFF   -> EPS enable_array/disable_array A
+        102/103: Solar array B ON/OFF   -> EPS enable_array/disable_array B
+        104/105: Battery heater ON/OFF  -> TCS heater circuit=battery
+        106/107: OBC heater ON/OFF      -> TCS heater circuit=obc
+        """
+        eps = self._engine.subsystems.get("eps")
+        tcs = self._engine.subsystems.get("tcs")
+        if func_id == 100 and eps:
+            eps.handle_command({"command": "enable_array", "array": "A"})
+        elif func_id == 101 and eps:
+            eps.handle_command({"command": "disable_array", "array": "A"})
+        elif func_id == 102 and eps:
+            eps.handle_command({"command": "enable_array", "array": "B"})
+        elif func_id == 103 and eps:
+            eps.handle_command({"command": "disable_array", "array": "B"})
+        elif func_id == 104 and tcs:
+            tcs.handle_command({"command": "heater", "circuit": "battery", "on": True})
+        elif func_id == 105 and tcs:
+            tcs.handle_command({"command": "heater", "circuit": "battery", "on": False})
+        elif func_id == 106 and tcs:
+            tcs.handle_command({"command": "heater", "circuit": "obc", "on": True})
+        elif func_id == 107 and tcs:
+            tcs.handle_command({"command": "heater", "circuit": "obc", "on": False})
         return []
 
     def _route_aocs_cmd(self, func_id: int, data: bytes) -> list[bytes]:
@@ -701,8 +815,21 @@ class ServiceDispatcher:
             tcs.handle_command({"command": "decontamination_stop"})
         elif func_id == 49:  # Get thermal map (Phase 5)
             result = tcs.handle_command({"command": "get_thermal_map"})
-            # Optionally return thermal map data as TM
-            # For now, just acknowledge
+            # Defect C: pack the thermal map into an S8.2 TM reply (mirroring
+            # the query funcs 61/62) instead of silently dropping it.
+            if result.get("success"):
+                tm = result.get("thermal_map", {})
+                # Fixed field order so the ground segment can decode positionally.
+                keys = [
+                    "temp_panel_px", "temp_panel_mx", "temp_panel_py",
+                    "temp_panel_my", "temp_panel_pz", "temp_panel_mz",
+                    "temp_obc", "temp_battery", "temp_fpa", "temp_thruster",
+                ]
+                values = [float(tm.get(k, 0.0)) for k in keys]
+                resp_data = struct.pack('>' + 'f' * len(values), *values)
+                return [self._engine.tm_builder._pack_tm(
+                    service=8, subtype=2, data=resp_data
+                )]
         return []
 
     def _route_obdh_cmd(self, func_id: int, data: bytes) -> list[bytes]:
@@ -1224,6 +1351,27 @@ class ServiceDispatcher:
             )]
         return []
 
+    # S8 funcs that boot/reboot/reconfigure the OBC. While the OBC is in
+    # bootloader (sw_image == SW_BOOTLOADER) the autonomous S19 path must NOT
+    # execute these — the operator-command path is already gated in
+    # obdh_basic.handle_command via _BOOTLOADER_ALLOWED, but trigger_event_action
+    # bypasses that gate. Defense-in-depth so a future mis-mapped rule cannot
+    # silently boot or reboot the OBC out of the bootloader (Bug 3 hardening).
+    _OBC_CRITICAL_FUNCS = frozenset({52, 53, 55, 56})  # reboot, switch_unit, boot_app, boot_inhibit
+
+    def _s19_dispatch(self, ea_id: int, func_id: int) -> None:
+        """Execute an S19 rule's S8 func, blocking OBC-critical funcs in bootloader."""
+        if func_id in self._OBC_CRITICAL_FUNCS:
+            obdh = self._engine.subsystems.get("obdh")
+            sw_image = getattr(getattr(obdh, "_state", None), "sw_image", None)
+            if sw_image == 0:  # SW_BOOTLOADER
+                logger.warning(
+                    "S19 rule %d BLOCKED: OBC-critical S8 func %d refused while OBC in bootloader",
+                    ea_id, func_id,
+                )
+                return
+        self._handle_s8(1, bytes([func_id]))
+
     def trigger_event_action(self, event_id: int) -> None:
         """Called when an event occurs — check for matching event-actions.
 
@@ -1244,8 +1392,8 @@ class ServiceDispatcher:
                     func_id = defn['action_func_id']
                     logger.info("S19 triggered: rule %d executing S8 func %d for event 0x%04X",
                                ea_id, func_id, event_id)
-                    # Execute the S8 function
-                    self._handle_s8(1, bytes([func_id]))
+                    # Execute the S8 function (guarded against OBC-critical funcs in bootloader)
+                    self._s19_dispatch(ea_id, func_id)
                     continue
 
                 # Also match by param_id if this is a param limit violation (0x9000 range)
@@ -1258,8 +1406,8 @@ class ServiceDispatcher:
                         func_id = defn['action_func_id']
                         logger.info("S19 triggered: rule %d executing S8 func %d for param 0x%04X violation",
                                    ea_id, func_id, event_param_id)
-                        # Execute the S8 function
-                        self._handle_s8(1, bytes([func_id]))
+                        # Execute the S8 function (guarded against OBC-critical funcs in bootloader)
+                        self._s19_dispatch(ea_id, func_id)
 
     # ─── S20 Parameter Management ────────────────────────────────────
 

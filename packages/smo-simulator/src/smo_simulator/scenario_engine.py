@@ -56,6 +56,11 @@ class ScenarioEngine:
         self._start_time: float = 0.0
         self._responses: list[dict] = []
         self._response_times: dict[str, float] = {}
+        self._last_debrief: Optional[ScenarioDebrief] = None
+        # Failure ids injected by the currently-active scenario, so they can be
+        # cleared when the scenario stops (auto-end or manual) and don't leak
+        # into the next scenario / free run.
+        self._injected_fids: list[str] = []
 
     def load_scenarios_from_dir(self, scenario_dir: Path) -> None:
         """Load all YAML scenario files from a directory."""
@@ -104,15 +109,53 @@ class ScenarioEngine:
         self._start_time = time.monotonic()
         self._responses = []
         self._response_times = {}
+        self._injected_fids = []
         logger.info("Scenario started: %s", name)
         return True
 
     def stop(self) -> Optional[ScenarioDebrief]:
+        """Stop the active scenario, returning (and caching) its debrief.
+
+        Idempotent: returns ``None`` and does nothing if no scenario is active.
+        """
+        return self._finish(reason="stopped")
+
+    def _finish(self, reason: str) -> Optional[ScenarioDebrief]:
+        """Tear down the active scenario exactly once.
+
+        Builds the debrief, caches it on ``self._last_debrief`` for later
+        retrieval, clears any failures this scenario injected, resets the
+        per-event ``fired`` flags, and deactivates the scenario. Safe to call
+        when nothing is active (returns ``None``).
+        """
         if self._active is None:
             return None
         debrief = self._build_debrief()
+        self._last_debrief = debrief
+        # Clear failures injected by this scenario so they don't leak past the
+        # scenario's lifetime. Timed injects (finite duration_s) auto-clear via
+        # the failure_manager; this also catches indefinite (duration_s<=0)
+        # injects that would otherwise stay active forever.
+        if self._fm is not None:
+            for fid in self._injected_fids:
+                try:
+                    self._fm.clear(fid)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("Scenario stop: failed to clear failure %s: %s",
+                                   fid, e)
+        self._injected_fids = []
+        # Reset fired-event state so the definition can be re-run cleanly.
+        for ev in self._active.events:
+            ev.fired = False
+        logger.info("Scenario '%s' %s after %.1fs (score %.0f%%)",
+                    self._active.name, reason, debrief.duration_s,
+                    debrief.score_pct)
         self._active = None
         return debrief
+
+    def last_debrief(self) -> Optional[ScenarioDebrief]:
+        """Return the debrief from the most recently finished scenario."""
+        return self._last_debrief
 
     def is_active(self) -> bool:
         return self._active is not None
@@ -139,9 +182,11 @@ class ScenarioEngine:
                 if self._eval_condition(ev.condition, shared_params):
                     self._fire_event(ev)
 
-        # Auto-end on duration
+        # Auto-end on duration: deactivate the scenario so the engine's main
+        # loop stops ticking it. Previously this only logged "duration expired"
+        # and left ``self._active`` set, so the scenario ran forever.
         if self._elapsed >= self._active.duration_s:
-            logger.info("Scenario '%s' duration expired", self._active.name)
+            self._finish(reason="duration expired")
 
     def _fire_event(self, ev: ScenarioEvent) -> None:
         ev.fired = True
@@ -149,7 +194,7 @@ class ScenarioEngine:
         params = ev.params
 
         if action == "inject" and self._fm:
-            self._fm.inject(
+            fid = self._fm.inject(
                 subsystem=params.get("subsystem", ""),
                 failure=params.get("failure", ""),
                 magnitude=float(params.get("magnitude", 1.0)),
@@ -158,6 +203,9 @@ class ScenarioEngine:
                 **{k: v for k, v in params.items()
                    if k not in ("subsystem", "failure", "magnitude", "onset", "duration_s")},
             )
+            # Track so it can be cleared if the scenario ends while still active.
+            if fid:
+                self._injected_fids.append(fid)
         elif action == "clear" and self._fm:
             fid = params.get("failure_id", "")
             if fid:

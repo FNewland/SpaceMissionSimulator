@@ -24,6 +24,7 @@ def create_instructor_app(engine) -> web.Application:
     app.router.add_get("/api/instructor/snapshot", handle_instructor_snapshot)
     app.router.add_post("/api/command", handle_command)
     app.router.add_get("/api/scenarios", handle_scenarios)
+    app.router.add_get("/api/scenario/debrief", handle_scenario_debrief)
     app.router.add_get("/api/failures", handle_failures)
     app.router.add_get("/api/breakpoints", handle_breakpoint_list)
     app.router.add_post("/api/breakpoint/save", handle_breakpoint_save)
@@ -121,6 +122,39 @@ async def handle_scenarios(request):
     if hasattr(engine, '_scenario_engine'):
         return web.json_response(engine._scenario_engine.list_scenarios())
     return web.json_response([])
+
+
+async def handle_scenario_debrief(request):
+    """Return the debrief for the most recently finished scenario.
+
+    A scenario can now end on its own when its ``duration_s`` elapses (it no
+    longer runs forever). The auto-stop builds and caches a debrief; this
+    endpoint lets the instructor UI poll for and display it once the scenario
+    has finished, whether it ended automatically or via stop_scenario.
+
+    Also reports whether a scenario is currently active so the UI can poll.
+    """
+    engine = request.app["engine"]
+    se = getattr(engine, "_scenario_engine", None)
+    if se is None:
+        return web.json_response({"active": False, "debrief": None})
+    debrief = se.last_debrief()
+    payload = None
+    if debrief is not None:
+        payload = {
+            "name": debrief.name,
+            "duration_s": debrief.duration_s,
+            "score_pct": debrief.score_pct,
+            "mttd_s": debrief.mttd_s,
+            "mtti_s": debrief.mtti_s,
+            "mttr_s": debrief.mttr_s,
+            "responses": debrief.responses,
+        }
+    return web.json_response({
+        "active": se.is_active(),
+        "current": se.current_name(),
+        "debrief": payload,
+    })
 
 
 async def handle_failures(request):

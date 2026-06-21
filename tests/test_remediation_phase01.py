@@ -62,6 +62,17 @@ def test_load_unknown_breakpoint_is_safe(engine):
     engine._handle_instructor_cmd({"type": "load_breakpoint", "name": "does_not_exist"})
 
 
+def test_orbit_propagator_clock_restored_on_load(engine):
+    """The propagator's _sim_utc was not being restored, so loading a breakpoint
+    left the satellite at a drifted orbital position. Now it's captured."""
+    t0 = engine.orbit.utc
+    engine._handle_instructor_cmd({"type": "save_breakpoint", "name": "orbit_rt"})
+    engine.orbit.advance(1800.0)                 # drift 30 min
+    assert engine.orbit.utc != t0
+    engine._handle_instructor_cmd({"type": "load_breakpoint", "name": "orbit_rt"})
+    assert engine.orbit.utc == t0, "orbit propagator clock not restored"
+
+
 # ─────────────────────────── #12: clear all failures ────────────────────────
 
 def test_failure_clear_all(engine):

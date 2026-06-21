@@ -367,6 +367,16 @@ class MCSServer:
             ground_utc = self.get_ground_utc()
             self._orbit_prop.reset(ground_utc)
             o = self._orbit_prop.state
+            # Defect D: surface the eclipse transition fields the power-budget
+            # display reads (in_eclipse + time-to-entry/exit). Coarse, bounded scan.
+            try:
+                ecl = self._orbit_prop.next_eclipse_transition()
+            except Exception:
+                ecl = {
+                    "in_eclipse": bool(o.in_eclipse),
+                    "time_to_eclipse_entry_s": None,
+                    "time_to_eclipse_exit_s": None,
+                }
             return {
                 "lat": round(o.lat_deg, 4),
                 "lon": round(o.lon_deg, 4),
@@ -374,6 +384,8 @@ class MCSServer:
                 "in_eclipse": bool(o.in_eclipse),
                 "in_contact": bool(o.in_contact),
                 "gs_elevation_deg": round(o.gs_elevation_deg, 1),
+                "time_to_eclipse_entry_s": ecl["time_to_eclipse_entry_s"],
+                "time_to_eclipse_exit_s": ecl["time_to_eclipse_exit_s"],
             }
         except Exception as e:
             logger.debug("Orbit propagation error: %s", e)

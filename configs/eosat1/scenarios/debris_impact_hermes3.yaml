@@ -1,102 +1,124 @@
-# Corrected debris-impact scenario, adapted from the HERMES-3 / SA-2B briefing
-# to the SMO ScenarioEngine schema. Changes from the original:
-#   - subsystems renamed:  adcs→aocs, comms→ttc, obc→obdh
-#   - failure types remapped to ones the SMO models actually handle
-#   - every set_parameter now uses a numeric param_id from configs/eosat1/parameters.yaml
-#   - conditional events use numeric param ids in the condition string
-#   - briefing/expected_responses kept intact for instructor narrative continuity
-# See the design critique for why the cascade timing has also been compressed
-# relative to the original (real FDIR safes in seconds-to-minutes, not 22 min).
+# Debris-impact scenario — HERMES-3 SA-2B strike
+# Mapped to SMO ScenarioEngine schema with verified failure names and param_ids.
+#
+# Subsystem mapping from original briefing:
+#   adcs → aocs   |   comms → ttc   |   obc → obdh
+#
+# Failure name mapping (original → SMO model):
+#   solar_array_cell_loss → solar_panel_loss (face: my)
+#   gimbal_drive_fault    → rw_bearing (wheel: 1)
+#   heater_circuit_cut    → cooler_failure
+#   tx_power_reduction    → uplink_loss
+#   pme_undervoltage_trip → bus_failure
+#   safe_mode_lockout     → watchdog_reset (conditional on SoC)
+#
+# Param ID corrections (parameters.yaml):
+#   bus_voltage  = 0x0105   (NOT 0x0107 which is power_gen)
+#   bat_soc      = 0x0101
+#   power_gen    = 0x0107
+#   rw2_speed    = 0x0208
+#   temp_battery = 0x0407
 
 name: "Debris Impact — HERMES-3 SA-2B (corrected)"
 difficulty: ADVANCED
 duration_s: 2400
 briefing: |
-  A debris fragment strikes HERMES-3 at T+00:00, partially severing the -Y solar
-  wing (modelled here as a step generation loss). The strike triggers a cascade
-  across EPS, AOCS, TCS, TTC and OBDH that must be stabilised within the contact
-  window before autonomous FDIR safes the spacecraft.
-  Note: real LEO MMOD events (e.g. Sentinel-1A 2016) typically lose ~5% of array
-  power and recover without operator action; this scenario deliberately compounds
-  the damage for training purposes — see the design-realism critique docx.
+  A debris fragment strikes HERMES-3 at T+00:00, destroying ~31% of the -Y solar
+  wing (SA-2B panel). The strike triggers a cascading failure across EPS, AOCS,
+  TCS, TTC and OBDH that must be stabilised within the contact window before
+  autonomous FDIR safes the spacecraft at T+22 min.
+
+  Operators must: triage EPS root cause within 90 s, isolate SA-2B, desaturate
+  RW-2 before 6000 RPM, restore heaters once bus ≥ 23 V, and return to nominal
+  mode before battery SoC falls below 60%.
 
 events:
 
-  # F-1 EPS — partial -Y solar wing loss + bus voltage forced low
+  # F-1 EPS — -Y solar panel partial loss (SA-2B / my face)
   - time_offset_s: 0
     action: inject
     params:
       subsystem: eps
-      failure: sa_b_fail            # remapped from solar_array_cell_loss
-      magnitude: 0.62                # severe degradation of B-side panels
+      failure: solar_panel_loss
+      magnitude: 0.62        # 62% degradation — models 37/120 cells destroyed + gimbal offset
       onset: step
+      face: my               # maps to SA-B wing (-Y face)
 
+  # Drive bus voltage below 24 V minimum to force alarm
   - time_offset_s: 0
     action: set_parameter
     params:
-      param_id: 0x0107               # bus_voltage (was 'bus_voltage_v')
+      param_id: 0x0105       # eps.bus_voltage
       value: 23.1
 
+  # Start battery draining (SoC visible to operator)
   - time_offset_s: 0
     action: set_parameter
     params:
-      param_id: 0x0101               # bat_soc (kept high so we can see decline)
+      param_id: 0x0101       # eps.bat_soc
       value: 78.0
 
-  # F-2 AOCS — RW bearing degradation from impact-side torque on B-wing
+  # Reduced power generation visible on HK
+  - time_offset_s: 0
+    action: set_parameter
+    params:
+      param_id: 0x0107       # eps.power_gen
+      value: 741.0
+
+  # F-2 AOCS — RW-2 bearing degradation from impact torque (T+02:15)
   - time_offset_s: 135
     action: inject
     params:
-      subsystem: aocs                # was 'adcs'
-      failure: rw_bearing            # remapped from gimbal_drive_fault
+      subsystem: aocs
+      failure: rw_bearing
       magnitude: 0.9
       onset: gradual
       onset_duration_s: 30
-      wheel: 1                       # RW-B
+      wheel: 1               # RW-2 (0-indexed)
 
+  # Force RW-2 speed into alarm range
   - time_offset_s: 135
     action: set_parameter
     params:
-      param_id: 0x0208               # rw_speed[1] (rw_b_speed_rpm equivalent)
-      value: 5620
+      param_id: 0x0208       # aocs.rw2_speed
+      value: 5620.0
 
-  # F-3 TCS — heater circuit lost on load-shed (simulated as cooler failure)
+  # F-3 TCS — heater circuit cut by EPS load shed (T+04:40)
   - time_offset_s: 280
     action: inject
     params:
       subsystem: tcs
-      failure: cooler_failed         # remapped from heater_circuit_cut
+      failure: cooler_failure
       magnitude: 1.0
       onset: step
 
+  # Battery temperature dropping (heater off)
   - time_offset_s: 280
     action: set_parameter
     params:
-      param_id: 0x0407               # temp_battery (gradient growth)
+      param_id: 0x0407       # tcs.temp_battery
       value: 8.0
 
-  # F-4 TTC — degraded link (uplink_loss is the closest SMO failure type)
+  # F-4 TTC — uplink degraded by load shed (T+07:10)
   - time_offset_s: 430
     action: inject
     params:
       subsystem: ttc
-      failure: uplink_loss           # remapped from tx_power_reduction
+      failure: uplink_loss
       magnitude: 1.0
       onset: step
 
-  # F-5 OBDH — bus failure on the primary CAN bus (matches the cascade narrative
-  # better than a fictional PME trip; recovery is obc_select_bus to bus B).
+  # F-5 OBDH — CAN bus failure as bus voltage continues to sag (T+11:00)
   - time_offset_s: 660
     action: inject
     params:
-      subsystem: obdh                # was 'obc'
-      failure: bus_failure           # remapped from pme_undervoltage_trip
+      subsystem: obdh
+      failure: bus_failure
       magnitude: 1.0
       onset: step
 
-  # Conditional safe-mode lockout: if battery SoC falls under 60%, the engine
-  # has not yet recovered. (Uses a numeric param_id so the condition resolves.)
-  - condition: "0x0101 < 60"
+  # Safe-mode lockout: if SoC falls below 60% and no recovery (conditional)
+  - condition: "256 < 60"    # 256 = 0x0101 decimal (bat_soc)
     action: inject
     params:
       subsystem: obdh
@@ -106,14 +128,27 @@ events:
 
 expected_responses:
   - category: detect
-    description: "Identify EPS as root cause within 90 s of anomaly; confirm bus < 24 V."
+    description: >
+      Identify EPS as root cause within 90 s — confirm bus < 24 V and power_gen < 900 W.
+      Issue load-shed tier-1 to stop SoC decline.
   - category: isolate
-    description: "Command EPS safe mode (S8 func 83, mode 1) to shed non-essential loads."
+    description: >
+      Isolate SA-2B degraded panel. Command EPS safe mode (S8 func 83, mode 1).
+      If SoC < 80%, limit battery discharge current.
   - category: recover
-    description: "AOCS: monitor RW-B speed; switch to safe attitude mode if pointing degrades."
+    description: >
+      AOCS: monitor RW-2 speed; switch to SUN_SAFE attitude if > 5000 RPM.
+      Desaturate RW-2 before saturation limit.
   - category: recover
-    description: "TCS: monitor battery temperature; restore heaters when bus ≥ 23 V."
+    description: >
+      TCS: monitor battery temperature. Restore heaters once bus ≥ 23 V sustained.
   - category: recover
-    description: "OBDH: switch active CAN bus (S8 func 54) to restore unreachable subsystems."
+    description: >
+      OBDH: switch active CAN bus (S8 func 54) to restore subsystem telemetry.
   - category: recover
-    description: "Restore TTC TX, command-mode → nominal, verify all subsystems reporting."
+    description: >
+      TTC: restore TX power once bus ≥ 24 V. Verify uplink margin before further commands.
+  - category: recover
+    description: >
+      Full recovery: bus ≥ 25 V sustained, SoC ≥ 80%, return OBC to NOMINAL mode,
+      restore payload power in stepped intervals, clear all fault flags.

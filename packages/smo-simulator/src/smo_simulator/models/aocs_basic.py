@@ -136,6 +136,17 @@ class AOCSState:
     # Slew state (0=IDLE, 1=SLEWING, 2=SETTLING, 3=COMPLETE)
     slew_state: int = 0
 
+    # ── Per-axis control-torque gains (X, Y, Z body axes) ──
+    # Operator-tunable multipliers applied to the commanded control torque in
+    # each body axis. Unity (1.0) reproduces the legacy ungained behaviour; a
+    # higher value makes that axis respond more strongly, a lower value weaker.
+    # Loaded/dumped via PUS S6 (memory management) at the AOCS gain register
+    # block (base 0x20100000; X/Y/Z at +0/+4/+8 as IEEE-754 big-endian
+    # float32). Persisted across breakpoints via get_state/set_state.
+    torque_gain_x: float = 1.0
+    torque_gain_y: float = 1.0
+    torque_gain_z: float = 1.0
+
     # S2 Device Access — device on/off states (device_id -> on/off)
     device_states: dict = field(default_factory=lambda: {
         0x0200: True,   # Reaction wheel 0
@@ -600,6 +611,47 @@ class AOCSBasicModel(SubsystemModel):
         # Failed axes produce no torque but duty is still commanded
         # (the model shows commanded duty; actual torque is zero on failed axis)
 
+    # ─── Per-axis control-torque gains ───────────────────────────────
+
+    def _commanded_control_torque(
+        self, axis: list[float], magnitude: float
+    ) -> list[float]:
+        """Return the commanded control-torque vector for the active control
+        law, with the operator-set per-axis gains applied.
+
+        The attitude control laws (NOMINAL / FINE_POINT) command a correction
+        of size ``magnitude`` along the body-frame error direction ``axis``
+        (a unit vector). The commanded torque on each body axis is scaled by
+        that axis's gain (``torque_gain_x/y/z``) so a higher gain produces a
+        stronger response and a lower gain a weaker one. With the unity
+        defaults this returns ``[axis[i] * magnitude]`` — identical to the
+        pre-gain behaviour.
+
+        Args:
+            axis: 3-element body-frame error-axis unit vector [x, y, z].
+            magnitude: scalar control effort (e.g. min(kp*err, cap)).
+
+        Returns:
+            3-element commanded torque vector [Tx, Ty, Tz].
+        """
+        s = self._state
+        gains = (s.torque_gain_x, s.torque_gain_y, s.torque_gain_z)
+        return [axis[i] * magnitude * gains[i] for i in range(3)]
+
+    def set_torque_gain(self, axis: str, value: float) -> None:
+        """Set the control-torque gain for body axis 'x', 'y' or 'z'."""
+        attr = f"torque_gain_{axis.lower()}"
+        if not hasattr(self._state, attr):
+            raise ValueError(f"Invalid torque-gain axis: {axis!r}")
+        setattr(self._state, attr, float(value))
+
+    def get_torque_gain(self, axis: str) -> float:
+        """Get the control-torque gain for body axis 'x', 'y' or 'z'."""
+        attr = f"torque_gain_{axis.lower()}"
+        if not hasattr(self._state, attr):
+            raise ValueError(f"Invalid torque-gain axis: {axis!r}")
+        return float(getattr(self._state, attr))
+
     # ─── Mode tick functions ─────────────────────────────────────────
 
     def _tick_off(self, s: AOCSState, dt: float) -> None:
@@ -671,7 +723,16 @@ class AOCSBasicModel(SubsystemModel):
         err = self._quat_angle_error(s.q, self._target_q)
         axis = self._quat_error_axis(s.q, self._target_q)
         delta = min(self._kp * err, 0.5) * dt
-        s.q = self._rotate_quat(s.q, axis, delta * _DEG)
+        # Apply the operator-set per-axis control-torque gains. The commanded
+        # torque vector is the error axis scaled by `delta` and the per-axis
+        # gain; we rotate about the (gain-weighted) torque direction by its
+        # magnitude so a higher gain on an axis produces a stronger correction
+        # on that axis. Unity gains reproduce the original `delta`-about-`axis`.
+        torque = self._commanded_control_torque(axis, delta)
+        t_mag = math.sqrt(sum(t * t for t in torque))
+        if t_mag > 1e-12:
+            t_axis = [t / t_mag for t in torque]
+            s.q = self._rotate_quat(s.q, t_axis, t_mag * _DEG)
         s.q = self._normalise(s.q)
         for i in range(3):
             s.q[i] += random.gauss(0, 0.00002)
@@ -699,7 +760,12 @@ class AOCSBasicModel(SubsystemModel):
         axis = self._quat_error_axis(s.q, self._target_q)
         # Tighter gain
         delta = min(self._kp * 1.5 * err, 0.3) * dt
-        s.q = self._rotate_quat(s.q, axis, delta * _DEG)
+        # Apply the operator-set per-axis control-torque gains (see _tick_nominal).
+        torque = self._commanded_control_torque(axis, delta)
+        t_mag = math.sqrt(sum(t * t for t in torque))
+        if t_mag > 1e-12:
+            t_axis = [t / t_mag for t in torque]
+            s.q = self._rotate_quat(s.q, t_axis, t_mag * _DEG)
         s.q = self._normalise(s.q)
         for i in range(3):
             s.q[i] += random.gauss(0, 0.000005)

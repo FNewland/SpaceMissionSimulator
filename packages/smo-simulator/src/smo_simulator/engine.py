@@ -795,7 +795,20 @@ class SimulationEngine:
 
         while self.running:
             dt_sim = dt_real * self.speed
+            self._tick_once(dt_sim)
 
+            # Rate control
+            elapsed = time.monotonic() - last_wall
+            sleep_t = max(0.0, dt_real - elapsed)
+            if sleep_t > 0:
+                time.sleep(sleep_t)
+            last_wall = time.monotonic()
+
+    def _tick_once(self, dt_sim: float) -> None:
+        """Execute one simulation step. Extracted from _run_loop so tests (and
+        any future scheduler) can drive the loop body deterministically without
+        the real-time pacing/threading of start()."""
+        if True:
             # Process instructor commands first (may set override flags
             # needed by orbit/subsystem logic below).
             self._drain_instr_queue()
@@ -888,13 +901,6 @@ class SimulationEngine:
 
             self._tick_count += 1
             self._sim_time += timedelta(seconds=dt_sim)
-
-            # Rate control
-            elapsed = time.monotonic() - last_wall
-            sleep_t = max(0.0, dt_real - elapsed)
-            if sleep_t > 0:
-                time.sleep(sleep_t)
-            last_wall = time.monotonic()
 
     # ------------------------------------------------------------------
     # FDIR
@@ -2041,6 +2047,30 @@ class SimulationEngine:
     # Public accessors
     # ------------------------------------------------------------------
 
+    def _get_eclipse_transition(self) -> dict:
+        """Return eclipse state + time-to-entry/exit for the power-budget display.
+
+        Defect D: produce `in_eclipse`, `time_to_eclipse_entry_s` and
+        `time_to_eclipse_exit_s` from the orbit propagator's forward scan.
+        Cached by tick so it runs at most once per state snapshot, and the
+        underlying scan is coarse/bounded (2-hour horizon, 60-s step) to keep
+        the cost off the hot tick loop.
+        """
+        cache = getattr(self, "_eclipse_transition_cache", None)
+        if cache is not None and cache[0] == self._tick_count:
+            return cache[1]
+        try:
+            result = self.orbit.next_eclipse_transition()
+        except Exception:
+            # Never let the display producer break state generation.
+            result = {
+                "in_eclipse": bool(self.orbit.state.in_eclipse),
+                "time_to_eclipse_entry_s": None,
+                "time_to_eclipse_exit_s": None,
+            }
+        self._eclipse_transition_cache = (self._tick_count, result)
+        return result
+
     def get_state_summary(self) -> dict:
         """Return spacecraft state summary with parameters mapped by subsystem.
 
@@ -2062,6 +2092,7 @@ class SimulationEngine:
             'sc_mode': self.sc_mode,
             'in_eclipse': bool(o.in_eclipse),
             'in_contact': bool(o.in_contact),
+            **self._get_eclipse_transition(),
             'lat': round(o.lat_deg, 4),
             'lon': round(o.lon_deg, 4),
             'alt_km': round(o.alt_km, 2),

@@ -43,6 +43,13 @@ creating GitHub issues.
 | 31  | Major    | Fixed      | TCS advanced thermal commands inert (decontamination, duty-limit, setpoints)  |
 | 32  | Minor    | Open       | Subsystem dead/inert commands & state (consolidated cleanup register)         |
 | 33  | Minor    | Open       | Subsystem computed-but-unobservable telemetry (consolidated cleanup register) |
+| 34  | Major    | Fixed      | Failure-script scenarios never stop at end of duration                       |
+| 35  | Major    | Fixed      | Breakpoint save/load does not restore orbital position or eclipse state       |
+| 36  | Major    | Fixed      | Eclipse / sunlight state never displayed — MCS reads keys sim never produces  |
+| 37  | Critical | Fixed      | S19 rules mis-map S8 func_ids — autonomous OBC application boot at startup     |
+| 38  | Major    | Fixed      | S8 function-management commands 100–107 (legacy EPS/TCS quick-actions) dropped |
+| 39  | Minor    | Fixed      | S8 func 49 TCS_GET_THERMAL_MAP acknowledges but returns no telemetry           |
+| 40  | Major    | Fixed      | tc_catalog.yaml on/off field names parse as booleans and abort the catalog load |
 
 Severity key:
 - **Critical** — mission cannot operate safely without this
@@ -66,3 +73,21 @@ controls), #17 (unify PUS parser), #18, #19 (RF bridge — needs GNU Radio to te
 #20, #21, #22, #32, #33 (cleanup registers). Remediation follows
 `REMEDIATION_PLAN.md`. Note: running the test suite needs `pytest-asyncio`
 installed (some MCS tests are async).
+
+Status note (2026-06-20 session): three bugs reported by Franz are now **Fixed** —
+scenario scripts never auto-stopping (#34), breakpoint save/load not restoring the
+orbital position / eclipse state (#35) and the matching MCS eclipse-display
+key mismatch (#36), and the OBC autonomously booting into its application at
+startup via mis-mapped S19 rules (#37). A dispatch/catalog audit during the same
+session found and fixed three dead command paths: dropped S8 legacy quick-actions
+100–107 (#38), the S8 func-49 thermal map that acknowledged but never downlinked
+(#39), and the `tc_catalog.yaml` `on`/`off` field names that parsed as YAML
+booleans and aborted the **whole** catalog load (#40, now 182 commands loading).
+A new **ADCS per-axis control-torque-gain feature** (S6 memory load/dump:
+`AOCS_SET_TORQUE_GAIN_X/Y/Z`, `AOCS_SET_TORQUE_GAINS_ALL`,
+`AOCS_DUMP_TORQUE_GAINS`) was also added — this is a feature, **not** a defect.
+Operational caveat (repeated): all of these fixes are **uncommitted working-tree
+edits** relative to git HEAD, so a running simulator must be **restarted** to pick
+them up, and breakpoint files saved before #35 lack the `orbit_utc` field. The
+GitHub-issue filing script `scripts/upload_and_file_defects.sh` would need its
+`ISSUES` array extended for 34–40 before these can be filed as issues.

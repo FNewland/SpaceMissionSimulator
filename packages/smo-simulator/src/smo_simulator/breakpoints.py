@@ -49,6 +49,19 @@ class BreakpointManager:
             except Exception as e:
                 logger.warning("Failed to save TM storage state: %s", e)
 
+        # Capture the orbit propagator's clock so the satellite returns to the
+        # same orbital position on load. SGP4 is stateless given a UTC time, so
+        # the propagator's _sim_utc is sufficient — but it is INDEPENDENT of
+        # eng._sim_time (each is advanced separately every tick) and was not
+        # being restored, so loading a breakpoint left the orbit at wherever the
+        # propagator happened to be, drifting from the snapshot.
+        orbit = getattr(eng, "orbit", None)
+        if orbit is not None:
+            try:
+                state["orbit_utc"] = orbit.utc.isoformat()
+            except Exception as e:
+                logger.warning("Failed to save orbit propagator state: %s", e)
+
         if path:
             path.parent.mkdir(parents=True, exist_ok=True)
             with open(path, 'w') as f:
@@ -85,6 +98,19 @@ class BreakpointManager:
             if tm_storage is not None and hasattr(tm_storage, "set_state") \
                     and "tm_storage" in state:
                 tm_storage.set_state(state["tm_storage"])
+
+            # Restore the orbit propagator's clock so the satellite is back at
+            # the snapshot's orbital position. Fall back to the engine sim_time
+            # for older snapshots that pre-date the orbit_utc field.
+            orbit = getattr(eng, "orbit", None)
+            if orbit is not None and hasattr(orbit, "reset"):
+                from datetime import datetime as _dt
+                utc_str = state.get("orbit_utc") or state.get("sim_time")
+                if utc_str:
+                    try:
+                        orbit.reset(_dt.fromisoformat(utc_str))
+                    except Exception as e:
+                        logger.warning("Orbit propagator reset failed: %s", e)
 
             logger.info("Breakpoint loaded: %s", state.get("name", "unknown"))
             return True
