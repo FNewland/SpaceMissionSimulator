@@ -28,6 +28,16 @@ workspace/logs/
 workspace/breakpoints/
 workspace/*.json
 
+# Runtime telemetry archive DB (generated; can grow >100MB — never commit)
+configs/data/tm_archive.db
+configs/data/tm_archive.db-shm
+configs/data/tm_archive.db-wal
+configs/data/.fuse_hidden*
+
+# Second virtualenv + build artifacts (do not commit)
+.venv-rfsim/
+*.tar
+
 # Offline wheel cache (build locally, don't commit)
 wheels/
 
