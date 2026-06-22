@@ -235,6 +235,13 @@ class AOCSBasicModel(SubsystemModel):
         self._prev_css_valid = False
         self._prev_gps_fix = 0
         self._prev_momentum_saturation = False
+        # Rising-edge state for level/threshold events that previously fired
+        # every tick while the condition held.
+        self._prev_rw_overspeed = False
+        self._prev_rw_bearing_degraded = [False, False, False, False]
+        self._prev_att_error_high = False
+        self._prev_gyro_bias_high = False
+        self._prev_css_degraded = False
         # Attitude error threshold for event (degrees)
         self._att_error_threshold_deg = 5.0
         # Bearing health tracking (0-100%)
@@ -1307,28 +1314,31 @@ class AOCSBasicModel(SubsystemModel):
                 'description': f'AOCS mode change from {_MODE_NAMES.get(prev_mode, "UNKNOWN")} to {_MODE_NAMES.get(s.mode, "UNKNOWN")}'
             })
 
-        # RW_OVERSPEED (0x0201) — when any wheel > 5000 RPM
-        for i in range(4):
-            if abs(s.rw_speed[i]) > 5000.0:
-                events.append({
-                    'event_id': 0x0201,
-                    'severity': 'MEDIUM',
-                    'description': f'Reaction wheel {i+1} overspeed: {s.rw_speed[i]:.1f} RPM'
-                })
-                break  # Only report once per tick
+        # RW_OVERSPEED (0x0201) — rising-edge: fire once when any wheel first
+        # exceeds 5000 RPM, not every tick the overspeed persists.
+        overspeed_idx = next((i for i in range(4) if abs(s.rw_speed[i]) > 5000.0), None)
+        rw_overspeed = overspeed_idx is not None
+        if rw_overspeed and not self._prev_rw_overspeed:
+            events.append({
+                'event_id': 0x0201,
+                'severity': 'MEDIUM',
+                'description': f'Reaction wheel {overspeed_idx+1} overspeed: {s.rw_speed[overspeed_idx]:.1f} RPM'
+            })
+        self._prev_rw_overspeed = rw_overspeed
 
-        # RW_BEARING_DEGRADED (0x0202) — when bearing_health < 50%
+        # RW_BEARING_DEGRADED (0x0202) — per-wheel rising-edge: fire once when a
+        # wheel's bearing health first drops below 50%, not every tick after.
         for i in range(4):
             health_pct = (1.0 - self._bearing_degradation[i]) * 100.0
             self._rw_bearing_health[i] = health_pct
-            if health_pct < 50.0 and self._rw_bearing_health[i] < 50.0:
-                if self._bearing_degradation[i] > 0.0:
-                    events.append({
-                        'event_id': 0x0202,
-                        'severity': 'MEDIUM',
-                        'description': f'Reaction wheel {i+1} bearing degradation: {health_pct:.1f}%'
-                    })
-                    break
+            degraded = (health_pct < 50.0 and self._bearing_degradation[i] > 0.0)
+            if degraded and not self._prev_rw_bearing_degraded[i]:
+                events.append({
+                    'event_id': 0x0202,
+                    'severity': 'MEDIUM',
+                    'description': f'Reaction wheel {i+1} bearing degradation: {health_pct:.1f}%'
+                })
+            self._prev_rw_bearing_degraded[i] = degraded
 
         # ST_BLIND (0x0203) — when star tracker loses lock (sun in FOV, etc.)
         for unit in (1, 2):
@@ -1342,7 +1352,9 @@ class AOCSBasicModel(SubsystemModel):
                     'severity': 'MEDIUM',
                     'description': f'Star tracker {unit} lost lock (BLIND)'
                 })
-            setattr(self, prev_attr, curr_status)
+            # NOTE: _prev_stN_status is updated in the ST_RECOVERY loop below
+            # (after both edge checks) so that the recovery check still sees the
+            # pre-tick status. Updating it here would mask BLIND->TRACKING.
 
         # ST_RECOVERY (0x0204) — when star tracker reacquires
         for unit in (1, 2):
@@ -1356,6 +1368,7 @@ class AOCSBasicModel(SubsystemModel):
                     'severity': 'INFO',
                     'description': f'Star tracker {unit} reacquired lock'
                 })
+            setattr(self, prev_attr, curr_status)
 
         # MOMENTUM_SATURATION (0x0205) — when total angular momentum > 90% of max
         max_momentum = self._rw_inertia * self._rw_max_speed * (2.0 * math.pi / 60.0) * 4
@@ -1370,13 +1383,16 @@ class AOCSBasicModel(SubsystemModel):
                 })
             self._prev_momentum_saturation = is_saturating
 
-        # ATTITUDE_ERROR_HIGH (0x0206) — when pointing error > configured threshold
-        if s.att_error > self._att_error_threshold_deg:
+        # ATTITUDE_ERROR_HIGH (0x0206) — rising-edge: fire once when pointing
+        # error first exceeds the configured threshold, not every tick after.
+        att_error_high = s.att_error > self._att_error_threshold_deg
+        if att_error_high and not self._prev_att_error_high:
             events.append({
                 'event_id': 0x0206,
                 'severity': 'MEDIUM',
                 'description': f'Attitude error exceeds threshold: {s.att_error:.2f} deg'
             })
+        self._prev_att_error_high = att_error_high
 
         # DESATURATION_START (0x0207) — when entering DESAT mode
         if s.mode == MODE_DESAT and prev_mode != MODE_DESAT:
@@ -1411,23 +1427,29 @@ class AOCSBasicModel(SubsystemModel):
                 'description': f'GPS lock acquired (fix={s.gps_fix})'
             })
 
-        # GYRO_BIAS_HIGH (0x020B) — when gyro bias drift exceeds threshold
+        # GYRO_BIAS_HIGH (0x020B) — rising-edge: fire once when bias drift first
+        # exceeds the threshold, not every tick after.
         bias_mag = math.sqrt(sum(b*b for b in self._gyro_bias))
-        if bias_mag > 0.05:  # deg/s threshold
+        gyro_bias_high = bias_mag > 0.05  # deg/s threshold
+        if gyro_bias_high and not self._prev_gyro_bias_high:
             events.append({
                 'event_id': 0x020B,
                 'severity': 'LOW',
                 'description': f'Gyro bias drift high: {bias_mag:.5f} deg/s'
             })
+        self._prev_gyro_bias_high = gyro_bias_high
 
-        # CSS_DEGRADED (0x020C) — when multiple CSS heads fail
+        # CSS_DEGRADED (0x020C) — rising-edge: fire once when CSS first goes
+        # degraded (2+ heads failed and composite invalid), not every tick.
         failed_count = sum(1 for failed in s.css_head_failed.values() if failed)
-        if failed_count >= 2 and not s.css_valid:
+        css_degraded = failed_count >= 2 and not s.css_valid
+        if css_degraded and not self._prev_css_degraded:
             events.append({
                 'event_id': 0x020C,
                 'severity': 'MEDIUM',
                 'description': f'CSS degraded: {failed_count} heads failed'
             })
+        self._prev_css_degraded = css_degraded
 
         # Dispatch all events to the engine (defect #23: drained via _emit_event)
         if hasattr(self, '_engine') and self._engine:

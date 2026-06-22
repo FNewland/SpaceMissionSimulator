@@ -38,8 +38,12 @@ DUMP_DIR="${SMO_DUMP_DIR:-$SCRIPT_DIR/workspace/dumps}"
 export SMO_DUMP_DIR="$DUMP_DIR"
 
 # Activate virtual environment
-if [ ! -d ".venv" ]; then
-    echo "ERROR: .venv not found. Create it first with: python3.11 -m venv .venv"
+if [ ! -f ".venv/bin/activate" ]; then
+    echo "ERROR: .venv is missing or incomplete (.venv/bin/activate not found)."
+    echo "Recreate it with:"
+    echo "    rm -rf .venv && python3.11 -m venv .venv && source .venv/bin/activate \\"
+    echo "      && pip install -e packages/smo-common -e packages/smo-simulator \\"
+    echo "         -e packages/smo-mcs -e packages/smo-planner -e packages/smo-rfsim"
     exit 1
 fi
 source .venv/bin/activate

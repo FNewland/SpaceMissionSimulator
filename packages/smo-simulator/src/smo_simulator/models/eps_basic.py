@@ -123,6 +123,9 @@ class EPSState:
     _prev_oc_trip_flags: int = 0     # Previous OC trip flags
     _prev_load_shed_stage: int = 0   # Previous load shedding stage
     _was_charging_prev: bool = False # For charge complete detection
+    _prev_bat_overtemp: bool = False # Battery overtemp edge state
+    _prev_bat_undertemp: bool = False # Battery undertemp edge state
+    _prev_sa_degraded: bool = False  # Solar-array-degraded edge state
     # ── Load shedding and control ──
     load_shed_stage: int = 0         # 0=none, 1/2/3=progressive shed
     charge_rate_override_a: float = 0.0  # 0.0 = auto, else manual A
@@ -469,11 +472,15 @@ class EPSBasicModel(SubsystemModel):
         delta_temp = ((self._bat_temp_env - s.bat_temp) / self._bat_temp_tau + bat_heat_w / 30.0) * dt
         s.bat_temp += delta_temp + random.gauss(0, 0.05)
 
-        # ── Event detection: Battery temperature extremes ──
-        if s.bat_temp > 45.0:
+        # ── Event detection: Battery temperature extremes (rising-edge only) ──
+        bat_overtemp = s.bat_temp > 45.0
+        if bat_overtemp and not s._prev_bat_overtemp:
             events_to_generate.append((0x0109, f"Battery overtemp: {s.bat_temp:.1f}C"))
-        if s.bat_temp < -5.0:
+        s._prev_bat_overtemp = bat_overtemp
+        bat_undertemp = s.bat_temp < -5.0
+        if bat_undertemp and not s._prev_bat_undertemp:
             events_to_generate.append((0x010A, f"Battery undertemp: {s.bat_temp:.1f}C"))
+        s._prev_bat_undertemp = bat_undertemp
 
         # ── Event detection: SoC thresholds ──
         if s.bat_soc_pct < 10.0 and s._prev_soc >= 10.0:
@@ -515,9 +522,16 @@ class EPSBasicModel(SubsystemModel):
         expected_sa_power = (self._panel_area * self._cell_eff * self._solar_irrad *
                            (1.0 if not s.in_eclipse else 0.0)) * s.mppt_efficiency * s.sa_age_factor
         actual_sa_power = s.power_gen_w
-        if expected_sa_power > 50.0 and actual_sa_power < expected_sa_power * 0.7:
-            if not s.in_eclipse:
-                events_to_generate.append((0x010B, f"Solar array degraded: {actual_sa_power:.1f}W vs {expected_sa_power:.1f}W"))
+        sa_degraded = (
+            expected_sa_power > 50.0
+            and actual_sa_power < expected_sa_power * 0.7
+            and not s.in_eclipse
+        )
+        # Rising-edge: emit once when the array first drops below the degradation
+        # threshold, not every sunlit tick while degraded.
+        if sa_degraded and not s._prev_sa_degraded:
+            events_to_generate.append((0x010B, f"Solar array degraded: {actual_sa_power:.1f}W vs {expected_sa_power:.1f}W"))
+        s._prev_sa_degraded = sa_degraded
 
         # ── Event detection: Power line state changes ──
         for i, line_name in enumerate(POWER_LINE_NAMES):

@@ -80,6 +80,7 @@ class TTCState:
 
     # ── Link quality thresholds for events ──
     _prev_pa_temp_warning: bool = False
+    _prev_pa_overheat_shutdown: bool = False
     _prev_link_margin_warning: bool = False
     _prev_link_margin_critical: bool = False
     _prev_ber_exceeded: bool = False
@@ -558,6 +559,14 @@ class TTCBasicModel(SubsystemModel):
                 'description': "Frame sync lost"
             })
 
+        # Update lock edge-detection state. Without this the three _prev_ flags
+        # stayed False forever, so every "acquired" event re-fired on EVERY tick
+        # while locked (and the matching "lost" events could never fire). This is
+        # the only place these flags are written.
+        s._prev_carrier_lock = s.carrier_lock
+        s._prev_bit_sync = s.bit_sync
+        s._prev_frame_sync = s.frame_sync
+
         # ── Link margin thresholds ──
         link_margin_warning = (s.link_active and s.eb_n0 < 6.0)
         if link_margin_warning and not s._prev_link_margin_warning:
@@ -587,12 +596,14 @@ class TTCBasicModel(SubsystemModel):
             })
         s._prev_pa_temp_warning = pa_overtemp_warning
 
-        if s.pa_overheat_shutdown:
+        # Edge-guarded: fire ONCE on entry into shutdown, not every tick while held.
+        if s.pa_overheat_shutdown and not s._prev_pa_overheat_shutdown:
             events.append({
                 'event_id': 0x0509,
                 'severity': 'HIGH',
                 'description': f"PA overheat shutdown at {s.pa_temp:.1f}C"
             })
+        s._prev_pa_overheat_shutdown = s.pa_overheat_shutdown
 
         if s._prev_pa_temp_warning and s.pa_temp < 50.0 and not s.pa_overheat_shutdown:
             events.append({

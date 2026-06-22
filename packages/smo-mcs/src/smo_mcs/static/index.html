@@ -405,6 +405,8 @@ button, select, input { font-family: inherit; font-size: inherit; }
   border-bottom: 2px solid transparent; transition: color .15s, border-color .15s;
 }
 #bottom-panel .bp-tab.active { color: var(--status-commanding); border-bottom-color: var(--status-commanding); }
+.event-log-filters { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.event-log-filters select { background:var(--surface-tertiary); color:var(--text-primary); border:1px solid var(--surface-overlay); border-radius:var(--r); padding:2px 6px; font-size:10px; font-family:inherit; }
 #log-container { flex: 1; overflow-y: auto; padding: 4px 13px; font-size: 10px; }
 .log-entry {
   padding: 2px 0; border-bottom: 1px solid rgba(34,34,54,.4);
@@ -2477,6 +2479,16 @@ button, select, input { font-family: inherit; font-size: inherit; }
     <button class="bp-tab" id="bp-tab-cmdhist" aria-label="Command history">CMD HISTORY</button>
     <button class="bp-tab" id="bp-tab-handover" aria-label="Shift handover log">HANDOVER</button>
     <button class="bp-tab" id="bp-tab-gonogo" aria-label="GO/NO-GO coordination">GO/NO-GO</button>
+    <div class="event-log-filters" id="event-log-filters">
+      <select id="event-filter-severity" aria-label="Filter events by severity / type">
+        <option value="">All Events</option>
+        <option value="info">Info</option>
+        <option value="nom">Nominal</option>
+        <option value="warn">Warning</option>
+        <option value="alarm">High / Alarm</option>
+        <option value="medplus">Warning+ (Warn &amp; Alarm)</option>
+      </select>
+    </div>
   </div>
   <div id="log-container" role="log" aria-live="polite" aria-label="Event and command log"></div>
   <div id="cmd-history-container" style="display:none;overflow-y:auto;height:100%;font-size:10px;font-family:var(--font-mono);padding:4px 8px;"></div>
@@ -2579,6 +2591,7 @@ let positionsData = {};
 let activeTab = 'overview';
 let bottomTab = 'events';
 let eventLog = [];
+let eventSevFilter = '';   // '' = all; else 'info'|'nom'|'warn'|'alarm'|'medplus'
 let tmLog = [];
 let cmdHistory = [];
 let verifLog = [];
@@ -3029,6 +3042,10 @@ function initBottomTabs() {
   document.getElementById('bp-tab-cmdhist').addEventListener('click', () => { bottomTab='cmdhist'; updateBottomTabs(); renderCmdHistory(); });
   document.getElementById('bp-tab-handover').addEventListener('click', () => { bottomTab='handover'; updateBottomTabs(); });
   document.getElementById('bp-tab-gonogo').addEventListener('click', () => { bottomTab='gonogo'; updateBottomTabs(); fetchGoNoGoStatus(); });
+  const evtFilter = document.getElementById('event-filter-severity');
+  if (evtFilter) {
+    evtFilter.addEventListener('change', () => { eventSevFilter = evtFilter.value; renderBottomLog(); });
+  }
 }
 function updateBottomTabs() {
   ['events','tm','cmdhist','handover','gonogo'].forEach(t => {
@@ -3215,7 +3232,18 @@ function handleTMPacket(pkt) {
 
 function renderBottomLog() {
   const container = document.getElementById('log-container');
-  const entries = bottomTab === 'events' ? eventLog : tmLog;
+  let entries = bottomTab === 'events' ? eventLog : tmLog;
+  // Apply the severity/type filter to the events tab only (TM tab is unaffected).
+  if (bottomTab === 'events' && eventSevFilter) {
+    if (eventSevFilter === 'medplus') {
+      entries = entries.filter(e => e.sev === 'warn' || e.sev === 'alarm');
+    } else {
+      entries = entries.filter(e => e.sev === eventSevFilter);
+    }
+  }
+  // Show the filter control only on the events tab.
+  const filters = document.getElementById('event-log-filters');
+  if (filters) filters.style.display = bottomTab === 'events' ? 'flex' : 'none';
   let html = '';
   const show = entries.slice(0, 80);
   for (const e of show) {

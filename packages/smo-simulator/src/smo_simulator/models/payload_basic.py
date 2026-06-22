@@ -156,6 +156,15 @@ class PayloadState:
     prev_mode: int = 0
     prev_fpa_temp: float = 5.0
     prev_store_used_pct: float = 20.0
+    # Rising-edge state for level/threshold events that previously fired every
+    # tick while the condition held (storage critical/full, cooler failure,
+    # SNR degraded, bad-segment, compression error).
+    _prev_storage_critical: bool = False
+    _prev_storage_full: bool = False
+    _prev_cooler_failed: bool = False
+    _prev_snr_degraded: bool = False
+    _prev_bad_segment: bool = False
+    _prev_compression_error: bool = False
 
     # S2 Device Access — device on/off states (device_id -> on/off)
     device_states: dict = field(default_factory=lambda: {
@@ -501,13 +510,17 @@ class PayloadBasicModel(SubsystemModel):
         if s.store_used_pct >= 90.0 and s.prev_store_used_pct < 90.0:
             events_to_emit.append(0x0603)  # STORAGE_WARNING
 
-        # STORAGE_CRITICAL (95%)
-        if s.store_used_pct >= 95.0:
+        # STORAGE_CRITICAL (95%) — rising-edge only
+        storage_critical = s.store_used_pct >= 95.0
+        if storage_critical and not s._prev_storage_critical:
             events_to_emit.append(0x060C)  # STORAGE_CRITICAL
+        s._prev_storage_critical = storage_critical
 
-        # STORAGE_FULL (100%)
-        if s.store_used_pct >= 100.0:
+        # STORAGE_FULL (100%) — rising-edge only
+        storage_full = s.store_used_pct >= 100.0
+        if storage_full and not s._prev_storage_full:
             events_to_emit.append(0x0609)  # STORAGE_FULL
+        s._prev_storage_full = storage_full
 
         # FPA_OVERTEMP (> -3C)
         if s.fpa_temp > -3.0 and s.prev_fpa_temp <= -3.0:
@@ -517,25 +530,35 @@ class PayloadBasicModel(SubsystemModel):
         if s.fpa_temp < -15.0 and s.prev_fpa_temp >= -15.0:
             events_to_emit.append(0x0605)  # FPA_UNDERTEMP
 
-        # COOLER_FAILURE
-        if s.cooler_failed:
+        # COOLER_FAILURE — rising-edge only
+        if s.cooler_failed and not s._prev_cooler_failed:
             events_to_emit.append(0x0606)  # COOLER_FAILURE
+        s._prev_cooler_failed = s.cooler_failed
 
-        # IMAGE_CHECKSUM_ERROR
+        # IMAGE_CHECKSUM_ERROR — probabilistic, each fire is a distinct event
         if s.checksum_errors > 0 and random.random() < 0.01:
             events_to_emit.append(0x0607)  # IMAGE_CHECKSUM_ERROR
 
-        # SNR_DEGRADED (< 25 dB)
-        if s.snr < 25.0:
+        # SNR_DEGRADED (< 25 dB) — rising-edge only.
+        # Only meaningful while actually imaging (snr is forced to 0.0 in
+        # STANDBY/OFF, which would otherwise look "degraded" forever).
+        snr_degraded = (s.mode == 2 and s.fpa_ready and s.snr < 25.0)
+        if snr_degraded and not s._prev_snr_degraded:
             events_to_emit.append(0x0608)  # SNR_DEGRADED
+        s._prev_snr_degraded = snr_degraded
 
-        # BAD_SEGMENT_DETECTED
-        if s.mem_segments_bad > 0:
+        # BAD_SEGMENT_DETECTED — rising-edge only (fires when a new bad segment
+        # pushes the count above zero from zero; re-arms once all clear).
+        bad_segment = s.mem_segments_bad > 0
+        if bad_segment and not s._prev_bad_segment:
             events_to_emit.append(0x060A)  # BAD_SEGMENT_DETECTED
+        s._prev_bad_segment = bad_segment
 
-        # COMPRESSION_ERROR (compression ratio anomaly)
-        if s.compression_ratio < 0.5 or s.compression_ratio > 10.0:
+        # COMPRESSION_ERROR (compression ratio anomaly) — rising-edge only
+        compression_error = s.compression_ratio < 0.5 or s.compression_ratio > 10.0
+        if compression_error and not s._prev_compression_error:
             events_to_emit.append(0x060D)  # COMPRESSION_ERROR
+        s._prev_compression_error = compression_error
 
         # Store edge detection values for next tick
         s.prev_mode = s.mode

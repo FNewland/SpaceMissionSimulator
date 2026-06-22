@@ -79,6 +79,7 @@ class TCSState:
     _prev_htr_obc_stuck_on: bool = False
     _prev_htr_thruster_stuck_on: bool = False
     _prev_fpa_ready: bool = False
+    _prev_thermal_runaway: bool = False
     # ── Thermal zone coupling ──
     _temp_history: list = field(default_factory=lambda: [])  # For rate calculation
 
@@ -329,9 +330,13 @@ class TCSBasicModel(SubsystemModel):
             prev_time, prev_temp = s._temp_history[-1]
             curr_time = 0  # Current time in this tick
             rate_deg_per_min = (bat_temp - prev_temp) / max(dt / 60.0, 0.01)
-            if abs(rate_deg_per_min) > self._thermal_runaway_rate:
+            runaway_now = abs(rate_deg_per_min) > self._thermal_runaway_rate
+            # Rising-edge: fire once when the rate first exceeds the limit, not
+            # every tick the runaway persists.
+            if runaway_now and not s._prev_thermal_runaway:
                 events.append({"event_id": 0x0409, "severity": "HIGH", "subsystem": "tcs",
                               "description": f"THERMAL_RUNAWAY: Battery rate {rate_deg_per_min:.1f} deg/min"})
+            s._prev_thermal_runaway = runaway_now
 
         # Track temperature for rate calculation
         s._temp_history.append((0, bat_temp))
