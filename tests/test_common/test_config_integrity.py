@@ -40,7 +40,7 @@ NEW_PROCEDURE_FILES = {
     "emergency/obc_reboot.md",
 }
 
-EXPECTED_MANUAL_FILE_COUNT = 18
+EXPECTED_MANUAL_FILE_COUNT = 19  # +12_time_and_clocks.md (time-source docs)
 
 
 def _load_yaml(relative_path):

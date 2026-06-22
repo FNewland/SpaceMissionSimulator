@@ -15,14 +15,28 @@ cd "$SCRIPT_DIR"
 # ── Parse arguments ──
 RF_MODE=""
 PUBLIC=""
+REAL=""
 for arg in "$@"; do
     case "$arg" in
         --rf)       RF_MODE="RF" ;;
         --rf=*)     RF_MODE="${arg#--rf=}" ;;
         --public)   PUBLIC=1 ;;
-        *)          echo "Unknown option: $arg"; echo "Usage: $0 [--rf | --rf=FRAME | --rf=RF] [--public]"; exit 1 ;;
+        --real)     REAL=1 ;;
+        *)          echo "Unknown option: $arg"; echo "Usage: $0 [--rf | --rf=FRAME | --rf=RF] [--public] [--real]"; exit 1 ;;
     esac
 done
+
+# ── Time source (ground UTC / Planner "now") ──
+# "sim"  → MCS & Planner closed-loop follow the simulator's sim_time/speed.
+# "real" → both use real wall-clock UTC (for a real mission link).
+# Children inherit these env vars; we also pass --time-source explicitly.
+# Precedence in each service: CLI flag > env > mission-config field > default.
+SMO_TIME_SOURCE="${SMO_TIME_SOURCE:-sim}"
+if [ -n "$REAL" ]; then
+    SMO_TIME_SOURCE="real"
+fi
+export SMO_TIME_SOURCE
+export SMO_SIM_STATE_URL="${SMO_SIM_STATE_URL:-http://localhost:8080/api/state}"
 # Also honour the environment variable (CLI takes priority)
 if [ -z "$RF_MODE" ] && [ -n "${SMO_RF_MODE:-}" ]; then
     RF_MODE="$SMO_RF_MODE"
@@ -109,16 +123,16 @@ fi
 # Start MCS — in RF mode, connect through the bridge; otherwise direct to sim
 if [ -n "$RF_MODE" ]; then
     echo "==> Starting MCS on port 9090 (via RF bridge: TM:8012, TC:8011)..."
-    smo-mcs --config configs/eosat1/ --port 9090 --connect localhost:8012 --tc-port 8011 &
+    smo-mcs --config configs/eosat1/ --port 9090 --connect localhost:8012 --tc-port 8011 --time-source "$SMO_TIME_SOURCE" &
 else
     echo "==> Starting MCS on port 9090 (direct: TM:8002, TC:8001)..."
-    smo-mcs --config configs/eosat1/ --port 9090 &
+    smo-mcs --config configs/eosat1/ --port 9090 --time-source "$SMO_TIME_SOURCE" &
 fi
 MCS_PID=$!
 
 # Start Planner (HTTP:9091)
 echo "==> Starting Planner on port 9091..."
-smo-planner --config configs/eosat1/ --port 9091 &
+smo-planner --config configs/eosat1/ --port 9091 --time-source "$SMO_TIME_SOURCE" &
 PLANNER_PID=$!
 
 # Start Delayed TM Viewer (HTTP:8092) — reads workspace/dumps/ on demand
@@ -158,6 +172,7 @@ echo "  Planner:          http://localhost:9091"
 echo "  Delayed TM view:  http://localhost:8092"
 echo "  Orbit Tools:      http://localhost:8093"
 echo "  Documentation:    http://localhost:8095"
+echo "  Time source:      $SMO_TIME_SOURCE  (sim_state_url=$SMO_SIM_STATE_URL)"
 if [ -n "$RFSIM_MSG" ]; then
     echo "$RFSIM_MSG"
     echo "$RADIO_MSG"

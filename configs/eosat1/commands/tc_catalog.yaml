@@ -153,7 +153,8 @@ commands:
   - name: S2_AOCS_GPS_RECEIVER
     service: 2
     subtype: 1
-    description: "Control GPS receiver (device 0x020F)"
+    description: "GPS receiver ON/OFF (AOCS device 0x020F)"
+    position: aocs
     fields:
       - { name: device_id, type: uint16, description: "Device ID (0x020F)" }
       - { name: state, type: uint8, description: "0=OFF, 1=ON" }
@@ -597,6 +598,15 @@ commands:
     description: "Set attitude error deadband threshold"
     fields:
       - { name: deadband_deg, type: float32, description: "Attitude error threshold (0-1 deg)" }
+
+  - name: AOCS_GPS_SET_START_MODE
+    service: 8
+    subtype: 1
+    func_id: 84
+    description: "Select GPS receiver start mode (cold/warm/hot). Sets the time-to-first-fix profile used after the GPS receiver is powered on."
+    position: aocs
+    fields:
+      - { name: start_mode, type: uint8, description: "0=COLD (60s TTFF), 1=WARM (30s), 2=HOT (5s)" }
 
   # EPS commands (func_id 16-25)
   - name: EPS_PAYLOAD_MODE

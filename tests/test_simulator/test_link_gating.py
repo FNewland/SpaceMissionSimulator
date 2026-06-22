@@ -218,6 +218,9 @@ class TestOverride:
         from smo_simulator.engine import SimulationEngine
         engine = MagicMock(spec=SimulationEngine)
         engine._override_passes = False
+        # The override branch now publishes 0x05FF to the shared param store
+        # immediately so polled state reflects the change without a tick.
+        engine.params = {}
         engine._handle_instructor_cmd = SimulationEngine._handle_instructor_cmd.__get__(engine)
         engine._handle_failure_inject = MagicMock()
         engine._handle_failure_clear = MagicMock()
@@ -225,9 +228,16 @@ class TestOverride:
 
         engine._handle_instructor_cmd({'type': 'override_passes', 'enabled': True})
         assert engine._override_passes is True
+        assert engine.params[0x05FF] == 1
 
         engine._handle_instructor_cmd({'type': 'override_passes', 'enabled': False})
         assert engine._override_passes is False
+        assert engine.params[0x05FF] == 0
+
+        # A bare command (no explicit state) toggles the current value.
+        engine._handle_instructor_cmd({'type': 'override_passes'})
+        assert engine._override_passes is True
+        assert engine.params[0x05FF] == 1
 
     def test_override_in_state_summary(self):
         """downlink_active, uplink_active, override_passes appear in state summary."""
@@ -252,7 +262,10 @@ class TestOverride:
         engine._sim_time.isoformat = MagicMock(return_value="2026-01-01T00:00:00+00:00")
         engine._sim_elapsed_fdir = 42.0
         engine.speed = 1.0
-        engine.sc_mode = 0
+        # sc_mode convention: SAFE=0, NOMINAL=1, SCIENCE=2, EMERGENCY=3.
+        # A commissioned (phase 6) spacecraft with no contingency is NOMINAL.
+        from smo_simulator.engine import SC_NOMINAL
+        engine.sc_mode = SC_NOMINAL
         engine._spacecraft_phase = 6
         engine.orbit = MagicMock()
         engine.orbit.state = make_orbit_state(in_contact=True)

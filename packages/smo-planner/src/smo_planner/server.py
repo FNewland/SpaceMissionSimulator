@@ -10,9 +10,10 @@ import json
 import logging
 import argparse
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+import aiohttp
 from aiohttp import web
 
 from smo_common.config.loader import load_orbit_config
@@ -26,9 +27,50 @@ logger = logging.getLogger(__name__)
 
 
 class PlannerServer:
-    def __init__(self, config_dir: str | Path, http_port: int = 9091):
+    def __init__(self, config_dir: str | Path, http_port: int = 9091,
+                 time_source: str | None = None, sim_state_url: str | None = None,
+                 connect_host: str = "localhost"):
         self.config_dir = Path(config_dir)
         self.http_port = http_port
+
+        # ── Time source resolution ──────────────────────────────────
+        # Precedence: explicit ctor arg (from CLI) > env SMO_TIME_SOURCE >
+        # mission-config time_source field > built-in default ("sim").
+        # In SIM mode, _get_now() returns the simulator's current sim_time
+        # (anchored + extrapolated by speed, refreshed at most ~1/s). In
+        # REAL mode, _get_now() returns wall-clock UTC. The explicit
+        # ?epoch= query override always takes precedence over _get_now().
+        import os as _os
+        _cfg_time_source: str | None = None
+        _cfg_sim_state_url: str | None = None
+        try:
+            from smo_common.config.loader import load_mission_config
+            _mc = load_mission_config(self.config_dir)
+            _cfg_time_source = _mc.time_source
+            _cfg_sim_state_url = _mc.sim_state_url
+        except Exception as e:
+            logger.warning("Could not load mission config for time source: %s", e)
+        self._time_source = (
+            time_source
+            or _os.environ.get("SMO_TIME_SOURCE")
+            or _cfg_time_source
+            or "sim"
+        ).strip().lower()
+        self._sim_state_url = (
+            sim_state_url
+            or _os.environ.get("SMO_SIM_STATE_URL")
+            or _cfg_sim_state_url
+            or f"http://{connect_host}:8080/api/state"
+        )
+        logger.info("Planner time source: %s (sim_state_url=%s)",
+                    self._time_source, self._sim_state_url)
+        # Sim-clock anchor cache (sim mode). anchor_sim_time + (wall-now -
+        # anchor_wall)*speed = current sim time. Refreshed by _refresh_sim_anchor
+        # at most ~1/s; falls back to last anchor then wall clock if unreachable.
+        self._sim_anchor_time: datetime | None = None
+        self._sim_anchor_wall: float = 0.0
+        self._sim_anchor_speed: float = 1.0
+        self._sim_anchor_refreshed_wall: float = 0.0
 
         # Load orbit config and build propagator + ground stations
         orbit_cfg = load_orbit_config(self.config_dir)
@@ -56,7 +98,7 @@ class PlannerServer:
             ground_stations=self._gs_list,
             earth_radius_km=self._earth_r,
         )
-        self._live_prop.reset(datetime.now(timezone.utc))
+        self._live_prop.reset(self._get_now())
 
         # Load activity types
         self._activity_types: list[dict] = []
@@ -93,7 +135,27 @@ class PlannerServer:
         except Exception:
             pass
 
+    async def _sim_anchor_loop(self):
+        """Background refresh of the sim-clock anchor (sim mode only).
+
+        Keeps _get_now() fresh even with no inbound request traffic. The
+        synchronous fetch is short and rate-limited; run off-thread so the
+        event loop is never blocked.
+        """
+        if self._time_source != "sim":
+            return
+        while True:
+            try:
+                await asyncio.to_thread(self._refresh_sim_anchor, True)
+            except Exception as e:
+                logger.debug("planner sim-anchor loop error: %s", e)
+            await asyncio.sleep(1.5)
+
     async def start(self) -> None:
+        # In sim mode, kick off the background clock-anchor refresher first
+        # so contacts/ground-track compute against sim time from the start.
+        if self._time_source == "sim":
+            asyncio.create_task(self._sim_anchor_loop())
         # Compute initial contacts and ground track
         self._compute_contacts()
         self._compute_ground_track()
@@ -166,10 +228,75 @@ class PlannerServer:
             self._compute_contacts()
             self._compute_ground_track()
 
+    def _fetch_sim_state(self) -> dict | None:
+        """Synchronous, short, cached fetch of the simulator state endpoint.
+
+        Used to seed/refresh the sim-clock anchor without an event loop
+        (e.g. at construction and as a fallback). Returns the parsed JSON
+        dict or None on any failure. Kept tiny (1.5 s timeout); callers
+        must only invoke it at most ~1/s via the anchor-age guard.
+        """
+        try:
+            import urllib.request
+            with urllib.request.urlopen(self._sim_state_url, timeout=1.5) as r:
+                return json.loads(r.read().decode())
+        except Exception as e:
+            logger.debug("planner sim-state fetch failed: %s", e)
+            return None
+
+    def _refresh_sim_anchor(self, force: bool = False) -> None:
+        """Refresh the cached sim-clock anchor at most ~1/s (sim mode only)."""
+        if getattr(self, "_time_source", "real") != "sim":
+            return
+        wall = __import__("time").time()
+        if not force and (wall - self._sim_anchor_refreshed_wall) < 1.0:
+            return
+        self._sim_anchor_refreshed_wall = wall
+        payload = self._fetch_sim_state()
+        if not payload:
+            return
+        sim_time_str = payload.get("sim_time")
+        if not sim_time_str:
+            return
+        try:
+            parsed = datetime.fromisoformat(str(sim_time_str).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            self._sim_anchor_time = parsed
+            self._sim_anchor_wall = wall
+            speed = payload.get("speed")
+            if speed is not None:
+                self._sim_anchor_speed = float(speed)
+        except Exception as e:
+            logger.debug("planner sim-anchor parse failed: %s", e)
+
+    def _get_now(self) -> datetime:
+        """Return the planner's notion of "now".
+
+        - SIM mode: simulator sim_time, extrapolated from the cached anchor
+          by speed (anchor_sim_time + (wall-now - anchor_wall)*speed),
+          refreshed at most ~1/s. If the sim was never reachable, falls back
+          to wall-clock UTC.
+        - REAL mode: wall-clock UTC.
+
+        The explicit ?epoch= query override (handled by callers) takes
+        precedence over this method.
+        """
+        if getattr(self, "_time_source", "real") != "sim":
+            return datetime.now(timezone.utc)
+        # Refresh the anchor (cheap; rate-limited internally).
+        self._refresh_sim_anchor()
+        if getattr(self, "_sim_anchor_time", None) is None:
+            # Never reached the sim — best-effort wall clock.
+            return datetime.now(timezone.utc)
+        wall = __import__("time").time()
+        elapsed = (wall - self._sim_anchor_wall) * self._sim_anchor_speed
+        return self._sim_anchor_time + timedelta(seconds=elapsed)
+
     def _compute_contacts(self, epoch: datetime | None = None) -> None:
         """Compute contact windows for the next 24 hours from epoch (or now)."""
         try:
-            now = epoch or datetime.now(timezone.utc)
+            now = epoch or self._get_now()
             prop = OrbitPropagator(
                 self._tle1, self._tle2,
                 ground_stations=self._gs_list,
@@ -198,7 +325,7 @@ class PlannerServer:
     def _compute_ground_track(self, epoch: datetime | None = None) -> None:
         """Compute ground track for the next ~3 hours (2 orbits) from epoch."""
         try:
-            now = epoch or datetime.now(timezone.utc)
+            now = epoch or self._get_now()
             prop = OrbitPropagator(
                 self._tle1, self._tle2,
                 ground_stations=self._gs_list,
@@ -216,7 +343,7 @@ class PlannerServer:
 
     def _get_spacecraft_state(self) -> dict:
         """Get current spacecraft position and velocity."""
-        now = datetime.now(timezone.utc)
+        now = self._get_now()
         self._live_prop.reset(now)
         state = self._live_prop.advance(0.0)
 
@@ -298,8 +425,7 @@ class PlannerServer:
         use_cache = (duration == 3.0 and step == 30.0 and offset_min == 0)
         if not use_cache:
             try:
-                from datetime import timedelta
-                now = datetime.now(timezone.utc)
+                now = self._get_now()
                 start_time = now + timedelta(minutes=offset_min)
                 prop = OrbitPropagator(
                     self._tle1, self._tle2,
@@ -551,7 +677,7 @@ class PlannerServer:
         """
         try:
             # Use a 24-hour ground track for opportunity computation
-            now = datetime.now(timezone.utc)
+            now = self._get_now()
             prop = OrbitPropagator(
                 self._tle1, self._tle2,
                 ground_stations=self._gs_list,
@@ -705,9 +831,26 @@ def main():
     parser = argparse.ArgumentParser(description="SMO Mission Planner")
     parser.add_argument("--config", default="configs/eosat1/")
     parser.add_argument("--port", type=int, default=9091)
+    parser.add_argument("--connect-host", default="localhost",
+                        help="Host of the simulator (used to derive the default "
+                             "sim_state_url http://<host>:8080/api/state).")
+    parser.add_argument("--time-source", default=None, choices=["sim", "real"],
+                        help="Planner clock source: 'sim' (follow simulator "
+                             "sim_time/speed) or 'real' (wall-clock UTC). Overrides "
+                             "SMO_TIME_SOURCE env and mission-config time_source.")
+    parser.add_argument("--sim-state-url", default=None,
+                        help="Simulator state endpoint to poll for sim_time/speed in "
+                             "sim mode. Overrides SMO_SIM_STATE_URL env and "
+                             "mission-config sim_state_url. "
+                             "Default http://<connect_host>:8080/api/state.")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
-    asyncio.run(PlannerServer(args.config, args.port).start())
+    asyncio.run(PlannerServer(
+        args.config, args.port,
+        time_source=args.time_source,
+        sim_state_url=args.sim_state_url,
+        connect_host=args.connect_host,
+    ).start())
 
 if __name__ == "__main__":
     main()

@@ -213,23 +213,100 @@ class TTCBasicModel(SubsystemModel):
             "cmd_decode_timer": 0x0522,
         })
 
+    # ─── S2 device-access power gates ────────────────────────────────
+
+    def _apply_device_power_gates(self, s: TTCState) -> None:
+        """Force TT&C equipment to a powered-down state for any device
+        switched OFF via S2 device access (device_states).
+
+        Mirrors the AOCS/payload/OBDH device gates: before this, every entry
+        in ``device_states`` was a dead flag — the S2_TTC_* on/off commands
+        were accepted and toggled the dict but nothing in the model ever read
+        it, so they had no effect. Each device now collapses its corresponding
+        RF chain when powered off and the normal tick logic restores it when
+        powered back on.
+
+        Called at the START of ``tick`` so the gates COMBINE with (rather than
+        override) the contact/failure-driven lock and link-budget logic that
+        follows. All devices default ON, so nominal behaviour — and the
+        existing test suite — are unchanged.
+
+        Effects (minimal, using existing state fields):
+          * 0x0402 Power amplifier OFF → ``pa_on`` forced False (no TX /
+            downlink) while the device is off; the existing thermal-shutdown
+            logic is left to manage ``pa_on`` when the device is on.
+          * 0x0400 Transponder A / 0x0401 Transponder B — gating done in
+            ``tick`` via ``_device_rx_available`` so the OFF device mirrors the
+            corresponding ``primary_failed`` / ``redundant_failed`` RX/TX
+            availability effect (without setting the failure flag).
+          * 0x0403 LNA OFF — receiver dead: gated in ``tick`` so no uplink lock
+            can be acquired (carrier/bit/frame lock held False).
+          * 0x0404 Antenna drive OFF — gated in ``handle_command`` /
+            ``_device_antenna_drive_on`` so deployment cannot be driven (an
+            already-deployed antenna is left untouched).
+        """
+        ds = s.device_states
+        # 0x0402 Power amplifier: a powered-off PA cannot transmit. Force the
+        # PA off while the device is off; when the device is on we don't touch
+        # pa_on here so the thermal-shutdown / operator pa_on/pa_off logic owns
+        # it (don't fight the existing logic — only force OFF when off).
+        if not ds.get(0x0402, True):
+            s.pa_on = False
+
+    def _device_rx_available(self, s: TTCState) -> bool:
+        """True if the transponder selected by ``s.mode`` is powered via S2
+        device access (0x0400 primary / 0x0401 redundant). An OFF device
+        mirrors the ``primary_failed`` / ``redundant_failed`` RX/TX
+        availability effect without setting the failure flag."""
+        if s.mode == 0:
+            return s.device_states.get(0x0400, True)
+        if s.mode == 1:
+            return s.device_states.get(0x0401, True)
+        return True
+
+    def _device_lna_on(self, s: TTCState) -> bool:
+        """True if the LNA (0x0403) is powered. With the LNA off the receiver
+        is dead — no uplink lock can be acquired."""
+        return s.device_states.get(0x0403, True)
+
+    def _device_antenna_drive_on(self, s: TTCState) -> bool:
+        """True if the antenna drive (0x0404) is powered. With it off the
+        antenna cannot be moved/deployed (already-deployed state is kept)."""
+        return s.device_states.get(0x0404, True)
+
     def tick(self, dt: float, orbit_state: Any,
              shared_params: dict[int, float]) -> None:
         s = self._state
+
+        # ── S2 device-access power gates ──
+        # Force any operator-switched-off device down BEFORE the contact /
+        # failure-driven lock and link-budget logic runs, so the gates combine
+        # with it. All devices default ON → nominal behaviour unchanged.
+        self._apply_device_power_gates(s)
+
         in_contact = orbit_state.in_contact or bool(
             shared_params.get(0x05FF, 0)
         )
 
         # Transponder RX availability (receiver is on dedicated PDM —
         # independent of TX PA state).  A total transponder failure
-        # kills both RX and TX.
+        # kills both RX and TX. The selected transponder being switched OFF
+        # via S2 device access (0x0400/0x0401) has the same RX/TX-killing
+        # effect, driven by the device flag rather than the failure flag.
         rx_available = True
         if s.primary_failed and s.mode == 0:
             rx_available = False
         if s.redundant_failed and s.mode == 1:
             rx_available = False
+        if not self._device_rx_available(s):
+            rx_available = False
         if not rx_available:
             in_contact = False
+
+        # LNA (0x0403) powered-off → receiver dead: no uplink lock possible.
+        # Combines with the contact/failure lock logic below (treated like a
+        # loss of the uplink RX chain).
+        lna_on = self._device_lna_on(s)
 
         # TX capability (PA must be on and not in thermal shutdown).
         # This affects downlink / link budget only — uplink lock
@@ -250,9 +327,13 @@ class TTCBasicModel(SubsystemModel):
         if s.cmd_channel_active:
             s.cmd_decode_timer -= dt
             if s.cmd_decode_timer > 0:
-                # Override: keep PA on and TX active regardless of OBC state
-                s.pa_on = True
-                s.tx_fwd_power = self._pa_nominal_power_w
+                # Override: keep PA on and TX active regardless of OBC state —
+                # but a PA whose device (0x0402) is switched OFF via S2 device
+                # access still cannot transmit (hardware is unpowered), so the
+                # override only applies when the PA device is energised.
+                if s.device_states.get(0x0402, True):
+                    s.pa_on = True
+                    s.tx_fwd_power = self._pa_nominal_power_w
             else:
                 # Timer expired
                 s.cmd_decode_timer = 0.0
@@ -300,7 +381,10 @@ class TTCBasicModel(SubsystemModel):
         # is what produces the "no telemetry at AOS" symptom the scenario teaches.
         # Previously uplink_lost only suppressed the command-RX counter, so the
         # link re-locked on the next tick and telemetry kept flowing.
-        if in_contact and s.range_km > 0 and not s.uplink_lost:
+        # ``lna_on`` gates the receiver: with the LNA (0x0403) switched off the
+        # RX chain is dead, so lock can never be acquired (analogous to
+        # uplink loss). Default ON → unchanged.
+        if in_contact and s.range_km > 0 and not s.uplink_lost and lna_on:
             if not self._was_in_contact:
                 # AOS: reset lock sequence
                 s._lock_timer = 0.0
@@ -767,6 +851,14 @@ class TTCBasicModel(SubsystemModel):
 
         elif command == "deploy_antennas":
             # DEFECT FIX #4 (ttc.md): Update antenna deployment sensor on command
+            # S2 device gate: the antenna drive (0x0404) must be powered to
+            # move/deploy the antenna. With it switched off the burn-wire/drive
+            # cannot be commanded (an already-deployed antenna is untouched).
+            if not self._device_antenna_drive_on(self._state):
+                return {
+                    "success": False,
+                    "message": "Antenna drive (device 0x0404) is powered off"
+                }
             if not self._state.antenna_deployment_ready:
                 return {
                     "success": False,

@@ -245,6 +245,46 @@ class PayloadBasicModel(SubsystemModel):
                 return seg
         return -1
 
+    def _apply_device_power_gates(self, s: "PayloadState") -> None:
+        """Force payload telemetry to a powered-down state for any device
+        switched OFF via S2 device access (device_states). Wires the
+        S2_PAYLOAD_* on/off commands, which were previously dead flags.
+
+        Devices:
+          0x0600 FPA            — no imaging without the focal-plane array;
+                                  force OFF mode, not ready, no data.
+          0x0601 FPA cooler     — cooler cannot run; FPA warms toward ambient.
+          0x0602 Calibration lamp — lamp telemetry off; abort any cal sequence.
+          0x0603 Shutter        — mechanism unpowered; report CLOSED, abort test.
+          0x0604 Compression    — no compression engine; ratio collapses to 1.0.
+        """
+        ds = s.device_states
+
+        if not ds.get(0x0600, True):  # Focal plane array
+            s.mode = 0
+            s.fpa_ready = False
+            s.fpa_ready_timer = 0.0
+            s.line_rate = 0.0
+            s.data_rate_mbps = 0.0
+            s.duty_cycle_pct = 0.0
+
+        if not ds.get(0x0601, True):  # FPA cooler
+            s.cooler_active = False
+
+        if not ds.get(0x0602, True):  # Calibration lamp
+            s.cal_lamp_on = False
+            if s.calibration_active:
+                s.calibration_active = False
+                s.calibration_state = 0
+                s.calibration_progress = 0.0
+
+        if not ds.get(0x0603, True):  # Shutter mechanism
+            s.shutter_position = 0  # CLOSED
+            s.shutter_test_active = False
+
+        if not ds.get(0x0604, True):  # Compression unit
+            s.compression_ratio = 1.0
+
     def tick(self, dt: float, orbit_state: Any,
              shared_params: dict[int, float]) -> None:
         s = self._state
@@ -596,6 +636,15 @@ class PayloadBasicModel(SubsystemModel):
                     })
                 except Exception:
                     pass  # event queue full or format error
+
+        # ── S2 device-access power gates ──
+        # Collapse payload telemetry for any device the operator has switched
+        # OFF via S2 device access. Previously every entry in device_states was
+        # a dead flag — the S2_PAYLOAD_* on/off commands were accepted but the
+        # model never read the dict, so they had no effect. Gating runs after
+        # the physics tick so a powered-off device reads as down; all devices
+        # default ON so nominal behaviour and existing tests are unchanged.
+        self._apply_device_power_gates(s)
 
         # Write params
         p = self._param_ids

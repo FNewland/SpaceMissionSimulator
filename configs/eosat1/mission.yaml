@@ -7,6 +7,16 @@ start_in_bootloader: true # Power up in beacon mode (phase 3, SID 11 only, bootl
 pus_version: 2
 time_epoch: "2000-01-01T12:00:00"
 
+# Ground/Planner clock source: "sim" follows the simulator's sim_time/speed
+# (closed-loop); "real" uses wall-clock UTC (for a real mission link).
+# Overridable by SMO_TIME_SOURCE env and --time-source CLI (CLI > env > this).
+# Spacecraft OBC time always comes from telemetry regardless of this setting.
+time_source: sim
+# Where the MCS/Planner poll the simulator's sim_time/speed (sim mode only).
+# Defaults to http://<connect_host>:8080/api/state if left unset.
+# Overridable by SMO_SIM_STATE_URL env.
+# sim_state_url: http://localhost:8080/api/state
+
 orbit:
   type: sun_synchronous
   altitude_km: 450.0

@@ -156,6 +156,12 @@ body::before {
   color: var(--amber);
   border: 1px solid rgba(255,193,7,0.3);
 }
+.sc-mode-badge.science {
+  background: rgba(56,189,248,0.12);
+  color: #38bdf8;
+  border: 1px solid rgba(56,189,248,0.35);
+  box-shadow: 0 0 8px rgba(56,189,248,0.12);
+}
 .sc-mode-badge.emergency {
   background: var(--red-dim);
   color: var(--red);
@@ -1336,8 +1342,10 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
   const TTC_MODES  = { 0: 'NOMINAL', 1: 'REDUNDANT', 2: 'OFF' };
   const PL_MODES   = { 0: 'OFF', 1: 'STANDBY', 2: 'IMAGING', 3: 'PLAYBACK' };
   const LINK_STATUS = { 0: 'DOWN', 1: 'UP' };
-  const SC_MODES   = { 0: 'NOMINAL', 1: 'SAFE', 2: 'EMERGENCY' };
-  const SC_MODE_CLASS = { 0: 'nominal', 1: 'safe', 2: 'emergency' };
+  // Authoritative sc_mode convention (matches MCS + engine SC_* constants):
+  // SAFE=0, NOMINAL=1, SCIENCE=2, EMERGENCY=3.
+  const SC_MODES   = { 0: 'SAFE', 1: 'NOMINAL', 2: 'SCIENCE', 3: 'EMERGENCY' };
+  const SC_MODE_CLASS = { 0: 'safe', 1: 'nominal', 2: 'science', 3: 'emergency' };
 
   // EOSAT-1 has NO thrusters: ADCS uses 4 reaction wheels + 3 magnetorquers,
   // sun sensors, magnetometers, star trackers and a GPS receiver. The list below
@@ -2073,11 +2081,24 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
   }
 
   function toggleOverride() {
-    const btn = $('btn-override');
-    const isActive = btn.classList.contains('active');
-    const newState = !isActive;
-    wsSend({ type: 'override_passes', enabled: newState });
+    // Determine the new desired state from the TRUE engine state
+    // (state.override_passes, polled from /api/state -> 0x05FF), NOT from the
+    // button's CSS 'active' class. The poller rewrites that class on every
+    // frame from the engine state, so reading it here raced with polling and
+    // made repeated clicks send the same value (button never toggled off).
+    const cur = !!(state && state.override_passes);
+    const newState = !cur;
+    // Send the explicit desired state over a SINGLE channel. Previously the
+    // command was sent over BOTH the websocket and HTTP, enqueuing it twice;
+    // /api/command is the documented instructor path, so use only that.
     apiPost('/api/command', { type: 'override_passes', enabled: newState });
+    // Optimistically reflect the intent so the button feels responsive; the
+    // next poll of /api/state is authoritative and will confirm/correct it.
+    ['btn-override','btn-override-hdr'].forEach(id => {
+      const b = $(id); if (!b) return;
+      if (newState) { b.classList.add('active'); b.textContent = 'OVERRIDE ON'; }
+      else { b.classList.remove('active'); b.textContent = 'OVERRIDE PASSES'; }
+    });
     addLogEntry(newState ? 'low' : 'info', 'OVERRIDE', newState ? 'Pass override ENABLED' : 'Pass override DISABLED');
   }
 

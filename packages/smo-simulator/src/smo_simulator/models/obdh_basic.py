@@ -184,6 +184,40 @@ class OBDHBasicModel(SubsystemModel):
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         self._state.obc_time_cuc = int((now - TIME_EPOCH).total_seconds())
 
+    def _apply_device_power_gates(self, s: "OBDHState") -> None:
+        """Reflect OBDH equipment powered OFF via S2 device access into the
+        telemetry. Wires the S2_OBDH_* on/off commands, previously dead flags.
+
+        Devices (effects chosen to be telemetry-visible but non-cascading so
+        they don't spuriously trigger bus/OBC failover FDIR):
+          0x0501 OBC-B          — backup OBC unpowered → report OBC_OFF.
+          0x0502 Mass memory    — no accessible mass memory → MMM used = 0%.
+          0x0503 Watchdog timer  — watchdog unpowered → disarmed.
+          0x0504 CAN bus iface   — active CAN interface lost → active bus
+                                   reads DEGRADED (not FAILED, to avoid forcing
+                                   an autonomous bus switchover every tick).
+
+        OBC-A (0x0500) is the unit running the flight software; commanding it
+        off does not silently kill the simulation here — its state is exposed
+        through the existing active_obc / OBC switchover telemetry instead.
+        """
+        ds = s.device_states
+
+        if not ds.get(0x0501, True):  # OBC-B (backup)
+            s.obc_b_status = OBC_OFF
+
+        if not ds.get(0x0502, True):  # Mass memory unit
+            s.mmm_used_pct = 0.0
+
+        if not ds.get(0x0503, True):  # Watchdog timer
+            s.watchdog_armed = False
+
+        if not ds.get(0x0504, True):  # CAN bus interface
+            if s.active_bus == 0 and s.bus_a_status == BUS_OK:
+                s.bus_a_status = BUS_DEGRADED
+            elif s.active_bus == 1 and s.bus_b_status == BUS_OK:
+                s.bus_b_status = BUS_DEGRADED
+
     def tick(self, dt: float, orbit_state: Any,
              shared_params: dict[int, float]) -> None:
         s = self._state
@@ -367,6 +401,14 @@ class OBDHBasicModel(SubsystemModel):
                     })
                 except Exception:
                     pass  # event queue full or format error
+
+        # ── S2 device-access power gates ──
+        # Reflect OBDH equipment switched OFF via S2 device access into the
+        # telemetry. Previously every entry in device_states was a dead flag —
+        # the S2_OBDH_* on/off commands were accepted but the model never read
+        # the dict, so they had no effect. All devices default ON so nominal
+        # behaviour and the existing test suite are unchanged.
+        self._apply_device_power_gates(s)
 
         # Write params
         p = self._param_ids

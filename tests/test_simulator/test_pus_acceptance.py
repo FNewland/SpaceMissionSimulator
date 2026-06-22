@@ -25,9 +25,10 @@ def _make_engine():
 
 
 # Known services that accept TCs (S1 is TM-only, not included)
-KNOWN_SERVICES = {3, 5, 6, 8, 9, 11, 12, 15, 17, 19, 20}
+KNOWN_SERVICES = {2, 3, 5, 6, 8, 9, 11, 12, 15, 17, 19, 20}
 
 VALID_SUBTYPES = {
+    2: {1, 5, 6},
     3: {1, 2, 3, 4, 5, 6, 27, 31},
     5: {5, 6, 7, 8},
     6: {2, 5, 9},
@@ -222,7 +223,7 @@ class TestS1NotAccepted:
 class TestInvalidServiceRejected:
     """Unknown services must be rejected with error code 0x0001."""
 
-    @pytest.mark.parametrize("service", [0, 2, 4, 7, 10, 13, 14, 16, 18, 99, 255])
+    @pytest.mark.parametrize("service", [0, 4, 7, 10, 13, 14, 16, 18, 99, 255])
     def test_invalid_service_rejected(self, service):
         """Services outside the known set should be rejected."""
         engine = _make_engine()

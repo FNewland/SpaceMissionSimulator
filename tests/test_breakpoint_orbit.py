@@ -64,6 +64,36 @@ def _find_eclipse_crossing(eng: SimulationEngine, dt: float = 60.0, max_ticks: i
     return max_ticks
 
 
+def test_breakpoint_restores_sim_time_in_api_state():
+    """A loaded breakpoint must put the engine's sim epoch back so the
+    simulator's /api/state (get_state_summary) reports the saved sim_time.
+
+    This is the value the MCS (_sim_state_poll_loop) and Planner
+    (_refresh_sim_anchor) poll and re-anchor their ground clocks to when
+    time_source=sim, so a breakpoint load is picked up by both within one poll.
+    The orbit epoch is restored alongside it (already covered above).
+    """
+    eng = _make_engine()
+    _tick(eng, 5)
+
+    sim_time_saved = eng._sim_time
+    orbit_saved = eng.orbit.utc
+    state = BreakpointManager(eng).save(name="time_chk")
+    assert eng.get_state_summary()["sim_time"] == sim_time_saved.isoformat()
+
+    # Advance well past the saved instant so a failure to restore is obvious.
+    _tick(eng, 120)
+    assert eng.get_state_summary()["sim_time"] != sim_time_saved.isoformat()
+
+    assert BreakpointManager(eng).load(state=state) is True
+
+    # The engine clock and the served /api/state sim_time are both back to the
+    # saved epoch — i.e. the MCS/Planner will re-anchor to it.
+    assert eng._sim_time == sim_time_saved
+    assert eng.get_state_summary()["sim_time"] == sim_time_saved.isoformat()
+    assert abs((eng.orbit.utc - orbit_saved).total_seconds()) < 1.0
+
+
 def test_orbit_and_eclipse_restored_by_breakpoint():
     eng = _make_engine()
 

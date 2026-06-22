@@ -142,6 +142,19 @@ class TestAocsPosition:
         cfg = _position_config(positions, "aocs")
         assert len(cfg.allowed_func_ids) > 0
 
+    def test_can_command_gps_receiver_device(self):
+        """Flight Dynamics must be able to send S2 device on/off so the GPS
+        receiver (AOCS device 0x020F) can be commanded from this position."""
+        positions = _load_positions()
+        cfg = _position_config(positions, "aocs")
+        assert 2 in cfg.allowed_services  # S2 device access
+
+    def test_can_command_gps_start_mode_func(self):
+        """Flight Dynamics must be able to send the GPS start-mode S8 func 84."""
+        positions = _load_positions()
+        cfg = _position_config(positions, "aocs")
+        assert 84 in cfg.allowed_func_ids
+
 
 # ---------------------------------------------------------------------------
 # TTC — Tracking Telemetry & Command

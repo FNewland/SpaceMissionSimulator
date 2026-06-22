@@ -125,9 +125,10 @@ class ServiceDispatcher:
             success = self._set_device_state(device_id, state)
             if success:
                 logger.info("S2.1 DEVICE ON/OFF: device_id=0x%04X, state=%d", device_id, state)
-                # Generate S1.3 execution start success
-                req_id = struct.unpack('>H', primary_header[0:2])[0] if primary_header and len(primary_header) >= 2 else 0
-                responses.extend(self.generate_s1_reports(req_id, 2, subtype))
+                # S1 verification (accept/start/complete) is emitted centrally by
+                # the engine's _dispatch_tc, so the handler does not generate its
+                # own. (The previous code indexed the PrimaryHeader object as if
+                # it were bytes — `len(primary_header)` — raising mid-dispatch.)
             else:
                 logger.warning("S2.1 DEVICE ON/OFF failed: device_id=0x%04X not found", device_id)
         elif subtype == 5 and len(data) >= 3:
@@ -143,8 +144,7 @@ class ServiceDispatcher:
                 responses.append(self._engine.tm_builder._pack_tm(
                     service=2, subtype=6, data=resp_data
                 ))
-                req_id = struct.unpack('>H', primary_header[0:2])[0] if primary_header and len(primary_header) >= 2 else 0
-                responses.extend(self.generate_s1_reports(req_id, 2, subtype))
+                # S1 verification emitted centrally by _dispatch_tc (see S2.1).
             else:
                 logger.warning("S2.5 DEVICE ON/OFF WITH VERIFY failed: device_id=0x%04X", device_id)
         elif subtype == 6 and len(data) >= 2:
@@ -478,6 +478,8 @@ class ServiceDispatcher:
             return self._route_eps_cmd(func_id, data[1:])
         elif func_id == 83:  # EPS mode (defect #27) — set safe/emergency mode
             return self._route_eps_cmd(func_id, data[1:])
+        elif func_id == 84:  # AOCS GPS start-mode select (COLD/WARM/HOT)
+            return self._route_aocs_cmd(func_id, data[1:])
         elif func_id in range(100, 108):
             # Legacy quick-action funcs 100–107 from tc_catalog.yaml (MCS quick
             # buttons). They have no fields; map each to its intended existing
@@ -595,6 +597,15 @@ class ServiceDispatcher:
             aocs.handle_command({
                 "command": "set_deadband",
                 "deadband_deg": deadband
+            })
+        elif func_id == 84:  # AOCS_GPS_SET_START_MODE: start_mode (1 byte)
+            # 0=COLD, 1=WARM, 2=HOT. Selects the GPS time-to-first-fix profile
+            # consumed by the AOCS GPS model (gps_start_mode). Without this the
+            # model field/TTFF logic existed but no command could set it.
+            start_mode = int(data[0]) if data else 0
+            aocs.handle_command({
+                "command": "gps_set_start_mode",
+                "start_mode": start_mode,
             })
         return []
 

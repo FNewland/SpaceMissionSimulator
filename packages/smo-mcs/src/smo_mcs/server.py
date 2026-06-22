@@ -87,7 +87,8 @@ class MCSServer:
 
     def __init__(self, config_dir: str | Path, connect_host: str = "localhost",
                  connect_port: int = 8002, http_port: int = 9090,
-                 tc_port: int = 8001, sim_epoch: str | None = None):
+                 tc_port: int = 8001, sim_epoch: str | None = None,
+                 time_source: str | None = None, sim_state_url: str | None = None):
         self.config_dir = Path(config_dir)
         self.connect_host = connect_host
         self.connect_port = connect_port
@@ -105,6 +106,48 @@ class MCSServer:
         self._sim_speed: float = 1.0
         if sim_epoch:
             self._ground_epoch = datetime.fromisoformat(sim_epoch.replace("Z", "+00:00"))
+
+        # ── Time source resolution ──────────────────────────────────
+        # Precedence: explicit ctor arg (from CLI) > env SMO_TIME_SOURCE >
+        # mission-config time_source field > built-in default ("sim").
+        # In SIM mode the MCS closed-loop syncs its ground clock to the
+        # simulator's sim_time/speed via _sim_state_poll_loop (re-anchoring
+        # the open-loop clock periodically). In REAL mode it leaves
+        # _ground_epoch=None so get_ground_utc() returns wall-clock UTC.
+        import os as _os
+        _cfg_time_source: str | None = None
+        _cfg_sim_state_url: str | None = None
+        try:
+            from smo_common.config.loader import load_mission_config
+            _mc = load_mission_config(self.config_dir)
+            _cfg_time_source = _mc.time_source
+            _cfg_sim_state_url = _mc.sim_state_url
+        except Exception as e:
+            logger.warning("Could not load mission config for time source: %s", e)
+        self._time_source = (
+            time_source
+            or _os.environ.get("SMO_TIME_SOURCE")
+            or _cfg_time_source
+            or "sim"
+        ).strip().lower()
+        self._sim_state_url = (
+            sim_state_url
+            or _os.environ.get("SMO_SIM_STATE_URL")
+            or _cfg_sim_state_url
+            or f"http://{connect_host}:8080/api/state"
+        )
+        logger.info("MCS time source: %s (sim_state_url=%s)",
+                    self._time_source, self._sim_state_url)
+        if self._time_source == "real":
+            # Real mission: wall-clock UTC, no sim anchor, no polling.
+            self._ground_epoch = None
+        else:
+            # Sim mode: seed the open-loop clock with an immediate best-effort
+            # anchor so the clock is sane before the first poll completes.
+            # _sim_state_poll_loop re-anchors continuously once started.
+            if self._ground_epoch is None:
+                self._ground_epoch = datetime.now(timezone.utc)
+                self._ground_start_wall = _time_mod.time()
         # Orbit propagator (initialised from TLE config, if available)
         self._orbit_prop = None
         self._init_orbit_propagator()
@@ -527,12 +570,16 @@ class MCSServer:
         # Start command queue processor as a background task
         asyncio.create_task(self._command_processor())
 
-        # Start state polling, TM receive, and TC connection in parallel
-        await asyncio.gather(
+        # Start state polling, TM receive, and TC connection in parallel.
+        # In SIM mode, also run the closed-loop sim-clock sync loop.
+        loops = [
             self._tm_receive_loop(),
             self._state_poll_loop(),
             self._tc_connect_loop(),
-        )
+        ]
+        if self._time_source == "sim":
+            loops.append(self._sim_state_poll_loop())
+        await asyncio.gather(*loops)
 
     async def _command_processor(self):
         """Serialize all TC commands through a single queue for FIFO ordering."""
@@ -819,6 +866,43 @@ class MCSServer:
                 self._ws_clients = [
                     c for c in self._ws_clients if c not in disconnected
                 ]
+
+    async def _sim_state_poll_loop(self):
+        """Closed-loop sim clock sync (SIM mode only).
+
+        Every ~1.5 s, GET the simulator's state endpoint, parse `sim_time`
+        (ISO) and `speed`, and RE-ANCHOR the open-loop ground clock so
+        get_ground_utc() tracks the simulator's real sim_time through
+        pause / speed change / breakpoint load (bounded drift = poll
+        interval). On poll failure, keep the last anchor (debug log).
+
+        Does nothing in REAL mode — that path returns wall-clock UTC.
+        This loop never touches spacecraft OBC time (TM 0x0309).
+        """
+        if self._time_source != "sim":
+            return
+        while self._running:
+            try:
+                timeout = aiohttp.ClientTimeout(total=2.0)
+                async with aiohttp.ClientSession(timeout=timeout) as sess:
+                    async with sess.get(self._sim_state_url) as resp:
+                        payload = await resp.json()
+                sim_time_str = payload.get("sim_time")
+                speed = payload.get("speed")
+                if sim_time_str:
+                    parsed = datetime.fromisoformat(
+                        str(sim_time_str).replace("Z", "+00:00"))
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=timezone.utc)
+                    # Re-anchor: ground_utc = epoch + (now-start)*speed + offset.
+                    # We preserve any manual _ground_time_offset the operator set.
+                    self._ground_epoch = parsed
+                    self._ground_start_wall = _time_mod.time()
+                    if speed is not None:
+                        self._sim_speed = float(speed)
+            except Exception as e:
+                logger.debug("sim-state poll failed (keeping last anchor): %s", e)
+            await asyncio.sleep(1.5)
 
     async def _state_poll_loop(self):
         """Periodically build state from param_cache and broadcast.
@@ -2020,13 +2104,23 @@ def main():
     parser.add_argument("--sim-epoch", default=None,
                         help="Fixed simulation epoch (ISO 8601 UTC, e.g. 2026-03-10T00:00:00Z). "
                              "If omitted, ground time uses real wall-clock UTC.")
+    parser.add_argument("--time-source", default=None, choices=["sim", "real"],
+                        help="Ground clock source: 'sim' (closed-loop follow simulator "
+                             "sim_time/speed) or 'real' (wall-clock UTC). Overrides "
+                             "SMO_TIME_SOURCE env and mission-config time_source.")
+    parser.add_argument("--sim-state-url", default=None,
+                        help="Simulator state endpoint to poll for sim_time/speed in sim mode. "
+                             "Overrides SMO_SIM_STATE_URL env and mission-config sim_state_url. "
+                             "Default http://<connect_host>:8080/api/state.")
     args = parser.parse_args()
 
     host, port = args.connect.rsplit(":", 1)
     tc_port = args.tc_port if args.tc_port else 8001
     logging.basicConfig(level=logging.INFO)
     server = MCSServer(args.config, host, int(port), args.port,
-                       tc_port=tc_port, sim_epoch=args.sim_epoch)
+                       tc_port=tc_port, sim_epoch=args.sim_epoch,
+                       time_source=args.time_source,
+                       sim_state_url=args.sim_state_url)
     asyncio.run(server.start())
 
 

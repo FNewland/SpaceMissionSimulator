@@ -326,6 +326,19 @@ class EPSBasicModel(SubsystemModel):
             s.sa_a_current = sum(s.sa_panel_currents[f] for f in ['px', 'py', 'pz'])
             s.sa_b_current = sum(s.sa_panel_currents[f] for f in ['mx', 'my', 'mz'])
 
+        # ── S2 device-access power gate: solar array drive (0x0101) ──
+        # The solar-array drive points/tracks the arrays at the sun. With the
+        # drive switched OFF via S2 device access the arrays can no longer be
+        # oriented toward the sun, so usable generation collapses to zero while
+        # the device is off. Default ON → generation unchanged. (See
+        # _device_gate_solar_array_drive for the dead-flag history.)
+        if not s.device_states.get(0x0101, True):
+            gen_w = 0.0
+            s.sa_a_current = 0.0
+            s.sa_b_current = 0.0
+            for face in PANEL_NORMALS:
+                s.sa_panel_currents[face] = 0.0
+
         sa_a_pwr_v = s.sa_a_current * 28.0
         sa_b_pwr_v = s.sa_b_current * 28.0
         s.sa_a_voltage = sa_a_pwr_v / max(s.sa_a_current, 0.01) if s.sa_a_current > 0.01 else 0.0
@@ -406,6 +419,15 @@ class EPSBasicModel(SubsystemModel):
 
         # Battery SoC
         net_power_w = gen_w - s.power_cons_w
+
+        # ── S2 device-access power gate: battery charge regulator (0x010F) ──
+        # The charge regulator is the only path by which array power can charge
+        # the battery. With it switched OFF via S2 device access the battery
+        # cannot take charge, so any surplus array power is dumped rather than
+        # raising SoC: clamp the net power to <= 0 while the regulator is off.
+        # (Loads still discharge the battery normally.) Default ON → unchanged.
+        if not s.device_states.get(0x010F, True):
+            net_power_w = min(net_power_w, 0.0)
 
         # Charge rate limiting: if charge_rate_override_a > 0, clamp charge current
         # (Defect #4 fix: enforce set_charge_rate command in model)

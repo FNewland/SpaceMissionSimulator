@@ -880,12 +880,21 @@ class AOCSBasicModel(SubsystemModel):
 
         # GPS receiver model with cold/warm/hot start tracking (Defect #3)
         # See defects/reviews/aocs.md for start mode semantics.
-        if s.mode in (MODE_OFF, MODE_SAFE_BOOT):
+        #
+        # GPS power is gated by BOTH the AOCS mode (no GPS in OFF/SAFE_BOOT) AND
+        # the S2 device-access on/off state for the GPS receiver (device 0x020F).
+        # Previously only the mode was checked, so the S2_AOCS_GPS_RECEIVER
+        # command (the operator's GPS ON/OFF control) toggled device_states but
+        # had no effect on the receiver — an unwired command. Switching the
+        # device OFF now powers the GPS down; switching it back ON forces a COLD
+        # re-acquisition (TTFF restart).
+        gps_device_on = s.device_states.get(0x020F, True)
+        if s.mode in (MODE_OFF, MODE_SAFE_BOOT) or not gps_device_on:
             s.gps_fix = 0
             s.gps_num_sats = 0
             s.gps_pdop = 99.9
-            # Reset TTFF timer when powered down
-            if s.mode == MODE_OFF:
+            # Reset TTFF timer when powered down (mode-off or receiver switched off)
+            if s.mode == MODE_OFF or not gps_device_on:
                 s.gps_ttff_timer = 0.0
                 s.gps_start_mode = 0  # COLD
         else:
@@ -988,6 +997,87 @@ class AOCSBasicModel(SubsystemModel):
             for i in range(4) if s.active_wheels[i]
         )
 
+    # ─── S2 device-access power gates ────────────────────────────────
+
+    def _apply_device_power_gates(self, s: AOCSState) -> None:
+        """Force AOCS sensor/actuator telemetry to a powered-down state for
+        any device switched OFF via S2 device access (device_states).
+
+        Mirrors the GPS receiver gate (0x020F, handled in _tick_gyro_and_gps):
+        before this, every other entry in ``device_states`` was a dead flag —
+        the S2_AOCS_* on/off commands were accepted and toggled the dict but
+        nothing in the model ever read it, so they had no effect. Each device
+        now collapses its corresponding telemetry/validity when powered off and
+        the normal sensor/actuator tick restores it when powered back on.
+
+        Called at the end of ``tick`` so it overrides the freshly-computed
+        sensor values. All devices default ON, so nominal behaviour and the
+        existing test suite are unchanged.
+        """
+        ds = s.device_states
+
+        # Star trackers (0x0204 ST1, 0x0205 ST2). Forcing status 0 (OFF) makes
+        # the next _tick_star_trackers treat them as un-powered; here we also
+        # collapse the composite validity for the selected unit immediately.
+        if not ds.get(0x0204, True):
+            s.st1_status = 0
+            s.st1_num_stars = 0
+        if not ds.get(0x0205, True):
+            s.st2_status = 0
+            s.st2_num_stars = 0
+        sel_status = getattr(s, f"st{s.st_selected}_status", 0)
+        if sel_status != 2:
+            s.st_valid = False
+
+        # Gyroscopes (0x0206-0x0208). With no gyro powered the rate solution is
+        # invalid; zero the reported body rates and bias telemetry.
+        if not any(ds.get(d, True) for d in (0x0206, 0x0207, 0x0208)):
+            s.rate_roll = s.rate_pitch = s.rate_yaw = 0.0
+            s.gyro_bias_x = s.gyro_bias_y = s.gyro_bias_z = 0.0
+
+        # Magnetometers A/B (0x0209/0x020A). If the selected unit (or both) is
+        # powered off, the magnetometer reading is invalid.
+        mag_a_on = ds.get(0x0209, True)
+        mag_b_on = ds.get(0x020A, True)
+        if not mag_a_on:
+            s.mag_a_x = s.mag_a_y = s.mag_a_z = 0.0
+        if not mag_b_on:
+            s.mag_b_x = s.mag_b_y = s.mag_b_z = 0.0
+        if not mag_a_on and not mag_b_on:
+            s.mag_valid = False
+            s.mag_x = s.mag_y = s.mag_z = 0.0
+        elif s.mag_select == 'A' and not mag_a_on:
+            s.mag_valid = False
+        elif s.mag_select == 'B' and not mag_b_on:
+            s.mag_valid = False
+
+        # Sun sensor array (0x020E) — collapse the coarse sun vector.
+        if not ds.get(0x020E, True):
+            s.css_valid = False
+            s.css_sun_x = s.css_sun_y = s.css_sun_z = 0.0
+            for face in list(s.css_heads):
+                s.css_heads[face] = 0.0
+
+        # Magnetorquers X/Y/Z (0x020B-0x020D) — a powered-off rod produces no
+        # dipole, so zero its duty cycle.
+        if not ds.get(0x020B, True):
+            s.mtq_x_duty = 0.0
+        if not ds.get(0x020C, True):
+            s.mtq_y_duty = 0.0
+        if not ds.get(0x020D, True):
+            s.mtq_z_duty = 0.0
+
+        # Reaction wheels 0-3 (0x0200-0x0203) — a powered-off wheel is no longer
+        # spun up or current-drawing; mark it inactive and zero its telemetry.
+        for idx, dev in enumerate((0x0200, 0x0201, 0x0202, 0x0203)):
+            if not ds.get(dev, True):
+                if idx < len(s.active_wheels):
+                    s.active_wheels[idx] = False
+                if idx < len(s.rw_speed):
+                    s.rw_speed[idx] = 0.0
+                if idx < len(s.rw_current):
+                    s.rw_current[idx] = 0.0
+
     # ─── Main tick ───────────────────────────────────────────────────
 
     def tick(self, dt: float, orbit_state: Any,
@@ -1061,6 +1151,12 @@ class AOCSBasicModel(SubsystemModel):
         # even when AOCS mode is OFF; they just aren't actively controlled)
         self._tick_wheels(s, dt)
         self._tick_magnetorquers(s, dt)
+
+        # ── S2 device-access power gates ──
+        # Override sensor/actuator telemetry for any device the operator has
+        # switched OFF via S2 device access (e.g. S2_AOCS_STAR_TRACKER_1). Runs
+        # after the sensor/wheel ticks so a powered-off device reads as down.
+        self._apply_device_power_gates(s)
 
         self._prev_in_eclipse = orbit_state.in_eclipse
 

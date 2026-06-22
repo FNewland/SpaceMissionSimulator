@@ -31,6 +31,23 @@ logger = logging.getLogger(__name__)
 # where the bootloader has no knowledge of platform/payload telemetry.
 BOOTLOADER_BEACON_SID = 11
 
+# Authoritative spacecraft-mode (sc_mode) convention. This MUST match the MCS
+# (smo-mcs/static/index.html) and the instructor UI. sc_mode is a DERIVED state
+# recomputed each tick by Engine._update_sc_mode(); these constants are the only
+# place the numeric values are defined.
+SC_SAFE = 0       # uncommissioned (phase < NOMINAL) OR an FDIR safe contingency
+SC_NOMINAL = 1    # commissioned, no contingency, not imaging
+SC_SCIENCE = 2    # commissioned, no contingency, payload imaging
+SC_EMERGENCY = 3  # an FDIR emergency contingency is latched active
+
+# Spacecraft phase value at which the platform is considered commissioned
+# (NOMINAL). Below this the spacecraft is in bootloader/LEOP/commissioning and
+# sc_mode derives to SAFE.
+SC_PHASE_NOMINAL = 6
+
+# Payload model mode value meaning "actively imaging" (param 0x0600).
+PAYLOAD_MODE_IMAGING = 2
+
 # Map the string severity labels used by subsystem-model event code onto the
 # integer scale (1=INFO, 2=WARNING, 3=ALARM, 4=CRITICAL) used by _emit_event.
 _SEVERITY_NAME_TO_INT = {
@@ -155,7 +172,12 @@ class SimulationEngine:
             self._hk_enabled[hk.sid] = True
 
         # FDIR state
-        self.sc_mode = 0  # 0=nominal, 1=safe, 2=emergency
+        # sc_mode is DERIVED state recomputed each tick by _update_sc_mode().
+        # It starts SAFE (the spacecraft boots in SAFE) and is driven by the
+        # latched FDIR flags below plus spacecraft phase / payload mode.
+        self.sc_mode = SC_SAFE
+        self._fdir_safe_active = False       # an FDIR L>=2 (safe) rule is latched
+        self._fdir_emergency_active = False  # an FDIR L>=3 (emergency) rule is latched
         self._fdir_enabled = self._fdir_cfg.enabled
         self._fdir_rules = self._fdir_cfg.rules
         self._fdir_triggered: dict[str, bool] = {}
@@ -448,7 +470,10 @@ class SimulationEngine:
             # "set_eps_mode". The old name silently returned success:False, so
             # FDIR-driven EPS safing never happened.
             self._fdir_callbacks["safe_mode_eps"] = lambda: eps.handle_command({"command": "set_eps_mode", "mode": 1})
-        self._fdir_callbacks["spacecraft_emergency"] = lambda: setattr(self, 'sc_mode', 2)
+        # sc_mode is now derived; the emergency callback latches a flag that
+        # _update_sc_mode() reads. The flag is cleared when the triggering FDIR
+        # rule un-triggers (see _tick_fdir).
+        self._fdir_callbacks["spacecraft_emergency"] = lambda: setattr(self, '_fdir_emergency_active', True)
 
     def _load_fault_propagation_config(self) -> None:
         """Load fault propagation configuration from YAML."""
@@ -887,6 +912,11 @@ class SimulationEngine:
                 self._tick_fdir()
                 self._tick_fdir_advanced(dt_sim)
 
+            # Derive spacecraft mode (sc_mode) AFTER FDIR has updated its latched
+            # flags this tick. Runs unconditionally (even if FDIR is disabled) so
+            # phase/payload-driven SAFE/NOMINAL/SCIENCE transitions still happen.
+            self._update_sc_mode()
+
             # Subsystem event generation
             self._check_subsystem_events()
 
@@ -950,11 +980,6 @@ class SimulationEngine:
                     except Exception as e:
                         logger.warning("FDIR action %s error: %s", action, e)
 
-                if rule.level >= 2 and self.sc_mode == 0:
-                    self.sc_mode = 1
-                if rule.level >= 3:
-                    self.sc_mode = 2
-
                 self._emit_event({
                     'event_id': 0x8000 | (param_id & 0x0FFF),
                     'severity': rule.level + 1,
@@ -962,6 +987,57 @@ class SimulationEngine:
                 })
             elif not condition_met and was_triggered:
                 self._fdir_triggered[rule_key] = False
+
+        # Recompute the latched FDIR mode flags that drive sc_mode. A safe- or
+        # emergency-level flag is active whenever ANY rule of that level is still
+        # triggered; it clears automatically once the triggering rule un-triggers.
+        # This replaces the old direct sc_mode writes and lets EMERGENCY recover
+        # to SAFE/NOMINAL as contingencies clear (see _update_sc_mode).
+        safe_active = False
+        emergency_active = False
+        for rule in self._fdir_rules:
+            rule_key = f"{rule.parameter}_{rule.action}"
+            if not self._fdir_triggered.get(rule_key, False):
+                continue
+            if rule.level >= 3:
+                emergency_active = True
+            if rule.level >= 2:
+                safe_active = True
+        self._fdir_safe_active = safe_active
+        # The spacecraft_emergency callback may have latched emergency for a rule
+        # that isn't itself L>=3; honour the recomputed level-based result, which
+        # is the authoritative source for emergency latching.
+        self._fdir_emergency_active = emergency_active
+
+    def _update_sc_mode(self) -> None:
+        """Recompute the derived spacecraft mode (sc_mode).
+
+        Precedence (highest first):
+          EMERGENCY(3): an FDIR emergency contingency is latched active.
+          SAFE(0):      an FDIR safe contingency is latched active, OR the
+                        spacecraft is not yet commissioned (phase < NOMINAL) —
+                        this keeps it SAFE through bootloader/LEOP at startup.
+          SCIENCE(2):   commissioned, no contingency, payload actively imaging.
+          NOMINAL(1):   otherwise (commissioned, no contingency, not imaging).
+
+        Because this is recomputed every tick, EMERGENCY recovers to SAFE then
+        NOMINAL automatically once the triggering contingencies clear.
+        """
+        if self._fdir_emergency_active:
+            self.sc_mode = SC_EMERGENCY
+            return
+
+        phase = int(getattr(self, '_spacecraft_phase', SC_PHASE_NOMINAL))
+        if self._fdir_safe_active or phase < SC_PHASE_NOMINAL:
+            self.sc_mode = SC_SAFE
+            return
+
+        payload_mode = int(self.params.get(0x0600, 0))
+        if payload_mode == PAYLOAD_MODE_IMAGING:
+            self.sc_mode = SC_SCIENCE
+            return
+
+        self.sc_mode = SC_NOMINAL
 
     def _resolve_param_name(self, name: str) -> Optional[int]:
         """Resolve dotted param name to param ID using subsystem configs."""
@@ -1009,11 +1085,12 @@ class SimulationEngine:
         0x0003 = invalid data length
         0x0004 = subsystem power off
         """
-        known_services = {3, 5, 6, 8, 9, 11, 12, 15, 17, 19, 20}
+        known_services = {2, 3, 5, 6, 8, 9, 11, 12, 15, 17, 19, 20}
         if service not in known_services:
             return False, 0x0001
 
         valid_subtypes = {
+            2: {1, 5, 6},   # S2 Device Access: distribute on/off (1/5), report status (6)
             3: {1, 2, 3, 4, 5, 6, 27, 31},
             5: {5, 6, 7, 8},
             6: {2, 5, 9},
@@ -1701,7 +1778,24 @@ class SimulationEngine:
                                 'onset', 'duration_s', 'onset_duration_s')},
             )
         elif t == 'override_passes':
-            self._override_passes = bool(cmd.get('enabled', cmd.get('on', False)))
+            # Robust override handling: if the command carries an explicit desired
+            # state under any of the accepted keys, set it; otherwise toggle the
+            # current value. This keeps the engine in sync no matter which payload
+            # schema the UI uses, and makes a bare {'type':'override_passes'} a
+            # safe toggle. The new value is published to 0x05FF on the next tick
+            # (and immediately below so a polled snapshot reflects it at once).
+            explicit = None
+            for key in ('enabled', 'on', 'value', 'state'):
+                if key in cmd:
+                    explicit = bool(cmd[key])
+                    break
+            if explicit is None:
+                self._override_passes = not self._override_passes
+            else:
+                self._override_passes = explicit
+            # Publish immediately so /api/state and the instructor snapshot report
+            # the new value without waiting for the next main-loop tick.
+            self.params[0x05FF] = 1 if self._override_passes else 0
         elif t == 'failure_clear':
             fid = cmd.get('failure_id')
             if fid:

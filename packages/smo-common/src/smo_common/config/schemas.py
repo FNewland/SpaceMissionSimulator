@@ -13,6 +13,15 @@ class MissionConfig(BaseModel):
     pus_version: int = 2
     time_epoch: str = "2000-01-01T12:00:00"
     dump_dir: str | None = Field(default=None, description="Directory for archived S15 delayed-TM dumps; absolute or relative; may point to a shared/server location. Overridden by SMO_DUMP_DIR env. Defaults to workspace/dumps.")
+    # ── Time source (MCS ground UTC + Planner "now") ──
+    # Selects whether the MCS/Planner follow SIMULATION time (closed-loop
+    # synced to the simulator's sim_time/speed) or real wall-clock UTC.
+    # This does NOT affect spacecraft OBC time, which always comes from
+    # telemetry (TM param 0x0309), nor the simulator's own internal clock.
+    # Precedence (each service): CLI flag > env var (SMO_TIME_SOURCE) >
+    # this config field > built-in default ("sim").
+    time_source: str = Field(default="sim", description='Ground/Planner clock source: "sim" (follow simulator sim_time/speed) or "real" (wall-clock UTC).')
+    sim_state_url: str | None = Field(default=None, description="URL of the simulator state endpoint to poll for sim_time/speed when time_source=sim. Overridden by SMO_SIM_STATE_URL env. Defaults to http://<connect_host>:8080/api/state.")
 
 class NetworkConfig(BaseModel):
     """Simulation server network ports."""
@@ -178,6 +187,13 @@ class TCCommandDef(BaseModel):
     subtype: int
     description: str = ""
     fields: list[TCFieldDef] = Field(default_factory=list)
+    # Optional S8 function id (carried through so the MCS catalog/position
+    # access-control endpoints can filter S8 commands by func_id) and the
+    # operator position/subsystem grouping used by catalog-driven displays.
+    func_id: int | None = None
+    position: str | None = None
+    aliases: list[str] = Field(default_factory=list)
+    criticality: str | None = None
 
 class EventDefinition(BaseModel):
     """Event catalog entry."""
