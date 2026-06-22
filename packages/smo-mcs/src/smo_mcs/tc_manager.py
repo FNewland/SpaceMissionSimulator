@@ -73,6 +73,33 @@ class TCManager:
             6, 9, struct.pack('>IH', address, length)
         )
 
+    # ─── S6 AOCS torque-gain helpers ─────────────────────────────────
+    # The S6 dispatcher decodes a uint32 address + float payload (no
+    # memory_id byte). Gains live at fixed addresses: X/Y/Z below.
+    _AOCS_GAIN_ADDR = {"x": 0x20100000, "y": 0x20100004, "z": 0x20100008}
+
+    def build_s6_aocs_set_gain(self, axis: str, gain: float) -> bytes:
+        address = self._AOCS_GAIN_ADDR[axis.lower()]
+        return self.build_command(
+            6, 2, struct.pack('>I', address) + struct.pack('>f', gain)
+        )
+
+    def build_s6_aocs_set_all_gains(self, gx: float, gy: float,
+                                    gz: float) -> bytes:
+        address = self._AOCS_GAIN_ADDR["x"]
+        return self.build_command(
+            6, 2, struct.pack('>I', address) + struct.pack('>fff', gx, gy, gz)
+        )
+
+    def build_s6_aocs_dump_gains(self) -> bytes:
+        return self.build_command(
+            6, 5, struct.pack('>IH', self._AOCS_GAIN_ADDR["x"], 12)
+        )
+
+    def decode_aocs_gains_dump(self, payload: bytes) -> dict:
+        gx, gy, gz = struct.unpack('>fff', payload[:12])
+        return {"x": gx, "y": gy, "z": gz}
+
     # ─── S8 Function Management ──────────────────────────────────────
 
     def build_s8_command(self, func_id: int, params: bytes = b'') -> bytes:

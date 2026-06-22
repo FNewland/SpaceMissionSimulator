@@ -432,6 +432,46 @@ commands:
       - { name: address, type: uint32 }
       - { name: length, type: uint16 }
 
+  # AOCS torque-gain commands (S6 mem-load/dump at fixed gain addresses).
+  # S6 dispatcher decodes uint32 address + float payload (no memory_id byte).
+  - name: AOCS_SET_TORQUE_GAIN_X
+    service: 6
+    subtype: 2
+    description: "Set AOCS X-axis torque control gain"
+    fields:
+      - { name: address, type: uint32, description: "Gain X address (0x20100000)" }
+      - { name: gain, type: float32, description: "X-axis torque gain" }
+  - name: AOCS_SET_TORQUE_GAIN_Y
+    service: 6
+    subtype: 2
+    description: "Set AOCS Y-axis torque control gain"
+    fields:
+      - { name: address, type: uint32, description: "Gain Y address (0x20100004)" }
+      - { name: gain, type: float32, description: "Y-axis torque gain" }
+  - name: AOCS_SET_TORQUE_GAIN_Z
+    service: 6
+    subtype: 2
+    description: "Set AOCS Z-axis torque control gain"
+    fields:
+      - { name: address, type: uint32, description: "Gain Z address (0x20100008)" }
+      - { name: gain, type: float32, description: "Z-axis torque gain" }
+  - name: AOCS_SET_TORQUE_GAINS_ALL
+    service: 6
+    subtype: 2
+    description: "Set all three AOCS torque control gains"
+    fields:
+      - { name: address, type: uint32, description: "Gain base address (0x20100000)" }
+      - { name: gain_x, type: float32, description: "X-axis torque gain" }
+      - { name: gain_y, type: float32, description: "Y-axis torque gain" }
+      - { name: gain_z, type: float32, description: "Z-axis torque gain" }
+  - name: AOCS_DUMP_TORQUE_GAINS
+    service: 6
+    subtype: 5
+    description: "Dump all three AOCS torque control gains"
+    fields:
+      - { name: address, type: uint32, description: "Gain base address (0x20100000)" }
+      - { name: length, type: uint16, description: "Dump length (12 bytes = 3 floats)" }
+
   # ===== S8 Function Management =====
   # AOCS commands (func_id 0-9)
   - name: AOCS_SET_MODE
@@ -468,14 +508,14 @@ commands:
     func_id: 4
     description: "Star tracker 1 power on/off"
     fields:
-      - { name: on, type: uint8, description: "0=off, 1=on" }
+      - { name: "on", type: uint8, description: "0=off, 1=on" }
   - name: ST2_POWER
     service: 8
     subtype: 1
     func_id: 5
     description: "Star tracker 2 power on/off"
     fields:
-      - { name: on, type: uint8, description: "0=off, 1=on" }
+      - { name: "on", type: uint8, description: "0=off, 1=on" }
   - name: ST_SELECT
     service: 8
     subtype: 1
@@ -574,14 +614,14 @@ commands:
     func_id: 17
     description: "Enable/disable FPA cooler"
     fields:
-      - { name: on, type: uint8, description: "0=off, 1=on" }
+      - { name: "on", type: uint8, description: "0=off, 1=on" }
   - name: EPS_TRANSPONDER_TX
     service: 8
     subtype: 1
     func_id: 18
     description: "Enable/disable transponder TX"
     fields:
-      - { name: on, type: uint8, description: "0=off, 1=on" }
+      - { name: "on", type: uint8, description: "0=off, 1=on" }
   - name: EPS_POWER_ON
     aliases: [POWER_LINE_ON]
     service: 8
@@ -744,28 +784,28 @@ commands:
     func_id: 40
     description: "Battery heater on/off"
     fields:
-      - { name: on, type: uint8, description: "0=off, 1=on" }
+      - { name: "on", type: uint8, description: "0=off, 1=on" }
   - name: HEATER_OBC
     service: 8
     subtype: 1
     func_id: 41
     description: "OBC heater on/off"
     fields:
-      - { name: on, type: uint8, description: "0=off, 1=on" }
+      - { name: "on", type: uint8, description: "0=off, 1=on" }
   - name: HEATER_THRUSTER
     service: 8
     subtype: 1
     func_id: 42
     description: "Thruster heater on/off"
     fields:
-      - { name: on, type: uint8, description: "0=off, 1=on" }
+      - { name: "on", type: uint8, description: "0=off, 1=on" }
   - name: FPA_COOLER
     service: 8
     subtype: 1
     func_id: 43
     description: "FPA cooler on/off"
     fields:
-      - { name: on, type: uint8, description: "0=off, 1=on" }
+      - { name: "on", type: uint8, description: "0=off, 1=on" }
   - name: HEATER_SET_SETPOINT
     service: 8
     subtype: 1
@@ -972,7 +1012,7 @@ commands:
     func_id: 70
     description: "Enable/disable beacon mode (low-rate telemetry)"
     fields:
-      - { name: on, type: uint8, description: "0=off, 1=on" }
+      - { name: "on", type: uint8, description: "0=off, 1=on" }
   - name: TTC_CMD_CHANNEL_START
     service: 8
     subtype: 1
@@ -1025,7 +1065,7 @@ commands:
     func_id: 78
     description: "Enable/disable coherent transponder mode"
     fields:
-      - { name: on, type: uint8, description: "0=off (non-coherent), 1=on (coherent)" }
+      - { name: "on", type: uint8, description: "0=off (non-coherent), 1=on (coherent)" }
 
   # ===== S9 Time Management =====
   - name: SET_TIME

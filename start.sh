@@ -14,17 +14,28 @@ cd "$SCRIPT_DIR"
 
 # ── Parse arguments ──
 RF_MODE=""
+PUBLIC=""
 for arg in "$@"; do
     case "$arg" in
         --rf)       RF_MODE="RF" ;;
         --rf=*)     RF_MODE="${arg#--rf=}" ;;
-        *)          echo "Unknown option: $arg"; echo "Usage: $0 [--rf | --rf=FRAME | --rf=RF]"; exit 1 ;;
+        --public)   PUBLIC=1 ;;
+        *)          echo "Unknown option: $arg"; echo "Usage: $0 [--rf | --rf=FRAME | --rf=RF] [--public]"; exit 1 ;;
     esac
 done
 # Also honour the environment variable (CLI takes priority)
 if [ -z "$RF_MODE" ] && [ -n "${SMO_RF_MODE:-}" ]; then
     RF_MODE="$SMO_RF_MODE"
 fi
+# --public can also be requested via SMO_PUBLIC=1
+if [ -z "$PUBLIC" ] && [ "${SMO_PUBLIC:-}" = "1" ]; then
+    PUBLIC=1
+fi
+
+# Resolve the delayed-TM dump archive dir and export it so the simulator
+# child writes its dumps there (and the viewer reads from the same place).
+DUMP_DIR="${SMO_DUMP_DIR:-$SCRIPT_DIR/workspace/dumps}"
+export SMO_DUMP_DIR="$DUMP_DIR"
 
 # Activate virtual environment
 if [ ! -d ".venv" ]; then
@@ -108,7 +119,7 @@ PLANNER_PID=$!
 
 # Start Delayed TM Viewer (HTTP:8092) — reads workspace/dumps/ on demand
 echo "==> Starting Delayed TM viewer on port 8092..."
-python "$SCRIPT_DIR/tools/delayed_tm_viewer.py" --port 8092 --dumps "$SCRIPT_DIR/workspace/dumps" &
+python "$SCRIPT_DIR/tools/delayed_tm_viewer.py" --port 8092 --dumps "$DUMP_DIR" ${PUBLIC:+--public} &
 DTM_PID=$!
 
 # Start Orbit Tools (HTTP:8093) — TLE/state vector to TC command converter

@@ -132,6 +132,9 @@ class TTCBasicModel(SubsystemModel):
         self._min_el = 5.0
         self._tm_rate_hi = 64000
         self._tm_rate_lo = 1000
+        # The carrier->bit->frame sequence is an UPLINK lock paced by the
+        # uplink command rate, NOT the downlink TM rate.
+        self._tc_uplink_rate_bps = 64000
         self._ul_freq_mhz = 449.0
         self._coding_gain = 3.0  # dB (convolutional + RS)
         self._pa_max_power_w = 5.0
@@ -182,6 +185,7 @@ class TTCBasicModel(SubsystemModel):
         self._dl_freq_hz = config.get("dl_freq_mhz", 401.5) * 1e6
         self._tm_rate_hi = config.get("tm_rate_hi_bps", 64000)
         self._tm_rate_lo = config.get("tm_rate_lo_bps", 1000)
+        self._tc_uplink_rate_bps = config.get("tc_uplink_rate_bps", self._tm_rate_hi)
         self._ul_freq_mhz = config.get("ul_freq_mhz", 449.0)
         self._coding_gain = config.get("coding_gain_db", 3.0)
         self._pa_max_power_w = config.get("pa_max_power_w", 5.0)
@@ -305,12 +309,15 @@ class TTCBasicModel(SubsystemModel):
 
             s._lock_timer += dt
 
-            # Lock timing depends on data rate — low rate takes longer
-            # because lower symbol rate means slower acquisition loops
+            # Lock timing depends on the UPLINK command rate, not the
+            # downlink TM rate — the carrier->bit->frame sequence is the
+            # ground station acquiring the spacecraft's uplink, so it is
+            # paced by the uplink rate. Decoupled from s.tm_data_rate.
+            ul_rate = self._tc_uplink_rate_bps
             rate_factor = 1.0
-            if s.tm_data_rate <= self._tm_rate_lo:
-                rate_factor = 3.0  # low rate: 3x slower lock
-            elif s.tm_data_rate >= self._tm_rate_hi * 2:
+            if ul_rate <= self._tm_rate_lo:
+                rate_factor = 3.0  # low uplink rate: 3x slower lock
+            elif ul_rate >= self._tm_rate_hi * 2:
                 rate_factor = 0.7  # high-order mod: slightly faster
 
             s.carrier_lock = s._lock_timer >= s._carrier_lock_delay * rate_factor

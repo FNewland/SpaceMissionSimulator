@@ -180,6 +180,12 @@ class SimulationEngine:
         # TC Scheduler (S11)
         self._tc_scheduler = TCScheduler()
 
+        # Delayed-TM (S15) dump archive directory: env > mission config > default.
+        import os as _os
+        _dump_dir = (_os.environ.get("SMO_DUMP_DIR") or getattr(self._mission_cfg, "dump_dir", None) or "workspace/dumps")
+        self._dump_dir = Path(_dump_dir).expanduser()
+        logger.info("Delayed-TM dump archive dir: %s", self._dump_dir)
+
         # Onboard TM Storage (S15)
         self._tm_storage = OnboardTMStorage()
         # S15 dump pacing: pending packets released according to TTC data rate.
@@ -1457,7 +1463,7 @@ class SimulationEngine:
         try:
             import struct as _struct
             from datetime import datetime as _dt
-            dump_dir = Path("workspace/dumps")
+            dump_dir = self._dump_dir
             dump_dir.mkdir(parents=True, exist_ok=True)
             ts = _dt.utcnow().strftime("%Y%m%dT%H%M%SZ")
             path = dump_dir / f"dump_sid{store_id:02d}_{ts}.bin"

@@ -82,7 +82,7 @@ s19_rules:
   - name: ttc_link_margin_critical_boost_tx
     ea_id: 4001
     event_type: 0x0503  # TTC link_margin critical (from S12)
-    action_func_id: 55   # S8 func 55: Set TX power (increase)
+    action_func_id: 68   # S8 func 68: TTC set_tx_power (increase). NOTE: func 55 is OBDH obc_boot_app, NOT set-TX — mapping 55 here auto-booted the OBC out of bootloader at startup (bug 3 root cause).
     description: "TTC Link Margin Critical -> Increase TX Power"
     enabled: true
 
@@ -96,7 +96,7 @@ s19_rules:
   - name: ttc_high_ber_boost_tx
     ea_id: 4003
     event_type: 0x050C  # TTC bit error rate high (from S12)
-    action_func_id: 55   # S8 func 55: Set TX power (increase)
+    action_func_id: 68   # S8 func 68: TTC set_tx_power (increase). NOTE: func 55 is OBDH obc_boot_app, NOT set-TX — mapping 55 here auto-booted the OBC out of bootloader at startup (bug 3 root cause).
     description: "TTC High BER -> Increase TX Power"
     enabled: true
 

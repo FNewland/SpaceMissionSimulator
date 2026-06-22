@@ -70,7 +70,7 @@ class PowerBudgetMonitor:
         self._current_state.load_shedding_stage = int(eps.get("load_shed_stage", 0))
 
         # Eclipse status (may be in state or computed)
-        self._current_state.eclipse_active = bool(state.get("eclipse_active", False))
+        self._current_state.eclipse_active = bool(state.get("in_eclipse", state.get("eclipse_active", False)))
         self._current_state.time_to_eclipse_entry_s = state.get("time_to_eclipse_entry_s")
         self._current_state.time_to_eclipse_exit_s = state.get("time_to_eclipse_exit_s")
 

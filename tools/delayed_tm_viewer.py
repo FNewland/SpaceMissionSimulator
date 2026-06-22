@@ -742,11 +742,14 @@ setInterval(refreshDumps, 30000);  // poll dump dir for new files every 30 s
 # ---------- entrypoint ----------
 
 def main(argv: list[str] | None = None) -> int:
+    import os
     parser = argparse.ArgumentParser(description="Delayed TM viewer")
     parser.add_argument("--port", type=int, default=8092)
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--dumps", default="workspace/dumps",
+    parser.add_argument("--dumps", default=os.environ.get("SMO_DUMP_DIR", "workspace/dumps"),
                         help="Directory containing dump_*.bin files")
+    parser.add_argument("--public", action="store_true",
+                        help="Bind 0.0.0.0 (also honoured via SMO_PUBLIC=1)")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO,
@@ -756,9 +759,10 @@ def main(argv: list[str] | None = None) -> int:
     dump_dir.mkdir(parents=True, exist_ok=True)
     app = make_app(dump_dir)
 
+    host = "0.0.0.0" if (args.public or os.environ.get("SMO_PUBLIC") == "1") else args.host
     logger.info("Delayed TM viewer listening on http://%s:%d (dumps=%s)",
-                args.host, args.port, dump_dir)
-    web.run_app(app, host=args.host, port=args.port, print=None)
+                host, args.port, dump_dir)
+    web.run_app(app, host=host, port=args.port, print=None)
     return 0
 
 

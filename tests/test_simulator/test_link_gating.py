@@ -296,6 +296,9 @@ class TestS11Bypass:
         import inspect
 
         source = inspect.getsource(SimulationEngine._run_loop)
+        # The per-tick body now lives in _tick_once; include its source too.
+        if hasattr(SimulationEngine, '_tick_once'):
+            source += '\n' + inspect.getsource(SimulationEngine._tick_once)
         # Verify scheduler dispatches directly, not through _drain_tc_queue
         assert '_dispatch_tc(tc_pkt)' in source or '_dispatch_tc' in source
         # Verify the scheduled command dispatch is separate from tc_queue drain

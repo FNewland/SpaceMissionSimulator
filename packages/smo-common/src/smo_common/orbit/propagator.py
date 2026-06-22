@@ -173,6 +173,48 @@ class OrbitPropagator:
         s.gs_range_km = rng_km
         s.in_contact = in_contact
 
+    def next_eclipse_transition(
+        self, duration_s: float = 7200.0, step_s: float = 60.0
+    ) -> dict:
+        """Forward-scan the orbit for the next eclipse entry/exit.
+
+        Returns time-from-now (seconds) to the next eclipse entry and exit
+        relative to the current sim epoch, using the SAME math as the
+        propagator (``_sun_eci`` / ``_is_eclipse`` and ``self._sat.sgp4``).
+
+        Does NOT mutate ``self.state`` or ``self._sim_utc`` — all work is done
+        on locals. Coarse/bounded by ``duration_s`` / ``step_s``.
+        """
+        current = bool(self.state.in_eclipse)
+        entry_s: float | None = None
+        exit_s: float | None = None
+        prev = current
+        t0 = self._sim_utc
+        n_steps = int(duration_s / step_s) + 1
+        for i in range(1, n_steps + 1):
+            offset = i * step_s
+            t = t0 + timedelta(seconds=offset)
+            jd, fr = jday(t.year, t.month, t.day, t.hour, t.minute,
+                          t.second + t.microsecond * 1e-6)
+            e, r, _ = self._sat.sgp4(jd, fr)
+            if e != 0:
+                continue
+            r = np.array(r)
+            sun_eci = _sun_eci(jd + fr)
+            ecl = _is_eclipse(r, sun_eci, self._earth_r)
+            if ecl and not prev and entry_s is None:
+                entry_s = float(offset)
+            if (not ecl) and prev and exit_s is None:
+                exit_s = float(offset)
+            prev = ecl
+            if entry_s is not None and exit_s is not None:
+                break
+        return {
+            "in_eclipse": current,
+            "time_to_eclipse_entry_s": entry_s,
+            "time_to_eclipse_exit_s": exit_s,
+        }
+
     def _elevation_at(self, utc: datetime, gs: GroundStation) -> float:
         t = utc
         jd, fr = jday(t.year, t.month, t.day, t.hour, t.minute,

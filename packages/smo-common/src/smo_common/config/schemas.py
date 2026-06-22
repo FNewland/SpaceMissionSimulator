@@ -12,6 +12,7 @@ class MissionConfig(BaseModel):
     start_in_bootloader: bool = Field(default=True, description="If True, engine powers up in bootloader/beacon mode (phase 3) with only SID 11 active and bootloader APID")
     pus_version: int = 2
     time_epoch: str = "2000-01-01T12:00:00"
+    dump_dir: str | None = Field(default=None, description="Directory for archived S15 delayed-TM dumps; absolute or relative; may point to a shared/server location. Overridden by SMO_DUMP_DIR env. Defaults to workspace/dumps.")
 
 class NetworkConfig(BaseModel):
     """Simulation server network ports."""

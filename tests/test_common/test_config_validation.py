@@ -415,17 +415,18 @@ def test_hk_structure_pack_formats_are_valid():
 def test_command_catalog_no_duplicate_identifiers():
     """Each command must have a unique (service, subtype, func_id) or unique name.
 
-    S2 (Device Access) commands share (service=2, subtype=1) but are
-    differentiated by device_id in their data field, so we use the
-    command name as the uniqueness key for S2 commands.
+    S2 (Device Access) commands share (service=2, subtype=1) and S6 (Memory
+    Management) commands share (service=6, subtype=2/5) but are
+    differentiated by their data field (device_id for S2, memory address for
+    S6), so we use the command name as the uniqueness key for those services.
     """
     data = _load_yaml("commands/tc_catalog.yaml")
     commands = data["commands"]
 
     keys = []
     for cmd in commands:
-        if cmd["service"] == 2:
-            # S2 commands are unique by name (device_id is in the data)
+        if cmd["service"] in (2, 6):
+            # S2/S6 commands are unique by name (device_id / address in data)
             key = (cmd["service"], cmd["subtype"], cmd["name"])
         else:
             key = (cmd["service"], cmd["subtype"], cmd.get("func_id"))
@@ -443,3 +444,9 @@ def test_command_catalog_no_duplicate_identifiers():
         f"Duplicate command identifiers:\n"
         + "\n".join(f"  - {d}" for d in duplicates)
     )
+
+
+def test_tc_catalog_loads_through_loader():
+    from smo_common.config.loader import load_tc_catalog
+    cmds = load_tc_catalog(CONFIG_ROOT)
+    assert len(cmds) > 100
