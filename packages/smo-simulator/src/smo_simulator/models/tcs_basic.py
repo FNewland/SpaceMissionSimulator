@@ -325,14 +325,26 @@ class TCSBasicModel(SubsystemModel):
                           "description": f"TCS_MODE_CHANGE: Decontamination {'START' if decontam_now else 'STOP'}"})
             s._prev_decontam_active = decontam_now
 
-        # Thermal runaway detection (temperature rate > 2 deg/min)
-        if len(s._temp_history) > 1:
-            prev_time, prev_temp = s._temp_history[-1]
-            curr_time = 0  # Current time in this tick
-            rate_deg_per_min = (bat_temp - prev_temp) / max(dt / 60.0, 0.01)
-            runaway_now = abs(rate_deg_per_min) > self._thermal_runaway_rate
-            # Rising-edge: fire once when the rate first exceeds the limit, not
-            # every tick the runaway persists.
+        # Thermal runaway detection (temperature rate > 2 deg/min).
+        # Use a SMOOTHED rate over the temperature-history window rather than the
+        # tick-to-tick delta: consecutive-sample deltas are dominated by the
+        # per-tick gaussian noise on bat_temp, so abs(rate) chattered across the
+        # 2 deg/min threshold every tick and re-fired the event continuously.
+        # Combined with hysteresis (trigger at the limit, only clear well below),
+        # this yields one event per genuine runaway onset.
+        if len(s._temp_history) >= 3:
+            oldest_temp = s._temp_history[0][1]
+            span_min = max(len(s._temp_history) * dt / 60.0, 1e-6)
+            rate_deg_per_min = (bat_temp - oldest_temp) / span_min
+            high = self._thermal_runaway_rate          # 2.0 deg/min — trigger
+            low = self._thermal_runaway_rate * 0.5      # 1.0 deg/min — clear
+            if abs(rate_deg_per_min) > high:
+                runaway_now = True
+            elif abs(rate_deg_per_min) < low:
+                runaway_now = False
+            else:
+                runaway_now = s._prev_thermal_runaway   # hold state inside deadband
+            # Rising-edge: fire once when the rate first exceeds the limit.
             if runaway_now and not s._prev_thermal_runaway:
                 events.append({"event_id": 0x0409, "severity": "HIGH", "subsystem": "tcs",
                               "description": f"THERMAL_RUNAWAY: Battery rate {rate_deg_per_min:.1f} deg/min"})

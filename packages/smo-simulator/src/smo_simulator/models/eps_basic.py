@@ -121,6 +121,7 @@ class EPSState:
     _prev_bus_voltage: float = 28.2  # Previous bus voltage
     _prev_in_eclipse: bool = False   # Previous eclipse state
     _prev_oc_trip_flags: int = 0     # Previous OC trip flags
+    _prev_power_line_mask: int = -1  # Previous switchable power-line ON bitmask (-1 = uninitialised)
     _prev_load_shed_stage: int = 0   # Previous load shedding stage
     _was_charging_prev: bool = False # For charge complete detection
     _prev_bat_overtemp: bool = False # Battery overtemp edge state
@@ -534,11 +535,22 @@ class EPSBasicModel(SubsystemModel):
         s._prev_sa_degraded = sa_degraded
 
         # ── Event detection: Power line state changes ──
+        # Edge-detect against a DEDICATED previous power-line bitmask. Previously
+        # this compared against `_prev_oc_trip_flags` (a different thing that was
+        # never the prior line state), so any switchable line that was ON re-fired
+        # "switched ON" every tick (e.g. ttc_tx, aocs_wheels). First tick (mask ==
+        # -1) only initialises the baseline without emitting.
+        cur_mask = 0
         for i, line_name in enumerate(POWER_LINE_NAMES):
-            cur_state = s.power_lines.get(line_name, False)
-            prev_state = bool(s._prev_oc_trip_flags & (1 << i))  # Use trip flags temporarily
-            if cur_state and not prev_state and POWER_LINE_SWITCHABLE.get(line_name, False):
-                events_to_generate.append((0x0110, f"Power line {line_name} switched ON"))
+            if s.power_lines.get(line_name, False):
+                cur_mask |= (1 << i)
+        if s._prev_power_line_mask != -1:
+            for i, line_name in enumerate(POWER_LINE_NAMES):
+                bit = 1 << i
+                rose = (cur_mask & bit) and not (s._prev_power_line_mask & bit)
+                if rose and POWER_LINE_SWITCHABLE.get(line_name, False):
+                    events_to_generate.append((0x0110, f"Power line {line_name} switched ON"))
+        s._prev_power_line_mask = cur_mask
 
         # ── Event detection: EPS mode changes ──
         if s.eps_mode != s._prev_mode:

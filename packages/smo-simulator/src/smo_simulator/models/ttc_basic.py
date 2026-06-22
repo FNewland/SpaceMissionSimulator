@@ -913,6 +913,7 @@ class TTCBasicModel(SubsystemModel):
 
         elif failure == "antenna_deploy_failed":
             s.antenna_deployment_ready = True
+            s.antenna_deployment_sensor = 1  # back to stowed (operator must redeploy)
 
         # ── Ground segment failures ──
         elif failure == "gs_lna_degradation":
@@ -929,7 +930,6 @@ class TTCBasicModel(SubsystemModel):
             s.gs_ref_osc_drift_db = 0.0
         elif failure == "gs_tracking_loss":
             s.gs_tracking_loss_db = 0.0
-            s.antenna_deployment_sensor = 1  # stowed (operator must redeploy)
 
     def get_state(self) -> dict[str, Any]:
         import dataclasses

@@ -307,5 +307,60 @@ class TestAOCSEdgeTriggering:
         assert q.count(0x0202) <= 1, "RW bearing degraded re-fired while held"
 
 
+# ──────────────────────────────────────────────────────────────────────
+# Regression: specific cyclical-event sources reported in live runs
+# ──────────────────────────────────────────────────────────────────────
+
+class TestCyclicalEventRegressions:
+    def test_eps_power_line_switched_on_fires_once_per_transition(self):
+        """EPS 0x0110 'Power line … switched ON' must fire on the OFF->ON edge,
+        not every tick the line stays ON (was comparing against OC trip flags
+        that were never the prior line state)."""
+        m = EPSBasicModel()
+        m.configure({})
+        q = _attach_engine(m)
+        orbit = make_orbit_state()
+        params = {}
+        # Pick a known switchable line.
+        line = "ttc_tx"
+        m._state.power_lines[line] = False
+        m.tick(1.0, orbit, params)            # initialise baseline mask (no emit)
+        m._state.power_lines[line] = True     # OFF -> ON transition
+        for _ in range(20):
+            m.tick(1.0, orbit, params)        # held ON
+        assert q.count(0x0110) == 1, (
+            f"power-line switched-ON should fire exactly once per transition, "
+            f"got {q.count(0x0110)}")
+
+    def test_tcs_thermal_runaway_no_chatter_in_nominal(self):
+        """TCS 0x0409 THERMAL_RUNAWAY must not chatter every tick from per-tick
+        temperature noise (smoothed rate + hysteresis)."""
+        m = TCSBasicModel()
+        m.configure({})
+        q = _attach_engine(m)
+        orbit = make_orbit_state()
+        params = {}
+        for _ in range(40):
+            m.tick(1.0, orbit, params)
+        assert q.count(0x0409) <= 1, (
+            f"thermal-runaway chattered in nominal: {q.count(0x0409)} emits")
+
+    def test_ttc_antenna_deploy_failed_clear_resets_sensor(self):
+        """clear_failure('antenna_deploy_failed') must reset the deployment
+        sensor (was misplaced under the gs_tracking_loss branch)."""
+        m = TTCBasicModel()
+        m.configure({})
+        m.inject_failure("antenna_deploy_failed")
+        assert m._state.antenna_deployment_sensor == 3
+        assert m._state.antenna_deployment_ready is False
+        m.clear_failure("antenna_deploy_failed")
+        assert m._state.antenna_deployment_sensor == 1, "sensor not reset on clear"
+        assert m._state.antenna_deployment_ready is True
+        # gs_tracking_loss clear must NOT touch the antenna sensor
+        m._state.antenna_deployment_sensor = 2
+        m.clear_failure("gs_tracking_loss")
+        assert m._state.antenna_deployment_sensor == 2
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
