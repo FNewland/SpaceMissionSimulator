@@ -23,7 +23,7 @@ propulsion (if applicable). Establish baseline thermal profiles over a full orbi
 **TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 27)
 **Verify:** `tcs.temp_obc` (0x0406) in range [-5C, +45C] within 10s
 **Verify:** `tcs.temp_battery` (0x0407) in range [+5C, +35C] within 10s
-**Verify:** `tcs.temp_fpa` (0x0408) reported (payload off, expect +5C to +25C) within 10s
+**Verify:** `tcs.temp_fpa` (0x0408) reported (payload off, uncooled: expect +8C to +14C) within 10s
 **GO/NO-GO:** All thermal zones within operational limits
 
 ### Step 2 — Monitor Thermal Profile Through Sunlit Phase
@@ -59,8 +59,8 @@ propulsion (if applicable). Establish baseline thermal profiles over a full orbi
 **GO/NO-GO:** OBC heater circuit operational
 
 ### Step 6 — Verify Autonomous Heater Thermostat Settings
-**TC:** `GET_PARAM(0x0410)` (Service 20, Subtype 1) — battery heater ON threshold
-**TC:** `GET_PARAM(0x0411)` (Service 20, Subtype 1) — battery heater OFF threshold
+**TC:** `GET_PARAM(0x0410)` (Service 20, Subtype 3) — battery heater ON threshold
+**TC:** `GET_PARAM(0x0411)` (Service 20, Subtype 3) — battery heater OFF threshold
 **Verify:** Battery heater ON threshold = +5C within 10s
 **Verify:** Battery heater OFF threshold = +10C within 10s
 **Action:** Confirm autonomous thermostat will maintain battery within [+5C, +35C] range without ground intervention.
@@ -68,10 +68,12 @@ propulsion (if applicable). Establish baseline thermal profiles over a full orbi
 
 ### Step 7 — FPA Cooler Interface Check (Pre-activation)
 **Action:** Verify FPA cooler power interface and thermistor readback before payload commissioning.
-**TC:** `GET_PARAM(0x0420)` (Service 20, Subtype 1) — FPA cooler power status
-**Verify:** FPA cooler power = OFF (value 0) within 10s
-**Verify:** `tcs.temp_fpa` (0x0408) reading consistent with ambient (+5C to +25C) within 10s
-**Action:** Record baseline FPA temperature for comparison during cooler activation (COM-102).
+**TC:** `GET_PARAM(0x040C)` (Service 20, Subtype 3) — `tcs.cooler_fpa`, the effective cooler state
+**Verify:** `tcs.cooler_fpa` (0x040C) = 0 (cooler OFF) within 10s
+**TC:** `GET_PARAM(0x0114)` (Service 20, Subtype 3) — `eps.pl_fpa_cooler`, the EPS supply to the cooler
+**Verify:** `eps.pl_fpa_cooler` (0x0114) = 0 (line unpowered) within 10s
+**Verify:** `tcs.temp_fpa` (0x0408) consistent with the uncooled equilibrium (+8C to +14C) within 10s
+**Action:** Record baseline FPA temperature for comparison during cooler activation (COM-010).
 **GO/NO-GO:** FPA thermal interface healthy, baseline temperature recorded
 
 ### Step 8 — Compile Thermal Baseline Report
@@ -82,7 +84,7 @@ propulsion (if applicable). Establish baseline thermal profiles over a full orbi
 - If `tcs.temp_battery` < +5C and heater does not respond: Switch to redundant heater circuit via `HEATER_CONTROL(circuit=3, on=1)`. If no redundant circuit available, consider attitude adjustment to increase solar heating. Alert thermal engineer.
 - If `tcs.temp_obc` > +45C: Verify sun-pointing attitude is not causing excessive solar heating on OBC panel. Consider temporary attitude offset. Check if heater stuck ON via `GET_PARAM(0x0412)`.
 - If eclipse temperatures drop faster than predicted: Thermal model may need updating. Check for MLI damage indicators. Increase heater duty cycle if approaching survival limits.
-- If FPA temperature reading invalid (out of range -60C to +60C): Check thermistor wiring via `GET_PARAM(0x0421)`. If thermistor failed, payload commissioning may require alternative temperature monitoring.
+- If FPA temperature reading invalid (outside the -25.5C to +17.5C S12 alarm band with the cooler off): cross-check `payload.fpa_temp` (0x0601), which reads the same physical chain 0.5 K colder. Agreement means the FPA really is out of band; disagreement points at one of the two sensors. If the TCS thermistor has failed, payload commissioning can proceed on 0x0601 with the loss of redundancy logged.
 - If thermal zones show unexpected asymmetry: May indicate partial MLI blanket detachment or view factor change. Document and monitor trend over multiple orbits.
 
 ## Post-Conditions

@@ -8,10 +8,16 @@ from enum import Enum
 
 
 class HealthStatus(Enum):
-    """Subsystem health status."""
+    """Subsystem health status.
+
+    ``UNKNOWN`` is distinct from ``GREEN``: "we have not heard from this" is
+    not "this is fine", and a console that renders the two identically is
+    exactly how a dead telemetry link looks like a healthy spacecraft.
+    """
     GREEN = "green"
     YELLOW = "yellow"
     RED = "red"
+    UNKNOWN = "unknown"
 
 
 class SatelliteMode(Enum):
@@ -33,11 +39,18 @@ class SubsystemHealth:
 
 @dataclass
 class KeyParameter:
-    """A key system parameter for dashboard display."""
+    """A key system parameter for dashboard display.
+
+    ``value`` is ``None`` when the parameter has not been received. The
+    previous version substituted a plausible constant (75 % SoC, -15 C FPA,
+    8 dB link margin), so with no telemetry connected at all the dashboard
+    rendered a healthy spacecraft — the DI-03 fabricated-data class.
+    """
     name: str
-    value: float
+    value: Optional[float]
     units: str
     status: HealthStatus
+    param_id: str = ""
 
 
 class SystemOverviewDashboard:
@@ -70,38 +83,37 @@ class SystemOverviewDashboard:
             except ValueError:
                 pass
 
-        # Update key parameters from each subsystem
+        # Update key parameters from each subsystem. `_pick` returns None when
+        # the parameter has not arrived; a missing value is UNKNOWN, never a
+        # nominal-looking default.
+        def _pick(subsystem: str, *keys):
+            sub = state.get(subsystem) or {}
+            for key in keys:
+                val = sub.get(key)
+                if isinstance(val, (int, float)) and not isinstance(val, bool):
+                    return float(val)
+            return None
+
+        specs = (
+            ("battery_soc", "Battery SoC", "%", "0x0101", 20, 10,
+             _pick("eps", "soc_pct", "bat_soc")),
+            ("attitude_error", "Attitude Error", "deg", "0x0217", 1.0, 2.0,
+             _pick("aocs", "att_error_deg", "att_error")),
+            ("fpa_temp", "FPA Temperature", "°C", "0x0601", -10, -20,
+             _pick("payload", "fpa_temp_C", "fpa_temp")),
+            ("link_margin", "Link Margin", "dB", "0x0507", 3, 1,
+             _pick("ttc", "link_margin_dB", "link_margin")),
+            ("storage_percent", "Storage %", "%", "0x0312", 80, 95,
+             _pick("obdh", "hktm_buf_fill", "storage_fill")),
+        )
         self._key_parameters = {
-            "battery_soc": KeyParameter(
-                "Battery SoC",
-                float(state.get("eps", {}).get("bat_soc", 75.0)),
-                "%",
-                self._value_to_status(state.get("eps", {}).get("bat_soc", 75.0), 20, 10),
-            ),
-            "attitude_error": KeyParameter(
-                "Attitude Error",
-                float(state.get("aocs", {}).get("att_error", 0.5)),
-                "deg",
-                self._value_to_status(state.get("aocs", {}).get("att_error", 0.5), 1.0, 2.0),
-            ),
-            "fpa_temp": KeyParameter(
-                "FPA Temperature",
-                float(state.get("payload", {}).get("fpa_temp", -15.0)),
-                "°C",
-                self._value_to_status(state.get("payload", {}).get("fpa_temp", -15.0), -10, -20),
-            ),
-            "link_margin": KeyParameter(
-                "Link Margin",
-                float(state.get("ttc", {}).get("link_margin", 8.0)),
-                "dB",
-                self._value_to_status(state.get("ttc", {}).get("link_margin", 8.0), 3, 1),
-            ),
-            "storage_percent": KeyParameter(
-                "Storage %",
-                float(state.get("obdh", {}).get("storage_fill", 50.0)),
-                "%",
-                self._value_to_status(state.get("obdh", {}).get("storage_fill", 50.0), 80, 95),
-            ),
+            key: KeyParameter(
+                label, value, units,
+                (self._value_to_status(value, yellow, red)
+                 if value is not None else HealthStatus.UNKNOWN),
+                pid,
+            )
+            for key, label, units, pid, yellow, red, value in specs
         }
 
         # Update contact info
@@ -114,6 +126,39 @@ class SystemOverviewDashboard:
             self._active_alarms_count = counts.get("total", 0)
             self._critical_alarms = counts.get("critical", 0)
             self._high_alarms = counts.get("high", 0)
+
+    def update_health_from_limits(self, limit_status_by_subsystem: dict) -> None:
+        """Colour the subsystem health strip from the GROUND limit check.
+
+        Until Phase G every one of the six subsystems reported GREEN forever:
+        nothing ever called `update_subsystem_health`, so the "health" row was
+        decoration. It now reflects `mcs/limits.yaml`, which is the only limit
+        check 30 of the 51 limited parameters have.
+        """
+        for subsystem, statuses in (limit_status_by_subsystem or {}).items():
+            key = str(subsystem).lower()
+            if key not in self._subsystem_health:
+                continue
+            worst = "nominal"
+            offenders: list[str] = []
+            for tag, status in (statuses or {}).items():
+                if str(status).startswith("red"):
+                    worst = "red"
+                    offenders.append(tag)
+                elif str(status).startswith("yellow") and worst != "red":
+                    worst = "yellow"
+                    offenders.append(tag)
+            status_name = {"red": "RED", "yellow": "YELLOW"}.get(worst, "GREEN")
+            desc = (f"{len(offenders)} parameter(s) out of ground limits: "
+                    + ", ".join(sorted(offenders)[:4])) if offenders else \
+                   self._subsystem_health[key].description
+            self.update_subsystem_health(key, status_name, desc)
+
+    def set_alarm_counts(self, total: int, high: int, critical: int = 0) -> None:
+        """Feed the real journal counts (nothing ever set these before)."""
+        self._active_alarms_count = max(0, int(total) - int(high) - int(critical))
+        self._high_alarms = int(high)
+        self._critical_alarms = int(critical)
 
     def update_subsystem_health(self, subsystem: str, status: str, description: str = "") -> None:
         """Update health status of a subsystem."""
@@ -160,9 +205,11 @@ class SystemOverviewDashboard:
             "key_parameters": [
                 {
                     "name": p.name,
-                    "value": round(p.value, 2),
+                    "value": (round(p.value, 2) if p.value is not None
+                              else None),
                     "units": p.units,
                     "status": p.status.value,
+                    "param_id": p.param_id,
                 }
                 for p in self._key_parameters.values()
             ],

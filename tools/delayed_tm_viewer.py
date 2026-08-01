@@ -9,13 +9,27 @@ the time-window picker to decode any subset of those files into a
 human-readable view (packet counts, S5 events, per-SID HK time series
 with sparklines, anomalies).
 
-It is fully offline — no CDN, no MCS / simulator dependency at runtime.
-The decoder is shared with ``tools/tm_report.py``.
+It is fully offline — no CDN. The decoder is shared with
+``tools/tm_report.py``; the store layout and location rules are shared with
+``smo_common.dump_store``.
+
+The tool runs in one of two modes:
+
+**Local mode (default)** reads the dump directory off the local filesystem.
+This is the single-machine workflow and is unchanged.
+
+**API mode** (``--api http://<server>:9090``) reads the store over HTTP from
+whichever service owns it — normally the MCS, optionally the simulator. Use
+this when the archive lives on a server and this tool runs somewhere else,
+so no shared/NFS mount is needed (defect #90). Note that students do not
+need this tool at all in a networked classroom: the MCS serves its own
+listing/download/summary page at ``http://<server>:9090/dumps``.
 
 Usage::
 
     python tools/delayed_tm_viewer.py             # default port 8092
     python tools/delayed_tm_viewer.py --port 9100 --dumps workspace/dumps
+    python tools/delayed_tm_viewer.py --api http://server:9090
 """
 from __future__ import annotations
 
@@ -23,8 +37,8 @@ import argparse
 import asyncio
 import json
 import logging
-import re
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -35,6 +49,13 @@ sys.path.insert(0, str(REPO / "tools"))
 
 from aiohttp import web
 
+from smo_common.dump_store import (  # type: ignore
+    DUMP_NAME_RE,
+    list_dumps as _store_list_dumps,
+    parse_dump_filename,
+    resolve_dump_dir,
+)
+
 from tm_report import (  # type: ignore
     PassAnalysis,
     load_catalogs,
@@ -43,87 +64,127 @@ from tm_report import (  # type: ignore
 
 logger = logging.getLogger("delayed_tm_viewer")
 
-DUMP_NAME_RE = re.compile(r"^dump_sid(\d+)_(\d{8}T\d{6}Z)\.bin$")
-
 
 # ---------- core analysis ----------
 
-def parse_dump_filename(name: str) -> tuple[int | None, datetime | None]:
-    """Return (sid, utc_datetime) from a canonical dump filename."""
-    m = DUMP_NAME_RE.match(name)
-    if not m:
-        return None, None
-    sid = int(m.group(1))
-    try:
-        ts = datetime.strptime(m.group(2), "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
-    except Exception:
-        ts = None
-    return sid, ts
-
-
 def list_dumps(dump_dir: Path) -> list[dict[str, Any]]:
-    """Return metadata about every dump file in ``dump_dir``."""
-    out: list[dict[str, Any]] = []
-    if not dump_dir.exists():
-        return out
-    for p in sorted(dump_dir.glob("dump_*.bin")):
-        try:
-            stat = p.stat()
-        except OSError:
-            continue
-        sid, ts = parse_dump_filename(p.name)
-        out.append({
-            "filename": p.name,
-            "path": str(p),
-            "sid": sid,
-            "timestamp": ts.isoformat() if ts else None,
-            "size_bytes": stat.st_size,
-            "mtime": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
-        })
-    out.sort(key=lambda d: d.get("timestamp") or d.get("mtime") or "")
-    return out
+    """Return metadata about every dump file in ``dump_dir``.
+
+    Thin wrapper over ``smo_common.dump_store.list_dumps`` so this tool and
+    the MCS/simulator dump APIs describe the store identically.
+    """
+    return _store_list_dumps(dump_dir)
 
 
-def select_dumps(dump_dir: Path, *, files: list[str] | None = None,
-                 since: str | None = None, until: str | None = None,
-                 all_: bool = False, latest: bool = False) -> list[Path]:
-    """Resolve a request into a concrete list of dump file paths."""
-    available = list_dumps(dump_dir)
+def _parse_ts(t: str | None) -> datetime | None:
+    """Parse 'YYYY-MM-DDTHH:MM:SSZ' or '...+00:00'; None if unparseable."""
+    if not t:
+        return None
+    try:
+        return datetime.fromisoformat(t.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def select_meta(available: list[dict[str, Any]], *, files: list[str] | None = None,
+                since: str | None = None, until: str | None = None,
+                all_: bool = False, latest: bool = False) -> list[dict[str, Any]]:
+    """Filter a listing (local or fetched from the API) down to a selection.
+
+    Works purely on metadata dicts keyed by ``filename``/``timestamp``, so the
+    same selection logic serves the local filesystem and a remote store.
+    """
     if not available:
         return []
 
     if latest:
-        last = available[-1]
-        return [Path(last["path"])]
+        return [available[-1]]
 
     if files:
         wanted = {f.strip() for f in files if f.strip()}
-        return [Path(d["path"]) for d in available if d["filename"] in wanted]
+        return [d for d in available if d["filename"] in wanted]
 
     if all_ and not (since or until):
-        return [Path(d["path"]) for d in available]
+        return list(available)
 
-    def _parse(t: str | None) -> datetime | None:
-        if not t:
-            return None
-        try:
-            # Accept 'YYYY-MM-DDTHH:MM:SSZ' or '...+00:00'
-            return datetime.fromisoformat(t.replace("Z", "+00:00"))
-        except Exception:
-            return None
-
-    s, u = _parse(since), _parse(until)
-    out: list[Path] = []
+    s, u = _parse_ts(since), _parse_ts(until)
+    out: list[dict[str, Any]] = []
     for d in available:
-        ts = _parse(d.get("timestamp")) or _parse(d.get("mtime"))
+        ts = _parse_ts(d.get("timestamp")) or _parse_ts(d.get("mtime"))
         if ts is None:
             continue
         if s and ts < s:
             continue
         if u and ts > u:
             continue
-        out.append(Path(d["path"]))
+        out.append(d)
     return out
+
+
+def select_dumps(dump_dir: Path, *, files: list[str] | None = None,
+                 since: str | None = None, until: str | None = None,
+                 all_: bool = False, latest: bool = False) -> list[Path]:
+    """Resolve a request into a concrete list of local dump file paths."""
+    chosen = select_meta(list_dumps(dump_dir), files=files, since=since,
+                         until=until, all_=all_, latest=latest)
+    return [Path(d["path"]) for d in chosen]
+
+
+# ---------- remote (API) store client ----------
+
+class RemoteDumpStore:
+    """Read a dump store over the HTTP API instead of the local filesystem.
+
+    Downloaded archives are cached in a temporary directory so the existing
+    local decode path (:func:`analyse_dumps`) is reused unchanged — the only
+    difference between local and API mode is where the bytes come from.
+    """
+
+    def __init__(self, api_base: str, cache_dir: Path | None = None):
+        self.api_base = api_base.rstrip("/")
+        if not self.api_base.endswith("/api/dumps"):
+            self.api_base += "/api/dumps"
+        self._cache = Path(cache_dir) if cache_dir else \
+            Path(tempfile.mkdtemp(prefix="smo-dump-cache-"))
+        self._cache.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def cache_dir(self) -> Path:
+        return self._cache
+
+    async def list(self) -> list[dict[str, Any]]:
+        import aiohttp
+        async with aiohttp.ClientSession() as s:
+            async with s.get(self.api_base) as r:
+                r.raise_for_status()
+                body = await r.json()
+        return body.get("dumps", [])
+
+    async def fetch(self, filename: str) -> Path:
+        """Download one dump into the cache (skipping an unchanged copy)."""
+        import aiohttp
+        # The server validates the name too; refuse locally as well so a bad
+        # name never becomes a filesystem write outside the cache.
+        if Path(filename).name != filename or not DUMP_NAME_RE.match(filename):
+            raise ValueError(f"not a dump archive filename: {filename!r}")
+        target = self._cache / filename
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"{self.api_base}/file", params={"name": filename}) as r:
+                r.raise_for_status()
+                data = await r.read()
+        target.write_bytes(data)
+        return target
+
+    async def select(self, **kwargs) -> list[Path]:
+        chosen = select_meta(await self.list(), **kwargs)
+        out: list[Path] = []
+        for d in chosen:
+            try:
+                out.append(await self.fetch(d["filename"]))
+            except Exception as e:  # noqa: BLE001 — one bad file must not kill the view
+                logger.warning("Could not fetch %s from %s: %s",
+                               d.get("filename"), self.api_base, e)
+        return out
 
 
 def analyse_dumps(paths: Iterable[Path], params_by_id: dict, hk_plist: dict) -> dict[str, Any]:
@@ -206,10 +267,17 @@ def analyse_dumps(paths: Iterable[Path], params_by_id: dict, hk_plist: dict) -> 
 
 # ---------- HTTP handlers ----------
 
-def make_app(dump_dir: Path) -> web.Application:
+def make_app(dump_dir: Path | None, api_base: str | None = None) -> web.Application:
+    """Build the viewer app.
+
+    Exactly one source is used: the local ``dump_dir`` (default), or the
+    remote store at ``api_base`` when given.
+    """
     params_by_id, _, hk_plist = load_catalogs()
     app = web.Application()
+    remote = RemoteDumpStore(api_base) if api_base else None
     app["dump_dir"] = dump_dir
+    app["remote"] = remote
     app["params_by_id"] = params_by_id
     app["hk_plist"] = hk_plist
 
@@ -217,6 +285,14 @@ def make_app(dump_dir: Path) -> web.Application:
         return web.Response(text=INDEX_HTML, content_type="text/html")
 
     async def api_dumps(_req: web.Request) -> web.Response:
+        if remote is not None:
+            try:
+                dumps = await remote.list()
+            except Exception as e:  # noqa: BLE001 — surface, don't 500
+                return web.json_response(
+                    {"dump_dir": remote.api_base, "dumps": [],
+                     "error": f"cannot reach dump API: {e}"})
+            return web.json_response({"dump_dir": remote.api_base, "dumps": dumps})
         return web.json_response({"dump_dir": str(dump_dir),
                                   "dumps": list_dumps(dump_dir)})
 
@@ -224,14 +300,24 @@ def make_app(dump_dir: Path) -> web.Application:
         q = req.query
         files = q.get("files", "")
         file_list = files.split(",") if files else None
-        paths = select_dumps(
-            dump_dir,
+        selection = dict(
             files=file_list,
             since=q.get("since"),
             until=q.get("until"),
             all_=q.get("all") in ("1", "true", "yes"),
             latest=q.get("latest") in ("1", "true", "yes"),
         )
+        if remote is not None:
+            try:
+                paths = await remote.select(**selection)
+            except Exception as e:  # noqa: BLE001
+                return web.json_response(
+                    {"error": f"cannot reach dump API: {e}",
+                     "files": [], "events": [], "hk": [],
+                     "packet_counts": [], "anomalies": [],
+                     "total_packets": 0, "first_cuc": None, "last_cuc": None})
+        else:
+            paths = select_dumps(dump_dir, **selection)
         if not paths:
             return web.json_response({"error": "no dump files matched the request",
                                       "files": [], "events": [], "hk": [],
@@ -244,6 +330,28 @@ def make_app(dump_dir: Path) -> web.Application:
     app.router.add_get("/", index)
     app.router.add_get("/api/dumps", api_dumps)
     app.router.add_get("/api/decode", api_decode)
+
+    # Report generator (Phase F): same library and routes the MCS mounts, so
+    # the standalone viewer offers /reports and /api/reports/* in local mode.
+    if dump_dir is not None:
+        try:
+            from smo_common.reporting import register_report_routes
+            register_report_routes(app, dump_dir,
+                                   REPO / "configs" / "eosat1",
+                                   owner="delayed_tm_viewer")
+        except Exception as e:  # noqa: BLE001 — reports are optional here
+            logger.warning("Report API not mounted: %s", e)
+
+    # Serve Chart.js from the repo's vendor tree rather than a CDN, so the
+    # "fully offline" promise in the module docstring is actually true. The
+    # MCS static tree is preferred; the top-level vendor/ is the fallback.
+    for candidate in (REPO / "packages" / "smo-mcs" / "src" / "smo_mcs" / "static" / "vendor",
+                      REPO / "vendor"):
+        if (candidate / "js" / "chart.umd.min.js").is_file():
+            app.router.add_static("/vendor", str(candidate))
+            break
+    else:  # pragma: no cover - only on a broken checkout
+        logger.warning("Chart.js not found in the vendor tree; plots will not render")
     return app
 
 
@@ -252,8 +360,9 @@ def make_app(dump_dir: Path) -> web.Application:
 INDEX_HTML = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <title>Delayed TM Viewer</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.1.0/dist/chartjs-plugin-zoom.min.js"></script>
+<!-- Vendored locally (see the /vendor static route) so the tool really is
+     offline, as the module docstring promises. -->
+<script src="/vendor/js/chart.umd.min.js"></script>
 <style>
 :root {
   --bg: #0a1226; --panel: #0f1d33; --border: #1f3050; --text: #cfe;
@@ -351,6 +460,7 @@ td.num { text-align: right; }
 const $ = id => document.getElementById(id);
 let availableDumps = [];
 let selectedDumps = new Set();
+let lastStore = "";
 let chartInstances = {};
 let chartsData = [];
 let firstCuc = null;
@@ -363,8 +473,10 @@ async function refreshDumps() {
     const r = await fetch("/api/dumps");
     const j = await r.json();
     availableDumps = j.dumps || [];
+    lastStore = j.dump_dir || "";
     renderDumpsList();
-    setStatus(`${availableDumps.length} dump file(s) in ${j.dump_dir}`);
+    setStatus(j.error ? ("ERROR: " + j.error)
+                      : `${availableDumps.length} dump file(s) in ${j.dump_dir}`);
   } catch (e) {
     setStatus("ERROR: " + e);
   }
@@ -372,7 +484,11 @@ async function refreshDumps() {
 
 function renderDumpsList() {
   const root = $("dumpsList");
-  if (!availableDumps.length) { root.textContent = "No dumps in workspace/dumps/. Run a pass with an S15 dump in the simulator."; return; }
+  if (!availableDumps.length) {
+    root.textContent = "No dumps in " + (lastStore || "the store") +
+      ". Run a pass with an S15 dump in the simulator.";
+    return;
+  }
   root.innerHTML = "";
   const header = document.createElement("div");
   header.className = "dump-row";
@@ -499,17 +615,14 @@ function isoOf(localInput) {
   return new Date(localInput.value + "Z").toISOString();
 }
 
-function formatCucTime(cuc) {
-  if (typeof cuc !== 'number') return String(cuc);
-  const s = Math.floor(cuc / 256);
-  const ms = ((cuc % 256) / 256 * 1000).toFixed(0);
-  const date = new Date((s - 657720000) * 1000);
-  return date.toISOString().split('T')[1].split('.')[0];
-}
+// The sim's CUC is plain seconds since 2000-01-01T12:00:00Z, packed as a bare
+// '>I' (smo_common.protocol.ecss_packet.TIME_EPOCH). It is NOT coarse/fine
+// packed, so the old `cuc / 256` + magic 657720000 offset were both wrong.
+const CUC_EPOCH_UNIX_MS = Date.UTC(2000, 0, 1, 12, 0, 0);   // 946728000000
 
-function getRelativeTime(cuc, baseCuc) {
-  if (!baseCuc || typeof cuc !== 'number') return cuc;
-  return (cuc - baseCuc).toFixed(2);
+function formatCucTime(cuc) {
+  if (typeof cuc !== 'number' || !isFinite(cuc)) return String(cuc);
+  return new Date(CUC_EPOCH_UNIX_MS + cuc * 1000).toISOString().substr(11, 8);
 }
 
 function addChart(sid, pid, name, series, units) {
@@ -524,7 +637,6 @@ function addChart(sid, pid, name, series, units) {
     return;
   }
 
-  const minCuc = Math.min(...series.map(p => p[0]));
   const labels = series.map(([cuc]) => formatCucTime(cuc));
   const data = series.map(([_, v]) => v);
 
@@ -601,7 +713,11 @@ function addChart(sid, pid, name, series, units) {
         }
       }
     },
-    plugins: [ChartDataLabels || {}]
+    // NOTE: chartjs-plugin-datalabels is not loaded by this page and no
+    // datalabels options are configured. Referencing the undeclared global
+    // `ChartDataLabels` threw a ReferenceError while building the options
+    // object, killing every chart before it was constructed.
+    plugins: (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : []
   });
   chartInstances[chartId] = chart;
 }
@@ -699,7 +815,11 @@ function plotAllForSid(sid, params) {
         }
       }
     },
-    plugins: [ChartDataLabels || {}]
+    // NOTE: chartjs-plugin-datalabels is not loaded by this page and no
+    // datalabels options are configured. Referencing the undeclared global
+    // `ChartDataLabels` threw a ReferenceError while building the options
+    // object, killing every chart before it was constructed.
+    plugins: (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : []
   });
   chartInstances[chartId] = chart;
 }
@@ -746,22 +866,101 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Delayed TM viewer")
     parser.add_argument("--port", type=int, default=8092)
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--dumps", default=os.environ.get("SMO_DUMP_DIR", "workspace/dumps"),
-                        help="Directory containing dump_*.bin files")
+    parser.add_argument("--dumps", default=None,
+                        help="Directory containing dump_*.bin files "
+                             "(default: $SMO_DUMP_DIR, else mission dump_dir, "
+                             "else workspace/dumps)")
+    parser.add_argument("--api", default=os.environ.get("SMO_DUMP_API"),
+                        help="Read the store over HTTP from a service that "
+                             "serves it (e.g. http://server:9090) instead of "
+                             "the local filesystem. Also honoured via "
+                             "SMO_DUMP_API.")
     parser.add_argument("--public", action="store_true",
                         help="Bind 0.0.0.0 (also honoured via SMO_PUBLIC=1)")
+    # ── one-shot report mode (Phase F) ──
+    parser.add_argument("--report", metavar="TEMPLATE", default=None,
+                        help="Generate a report from a template id (e.g. "
+                             "pass_report, daily_ops_review, "
+                             "anomaly_investigation) or a YAML path, then "
+                             "exit — no server is started. Uses the same "
+                             "library as the MCS /reports page.")
+    parser.add_argument("--period-start", default=None,
+                        help="With --report: absolute period start "
+                             "(ISO-8601 UTC, CUC-based selection)")
+    parser.add_argument("--period-end", default=None,
+                        help="With --report: absolute period end")
+    parser.add_argument("--var", action="append", default=[],
+                        metavar="KEY=VALUE",
+                        help="With --report: template vars "
+                             "(e.g. --var t0=2026-03-10T04:18:22Z)")
+    parser.add_argument("-o", "--out", default=None,
+                        help="With --report: output HTML path "
+                             "(default workspace/reports/<auto>)")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
-    dump_dir = Path(args.dumps).resolve()
-    dump_dir.mkdir(parents=True, exist_ok=True)
-    app = make_app(dump_dir)
-
     host = "0.0.0.0" if (args.public or os.environ.get("SMO_PUBLIC") == "1") else args.host
-    logger.info("Delayed TM viewer listening on http://%s:%d (dumps=%s)",
-                host, args.port, dump_dir)
+
+    if args.report:
+        # One-shot report generation over the local store, no server.
+        from smo_common.reporting import generate_report
+        from smo_common.reporting.spec import SpecError
+        mission_cfg = None
+        try:
+            from smo_common.config.loader import load_mission_config
+            mission_cfg = load_mission_config(REPO / "configs" / "eosat1")
+        except Exception:  # noqa: BLE001
+            pass
+        dump_dir = resolve_dump_dir(mission_cfg, explicit=args.dumps).resolve()
+        period = None
+        if args.period_start and args.period_end:
+            period = {"kind": "absolute", "start": args.period_start,
+                      "end": args.period_end}
+        vars_ = {}
+        for kv in args.var:
+            if "=" in kv:
+                k, v = kv.split("=", 1)
+                vars_[k.strip()] = v.strip()
+        try:
+            meta = generate_report(
+                args.report, config_dir=REPO / "configs" / "eosat1",
+                dump_dir=dump_dir, vars=vars_, period_override=period,
+                out_path=args.out)
+        except SpecError as e:
+            for err in e.errors:
+                print(f"spec error — {err['path']}: {err['msg']}",
+                      file=sys.stderr)
+            return 2
+        except FileNotFoundError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+        print(f"{meta['title']}: {meta['packets']} packets over "
+              f"{meta['period']['start_utc']} → {meta['period']['end_utc']}"
+              f" -> {meta['path']}")
+        return 0
+
+    if args.api:
+        app = make_app(None, api_base=args.api)
+        logger.info("Delayed TM viewer listening on http://%s:%d (API store=%s)",
+                    host, args.port, args.api)
+    else:
+        # Shared resolution order: --dumps > SMO_DUMP_DIR > mission dump_dir >
+        # workspace/dumps. Resolved to an absolute path here because the viewer
+        # may be started from a different working directory than the simulator.
+        mission_cfg = None
+        try:
+            from smo_common.config.loader import load_mission_config
+            mission_cfg = load_mission_config(REPO / "configs" / "eosat1")
+        except Exception as e:  # noqa: BLE001 — config is optional for this tool
+            logger.debug("No mission config for dump_dir resolution: %s", e)
+        dump_dir = resolve_dump_dir(mission_cfg, explicit=args.dumps).resolve()
+        dump_dir.mkdir(parents=True, exist_ok=True)
+        app = make_app(dump_dir)
+        logger.info("Delayed TM viewer listening on http://%s:%d (dumps=%s)",
+                    host, args.port, dump_dir)
+
     web.run_app(app, host=host, port=args.port, print=None)
     return 0
 

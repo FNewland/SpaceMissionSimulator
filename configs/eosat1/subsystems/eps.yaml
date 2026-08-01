@@ -1,41 +1,100 @@
 model: eps_basic
 technology: triple_junction_gaas
 
-arrays:
-  - name: A
-    area_m2: 0.314
-    efficiency: 0.295
-  - name: B
-    area_m2: 0.314
-    efficiency: 0.295
+# NOTE: the legacy two-array `arrays:` block (2 x 0.314 m2) is GONE. It was
+# dead config for generation (superseded by solar_panels below) but was still
+# silently used as the expected-power reference for the "solar array degraded"
+# event, which therefore fired on the first sunlit tick of every run
+# (Phase B / brief 01 F11, WP-10, WP-13).
 
 battery:
   type: li_ion
-  capacity_wh: 120.0
+  # Phase B rebalance (brief 01 WP-3): 120 -> 100 Wh (3.6 Ah @ 28 V, ~0.9 kg).
+  # Squarely inside the commercial 6U range (GomSpace BPX 77 Wh, ISISpace
+  # 85 Wh, AAC Clyde Optimus 160 Wh) and restores per-orbit DoD to a value
+  # where eclipse management is a real operational decision.
+  capacity_wh: 100.0
   voltage_nom: 26.4
   soc_100_v: 29.2
   soc_0_v: 21.5
   internal_r_ohm: 0.05
+  # Li-ion coulombic efficiency (brief 01 F19 / WP-4).
+  charge_efficiency: 0.94
+  discharge_efficiency: 1.0
+  # Charge power tapers linearly to zero between this SoC and 100 % (CV phase).
+  cv_taper_start_soc_pct: 90.0
 
-obc_power_w: 15.0
-platform_idle_power_w: 70.0
+# Bare cell efficiency of the triple-junction GaAs cells.
+cell_efficiency: 0.295
 
-# Body-mounted panels + deployable wings on ±Y faces
+# Array performance loss stack (brief 01 F1 / WP-1). Replaces the bare
+# cell_eff x MPPT model, which was a beginning-of-life number 45 % optimistic
+# against any defensible EOL figure. Effective plane-of-array constant:
+#   K = 1361 x 0.295 x 0.85 x [1 - 0.0020x(65-28)] x 0.97(MPPT) x 0.95
+#     x sa_age_factor  =  292 W/m2 BOL, 267.9 W/m2 at 3-year EOL.
+# EOL aging is carried live by sa_age_factor (annual_degradation and
+# design_life_years document the sizing case used by tools/power_budget.py).
+array_losses:
+  inherent_degradation: 0.85   # cell mismatch, cover glass, packing, assembly
+  temp_coeff_per_c: -0.0020    # TJ GaAs power coefficient
+  temp_ref_c: 28.0
+  array_temp_sunlit_c: 65.0    # until wired to the TCS panel zones
+  harness_efficiency: 0.95
+  annual_degradation: 0.0275   # matches the live sa_age_factor rate
+  design_life_years: 3.0       # sizing case = EOL
+
+# Phase B rebalance (brief 01 WP-3): OBC 15 -> 6 W. 15 W of always-on OBC on a
+# 6U was fiction; 6 W = OBC 3 W + PDU/EPS housekeeping 3 W.
+obc_power_w: 6.0
+
+# Body-mounted panels + deployable wings on the +/-Y faces, single-axis solar
+# array drive about body Z (= orbit normal). 6U CDS envelope 100x226x366 mm —
+# a box has only ONE pair of each face size (brief 01 F13); packing factors
+# 73-82 %. -Z carries the imager aperture and radiator: no cells.
 solar_panels:
-  px_area_m2: 0.060    # +X body face (3U x 2U = 300x200mm)
-  mx_area_m2: 0.060    # -X body face
-  py_area_m2: 0.030    # +Y body face (3U x 1U = 300x100mm)
-  my_area_m2: 0.030    # -Y body face
-  pz_area_m2: 0.060    # +Z body face (zenith)
-  mz_area_m2: 0.060    # -Z body face (nadir)
-  wing_py_area_m2: 0.240   # +Y deployable wing (2x 3U panels)
-  wing_my_area_m2: 0.240   # -Y deployable wing (2x 3U panels)
+  px_area_m2: 0.060    # 366x226 face, 73% packing
+  mx_area_m2: 0.060
+  py_area_m2: 0.030    # 366x100 face, 82% packing
+  my_area_m2: 0.030
+  pz_area_m2: 0.018    # 226x100 face, 80% packing
+  mz_area_m2: 0.000    # imager aperture + radiator — no cells
+  # Phase B (brief 01 F12 / WP-2 / WP-3): 0.300 -> 0.180 m2 per wing on a
+  # solar-array drive. 0.300 m2/wing was ten folded 3U segments — not a
+  # buildable part. 0.180 m2 = 3 folding segments of 366x164 mm, ~0.6 kg per
+  # wing with hinge and HDRM (MMA eHaWK / DHV 6U class, upper end). Sized so
+  # that the orbit-average margin at the WORST beta (49.8 deg), with the full
+  # EOL loss stack and the Phase-C AOCS suite draw (12 W), stays >= +10 W /
+  # >= 1.25x ratio in nominal ops — verified by tools/power_budget.py.
+  wing_py_area_m2: 0.180
+  wing_my_area_m2: 0.180
   wing_deploy_time_s: 30.0 # Burn wire release + spring deployment
+  # Single-axis solar array drive (brief 01 F4/F5 / WP-2). The command
+  # (EPS set_solar_array_drive), device gate (0x0101) and telemetry (0x0133)
+  # all existed but drove nothing. With sada_tracking the wing pair follows
+  # the sun's projection perpendicular to the drive axis continuously
+  # (cos beta), 1.56x the fixed-wing |sin phi| duty from the same area.
+  sada_present: true
+  # Phase C: with the real LVLH attitude frame (+Z = nadir boresight) the
+  # orbit normal is the body ±Y axis (the wing mounting axis), so the drive
+  # rotates about Y. Phase B's synthetic frame had labelled the same
+  # geometric axis 'z' before an attitude existed.
+  sada_axis: y             # rotation axis = body Y = orbit normal (LVLH)
+  sada_tracking: true      # false => wings frozen at solar_array_drive_angle
+  sada_max_rate_deg_s: 1.0
 payload_power_w: 45.0
-payload_standby_power_w: 8.0
+# Phase B rebalance (brief 01 WP-3): payload standby 8 -> 6 W.
+payload_standby_power_w: 6.0
 fpa_cooler_power_w: 15.0
-transponder_power_w: 20.0
-transponder_rx_power_w: 5.0
+# TX line loads by TM tier (brief 01 F20 / WP-12): LOW (16 kbps BPSK) 12 W;
+# HIGH (128 kbps QPSK dump) 20 W — 8x the information rate with worse PA
+# backoff. Makes "book a dump on every pass" cost real energy.
+transponder_power_w: 12.0
+transponder_hi_power_w: 20.0
+# Phase B rebalance (brief 01 WP-3): RX 5 -> 1.5 W (S-band receiver).
+transponder_rx_power_w: 1.5
+# NOTE: protection levels (load-shed voltage/order, UV/OV, overcurrent trips),
+# initial SoC, event thresholds and the htr_bat/htr_obc/aocs_wheels line loads
+# are SIMULATION tuning and live in ../simulation.yaml (eps: section).
 
 # Power line initial states (overrides defaults)
 power_lines:
@@ -47,6 +106,9 @@ power_lines:
   htr_bat: false     # switchable, default OFF
   htr_obc: false     # switchable, default OFF
   aocs_wheels: false # switchable, default OFF — AOCS commissioned in LEOP
+  prop: false        # switchable, default OFF — Phase D propulsion line
+                     # (catbed heater + valve drivers), powered for manoeuvre
+                     # preparation only; LAST in the load-shed order
 
 param_ids:
   bat_voltage: 0x0100

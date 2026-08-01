@@ -25,7 +25,7 @@ against predictions for the current sun angle and orbit phase. The spacecraft ha
 ## Procedure Steps
 
 ### Step 0 — Command Wing Deployment
-**TC:** `S8_COMMAND(func_id=81, wing=2)` (Service 8, Subtype 1) — Deploy both wings
+**TC:** `EPS_DEPLOY_WING(wing=2)` (Service 8, Subtype 1) — Deploy both wings
 **Verify:** `eps.wing_status` (0x0144) bit 0x10 or 0x20 set (deploying) within 5s
 **Action:** Wait 30 seconds for burn-wire release and spring deployment
 **Verify:** `eps.wing_status` (0x0144) = 0x03 (both wings deployed) within 45s
@@ -38,16 +38,16 @@ against predictions for the current sun angle and orbit phase. The spacecraft ha
 **GO/NO-GO:** EPS telemetry responding nominally
 
 ### Step 2 — Check Solar Array A Deployment Status
-**TC:** `GET_PARAM(0x0110)` (Service 20, Subtype 1) — SA-A deploy switch status
+**TC:** `GET_PARAM(0x0110)` (Service 20, Subtype 3) — SA-A deploy switch status
 **Verify:** SA-A deploy switch = DEPLOYED (value 1) within 10s
-**TC:** `GET_PARAM(0x0112)` (Service 20, Subtype 1) — SA-A string current
+**TC:** `GET_PARAM(0x0112)` (Service 20, Subtype 3) — SA-A string current
 **Verify:** SA-A string current > 0.1A when in sunlight within 10s
 **GO/NO-GO:** SA-A confirmed deployed and generating current
 
 ### Step 3 — Check Solar Array B Deployment Status
-**TC:** `GET_PARAM(0x0111)` (Service 20, Subtype 1) — SA-B deploy switch status
+**TC:** `GET_PARAM(0x0111)` (Service 20, Subtype 3) — SA-B deploy switch status
 **Verify:** SA-B deploy switch = DEPLOYED (value 1) within 10s
-**TC:** `GET_PARAM(0x0113)` (Service 20, Subtype 1) — SA-B string current
+**TC:** `GET_PARAM(0x0113)` (Service 20, Subtype 3) — SA-B string current
 **Verify:** SA-B string current > 0.1A when in sunlight within 10s
 **GO/NO-GO:** SA-B confirmed deployed and generating current
 
@@ -66,8 +66,8 @@ against predictions for the current sun angle and orbit phase. The spacecraft ha
 
 ### Step 6 — Verify Array Symmetry
 **Action:** Compare SA-A and SA-B string currents. Arrays should produce similar current at equivalent sun angles, within 15% of each other.
-**TC:** `GET_PARAM(0x0112)` (Service 20, Subtype 1) — SA-A current
-**TC:** `GET_PARAM(0x0113)` (Service 20, Subtype 1) — SA-B current
+**TC:** `GET_PARAM(0x0112)` (Service 20, Subtype 3) — SA-A current
+**TC:** `GET_PARAM(0x0113)` (Service 20, Subtype 3) — SA-B current
 **Verify:** |SA-A current - SA-B current| / max(SA-A, SA-B) < 0.15 within 10s
 **GO/NO-GO:** Array currents balanced within 15% tolerance
 
@@ -78,7 +78,7 @@ against predictions for the current sun angle and orbit phase. The spacecraft ha
 **GO/NO-GO:** Positive power budget confirmed or achievable after sun acquisition
 
 ## Off-Nominal Handling
-- If a wing fails to deploy (wing_status bit not set after 45s): Retry single wing with `S8_COMMAND(func_id=81, wing=0)` for +Y or `S8_COMMAND(func_id=81, wing=1)` for -Y — requires Flight Director approval. If retry fails, assess single-wing power budget viability (single wing provides ~32W in sunlight, marginal for nominal ops).
+- If a wing fails to deploy (wing_status bit not set after 45s): Retry single wing with `EPS_DEPLOY_WING(wing=0)` for +Y or `EPS_DEPLOY_WING(wing=1)` for -Y — requires Flight Director approval. If retry fails, assess single-wing power budget viability (single wing provides ~32W in sunlight, marginal for nominal ops).
 - If both arrays deployed but power generation < 10W in sunlight: Verify spacecraft is actually in sunlight via Flight Dynamics. Check for excessive tumble rate reducing effective solar incidence. Prioritize LEOP-004 (Sun Acquisition) to stabilize attitude.
 - If array currents asymmetric > 30%: Log anomaly. One array may have partial deployment or string failure. Continue LEOP with reduced power budget. Schedule detailed EPS investigation during commissioning.
 - If `eps.bat_soc` dropping rapidly (> 2% per minute): Reduce spacecraft load — disable non-essential heaters via `HEATER_CONTROL(circuit=2, on=0)`. Ensure AOCS detumble is using magnetorquers only (lower power). Prioritize sun acquisition.

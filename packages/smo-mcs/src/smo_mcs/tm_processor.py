@@ -26,6 +26,10 @@ class TMProcessor:
         self._history: dict[int, deque] = {}
         self._alarms: list[dict] = []
         self._max_history = 600  # 10 minutes at 1 Hz
+        # Ground-limit state machine.  A parameter sitting outside its band
+        # must raise exactly one alarm, not one per HK cycle, so the journal
+        # stays readable; the *state* is what the displays colour from.
+        self._limit_status: dict[int, str] = {}
 
     def process_packet(self, raw: bytes) -> Optional[dict]:
         pkt = decommutate_packet(raw)
@@ -114,25 +118,60 @@ class TMProcessor:
 
         return result
 
+    def classify(self, param_id: int, value: float) -> str:
+        """Return the ground-limit state of *value* for *param_id*.
+
+        ``"unlimited"`` when the parameter carries no band at all — which is
+        a different statement from ``"nominal"`` and the displays render it
+        differently (no colour, rather than green).
+        """
+        limit = self._limits.get(param_id)
+        if not limit:
+            return "unlimited"
+        if limit.red_low is not None and value < limit.red_low:
+            return "red_low"
+        if limit.red_high is not None and value > limit.red_high:
+            return "red_high"
+        if limit.yellow_low is not None and value < limit.yellow_low:
+            return "yellow_low"
+        if limit.yellow_high is not None and value > limit.yellow_high:
+            return "yellow_high"
+        return "nominal"
+
+    def limit_band(self, param_id: int) -> Optional[dict]:
+        limit = self._limits.get(param_id)
+        if not limit:
+            return None
+        return {
+            "yellow_low": limit.yellow_low, "yellow_high": limit.yellow_high,
+            "red_low": limit.red_low, "red_high": limit.red_high,
+        }
+
+    def limit_bands(self) -> dict[int, dict]:
+        return {pid: self.limit_band(pid) for pid in self._limits}
+
+    def limit_statuses(self) -> dict[int, str]:
+        """Current ground-limit state of every limited parameter seen so far."""
+        return dict(self._limit_status)
+
     def _check_limit(self, param_id: int, value: float) -> None:
         limit = self._limits.get(param_id)
         if not limit:
             return
-        status = "nominal"
-        if limit.red_low is not None and value < limit.red_low:
-            status = "red_low"
-        elif limit.red_high is not None and value > limit.red_high:
-            status = "red_high"
-        elif limit.yellow_low is not None and value < limit.yellow_low:
-            status = "yellow_low"
-        elif limit.yellow_high is not None and value > limit.yellow_high:
-            status = "yellow_high"
-        if status != "nominal":
-            self._alarms.append({
-                "param_id": param_id,
-                "value": value,
-                "status": status,
-            })
+        status = self.classify(param_id, value)
+        prev = self._limit_status.get(param_id, "nominal")
+        self._limit_status[param_id] = status
+        if status == prev:
+            # Steady state — already journalled (or already nominal).
+            return
+        self._alarms.append({
+            "param_id": param_id,
+            "value": value,
+            "status": status,
+            "previous": prev,
+            "cleared": status == "nominal",
+            "band": self.limit_band(param_id),
+        })
 
     def get_param(self, param_id: int) -> Optional[float]:
         return self._params.get(param_id)

@@ -14,7 +14,8 @@ steps:
     command: "s8_command"
     params:
       func_id: 0  # AOCS_SET_MODE
-      data: [0x02]  # mode = 2 (safe)
+      data: [0x03]  # mode = 3 (COARSE_SUN — the sun-safe hold; mode 2 is
+                    # DETUMBLE, which was mislabelled "safe" here)
 
   - step_id: 2
     name: "Reset Reaction Wheels"
@@ -22,8 +23,10 @@ steps:
     delay_s: 1.0
     command: "s8_command"
     params:
-      func_id: 8  # RW_SET_SPEED_BIAS
-      data: [0xFF, 0x00, 0x00]  # all wheels, zero bias
+      func_id: 14  # AOCS_RW_RAMP_DOWN (wheel=255 -> all, target f32 RPM)
+      # Phase C WP-9: step was func 8 with 3 malformed bytes (handler needs
+      # wheel u8 + f32, and wheel 255 was out of range) — a silent no-op.
+      data: [0xFF, 0x44, 0x96, 0x00, 0x00]  # all wheels -> 1200 RPM
 
   - step_id: 3
     name: "Payload Standby"

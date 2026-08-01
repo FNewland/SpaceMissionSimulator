@@ -47,6 +47,10 @@ class OBDHState:
     tc_acc_count: int = 0
     tc_rej_count: int = 0
     tm_pkt_count: int = 0
+    # S1 failure code of the most recently refused telecommand (0 = none since
+    # boot). The code used to exist only inside ServiceDispatcher; nothing
+    # downlinked it, so no parameter display could ever show it (defect #88).
+    last_tc_error_code: int = 0
 
     # Timing
     uptime_s: int = 0
@@ -131,6 +135,11 @@ class OBDHBasicModel(SubsystemModel):
 
     def __init__(self):
         self._state = OBDHState()
+        # Per-model RNG (plan A-2). Standalone construction gets a fresh
+        # unseeded stream so existing unit tests keep working; the engine
+        # replaces this with a Random derived from simulation.yaml `seed`.
+        import random as _random
+        self.rng = _random.Random(20260731)  # deterministic standalone fallback; engine overrides via derive_rng
         self._cpu_base = 35.0
         self._param_ids: dict[str, int] = {}
         self._event_to_emit: tuple[int, str] | None = None  # (event_id, event_name)
@@ -245,7 +254,7 @@ class OBDHBasicModel(SubsystemModel):
         # CPU load depends on mode and sw_image
         if s.sw_image == SW_BOOTLOADER:
             # Boot loader: minimal CPU, limited functionality
-            s.cpu_load = max(0, min(100, 15.0 + random.gauss(0, 1.0)))
+            s.cpu_load = max(0, min(100, 15.0 + self.rng.gauss(0, 1.0)))
         else:
             mode_load = {0: 0, 1: -10, 2: 20}
             s.cpu_load = max(
@@ -254,7 +263,7 @@ class OBDHBasicModel(SubsystemModel):
                     100,
                     self._cpu_base
                     + mode_load.get(s.mode, 0)
-                    + random.gauss(0, 2.0),
+                    + self.rng.gauss(0, 2.0),
                 ),
             )
 
@@ -284,7 +293,7 @@ class OBDHBasicModel(SubsystemModel):
         # Phase 4: SEU simulation (South Atlantic Anomaly model)
         # ~1 SEU per orbit on average for LEO spacecraft
         seu_prob = 0.00015 * dt  # ~1 per 6600s orbit
-        if random.random() < seu_prob:
+        if self.rng.random() < seu_prob:
             s.seu_count += 1
             s.mem_errors += 1
             self._event_to_emit = (0x0307, "SEU_DETECTED")
@@ -302,25 +311,25 @@ class OBDHBasicModel(SubsystemModel):
         # Task count and stack/heap usage
         if s.sw_image == SW_APPLICATION:
             s.task_count = 12 + (3 if s.mode == 0 else 0)
-            s.stack_usage_pct = 30.0 + s.cpu_load * 0.3 + random.gauss(0, 1.0)
+            s.stack_usage_pct = 30.0 + s.cpu_load * 0.3 + self.rng.gauss(0, 1.0)
             s.stack_usage_pct = max(10.0, min(95.0, s.stack_usage_pct))
-            s.heap_usage_pct = 35.0 + s.mmm_used_pct * 0.4 + random.gauss(0, 0.5)
+            s.heap_usage_pct = 35.0 + s.mmm_used_pct * 0.4 + self.rng.gauss(0, 0.5)
             s.heap_usage_pct = max(10.0, min(95.0, s.heap_usage_pct))
         else:
             s.task_count = 4  # Boot loader has minimal tasks
-            s.stack_usage_pct = 15.0 + random.gauss(0, 0.5)
-            s.heap_usage_pct = 10.0 + random.gauss(0, 0.5)
+            s.stack_usage_pct = 15.0 + self.rng.gauss(0, 0.5)
+            s.heap_usage_pct = 10.0 + self.rng.gauss(0, 0.5)
 
         # OBC nominal heat dissipation (defects/reviews/obdh.md)
         # ~15W in application mode, ~2W in bootloader (minimal activity)
         if s.sw_image == SW_APPLICATION:
             # Base 12W nominal + 2W per 10% CPU load + mode variation
             mode_heat = {0: 3.0, 1: 0.5, 2: 6.0}  # nominal, safe, maintenance
-            s.heat_dissipation_w = 12.0 + (s.cpu_load / 10.0 * 2.0) + mode_heat.get(s.mode, 0) + random.gauss(0, 0.5)
+            s.heat_dissipation_w = 12.0 + (s.cpu_load / 10.0 * 2.0) + mode_heat.get(s.mode, 0) + self.rng.gauss(0, 0.5)
             s.heat_dissipation_w = max(5.0, min(35.0, s.heat_dissipation_w))  # Clamp to realistic range
         else:
             # Bootloader: minimal power consumption
-            s.heat_dissipation_w = 2.0 + random.gauss(0, 0.1)
+            s.heat_dissipation_w = 2.0 + self.rng.gauss(0, 0.1)
 
         # Buffer fill simulation — expressed as a PERCENTAGE (0..100) so
         # that the MCS "Buffer Fill – HK TM" widget (param 0x0312) never
@@ -339,14 +348,16 @@ class OBDHBasicModel(SubsystemModel):
         if s.sw_image == SW_APPLICATION:
             # Accumulate a small percentage every tick (equivalent to the
             # previous raw count scaled by 100/capacity).
-            accumulate_pct = random.uniform(0.0, 2.0) * (100.0 / max(1, s.hktm_buf_capacity))
+            # Rate per unit sim time (plan A-3): scale by dt so the fill
+            # rate is invariant under sub-stepping / acceleration.
+            accumulate_pct = self.rng.uniform(0.0, 2.0) * dt * (100.0 / max(1, s.hktm_buf_capacity))
             s.hktm_buf_fill = min(100.0, float(s.hktm_buf_fill) + accumulate_pct)
             # Drain when downlink active (TTC carrier lock)
             carrier_lock = shared_params.get(0x0510, 0)
             if carrier_lock:
-                drain_pct = random.uniform(1.0, 5.0) * (100.0 / max(1, s.hktm_buf_capacity))
+                drain_pct = self.rng.uniform(1.0, 5.0) * dt * (100.0 / max(1, s.hktm_buf_capacity))
                 s.hktm_buf_fill = max(0.0, float(s.hktm_buf_fill) - drain_pct)
-                s.event_buf_fill = max(0, s.event_buf_fill - random.randint(0, 2))
+                s.event_buf_fill = max(0, s.event_buf_fill - self.rng.randint(0, 2))
         # Hard-clamp in all cases (belt and braces)
         s.hktm_buf_fill = max(0.0, min(100.0, float(s.hktm_buf_fill)))
 
@@ -419,6 +430,7 @@ class OBDHBasicModel(SubsystemModel):
         shared_params[p.get("tc_rx", 0x0304)] = s.tc_rx_count
         shared_params[p.get("tc_acc", 0x0305)] = s.tc_acc_count
         shared_params[p.get("tc_rej", 0x0306)] = s.tc_rej_count
+        shared_params[p.get("last_tc_error_code", 0x0315)] = s.last_tc_error_code
         shared_params[p.get("tm_pkt", 0x0307)] = s.tm_pkt_count
         shared_params[p.get("uptime", 0x0308)] = s.uptime_s
         shared_params[p.get("obc_time", 0x0309)] = s.obc_time_cuc
@@ -446,6 +458,16 @@ class OBDHBasicModel(SubsystemModel):
         shared_params[0x031E] = float(s.mem_errors)
         # Heat dissipation (defects/reviews/obdh.md — nominal ~15W in app mode)
         shared_params[0x031F] = s.heat_dissipation_w
+        # 0x0A10 obdh.storage_fill / 0x0A11 obdh.can_bus_status. Both were in
+        # the catalogue and written by nothing. can_bus_status in particular is
+        # the primary parameter of the `obdh_can_bus_failure` FDIR rule and of
+        # the fault cascade of the same name: with no value it read 0.0 = FAILED
+        # from the first tick, which is why wiring detection up had to fix this
+        # too. 1 = healthy, 0 = the active bus has failed.
+        shared_params[0x0A10] = s.mmm_used_pct
+        active_bus_status = (s.bus_a_status if s.active_bus == 0
+                             else s.bus_b_status)
+        shared_params[0x0A11] = 0.0 if active_bus_status == BUS_FAILED else 1.0
 
     def _reboot(self, cause: int = REBOOT_COMMAND) -> None:
         """Reboot OBC — drop to boot loader, reset counters."""
@@ -456,6 +478,7 @@ class OBDHBasicModel(SubsystemModel):
         s.tc_rx_count = 0
         s.tc_acc_count = 0
         s.tc_rej_count = 0
+        s.last_tc_error_code = 0
         s.tm_pkt_count = 0
         s.watchdog_timer = 0
         s.sw_image = SW_BOOTLOADER
@@ -514,6 +537,17 @@ class OBDHBasicModel(SubsystemModel):
 
     def record_tc_rejected(self):
         self._state.tc_rej_count += 1
+
+    def record_tc_failure_code(self, error_code: int) -> None:
+        """Latch the S1 failure code of the most recent refused telecommand.
+
+        Called from ``SimulationEngine._emit_command_rejected``, which is the
+        one place every refusal — acceptance and execution — passes through.
+        """
+        try:
+            self._state.last_tc_error_code = int(error_code) & 0xFFFF
+        except (TypeError, ValueError):
+            self._state.last_tc_error_code = 0x0001
 
     def record_tc_executed(self):
         # Best-effort: if a separate execution counter exists use it,
@@ -797,12 +831,18 @@ class OBDHBasicModel(SubsystemModel):
 
     def get_state(self) -> dict[str, Any]:
         import dataclasses
-        return dataclasses.asdict(self._state)
+        from smo_common.state import rng_state_to_json
+        d = dataclasses.asdict(self._state)
+        d["_rng_state"] = rng_state_to_json(self.rng.getstate())
+        return d
 
     def set_state(self, state: dict[str, Any]) -> None:
-        for k, v in state.items():
-            if hasattr(self._state, k):
-                setattr(self._state, k, v)
+        # Container fields are deep-copied by restore_dataclass_state: the
+        # plain setattr this used to do aliased the snapshot's own dicts and
+        # lists into live model state (G2-f).
+        from smo_common.state import restore_dataclass_state, restore_rng
+        restore_rng(self.rng, state.get("_rng_state"))
+        restore_dataclass_state(self._state, state, skip=("_rng_state",))
 
     # S2 Device Access — device-level on/off control
     def set_device_state(self, device_id: int, on_off: bool) -> bool:

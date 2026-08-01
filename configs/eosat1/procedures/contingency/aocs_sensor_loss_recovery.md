@@ -65,7 +65,7 @@ must be evaluated after each recovery action.
 | ST1_POWER | 8 | 1 | 4 | Star tracker 1 power on/off |
 | MAG_SELECT | 8 | 1 | 7 | Select active magnetometer source |
 | AOCS_SET_MODE | 8 | 1 | 0 | Set AOCS mode |
-| PAYLOAD_SET_MODE | 8 | 1 | 20 | Set payload mode (for safe mode entry) |
+| PAYLOAD_SET_MODE | 8 | 1 | 26 | Set payload mode (for safe mode entry) |
 
 ## Procedure Steps
 

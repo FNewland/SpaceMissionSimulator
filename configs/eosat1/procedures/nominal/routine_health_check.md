@@ -56,7 +56,7 @@ and serves as the primary tool for early anomaly detection and trend analysis.
 **Verify:** `tcs.temp_obc` (0x0406) in range -10.0 to +50.0 C
 **Verify:** `tcs.temp_battery` (0x0407) in range +5.0 to +35.0 C
 **Verify:** `tcs.temp_fpa` (0x0408) < 0.0 C (if cooler active, expect < -25 C)
-**Verify:** `tcs.htr_battery` (0x040A) = expected state (ON if temp < +10 C)
+**Verify:** `tcs.htr_battery` (0x040A) = expected state (thermostat: ON at <= +5 C, OFF at >= +10 C; between the setpoints the previous state holds)
 **Verify:** `tcs.cooler_fpa` (0x040C) = expected state (ON if payload not OFF)
 **Trend:** Compare battery temperature with orbital position --- should follow
   predictable eclipse/sunlight pattern.

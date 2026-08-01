@@ -11,7 +11,9 @@ from collections import Counter
 
 CONFIG_ROOT = Path(__file__).resolve().parent.parent.parent / "configs" / "eosat1"
 
-VALID_SUBSYSTEMS = {"eps", "aocs", "obdh", "tcs", "ttc", "payload", "orbital", "fdir"}
+VALID_SUBSYSTEMS = {"eps", "aocs", "obdh", "tcs", "ttc", "payload",
+                    "prop",  # Phase D propulsion
+                    "orbital", "fdir"}
 
 VALID_EVENT_SEVERITIES = {"INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"}
 
@@ -299,6 +301,11 @@ def test_display_parameter_references_are_valid():
     """Every parameter name used in display widgets must exist in parameters.yaml."""
     params_data = _load_yaml("telemetry/parameters.yaml")
     valid_names = {p["name"] for p in params_data["parameters"]}
+    # Phase G: `contact.*` moved out of the spacecraft parameter catalogue into
+    # telemetry/derived.yaml — they are computed by the ground, are in no HK SID
+    # and no S20 read can return them. A display may still bind to them.
+    derived = _load_yaml("telemetry/derived.yaml")
+    valid_names |= {p["name"] for p in derived["derived_parameters"]}
 
     displays_data = _load_yaml("mcs/displays.yaml")
     missing = []

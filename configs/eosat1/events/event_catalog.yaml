@@ -41,6 +41,7 @@ events:
   - { id: 0x020A, name: GPS_LOCK_ACQUIRED, severity: INFO, subsystem: aocs, description: "GPS lock acquired (3D+ fix)" }
   - { id: 0x020B, name: GYRO_BIAS_HIGH, severity: LOW, subsystem: aocs, description: "Gyroscope bias drift exceeds threshold" }
   - { id: 0x020C, name: CSS_DEGRADED, severity: MEDIUM, subsystem: aocs, description: "Coarse Sun Sensor multiple head failures" }
+  - { id: 0x020D, name: AOCS_FAST_LOOP_BYPASSED, severity: LOW, subsystem: aocs, description: "AOCS attitude fast loop bypassed/restored (secular fidelity mode above 60x time acceleration; see aocs.fidelity_mode 0x02C6)" }
 
   # OBDH events (0x0300-0x03FF)
   - { id: 0x0300, name: OBDH_MODE_CHANGE, severity: MEDIUM, subsystem: obdh, description: "OBC mode transition" }
@@ -54,6 +55,7 @@ events:
   - { id: 0x0308, name: SCRUB_COMPLETE, severity: LOW, subsystem: obdh, description: "Memory scrub operation completed" }
   - { id: 0x0309, name: TC_QUEUE_OVERFLOW, severity: MEDIUM, subsystem: obdh, description: "S11 TC scheduling queue full" }
   - { id: 0x030A, name: TM_STORE_OVERFLOW, severity: MEDIUM, subsystem: obdh, description: "S15 TM storage full" }
+  - { id: 0x030B, name: COMMAND_REJECTED, severity: MEDIUM, subsystem: obdh, description: "Telecommand refused at acceptance or execution; aux text carries the command identity (service/subtype/func), the failure code and the on-board software's reason" }
 
   # TCS events (0x0400-0x04FF)
   - { id: 0x0400, name: TCS_OVERTEMP_WARNING, severity: MEDIUM, subsystem: tcs, description: "Thermal zone temperature above warning threshold" }
@@ -105,6 +107,36 @@ events:
   - { id: 0x0510, name: AGC_SATURATION, severity: LOW, subsystem: ttc, description: "Automatic gain control saturation detected" }
   - { id: 0x0511, name: UPLINK_TIMEOUT, severity: HIGH, subsystem: ttc, description: "No valid uplink command received (timeout threshold exceeded)" }
   - { id: 0x0512, name: ANTENNA_DEPLOY_READY_RECOVERED, severity: INFO, subsystem: ttc, description: "Antenna deployment readiness recovered (pyro continuity OK)" }
+
+  # OBCP events (0x0700-0x070F) — S18 on-board control procedures
+  - { id: 0x0700, name: OBCP_STARTED, severity: INFO, subsystem: obdh, description: "On-board control procedure started" }
+  - { id: 0x0701, name: OBCP_COMPLETED, severity: INFO, subsystem: obdh, description: "On-board control procedure completed (all steps executed)" }
+  - { id: 0x0702, name: OBCP_ABORTED, severity: MEDIUM, subsystem: obdh, description: "On-board control procedure aborted (TC(18,4), delete, or step failure)" }
+  - { id: 0x0703, name: OBCP_STEP_FAILED, severity: MEDIUM, subsystem: obdh, description: "On-board control procedure step rejected or failed to dispatch" }
+
+  # Propulsion events (0x0800-0x0812) — Phase D
+  - { id: 0x0800, name: PROP_ARMED, severity: MEDIUM, subsystem: prop, description: "Propulsion armed (all interlocks passed)" }
+  - { id: 0x0801, name: PROP_DISARMED, severity: INFO, subsystem: prop, description: "Propulsion disarmed (ground command, safing or line unpowered)" }
+  - { id: 0x0802, name: PROP_ARM_REJECTED, severity: MEDIUM, subsystem: prop, description: "PROP_ARM refused — an interlock failed (see 0x0B15 arm_inhibit_mask)" }
+  - { id: 0x0803, name: PROP_BURN_START, severity: MEDIUM, subsystem: prop, description: "Burn started (PROP_EXECUTE or S11 time-tag)" }
+  - { id: 0x0804, name: PROP_BURN_COMPLETE, severity: INFO, subsystem: prop, description: "Burn completed nominally (achieved dv in 0x0B0F)" }
+  - { id: 0x0805, name: PROP_BURN_ABORTED, severity: HIGH, subsystem: prop, description: "Burn aborted (reason in 0x0B14); partial dv still applied to the orbit" }
+  - { id: 0x0806, name: PROP_TANK_PRESSURE_LOW, severity: MEDIUM, subsystem: prop, description: "Tank pressure below the 6.0 bar operating floor" }
+  - { id: 0x0807, name: PROP_TANK_PRESSURE_HIGH, severity: HIGH, subsystem: prop, description: "Tank pressure above 24.0 bar (burst-disc margin eroding — CTG-028 escalation)" }
+  - { id: 0x0808, name: PROP_CATBED_UNDERTEMP, severity: MEDIUM, subsystem: prop, description: "Catalyst bed below minimum while armed/firing" }
+  - { id: 0x0809, name: PROP_CATBED_OVERTEMP, severity: HIGH, subsystem: prop, description: "Catalyst bed over temperature limit" }
+  - { id: 0x080A, name: PROP_VALVE_FAULT, severity: HIGH, subsystem: prop, description: "Latch valve fault (stuck) — CTG-028: isolate and bound remaining dv" }
+  - { id: 0x080B, name: PROP_LEAK_DETECTED, severity: HIGH, subsystem: prop, description: "Propellant leak detected (0x0B16 non-zero)" }
+  - { id: 0x080C, name: PROP_UNDERPERFORMANCE, severity: MEDIUM, subsystem: prop, description: "Thrust below prediction (catbed poisoning / feed restriction)" }
+  - { id: 0x080D, name: PROP_PROPELLANT_LOW, severity: MEDIUM, subsystem: prop, description: "Propellant below 20 g" }
+  - { id: 0x080E, name: PROP_PROPELLANT_DEPLETED, severity: HIGH, subsystem: prop, description: "Propellant depleted" }
+  - { id: 0x080F, name: PROP_ORBIT_UPDATED, severity: INFO, subsystem: prop, description: "Burn delta-V applied to the orbit (carries da and epoch_version)" }
+  - { id: 0x0810, name: PROP_INHIBIT_LATCHED, severity: HIGH, subsystem: prop, description: "Second abort — propulsion inhibit latched, cleared only by PROP_INHIBIT_CLR" }
+  - { id: 0x0811, name: PROP_SPEED_CLAMPED, severity: INFO, subsystem: prop, description: "Time acceleration clamped during burn (instructor-facing)" }
+  - { id: 0x0812, name: PROP_ORBIT_FIT_FAILED, severity: HIGH, subsystem: prop, description: "Post-burn element re-fit did not converge — orbit unchanged, FDS to investigate" }
+
+  # Scenario / training events (0x0F20-0x0F2F)
+  - { id: 0x0F20, name: SCENARIO_CONFIG_INVALID, severity: MEDIUM, subsystem: obdh, description: "Scenario definition rejected an event at load (unknown action or failure mode)" }
 
   # FDIR Advanced Events (0x0F00-0x0F0B)
   - { id: 0x0F00, name: FDIR_FAULT_DETECTED, severity: MEDIUM, subsystem: fdir, description: "FDIR fault detected" }

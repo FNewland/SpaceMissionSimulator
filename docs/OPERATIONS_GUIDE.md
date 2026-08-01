@@ -14,8 +14,11 @@
 6. [Mission Planner Usage](#mission-planner-usage)
 7. [Anomaly Response Procedures](#anomaly-response-procedures)
 8. [Common Operational Scenarios](#common-operational-scenarios)
-9. [Troubleshooting](#troubleshooting)
-10. [Training Scenarios](#training-scenarios)
+9. [Trends and history](#trends-and-history)
+10. [Reports](#reports)
+11. [Browsing the configuration](#browsing-the-configuration)
+12. [Troubleshooting](#troubleshooting)
+13. [Training Scenarios](#training-scenarios)
 
 ---
 
@@ -153,10 +156,38 @@ Thermal:
 4. **Thermal Monitor** — Zone temperatures, heater/cooler status
 5. **Link Quality** — Carrier lock, link margin, PA temp
 6. **Payload Status** — FPA temp, storage, image catalog
-7. **FDIR Alarms** — S12 violations, S19 rule triggers
+7. **FDIR Alarms** — S12 violations, S19 rule triggers, fault cascades and recovery-procedure progress
 8. **Contact Schedule** — Ground station visibility windows
-9. **Procedure Status** — Active/scheduled procedures
+9. **TRENDS** — parameter history over any window (see below)
 10. **Event Log** — Historical S5 events (queryable)
+
+### Situational-awareness header
+
+Across the top of every tab, and worth reading before anything else:
+
+| Field | What it tells you |
+|---|---|
+| Time to AOS / LOS, with station name | Whether you can command right now, and for how long |
+| Active vs commanded data-rate tier | A **gate-demoted** link — you asked for HIGH and the spacecraft is on LOW because the antenna, the DOWNLINK mode or the elevation mask says so |
+| On-board store fill | How much you still have to get down |
+| Unacknowledged alarm count | What nobody has looked at yet |
+| Sim speed | Whether what you are watching is real-time |
+| LIVE / STALE | Whether the whole console is receiving anything at all |
+
+### Limit colouring
+
+A parameter turns yellow or red on **two independent** sources:
+
+* **Ground limits** (`configs/eosat1/mcs/limits.yaml`, 51 bands) — checked by
+  the MCS on every sample. This is the control room's own judgement and it
+  covers parameters the spacecraft does not monitor at all.
+* **S12 on-board monitors** (46 definitions) — the spacecraft's judgement.
+  These can fire autonomous S19 actions; ground limits cannot.
+
+They are deliberately different sets. 29 limited parameters have no S12
+equivalent — bus current, per-line currents, gyro temperature, GPS PDOP — so
+before ground limits were wired those gave no visual cue on either side.
+`docs/PARAMETER_MAP.md` lists which parameter has which.
 
 ---
 
@@ -1004,6 +1035,94 @@ Verification:
 
 ---
 
+## Trends and history
+
+**Tab: TRENDS.** Live plots answer "what is it doing now". Trends answer "what
+has it been doing", which is the question an anomaly actually raises.
+
+1. **Pick parameters.** Any catalogued parameter that reaches the ground —
+   multiple at once, on shared or separate axes.
+2. **Pick a window.** Last 15 min / 1 h / 6 h / 12 h, or an explicit range.
+   The axis is **spacecraft time (CUC)**, not wall clock: under time
+   acceleration those two are unrelated and only CUC is meaningful.
+3. **Read the overlays.**
+   - Limit bands are shaded, so "it is drifting toward the limit" is visible
+     before it is an alarm.
+   - **Eclipse arcs** are shaded — most thermal and power behaviour is only
+     interpretable against them.
+   - **Contact arcs** are marked — a gap in the data during a non-contact arc
+     is the link, not the spacecraft.
+
+The data comes from the MCS's TM archive, which stores every parameter sample
+it receives. It survives a browser reload and a console restart.
+
+**The most useful habit to teach:** before you command anything in response to
+a reading, put the parameter on TRENDS and look at the last hour. Roughly half
+of the "anomalies" in the training scenarios are a normal orbital cycle seen
+one sample at a time.
+
+---
+
+## Reports
+
+**`http://<server>:9090/reports`** (and the same generator on the simulator at
+8080, and standalone in the delayed-TM viewer on 8092).
+
+Three templates:
+
+| Template | Answers |
+|---|---|
+| **Daily ops review** | What happened in this period: mode changes, alarms, commands sent and their verification outcomes, power and thermal envelopes, data volume produced and downlinked |
+| **Pass report** | What happened in one contact: AOS/LOS, station, link margin, commands, dumps, and **what the link cost you** |
+| **Anomaly investigation** | Everything around one event: the parameter traces either side of it, the S12/S19 chain that fired, the recovery procedure, and the operator's commands |
+
+Output is a **self-contained HTML file** — no server needed to read it later.
+
+### The number worth understanding
+
+The S15 dump archive is the **complete** tape: every packet the spacecraft
+played back, whether or not the ground heard it. The MCS live view is
+**lossy** — packets released while the link is down are discarded.
+
+*Archive minus live* is therefore a measured answer to "what did the link cost
+me", and it is a section of the report rather than a footnote. If you dumped
+into a fading pass, this is where it shows up.
+
+### Period selection
+
+Always **CUC-based**. Dump *filenames* carry the wall clock at which the file
+was written; packet timestamps carry spacecraft time. At ×60 one wall minute
+is one simulated hour, so selecting a period by file timestamp would return
+the wrong hour of the mission. The report tool never does this; if you are
+scripting around it, do not either.
+
+---
+
+## Browsing the configuration
+
+**`http://<server>:9090/config`** — read-only, and read-only *by
+construction*: the mutating routes do not exist on the MCS or the planner, so
+there is nothing to disable and nothing to get wrong. The read-write editor
+lives only on the instructor's port (8080).
+
+What it is for, as an operator:
+
+- **"What is the limit, actually?"** — read the band straight out of
+  `mcs/limits.yaml` rather than from a card that may be a revision behind.
+- **"Why did that rule fire?"** — read the S12 definition and the S19 rule.
+- **"Has this changed?"** — every revision carries who changed it, when, why,
+  and who cross-checked it. Browsing configuration history is how a real
+  control room answers "was it always like that", and it is worth doing at
+  least once in a training session.
+
+Configuration is the mission: the hardware sheet, the command catalogue, the
+telemetry dictionary, the housekeeping structures, the monitors, the FDIR
+model and the procedures all live there. Knowing your way around it is a
+larger part of operations than any single display.
+
+
+---
+
 ## Troubleshooting
 
 ### MCS Won't Connect to Simulator
@@ -1391,7 +1510,7 @@ The following timeline assumes a Chennai/Sriharikota launch into a southward-des
 | 13 | S8.1 EPS_SWITCH_LOAD (line 0, on) | 17 | Power line 0 active |
 | 14 | S8.1 EPS_SWITCH_LOAD (line 1, on) | 17 | Power line 1 active |
 | 15 | S3.27 request SID 1 (EPS) | — | power_gen > 0W (sunlit) |
-| 16 | S8.1 TTC_SET_DATA_RATE (high) | 65 | S1.7, rate=64kbps |
+| 16 | S8.1 TTC_SET_DATA_RATE (rate=0, LOW) | 65 | S1.7, ttc.tm_data_rate = 16000 bps — the routine operations tier |
 | 17 | S8.1 TTC_PA_ON | 66 | PA enabled, link margin up |
 
 **GO/NO-GO:** Antenna deployed, PA on, link margin > 6 dB, solar power generating.
@@ -1540,7 +1659,8 @@ The following timeline assumes a Chennai/Sriharikota launch into a southward-des
 
 | Step | Command | func_id | Verification |
 |------|---------|---------|--------------|
-| 64 | S8.1 TTC_SET_DATA_RATE (high) | 65 | 64 kbps confirmed |
+| 63a | S8.1 TTC_SET_DOWNLINK_MODE (on=1) | 79 | ttc.downlink_mode = 1 — the mode gate on HIGH |
+| 64 | S8.1 TTC_SET_DATA_RATE (rate=1, HIGH) | 65 | ttc.tm_data_rate = 128000 bps, ttc.tm_tier = ttc.tm_tier_cmd = 2. Requires elevation >= 10 deg |
 | 65 | S13.1 Initiate test transfer | — | Transfer session open |
 | 66 | S13.3 Request data blocks | — | Blocks received, CRC OK |
 | 67 | S13.5 End transfer | — | Transfer complete |

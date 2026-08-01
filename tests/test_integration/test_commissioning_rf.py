@@ -9,6 +9,7 @@ diagnostic counters at every handoff point.
 """
 
 import asyncio
+import math
 import struct
 import time
 from pathlib import Path
@@ -110,27 +111,38 @@ def _drain_tm_to_pipeline(engine, coord):
     return count
 
 
-def _recover_packets(coord, timeout=3.0):
+def _recover_packets(coord, timeout=None):
     """Recover all available packets from the RF pipeline.
 
-    Uses batch drain first (fast, no async overhead), then falls back
-    to blocking get for any remaining in-flight packets.
+    Timing is derived from the link, never pinned: the downlink delivers
+    telemetry one transfer frame at a time, so both the acquisition budget
+    and the silence that means "nothing more is coming" are expressed as
+    multiples of `coord.frame_air_time_s` (0.08 s at the ladder's HIGH tier,
+    0.32 s at the harness rate, 1.28 s at LOW). The previous version gave up
+    after a single 0.2 s gap, which is shorter than one frame at every tier
+    at or below the harness rate — it could return empty simply because the
+    frame carrying the telemetry was still on the air.
     """
+    frame = coord.frame_air_time_s
+    if timeout is None:
+        timeout = 6.0 * frame          # acquisition: see conftest _DELIVERY_FRAMES
+    poll = min(0.25, max(0.02, frame / 4.0))
+    quiet_needed = max(2, math.ceil(2.0 * frame / poll))
+
     recovered = []
+    quiet_polls = 0
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        # Batch drain: grab everything available immediately
         batch = coord.drain_recovered_packets()
         if batch:
             recovered.extend(batch)
+            quiet_polls = 0
             continue  # check for more immediately
-        # Nothing available — wait briefly for pipeline to produce more
-        time.sleep(0.2)
-        batch = coord.drain_recovered_packets()
-        if batch:
-            recovered.extend(batch)
-        else:
-            break  # no more coming
+        if recovered:
+            quiet_polls += 1
+            if quiet_polls >= quiet_needed:
+                break  # burst over — the link has gone quiet
+        time.sleep(poll)
     return recovered
 
 
@@ -232,7 +244,7 @@ class TestCommissioningRFPipeline:
 
             # Let pipeline process
             time.sleep(1.0)
-            recovered_a = _recover_packets(coord, timeout=3.0)
+            recovered_a = _recover_packets(coord)
             total_recovered += len(recovered_a)
             class_a = _classify_packets(recovered_a)
             all_sids |= class_a["hk_sids"]
@@ -275,7 +287,7 @@ class TestCommissioningRFPipeline:
                 time.sleep(0.05)
 
             time.sleep(1.0)
-            recovered_b = _recover_packets(coord, timeout=3.0)
+            recovered_b = _recover_packets(coord)
             total_recovered += len(recovered_b)
             class_b = _classify_packets(recovered_b)
             all_sids |= class_b["hk_sids"]
@@ -305,7 +317,7 @@ class TestCommissioningRFPipeline:
                 time.sleep(0.05)
 
             time.sleep(1.0)
-            recovered_c = _recover_packets(coord, timeout=3.0)
+            recovered_c = _recover_packets(coord)
             total_recovered += len(recovered_c)
             class_c = _classify_packets(recovered_c)
             all_sids |= class_c["hk_sids"]
@@ -347,7 +359,7 @@ class TestCommissioningRFPipeline:
                 time.sleep(0.05)
 
             time.sleep(1.0)
-            recovered_d = _recover_packets(coord, timeout=3.0)
+            recovered_d = _recover_packets(coord)
             total_recovered += len(recovered_d)
             class_d = _classify_packets(recovered_d)
             all_sids |= class_d["hk_sids"]
@@ -371,7 +383,7 @@ class TestCommissioningRFPipeline:
                 time.sleep(0.05)
 
             time.sleep(2.0)
-            recovered_e = _recover_packets(coord, timeout=5.0)
+            recovered_e = _recover_packets(coord, timeout=10.0 * coord.frame_air_time_s)
             total_recovered += len(recovered_e)
             class_e = _classify_packets(recovered_e)
             all_sids |= class_e["hk_sids"]

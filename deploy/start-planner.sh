@@ -30,8 +30,13 @@ if [ ! -d ".venv" ]; then
 fi
 source .venv/bin/activate
 
-# Ensure packages are installed
-pip install -q -e packages/smo-common -e packages/smo-planner 2>/dev/null
+# Packages are installed by install.sh; a start script must not reach the
+# network in an offline classroom (D-3).
+if ! python -c "import smo_common, smo_planner" 2>/dev/null; then
+    echo "ERROR: smo-common / smo-planner are not installed in .venv."
+    echo "       Run deploy/install.sh once, then start again."
+    exit 1
+fi
 
 HTTP_PORT="${PLANNER_HTTP_PORT:-9091}"
 HOSTNAME_DISPLAY="$(hostname -f 2>/dev/null || echo localhost)"
@@ -39,7 +44,7 @@ HOSTNAME_DISPLAY="$(hostname -f 2>/dev/null || echo localhost)"
 echo "============================================="
 echo "  SMO Mission Planner"
 echo "============================================="
-echo "  HTTP Port:  ${HTTP_PORT}"
+echo "  Bind:       ${PLANNER_BIND:-0.0.0.0}:${HTTP_PORT}"
 echo "  Config:     ${MISSION_CONFIG:-configs/eosat1/}"
 echo "============================================="
 echo "  Standard:   http://${HOSTNAME_DISPLAY}:${HTTP_PORT}"
@@ -51,4 +56,5 @@ echo ""
 
 exec smo-planner \
     --config "${MISSION_CONFIG:-configs/eosat1/}" \
+    --host "${PLANNER_BIND:-0.0.0.0}" \
     --port "${HTTP_PORT}"

@@ -9,21 +9,31 @@ description: "Level 1 recovery: Reduce TTC TX power and data rate"
 steps:
   - step_id: 1
     name: "Set Data Rate Low"
-    description: "Reduce data rate to 1 kbps"
+    description: "Reduce data rate to the LOW tier (16 kbps)"
     delay_s: 0.0
     command: "s8_command"
     params:
       func_id: 65  # TTC_SET_DATA_RATE
-      data: [0x00]  # rate = 0 (1 kbps low rate)
+      # Tier code 0 = LOW (16 kbps, BPSK, conv(7,1/2)+RS). Unchanged byte:
+      # code 0 kept its "the low rate" meaning when the binary switch became
+      # the four-rung ladder (defect #85), so FDIR now drops to a rate that
+      # still carries real-time housekeeping (1557 bps of channel) plus
+      # stored-HK playback, instead of the 1 kbps bootloader beacon that
+      # could not carry housekeeping at all.
+      data: [0x00]
 
   - step_id: 2
-    name: "Set TX Power Medium"
-    description: "Set TX power to 50% (medium level)"
+    name: "Set TX Power LOW"
+    description: "Set TX power to the LOW operating point (1.0 W RF)"
     delay_s: 1.0
     command: "s8_command"
     params:
       func_id: 68  # TTC_SET_TX_POWER
-      data: [0x32]  # 50% power level
+      # Phase E WP-2: enumerated level 0 = LOW (1.0 W). The old 0x32
+      # ("50 %") was a third unit system no handler ever understood — the
+      # float32-era handler substituted 2.0 W for every 1-byte caller, so
+      # this FDIR step was silently ignored while S1.7 reported success.
+      data: [0x00]
 
 timeout_s: 15.0
 max_retries: 2

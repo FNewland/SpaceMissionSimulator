@@ -200,9 +200,10 @@ class TestProgressiveLoadShed:
         assert eps._state.power_lines["payload"] is False
 
     def test_load_shed_sequence(self):
-        """Load shed sequence: payload -> fpa_cooler -> ttc_tx -> aocs_wheels."""
+        """Load shed sequence: payload -> fpa_cooler -> ttc_tx -> aocs_wheels
+        -> prop (Phase D: propulsion sheds LAST, aborting any burn)."""
         from smo_simulator.models.eps_basic import LOAD_SHED_ORDER
-        expected = ["payload", "fpa_cooler", "ttc_tx", "aocs_wheels"]
+        expected = ["payload", "fpa_cooler", "ttc_tx", "aocs_wheels", "prop"]
         assert LOAD_SHED_ORDER == expected
 
     def test_shed_payload_first(self):

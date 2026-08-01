@@ -39,8 +39,8 @@ of operating on a single-string bus.
 | Command | Service | Subtype | Func ID | Description |
 |---|---|---|---|---|
 | HK_REQUEST | 3 | 27 | -- | Request one-shot HK report |
-| OBC_SELECT_BUS | 8 | 1 | 44 | Select active CAN bus (0=A, 1=B) |
-| OBC_REBOOT | 8 | 1 | 42 | Force OBC reboot (last resort) |
+| OBC_SELECT_BUS | 8 | 1 | 54 | Select active CAN bus (0=A, 1=B) |
+| OBC_REBOOT | 8 | 1 | 52 | Force OBC reboot (last resort) |
 
 ## Procedure Steps
 
@@ -99,9 +99,9 @@ as likely cause) — proceed to switchover.
 brief HK gap of 5-10 seconds."
 **Action:** Command switchover to the redundant bus:
 - If currently on Bus A (0x030E = 0):
-  `OBC_SELECT_BUS(bus=1)` (func_id 44) — switch to Bus B
+  `OBC_SELECT_BUS(bus=1)` (func_id 54) — switch to Bus B
 - If currently on Bus B (0x030E = 1):
-  `OBC_SELECT_BUS(bus=0)` (func_id 44) — switch to Bus A
+  `OBC_SELECT_BUS(bus=0)` (func_id 54) — switch to Bus A
 **CAUTION:** This command will briefly interrupt all CAN bus communications during
 the switchover. Subsystem HK will be unavailable for 5-10 seconds. This is normal.
 **Verify:** Wait 15 s for switchover to complete.
@@ -172,14 +172,14 @@ back to without engineering team approval and analysis.
   missing, the issue is subsystem-level, not bus-level. Investigate each
   individually.
 - If OBC does not respond to the bus select command: OBC may be in a degraded
-  state. Attempt `OBC_REBOOT` (func_id 42) as a last resort. If OBC is
+  state. Attempt `OBC_REBOOT` (func_id 52) as a last resort. If OBC is
   unresponsive, follow CTG-011 (OBC Redundancy Switchover).
 - If a subsystem mode changed during switchover (e.g., AOCS went to SAFE or
   DETUMBLE): The brief bus interruption may have triggered a subsystem timeout.
   After confirming bus stability, restore the affected subsystem to its
   pre-switchover mode using the appropriate mode command.
 - If bus switchover triggers continuous OBC reboots: The OBC may be detecting
-  errors on both buses. Command `OBC_BOOT_INHIBIT(inhibit=1)` (func_id 46) to
+  errors on both buses. Command `OBC_BOOT_INHIBIT(inhibit=1)` (func_id 56) to
   stay in bootloader and stop the reboot cycle. Investigate from bootloader.
 - If the failed bus recovers on its own (intermittent failure): Do NOT switch
   back without engineering analysis. Intermittent bus failures indicate a

@@ -1,5 +1,17 @@
 # EOSAT-1 TT&C Position -- Operations and Simulation Requirements
 
+> **Superseded in part, 2026-07-29 (defects #85 / #86).** Every requirement below
+> that names a *rate* — the 1 kbps low rate, the 64 kbps high rate, the fixed
+> beacon rate — predates the TM data-rate ladder and is retained here as a record
+> of what was captured, not as a live requirement. The shipped ladder is
+> `configs/eosat1/subsystems/ttc.yaml tm_rate_tiers`: **BEACON 1 kbps** (bootloader
+> and beacon mode only), **LOW 16 kbps** (routine operations, safe mode and the
+> FDIR fallback; no gates), **HIGH 128 kbps** (dumps only; antenna deployed,
+> DOWNLINK mode and elevation >= 10 deg). The rate rows in §"Current
+> Configuration" and the command table have been corrected in place; the numbered
+> REQ statements have not, so read them against
+> `docs/LINK_BUDGET_AND_RATES.md`.
+
 **Document ID:** EOSAT1-OPS-REQ-TTC-001
 **Issue:** 1.0
 **Date:** 2026-03-12
@@ -233,8 +245,9 @@ station, including:
 | Modulation (TC) | BPSK | Manual 05_ttc Section 2.1 |
 | Modulation (TM) | QPSK | Manual 05_ttc Section 2.1 |
 | Uplink Data Rate | 4 kbps | Manual 05_ttc Section 2.1 |
-| Downlink Data Rate (high) | 64 kbps | `ttc.yaml` `tm_rate_hi_bps` |
-| Downlink Data Rate (low) | 1 kbps | `ttc.yaml` `tm_rate_lo_bps` |
+| Downlink Data Rate (dump tier, HIGH) | 128 kbps QPSK RS(255,223) | `ttc.yaml` `tm_rate_tiers[HIGH]` |
+| Downlink Data Rate (routine tier, LOW) | 16 kbps BPSK conv(7,1/2)+RS | `ttc.yaml` `tm_rate_tiers[LOW]` = `default_tier` |
+| Downlink Data Rate (beacon tier) | 1 kbps BPSK conv(7,1/2)+RS | `ttc.yaml` `tm_rate_tiers[BEACON]` = `beacon_tier` |
 | RF Output Power (nominal) | 2 W | `ttc_basic.py` `_pa_nominal_power_w` |
 | RF Output Power (max) | 5 W | `ttc_basic.py` `_pa_max_power_w` |
 
@@ -334,7 +347,8 @@ PDM channel, burn wire deployment, and beacon features:
 |---|---|---|---|
 | TTC_SWITCH_PRIMARY | 50 | Activate primary transponder | (none) |
 | TTC_SWITCH_REDUNDANT | 51 | Activate redundant transponder | (none) |
-| TTC_SET_DATA_RATE | 52 | Set TM data rate | rate: 0=low (1 kbps), 1=high (64 kbps) |
+| TTC_SET_DATA_RATE | 65 | Select a rung of the TM data-rate ladder | rate (uint8 tier code): 0=LOW (16 kbps), 1=HIGH (128 kbps), 255=BEACON (1 kbps, bootloader only) |
+| TTC_SET_DOWNLINK_MODE | 79 | Enter/leave DOWNLINK (dump) mode | on (uint8): 1=enter, 0=leave. Mode gate on the HIGH tier |
 | TTC_PA_ON | 53 | Enable power amplifier | (none) |
 | TTC_PA_OFF | 54 | Disable power amplifier | (none) |
 | TTC_SET_TX_POWER | 55 | Set transmit power level | level: 0=low (1 W), 1=nom (2 W), 2=high (5 W) |
@@ -604,7 +618,7 @@ station (all are currently implemented in `ttc_basic.py`):
 - TX forward power value
 - Transponder mode indicator (PRIMARY / REDUNDANT)
 - Transponder temperature value
-- Data rate indicator (1 kbps / 64 kbps)
+- Rate tier indicator: named tier with modulation and coding, e.g. `LOW (16 kbps, BPSK, conv+RS)`, showing ACTIVE and COMMANDED separately plus the symbol rate and DOWNLINK-mode state
 - Command received counter
 
 **Ranging and Tracking Panel:**
@@ -973,7 +987,7 @@ deployment parameters.
 | SID 6 references 0x0508 | `hk_structures.yaml` line 188 | Param 0x0508 (ranging_status) not in `parameters.yaml` -- known xfail |
 | EIRP inconsistency | `ttc.yaml` vs `05_ttc.md` | Config says 10 dBW; manual says 33 dBW |
 | Manual GS list | `05_ttc.md` Section 5 | Lists Svalbard, Troll, Inuvik, O'Higgins; mission profile specifies Iqaluit + Troll |
-| Manual data rates | `05_ttc.md` Section 2.1 | Says 128 kbps nominal downlink; config says 64 kbps |
+| ~~Manual data rates~~ | `05_ttc.md` Section 2.1 | **CLOSED 2026-07-29.** The manual and the config now both carry the three-rung ladder; the manual's old "128 kbps nominal" turned out to anticipate the shipped HIGH tier |
 | Manual uplink freq | `05_ttc.md` Section 2.1 | Says 2.2 GHz uplink; config says 2025.5 MHz |
 | PA max power | `05_ttc.md` Section 2.1 vs role analysis | Manual says 2 W; role analysis says 8 W high; model says 5 W max |
 

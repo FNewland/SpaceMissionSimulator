@@ -627,11 +627,13 @@ class TestPayloadAttitudeQuality:
         return model
 
     def test_good_attitude_full_quality(self):
-        """Attitude error <= 0.1 deg should give quality factor 1.0."""
+        """Attitude error <= 0.02 deg gives quality factor 1.0 (Phase C:
+        curve rescaled to the real error magnitudes — the old 0.1° knee
+        scored NOMINAL and FINE identically)."""
         model = self._make_model()
         model._state.mode = 2
         model._state.fpa_ready = True
-        params = {0x0217: 0.05}
+        params = {0x0217: 0.015}
         orbit = make_orbit_state()
         model.tick(1.0, orbit, params)
         assert model._state.att_quality_factor == pytest.approx(1.0, abs=0.01)

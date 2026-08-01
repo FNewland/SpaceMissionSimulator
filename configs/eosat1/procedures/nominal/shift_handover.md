@@ -32,7 +32,10 @@ operational awareness is fully transferred to the incoming shift team.
 | tcs.temp_battery | 0x0407 | Within 0 to 40 C |
 | tcs.temp_fpa | 0x0408 | Current value |
 | ttc.link_status | 0x0501 | Current link state |
-| ttc.tm_data_rate | 0x0506 | Current data rate |
+| ttc.tm_data_rate | 0x0506 | Active rate — expect 16000 bps (LOW) in routine operations |
+| ttc.tm_tier | 0x0539 | ACTIVE tier (0=BEACON, 1=LOW, 2=HIGH) |
+| ttc.tm_tier_cmd | 0x053A | COMMANDED tier — must equal 0x0539 at handover |
+| ttc.downlink_mode | 0x053C | Expect 0 outside a dump |
 | payload.mode | 0x0600 | Current payload mode |
 | payload.store_used | 0x0604 | Current storage level |
 | obdh.reboot_count | 0x030A | Current value |
@@ -64,7 +67,10 @@ operational awareness is fully transferred to the incoming shift team.
 **Action:** Each position operator provides verbal status summary to incoming team:
 - EPS/TCS: Power budget, battery trend, thermal status, heater activity
 - AOCS: Attitude mode, pointing accuracy, wheel speeds, momentum status
-- TT&C: Link status, next contact window, data rate configuration
+- TT&C: Link status, next contact window, TM rate ladder state — the ACTIVE tier
+  (0x0539), the COMMANDED tier (0x053A) and whether they agree. A handover that leaves
+  the spacecraft commanded to HIGH with DOWNLINK mode latched is a handover that leaves
+  a gate open; routine operations belong at LOW with `ttc.downlink_mode` (0x053C) = 0
 - Payload: Imaging status, storage capacity, pending downlinks
 - FDIR/Systems: OBC health, reboot count, memory usage, active FDIR rules
 **GO/NO-GO:** All subsystem states reviewed and understood by incoming team — proceed.
@@ -87,7 +93,9 @@ or review alarm display on MCS console.
 **Action:** Review ground station contact schedule for the next 12 hours.
 **Verify:** Next contact window: station, AOS/LOS times, maximum elevation
 **Verify:** Planned activities for each contact (HK dump, data downlink, command uploads)
-**Verify:** Link configuration required (data rate, PA power level)
+**Verify:** Link configuration required (TM rate tier, PA power level). A pass planned
+for a stored-data dump needs the HIGH tier, which needs DOWNLINK mode and a maximum
+elevation of at least 10 deg — check the pass geometry before promising the dump
 **Action:** If any contact requires special configuration (e.g., high-rate downlink,
 ranging session), brief incoming TT&C operator on required actions.
 **GO/NO-GO:** Contact schedule reviewed and understood — proceed.

@@ -1,0 +1,24 @@
+{
+  "global": {
+    "core:datatype": "cf32_le",
+    "core:sample_rate": 250000.0,
+    "core:version": "1.0.0",
+    "core:description": "Simulated GFSK downlink (EOSAT1-TUNED)",
+    "core:recorder": "smo-rfsim BasebandRecorder"
+  },
+  "captures": [
+    {
+      "core:sample_start": 0,
+      "core:frequency": 437304500.0
+    }
+  ],
+  "annotations": [
+    {
+      "core:sample_start": 0,
+      "core:sample_count": 7500000,
+      "core:freq_lower_edge": 437369020.0,
+      "core:freq_upper_edge": 437381980.0,
+      "core:label": "GFSK"
+    }
+  ]
+}

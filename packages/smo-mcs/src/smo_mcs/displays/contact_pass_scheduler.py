@@ -57,16 +57,49 @@ class ContactScheduler:
         self._passes: list[ContactPass] = []
         self._current_contact_status: dict = {}
 
+    @staticmethod
+    def _to_epoch(value) -> Optional[float]:
+        """Accept unix epoch floats or ISO 8601 strings (planner format)."""
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        try:
+            from datetime import datetime, timezone
+            dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.timestamp()
+        except (ValueError, TypeError):
+            return None
+
     def update_passes(self, passes: list[dict]) -> None:
-        """Update the contact pass list from telemetry or planner API."""
+        """Update the contact pass list from the planner API.
+
+        Accepts BOTH schemas (defect #47): the MCS display schema
+        (``aos_time``/``los_time`` floats, ``max_elevation``,
+        ``ground_station``) and the planner's native schema (``aos``/``los``
+        ISO strings, ``max_elevation_deg``, ``gs_name``). Entries with no
+        usable AOS/LOS are dropped instead of being faked as "now".
+        """
         self._passes = []
         for p in passes:
             try:
+                aos = self._to_epoch(p.get("aos_time", p.get("aos_utc",
+                                                             p.get("aos"))))
+                los = self._to_epoch(p.get("los_time", p.get("los_utc",
+                                                             p.get("los"))))
+                if aos is None or los is None:
+                    continue
+                max_el = p.get("max_elevation",
+                               p.get("max_elevation_deg", 45.0))
+                gs = (p.get("ground_station") or p.get("gs_name")
+                      or p.get("gs") or "Unknown")
                 cp = ContactPass(
-                    aos_time=p.get("aos_time", _time_mod.time()),
-                    los_time=p.get("los_time", _time_mod.time() + 600),
-                    max_elevation=p.get("max_elevation", 45.0),
-                    ground_station=p.get("ground_station", "Unknown"),
+                    aos_time=aos,
+                    los_time=los,
+                    max_elevation=float(max_el),
+                    ground_station=gs,
                     data_downlink_capacity=p.get("data_downlink_capacity", 100.0),
                 )
                 self._passes.append(cp)
@@ -74,13 +107,22 @@ class ContactScheduler:
                 continue
         self._passes.sort(key=lambda p: p.aos_time)
 
-    def get_next_passes(self, count: int = 10, current_time: Optional[float] = None) -> list[dict]:
-        """Get the next N passes as display data."""
+    def get_next_passes(self, count: int = 10, current_time: Optional[float] = None,
+                        include_completed: bool = False) -> list[dict]:
+        """Get the next N passes as display data.
+
+        "Next" means next: passes whose LOS is in the past are dropped unless
+        the caller explicitly asks for them. The old version sliced the raw
+        list, so a schedule that started before the exercise filled the panel
+        with completed passes and pushed the upcoming ones off the bottom.
+        """
         if current_time is None:
             current_time = _time_mod.time()
 
+        candidates = ([p for p in self._passes if p.los_time >= current_time]
+                      if not include_completed else list(self._passes))
         result = []
-        for i, pass_obj in enumerate(self._passes[:count]):
+        for i, pass_obj in enumerate(candidates[:count]):
             result.append({
                 "index": i,
                 "aos_time": pass_obj.aos_time,
@@ -116,7 +158,10 @@ class ContactScheduler:
                     "time_to_aos": status.get("time_to_aos", 0),
                 }
 
-        return {"in_contact": False, "ground_station": "None", "time_to_aos": float('inf')}
+        # `float('inf')` here serialised as bare `Infinity`, which is not
+        # valid JSON and which `JSON.parse` rejects in the browser — the
+        # no-upcoming-pass case broke the whole response.
+        return {"in_contact": False, "ground_station": "", "time_to_aos": None}
 
     @staticmethod
     def _elevation_to_color(elevation: float) -> str:

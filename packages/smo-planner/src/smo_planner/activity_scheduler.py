@@ -30,10 +30,23 @@ class ActivityState(IntEnum):
 class ActivityScheduler:
     """Enhanced scheduler with conflict detection and procedure linking."""
 
-    def __init__(self, activity_types: list[dict] | None = None):
+    def __init__(self, activity_types: list[dict] | None = None,
+                 data_params: dict | None = None):
+        """
+        Args:
+            activity_types: the activity TYPE catalogue (planning/activity_types.yaml).
+                It is a lookup table for instance defaults — constructing a
+                scheduler creates ZERO activities; the plan starts empty.
+            data_params: resolved data-budget parameters (storage capacity,
+                downlink rate, protocol overhead) from
+                ``budget_tracker.budget_params_from_config``, so the constraint
+                checkers use the mission config rather than their own constants
+                (defect #60).
+        """
         self._types = {a["name"]: a for a in (activity_types or [])}
         self._schedule: list[dict] = []
         self._next_id = 1
+        self._data_params = data_params or {}
 
     def add_activity(self, name: str, start_time: str, **kwargs) -> dict:
         """Add an activity to the schedule."""
@@ -74,6 +87,16 @@ class ActivityScheduler:
 
     def get_schedule(self) -> list[dict]:
         return list(self._schedule)
+
+    def clear_schedule(self) -> int:
+        """Remove every activity. Returns the number removed.
+
+        Lets the operator get back to the empty default state after loading a
+        standard-activity template.
+        """
+        n = len(self._schedule)
+        self._schedule = []
+        return n
 
     def get_activity(self, activity_id: int) -> dict | None:
         for a in self._schedule:
@@ -479,6 +502,7 @@ class ActivityScheduler:
             contacts=contacts,
             ground_track=ground_track,
             battery_soc_percent=battery_soc_percent,
+            data_params=self._data_params,
         )
 
     def check_power_constraints(
@@ -488,12 +512,20 @@ class ActivityScheduler:
     ) -> dict:
         """Check power budget constraints.
 
-        Returns dict with violations and SoC timeline
+        Returns dict with violations and SoC timeline.
+
+        ``check_plan_power`` returns ConstraintViolation *objects* (validate_plan
+        needs them that way to aggregate severities). This wrapper is the one the
+        HTTP layer serialises, so violations are converted to dicts here —
+        otherwise ``/api/constraints/power`` returned 500 for every plan that
+        actually had a power violation, i.e. exactly when the route matters.
         """
         checker = PowerConstraintChecker()
-        return checker.check_plan_power(
+        result = checker.check_plan_power(
             self._schedule, initial_soc, ground_track
         )
+        result["violations"] = [v.to_dict() for v in result["violations"]]
+        return result
 
     def check_aocs_constraints(self) -> dict:
         """Check AOCS slew and momentum constraints.
@@ -548,7 +580,7 @@ class ActivityScheduler:
 
         Returns dict with storage violations
         """
-        data_checker = DataVolumeConstraintChecker()
+        data_checker = DataVolumeConstraintChecker.from_params(self._data_params)
         violations = data_checker.check_storage_capacity(
             self._schedule, current_onboard_mb
         )

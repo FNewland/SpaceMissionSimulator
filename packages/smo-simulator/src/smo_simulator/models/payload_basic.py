@@ -6,11 +6,13 @@ handling, comprehensive failure injection, and ocean current multispectral
 imaging with per-band SNR, attitude-quality coupling, and scene-dependent
 compression.
 """
+import math
 import random
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from smo_common.config.fpa_envelope import FPAEnvelope
 from smo_common.models.subsystem import SubsystemModel
 
 # ── Spectral band definitions for multispectral imaging ──
@@ -31,7 +33,7 @@ class ImageMetadata:
     lon: float = 0.0
     quality: float = 100.0  # 0-100 pct
     status: int = 0  # 0=OK, 1=PARTIAL, 2=CORRUPT
-    size_mb: float = 800.0
+    size_mb: float = 4.0
     segment: int = 0  # Which memory segment stores it
 
 
@@ -48,7 +50,7 @@ class PayloadState:
     data_rate_mbps: float = 0.0
     checksum_errors: int = 0
     cooler_on_time_s: float = 0.0
-    image_size_mb: float = 800.0
+    image_size_mb: float = 4.0   # raw frame; payload.yaml image_size_mb (defect #82)
     total_storage_mb: float = 20000.0
     cooler_failed: bool = False
     fpa_degraded: bool = False
@@ -91,6 +93,22 @@ class PayloadState:
     gsd_m: float = 10.0
     scene_entropy: float = 0.0
 
+    # ── Phase C: AOCS fine-pointing gate (WP-6) ──
+    # Last-seen AOCS pointing state from shared params during tick; None-like
+    # sentinel aocs_seen=False keeps standalone harnesses (no AOCS in the
+    # loop) permissive, matching the tcs_fpa pattern above.
+    aocs_seen: bool = False
+    aocs_mode_seen: int = 0
+    aocs_total_err_seen: float = 0.0
+    aocs_rate_stab_seen: float = 0.0
+    aocs_settled_seen: bool = True
+    # Strip-acquisition monitor: while > 0 the last capture is still being
+    # scanned; losing FINE (or the error gate) mid-strip marks it PARTIAL
+    # with the worst actual pointing error stamped into the catalog entry.
+    strip_remaining_s: float = 0.0
+    strip_worst_err_deg: float = 0.0
+    strip_scene_id: int = 0
+
     # ── Failure injection ──
     corrupt_remaining: int = 0  # Next N images are corrupt
     ccd_line_dropout: bool = False  # Reduces image quality
@@ -116,6 +134,7 @@ class PayloadState:
     calibration_active: bool = False  # Currently calibrating
     calibration_progress: float = 0.0  # 0-100%
     calibration_state: int = 0  # 0=IDLE, 1=DARK_FRAME, 2=FLAT_FIELD, 3=COMPLETE
+    calibration_mode: int = 2   # Phase E WP-7: 0=DARK only, 1=FLAT only, 2=BOTH
     last_calibration_time: float = 0.0  # Timestamp when cal completed
     calibration_duration_s: float = 30.0  # How long calibration takes
     calibration_timer: float = 0.0  # Countdown timer
@@ -128,6 +147,13 @@ class PayloadState:
     detector_gain: float = 1.0  # Detector gain/offset
     cooler_setpoint_c: float = -15.0  # Cooler target temperature
     compression_override: float = 0.0  # 0=auto, else manual ratio
+
+    # ── Phase E WP-1: on-board geolocation stamp ──
+    # Sub-satellite point sampled from orbit_state each tick; `capture`
+    # stamps it into the image catalogue (geodesy is NOT a TC argument —
+    # the WHERE is set by the WHEN via S11).
+    orbit_lat_deg: float = 0.0
+    orbit_lon_deg: float = 0.0
 
     # ── FPA Readiness Hysteresis (Defect 2 — payload.md §3.2) ──
     fpa_ready_timer: float = 0.0  # Time temp has been in range
@@ -181,10 +207,22 @@ class PayloadBasicModel(SubsystemModel):
 
     def __init__(self):
         self._state = PayloadState()
+        # Per-model RNG (plan A-2). Standalone construction gets a fresh
+        # unseeded stream so existing unit tests keep working; the engine
+        # replaces this with a Random derived from simulation.yaml `seed`.
+        import random as _random
+        self.rng = _random.Random(20260731)  # deterministic standalone fallback; engine overrides via derive_rng
         self._fpa_target = -15.0
         self._fpa_ambient = 5.0
         self._tau_cool = 100.0
         self._tau_warm = 120.0
+        # Documented detector (cold-finger) offset from the TCS FPA bracket
+        # node while the cooler runs (brief 05 WP-1): 0x0601 = 0x0408 + offset.
+        self._detector_offset_c = -0.5
+        # Envelope defaults, replaced by configure() with the TCS-owned block
+        # the engine injects. Set here too so a directly instantiated model
+        # (tests, tooling) still has the readiness and event rules.
+        self._fpa_env = FPAEnvelope()
         self._cooler_power_w = 15.0
         self._line_rate_hz = 500.0
         self._data_rate_mbps = 80.0
@@ -200,7 +238,13 @@ class PayloadBasicModel(SubsystemModel):
         self._fpa_ambient = config.get("fpa_ambient_c", 5.0)
         self._tau_cool = config.get("fpa_tau_cooling_s", 100.0)
         self._tau_warm = config.get("fpa_tau_warming_s", 120.0)
-        self._state.image_size_mb = config.get("image_size_mb", 800.0)
+        self._detector_offset_c = config.get("detector_offset_c", -0.5)
+        # FPA envelope — single-sourced in subsystems/tcs.yaml and injected by
+        # the engine (DECISIONS §3 / G3-d). The payload reads the TCS-owned
+        # node, so it must use the same readiness rule and the same over/under
+        # -temp thresholds; a second copy is the defect this ruling removes.
+        self._fpa_env = FPAEnvelope.from_config(config)
+        self._state.image_size_mb = config.get("image_size_mb", 4.0)
         self._state.total_storage_mb = config.get("total_storage_mb", 20000.0)
         self._cooler_power_w = config.get("fpa_cooler_power_w", 15.0)
         self._line_rate_hz = config.get("line_rate_hz", 500.0)
@@ -226,7 +270,10 @@ class PayloadBasicModel(SubsystemModel):
             # New params
             "mem_total_mb": 0x060A, "mem_used_mb": 0x060B,
             "last_scene_id": 0x060C, "last_scene_quality": 0x060D,
-            "fpa_ready": 0x060F, "mem_segments_bad": 0x0612,
+            # 0x0610, not 0x060F: parameters.yaml and HK SID 5 both use
+            # 0x0610 — the model wrote 0x060F so the "FPA Ready" indicator
+            # was hard-zero forever (brief 05 finding 11 / WP-7).
+            "fpa_ready": 0x0610, "mem_segments_bad": 0x0612,
             "duty_cycle_pct": 0x0613,
         })
 
@@ -324,6 +371,10 @@ class PayloadBasicModel(SubsystemModel):
         if s.calibration_active:
             s.calibration_timer -= dt
             half_duration = s.calibration_duration_s / 2
+            # Phase E WP-7: single-phase runs (mode 0 = DARK only, 1 = FLAT
+            # only) complete after their one phase; mode 2 = BOTH keeps the
+            # legacy dark-then-flat sequence.
+            dark_only = (s.calibration_mode == 0)
             if s.calibration_state == 1:  # DARK_FRAME
                 # Accumulate dark frames: ~10 frames over half duration
                 if s.calibration_timer <= 0:
@@ -332,11 +383,25 @@ class PayloadBasicModel(SubsystemModel):
                 else:
                     elapsed = half_duration - s.calibration_timer
                     s.dark_frame_count = max(0, int((elapsed / half_duration) * 10))
-                s.calibration_progress = 100.0 * (half_duration - s.calibration_timer) / half_duration
-                if s.calibration_timer <= half_duration:
-                    s.calibration_state = 2  # FLAT_FIELD
-                    s.calibration_timer = half_duration
-                    s.dark_frame_count = 10  # Ensure at least 10
+                if dark_only:
+                    s.calibration_progress = min(
+                        100.0,
+                        100.0 * (half_duration - s.calibration_timer) / half_duration)
+                    if s.calibration_timer <= 0:
+                        s.dark_frame_count = 10
+                        for band_id in ['blue', 'green', 'red', 'nir']:
+                            s.bias_coeff[band_id] = 0.0
+                        s.calibration_active = False
+                        s.calibration_state = 3  # COMPLETE (dark set only)
+                        s.calibration_progress = 100.0
+                        s.last_calibration_time = self._now()
+                        events_to_emit.append(0x060B)  # CALIBRATION_COMPLETE
+                else:
+                    s.calibration_progress = 100.0 * (half_duration - s.calibration_timer) / half_duration
+                    if s.calibration_timer <= half_duration:
+                        s.calibration_state = 2  # FLAT_FIELD
+                        s.calibration_timer = half_duration
+                        s.dark_frame_count = 10  # Ensure at least 10
             elif s.calibration_state == 2:  # FLAT_FIELD
                 # Accumulate flat frames: ~10 frames over half duration
                 if s.calibration_timer <= 0:
@@ -344,17 +409,23 @@ class PayloadBasicModel(SubsystemModel):
                 else:
                     elapsed = half_duration - s.calibration_timer
                     s.flat_frame_count = max(0, int((elapsed / half_duration) * 10))
-                s.calibration_progress = 50.0 + 50.0 * (half_duration - s.calibration_timer) / half_duration
+                if s.calibration_mode == 1:   # FLAT only: full-range progress
+                    s.calibration_progress = min(
+                        100.0,
+                        100.0 * (half_duration - s.calibration_timer) / half_duration)
+                else:
+                    s.calibration_progress = 50.0 + 50.0 * (half_duration - s.calibration_timer) / half_duration
                 if s.calibration_timer <= 0:
                     # Compute gain/bias coefficients
                     for band_id in ['blue', 'green', 'red', 'nir']:
                         s.bias_coeff[band_id] = 0.0  # Simplified: would normally compute from dark_frame_buffer
                         s.gain_coeff[band_id] = 1.0  # Simplified: would normally compute from flat_frame_buffer
-                    s.calibration_valid_mask = 0x0F  # All bands valid
+                    if s.calibration_mode == 2:
+                        s.calibration_valid_mask = 0x0F  # All bands valid
                     s.calibration_active = False
                     s.calibration_state = 3  # COMPLETE
                     s.calibration_progress = 100.0
-                    s.last_calibration_time = time.time()
+                    s.last_calibration_time = self._now()
                     events_to_emit.append(0x060B)  # CALIBRATION_COMPLETE
 
         # ── Shutter cycle test (Defect 4 — payload.md §3.3) ──
@@ -375,25 +446,52 @@ class PayloadBasicModel(SubsystemModel):
                 s.filter_rotation_in_progress = False
                 events_to_emit.append(0x060F)  # FILTER_ROTATION_COMPLETE
 
-        # FPA thermal model
-        if s.cooler_active and not s.cooler_failed:
+        # FPA thermal model (brief 05 defect 1 / WP-1): TCS owns the FPA
+        # thermal node (0x0408); the payload's fpa_temp is the DETECTOR
+        # (cold-finger) side — a fast first-order lag onto the TCS bracket
+        # node plus a small documented gradient. Previously this was a second,
+        # fully independent integrator with its own target and its own
+        # unlinked cooler flag, and the two "FPA temperature" curves diverged
+        # by up to 26 C on the command path the shipped procedures use.
+        tcs_fpa = shared_params.get(0x0408)
+        if tcs_fpa is not None:
+            cooler_running = bool(shared_params.get(0x040C, 0))
+            # Mirror the ACTUAL cooler state (unified flag) so 0x0602 cooler
+            # power telemetry and cooler_on_time agree with TCS/EPS (WP-2).
+            s.cooler_active = cooler_running and not s.cooler_failed
+            if s.cooler_active:
+                target = tcs_fpa + self._detector_offset_c
+                tau = self._tau_cool
+                s.cooler_on_time_s += dt
+            else:
+                target, tau = tcs_fpa, self._tau_warm
+                s.cooler_on_time_s = 0.0
+        elif s.cooler_active and not s.cooler_failed:
+            # Standalone fallback (no TCS in the loop): legacy self-integration
             target, tau = self._fpa_target, self._tau_cool
             s.cooler_on_time_s += dt
         else:
             target, tau = self._fpa_ambient, self._tau_warm
             s.cooler_on_time_s = 0.0
+        # Integrator process noise: sqrt(dt) scaling (plan A-3)
         s.fpa_temp += (
-            (target - s.fpa_temp) / tau * dt + random.gauss(0, 0.02)
+            (target - s.fpa_temp) / tau * dt
+            + self.rng.gauss(0, 0.02) * math.sqrt(dt)
         )
 
         # Imager temperature
         env_img = 5.0 if not orbit_state.in_eclipse else -5.0
         s.imager_temp += (
-            (env_img - s.imager_temp) / 400.0 * dt + random.gauss(0, 0.03)
+            (env_img - s.imager_temp) / 400.0 * dt
+            + self.rng.gauss(0, 0.03) * math.sqrt(dt)
         )
 
-        # FPA readiness with hysteresis and cooler health check (Defect 2 — payload.md §3.2)
-        temp_in_range = (self._fpa_target - 1.0) <= s.fpa_temp <= (self._fpa_target + 5.0)
+        # FPA readiness with hysteresis and cooler health check (Defect 2 —
+        # payload.md §3.2). G3-d: the window is now the shared envelope rule —
+        # settled about the ACTIVE setpoint AND cold enough to image — so TCS
+        # (0x040A/0x040B) and the payload (0x0610) can no longer disagree
+        # about whether the same detector is ready.
+        temp_in_range = self._fpa_env.is_ready(s.fpa_temp, self._fpa_target)
         cooler_ok = not s.cooler_failed
         if temp_in_range and cooler_ok:
             s.fpa_ready_timer += dt
@@ -403,21 +501,26 @@ class PayloadBasicModel(SubsystemModel):
             s.fpa_ready = False
             s.fpa_ready_timer = 0.0
 
-        # Mode behaviour
+        # Mode behaviour. With TCS in the loop (0x0408 present) cooler_active
+        # is the ACTUAL unified cooler state set above, not the mode request —
+        # the request reaches TCS through service dispatch (brief 05 WP-2).
+        _tcs_in_loop = tcs_fpa is not None
         if s.mode == 0:  # OFF
-            s.cooler_active = False
+            if not _tcs_in_loop:
+                s.cooler_active = False
             s.line_rate = 0.0
             s.data_rate_mbps = 0.0
             s.duty_cycle_pct = 0.0
         elif s.mode == 1:  # STANDBY (cooler on)
-            s.cooler_active = True
+            if not _tcs_in_loop:
+                s.cooler_active = True
             s.line_rate = 0.0
             s.data_rate_mbps = 0.0
             s.duty_cycle_pct = 0.0
         elif s.mode == 2:  # IMAGING
             if s.fpa_ready and not s.cooler_failed:
-                s.line_rate = self._line_rate_hz + random.gauss(0, 2.0)
-                s.data_rate_mbps = self._data_rate_mbps + random.gauss(0, 0.5)
+                s.line_rate = self._line_rate_hz + self.rng.gauss(0, 2.0)
+                s.data_rate_mbps = self._data_rate_mbps + self.rng.gauss(0, 0.5)
                 data_mb = s.data_rate_mbps * 1e6 / 8 / 1e6 * dt
                 s.mem_used_mb = min(
                     s.mem_total_mb, s.mem_used_mb + data_mb
@@ -426,10 +529,11 @@ class PayloadBasicModel(SubsystemModel):
                     100.0, s.mem_used_mb / s.mem_total_mb * 100.0
                 )
                 # Checksum errors
-                error_prob = 0.0001 * (2 if s.fpa_degraded else 1)
+                # Rate per unit sim time, not per tick (plan A-3)
+                error_prob = 0.0001 * dt * (2 if s.fpa_degraded else 1)
                 if s.ccd_line_dropout:
                     error_prob *= 3
-                if random.random() < error_prob:
+                if self.rng.random() < error_prob:
                     s.checksum_errors += 1
                 s.duty_cycle_pct = min(
                     100.0,
@@ -440,20 +544,63 @@ class PayloadBasicModel(SubsystemModel):
                 s.data_rate_mbps = 0.0
 
         # ── Attitude-quality coupling ──
+        # Phase C (brief 02 WP-6): curve rescaled to the REAL error
+        # magnitudes — the old breakpoints (knee at 0.1°) scored NOMINAL
+        # (0.06°) and FINE (0.02°) identically. Same shape, new knees:
+        # full quality below 0.02°, knee at 0.05°, zero above 0.2°.
         att_error = shared_params.get(0x0217, 0.0)  # AOCS att_error_deg
-        if att_error <= 0.1:
+        if att_error <= 0.02:
             att_quality = 1.0
-        elif att_error <= 0.5:
-            att_quality = 1.0 - (att_error - 0.1) * 0.25  # Linear 1.0 -> 0.9
-        elif att_error <= 1.0:
-            att_quality = 0.9 - (att_error - 0.5) * 0.6  # 0.9 -> 0.6
-        elif att_error <= 2.0:
-            att_quality = 0.6 - (att_error - 1.0) * 0.4  # 0.6 -> 0.2
+        elif att_error <= 0.05:
+            att_quality = 1.0 - (att_error - 0.02) / 0.03 * 0.1   # 1.0 -> 0.9
+        elif att_error <= 0.1:
+            att_quality = 0.9 - (att_error - 0.05) / 0.05 * 0.3   # 0.9 -> 0.6
+        elif att_error <= 0.2:
+            att_quality = 0.6 - (att_error - 0.1) / 0.1 * 0.4     # 0.6 -> 0.2
         else:
-            att_quality = max(0.0, 0.2 - (att_error - 2.0) * 0.1)
+            att_quality = max(0.0, 0.2 - (att_error - 0.2) * 1.0)
 
         s.att_quality_factor = att_quality
         s.att_error_deg = att_error
+
+        # ── Phase C: sample the AOCS pointing state for the capture gate ──
+        aocs_mode = shared_params.get(0x020F)
+        if aocs_mode is not None and 0x02AA in shared_params:
+            s.aocs_seen = True
+            s.aocs_mode_seen = int(aocs_mode)
+            s.aocs_total_err_seen = float(shared_params.get(0x02AA, 0.0))
+            s.aocs_rate_stab_seen = float(shared_params.get(0x02C3, 0.0))
+            s.aocs_settled_seen = bool(
+                shared_params.get(0x0292, 0.0) < 0.5)   # slew idle
+
+        # ── Strip-acquisition monitor (WP-6): PARTIAL on FINE loss ──
+        if s.strip_remaining_s > 0.0:
+            s.strip_remaining_s = max(0.0, s.strip_remaining_s - dt)
+            if s.aocs_seen:
+                err_now = s.aocs_total_err_seen
+                fine_lost = (s.aocs_mode_seen != 5) or (err_now > 0.05)
+                if fine_lost and err_now > s.strip_worst_err_deg:
+                    s.strip_worst_err_deg = err_now
+                if fine_lost:
+                    for img in reversed(s.image_catalog):
+                        if img.get("scene_id") == s.strip_scene_id:
+                            if img.get("status", 0) == 0:
+                                img["status"] = 1  # PARTIAL
+                                img["quality"] = min(
+                                    img.get("quality", 100.0),
+                                    self.rng.uniform(55.0, 80.0))
+                            img["pointing_err_deg"] = round(
+                                max(err_now, s.strip_worst_err_deg), 4)
+                            s.last_scene_quality = img["quality"]
+                            break
+
+        # ── Phase E WP-1: sample the sub-satellite point for the capture
+        # geolocation stamp (what a real spacecraft does — resolved on board
+        # from the propagated ephemeris at shutter open, not commanded).
+        if hasattr(orbit_state, 'lat_deg'):
+            s.orbit_lat_deg = float(orbit_state.lat_deg)
+        if hasattr(orbit_state, 'lon_deg'):
+            s.orbit_lon_deg = float(orbit_state.lon_deg)
 
         # ── Swath width from altitude ──
         alt_km = orbit_state.alt_km if hasattr(orbit_state, 'alt_km') else 500.0
@@ -467,6 +614,12 @@ class PayloadBasicModel(SubsystemModel):
         if s.mode == 2 and s.fpa_ready:
             fpa_temp = s.fpa_temp
             degrade_factor = 0.85 if s.fpa_degraded else 1.0
+            int_times = {
+                'blue': s.integration_time_blue,
+                'green': s.integration_time_green,
+                'red': s.integration_time_red,
+                'nir': s.integration_time_nir,
+            }
             for band in SPECTRAL_BANDS:
                 band_id = band['id']
                 bit = band['bit']
@@ -478,9 +631,29 @@ class PayloadBasicModel(SubsystemModel):
                 # Temperature-dependent SNR (degrades ~3dB per 10C above -20C)
                 temp_factor = max(0.3, 1.0 - max(0.0, (fpa_temp + 20.0)) * 0.03)
 
+                # ── Phase E WP-8 (DECISIONS.md section 6): integration time
+                # and detector gain have radiometric consequences. Signal
+                # scales with t_int, so SNR gains ~3 dB per doubling
+                # (10*log10(t/t0), read-noise-limited detector); gain lifts
+                # the signal out of the read-noise floor at ~1.5 dB per
+                # doubling until it saturates the ADC — beyond gain x
+                # t_int/t0 > 8 the well fills and SNR collapses 6 dB per
+                # further doubling (the COM-012 saturation decision point).
+                t_ratio = max(0.05, int_times[band_id] / 2.0)
+                radiometric_db = 10.0 * math.log10(t_ratio)
+                gain = max(0.1, s.detector_gain)
+                radiometric_db += 5.0 * math.log10(gain)
+                exposure = gain * t_ratio
+                if exposure > 8.0:      # ADC full-well: overexposed
+                    radiometric_db -= 20.0 * math.log10(exposure / 8.0)
+                # Bound the term so a pathological setting cannot produce a
+                # negative-noise fantasy (raw dynamic range ~ +12 dB).
+                radiometric_db = max(-30.0, min(12.0, radiometric_db))
+
                 # Attitude-dependent SNR
                 snr = band['snr_nominal'] * temp_factor * att_quality * degrade_factor
-                snr += random.gauss(0, 0.5)  # Measurement noise
+                snr += radiometric_db
+                snr += self.rng.gauss(0, 0.5)  # Measurement noise
                 s.band_snrs[band_id] = max(0.0, snr)
 
             # Aggregate SNR is worst-case across enabled bands
@@ -503,7 +676,7 @@ class PayloadBasicModel(SubsystemModel):
             entropy = 0.2  # Base ocean
             if 20 < abs_lat < 60:
                 entropy += 0.3 * (1.0 - abs(abs_lat - 40) / 20.0)
-            entropy += random.gauss(0, 0.05)
+            entropy += self.rng.gauss(0, 0.05)
             entropy = max(0.0, min(1.0, entropy))
             s.scene_entropy = entropy
 
@@ -514,7 +687,7 @@ class PayloadBasicModel(SubsystemModel):
             s.scene_entropy = 0.0
 
         # Detector temperature tracks FPA temp closely
-        s.detector_temp_c = s.fpa_temp + 0.5 + random.gauss(0, 0.05)
+        s.detector_temp_c = s.fpa_temp + 0.5 + self.rng.gauss(0, 0.05)
 
         # ── Downlink progress (Defect 5 — payload.md §3.7) ──
         if s.transfer_active and s.transfer_bytes_total > 0:
@@ -562,12 +735,20 @@ class PayloadBasicModel(SubsystemModel):
             events_to_emit.append(0x0609)  # STORAGE_FULL
         s._prev_storage_full = storage_full
 
-        # FPA_OVERTEMP (> -3C)
-        if s.fpa_temp > -3.0 and s.prev_fpa_temp <= -3.0:
+        # FPA_OVERTEMP — warmer than the science can tolerate. Derived from
+        # fpa_envelope.imaging_max_c (G3-d), which is where the textbook's
+        # -3 C upper bound and the planner precondition now both come from.
+        _over = self._fpa_env.overtemp_c()
+        if s.fpa_temp > _over and s.prev_fpa_temp <= _over:
             events_to_emit.append(0x0604)  # FPA_OVERTEMP
 
-        # FPA_UNDERTEMP (< -15C)
-        if s.fpa_temp < -15.0 and s.prev_fpa_temp >= -15.0:
+        # FPA_UNDERTEMP — colder than the loop can command. The old -15.0
+        # threshold sat exactly ON the cooler setpoint and fired on every
+        # nominal cooldown; the -18.0 that replaced it then fired on any
+        # setpoint at or below -17 C, which Phase E made an ordinary thing to
+        # command. Derived: setpoint_min - 3 sigma = -20.5 C.
+        _under = self._fpa_env.undertemp_c()
+        if s.fpa_temp < _under and s.prev_fpa_temp >= _under:
             events_to_emit.append(0x0605)  # FPA_UNDERTEMP
 
         # COOLER_FAILURE — rising-edge only
@@ -576,7 +757,7 @@ class PayloadBasicModel(SubsystemModel):
         s._prev_cooler_failed = s.cooler_failed
 
         # IMAGE_CHECKSUM_ERROR — probabilistic, each fire is a distinct event
-        if s.checksum_errors > 0 and random.random() < 0.01:
+        if s.checksum_errors > 0 and self.rng.random() < 0.01 * dt:
             events_to_emit.append(0x0607)  # IMAGE_CHECKSUM_ERROR
 
         # SNR_DEGRADED (< 25 dB) — rising-edge only.
@@ -667,7 +848,7 @@ class PayloadBasicModel(SubsystemModel):
         shared_params[p.get("last_scene_quality", 0x060D)] = (
             s.last_scene_quality
         )
-        shared_params[p.get("fpa_ready", 0x060F)] = 1 if s.fpa_ready else 0
+        shared_params[p.get("fpa_ready", 0x0610)] = 1 if s.fpa_ready else 0
         shared_params[p.get("mem_segments_bad", 0x0612)] = s.mem_segments_bad
         shared_params[p.get("duty_cycle_pct", 0x0613)] = s.duty_cycle_pct
         # Phase 4: Flight hardware params
@@ -708,6 +889,30 @@ class PayloadBasicModel(SubsystemModel):
         # ── Integration time (multi-band) ──
         shared_params[0x062F] = s.integration_time_ms
 
+        # ── Phase E WP-7: real telemetry for the previously-stub settings ──
+        shared_params[0x0631] = s.cooler_setpoint_c        # payload.fpa_setpoint
+        shared_params[0x0635] = s.integration_time_ms      # payload.integration_ms
+        shared_params[0x0636] = s.detector_gain            # payload.gain_code
+        shared_params[0x0638] = s.integration_time_blue    # payload.int_time_blue
+        shared_params[0x0639] = s.integration_time_green   # payload.int_time_green
+        shared_params[0x063A] = s.integration_time_red     # payload.int_time_red
+        shared_params[0x063B] = s.integration_time_nir     # payload.int_time_nir
+        shared_params[0x063C] = float(s.shutter_position)  # payload.shutter_pos
+        shared_params[0x063D] = float(s.filter_position)   # payload.filter_pos
+        shared_params[0x063E] = float(s.compression_algorithm)  # payload.compression_algo
+        shared_params[0x0640] = 1.0 if s.calibration_active else 0.0  # payload.cal_flag
+        shared_params[0x0642] = float(s.dark_frame_count)  # payload.dark_frame_cnt
+        shared_params[0x0643] = float(s.flat_frame_count)  # payload.bias_frame_cnt
+
+    def _now(self) -> float:
+        """Mission time: engine sim time when hosted (deterministic under a
+        pinned t0_epoch, plan A-2), wall clock when standalone."""
+        eng = getattr(self, "_engine", None)
+        sim_time = getattr(eng, "_sim_time", None)
+        if sim_time is not None:
+            return sim_time.timestamp()
+        return time.time()
+
     def get_telemetry(self) -> dict[int, float]:
         return {0x0601: self._state.fpa_temp}
 
@@ -734,9 +939,58 @@ class PayloadBasicModel(SubsystemModel):
                 }
             if not s.fpa_ready:
                 return {"success": False, "message": "FPA not ready"}
+            # ── Phase C WP-6: fine-pointing gate ──
+            # Capture requires AOCS FINE_POINT held with total pointing error
+            # < 0.05° and rate stability < 0.005 °/s. Distinct failure codes
+            # so the operator sees WHY. Standalone harnesses without an AOCS
+            # in the loop (aocs_seen False) are not gated.
+            if s.aocs_seen and not cmd.get("force", False):
+                if s.aocs_mode_seen != 5:
+                    return {"success": False,
+                            "code": "POINTING_NOT_FINE",
+                            "error_code": 0x0021,
+                            "message": ("Capture refused: AOCS not in "
+                                        "FINE_POINT (mode %d)"
+                                        % s.aocs_mode_seen)}
+                if s.aocs_total_err_seen > 0.05:
+                    return {"success": False,
+                            "code": "POINTING_ERROR_HIGH",
+                            "error_code": 0x0022,
+                            "message": ("Capture refused: total pointing "
+                                        "error %.3f deg > 0.05 deg"
+                                        % s.aocs_total_err_seen)}
+                if s.aocs_rate_stab_seen > 0.005:
+                    return {"success": False,
+                            "code": "RATE_STABILITY_HIGH",
+                            "error_code": 0x0023,
+                            "message": ("Capture refused: rate stability "
+                                        "%.4f deg/s > 0.005 deg/s"
+                                        % s.aocs_rate_stab_seen)}
 
+            # ── Phase E WP-1: commanded scene_id + lines ──
+            # scene_id 0 = auto-assign (preserves the legacy behaviour);
+            # a ground-assigned id lets the pass plan pre-book the downlink
+            # (PAYLOAD_DOWNLOAD_IMAGE / DELETE_IMAGE address it later).
+            req_scene = int(cmd.get("scene_id", 0) or 0)
+            if req_scene and any(img.get("scene_id") == req_scene
+                                 for img in s.image_catalog):
+                return {"success": False, "error_code": 0x0003,
+                        "message": f"Scene id {req_scene} already in the "
+                                   "image catalogue"}
+            lines = int(cmd.get("lines", 0) or 0)
+            if lines == 0:
+                lines = 2048           # catalogue default
+            if not (256 <= lines <= 20000):
+                return {"success": False, "error_code": 0x0003,
+                        "message": f"lines = {lines} outside 256-20000"}
+
+            # ── Phase E WP-8: frame size follows the commanded acquisition.
+            # Reference frame (payload.yaml image_size_mb, 4.0 MB) is 2048
+            # lines x 4 bands; raw volume scales with lines and enabled
+            # bands — the arithmetic the pass-planning lesson rests on.
+            active_bands = max(1, bin(s.band_enable_mask & 0x0F).count('1'))
+            base_size = s.image_size_mb * (lines / 2048.0) * (active_bands / 4.0)
             # Compute actual stored size with compression (Defect 3 — payload.md §3.6)
-            base_size = s.image_size_mb
             if s.compression_enabled:
                 stored_size = base_size / s.compression_ratio
             else:
@@ -757,29 +1011,53 @@ class PayloadBasicModel(SubsystemModel):
             status = 0  # OK
             if s.corrupt_remaining > 0:
                 status = 2  # CORRUPT
-                quality = random.uniform(10.0, 30.0)
+                quality = self.rng.uniform(10.0, 30.0)
                 s.corrupt_remaining -= 1
                 s.checksum_errors += 1
             elif s.ccd_line_dropout:
                 status = 1  # PARTIAL
-                quality = random.uniform(60.0, 85.0)
+                quality = self.rng.uniform(60.0, 85.0)
             elif s.fpa_degraded:
-                quality = random.uniform(80.0, 95.0)
+                quality = self.rng.uniform(80.0, 95.0)
 
-            self._next_scene_id += 1
+            if req_scene:
+                scene_id = req_scene
+                # Keep the auto-assign counter ahead of ground-assigned ids
+                # so a later auto capture cannot collide.
+                self._next_scene_id = max(self._next_scene_id, req_scene)
+            else:
+                self._next_scene_id += 1
+                scene_id = self._next_scene_id
             img = {
-                "scene_id": self._next_scene_id,
-                "timestamp": time.time(),
-                "lat": cmd.get("lat", 0.0),
-                "lon": cmd.get("lon", 0.0),
+                "scene_id": scene_id,
+                "timestamp": self._now(),
+                # Phase E WP-1: geolocation stamped ON BOARD from the
+                # propagated sub-satellite point at shutter open (sampled
+                # from orbit_state in tick) — not a TC argument.
+                "lat": round(s.orbit_lat_deg, 4),
+                "lon": round(s.orbit_lon_deg, 4),
+                "lines": lines,
                 "quality": quality,
                 "status": status,
                 "size_mb": stored_size,  # CHANGED: now uses compressed size
+                "raw_size_mb": base_size,
                 "compression_ratio": s.compression_ratio,
                 "compression_algorithm": s.compression_algorithm,
                 "segment": seg,
+                # Phase C WP-6: actual pointing error at capture start,
+                # updated with the worst error if FINE is lost mid-strip.
+                "pointing_err_deg": round(s.aocs_total_err_seen, 4)
+                    if s.aocs_seen else None,
+                "aocs_mode": s.aocs_mode_seen if s.aocs_seen else None,
             }
             s.image_catalog.append(img)
+            # Start the strip-acquisition monitor over the COMMANDED strip
+            # length (lines / line_rate; 2048 @ 500 Hz = 4.1 s)
+            line_rate = max(1.0, self._line_rate_hz)
+            s.strip_remaining_s = float(lines) / line_rate
+            s.strip_worst_err_deg = (s.aocs_total_err_seen
+                                     if s.aocs_seen else 0.0)
+            s.strip_scene_id = scene_id
             # Cap catalog to prevent unbounded memory growth
             if len(s.image_catalog) > 1000:
                 s.image_catalog.pop(0)  # evict oldest
@@ -788,13 +1066,16 @@ class PayloadBasicModel(SubsystemModel):
             s.store_used_pct = min(
                 100.0, s.mem_used_mb / s.mem_total_mb * 100.0
             )
-            s.current_scene_id = self._next_scene_id
-            s.last_scene_id = self._next_scene_id
+            s.current_scene_id = scene_id
+            s.last_scene_id = scene_id
             s.last_scene_quality = quality
 
             return {
                 "success": True,
-                "scene_id": self._next_scene_id,
+                "scene_id": scene_id,
+                "lat": img["lat"],
+                "lon": img["lon"],
+                "lines": lines,
                 "quality": quality,
                 "status": status,
                 "stored_size_mb": stored_size,
@@ -863,52 +1144,94 @@ class PayloadBasicModel(SubsystemModel):
 
         elif command == "set_band_config":
             mask = int(cmd.get("mask", 0x0F))
-            if 0 <= mask <= 0x0F:
+            if mask == 0:
+                # Phase E WP-3: all-bands-off is REJECTED — an imager with no
+                # enabled band cannot produce a product, and the old silent
+                # accept made every subsequent capture 0-band garbage.
+                return {"success": False, "error_code": 0x0003,
+                        "message": "Band mask 0x00 rejected — at least one "
+                                   "band (bits 0-3) must be enabled"}
+            if 0 < mask <= 0x0F:
                 s.band_enable_mask = mask
                 s.active_bands = bin(mask).count('1')
                 return {"success": True}
-            return {"success": False, "message": "Invalid band mask (0x00-0x0F)"}
+            return {"success": False, "error_code": 0x0003,
+                    "message": "Invalid band mask (0x01-0x0F)"}
 
         elif command == "set_integration_time":
-            # Set per-band integration times (4 float values)
+            # Set per-band integration times (ms, blue/green/red/nir).
             times = cmd.get("times", [2.0, 2.0, 2.0, 2.0])
             if len(times) >= 4:
-                s.integration_time_blue = times[0]
-                s.integration_time_green = times[1]
-                s.integration_time_red = times[2]
-                s.integration_time_nir = times[3]
-                s.integration_time_ms = sum(times) / 4.0  # Average
+                bad = [t for t in times[:4] if not (0.1 <= float(t) <= 655.35)]
+                if bad:
+                    return {"success": False, "error_code": 0x0003,
+                            "message": f"Integration time {bad[0]} ms outside "
+                                       "0.10-655.35 ms"}
+                s.integration_time_blue = float(times[0])
+                s.integration_time_green = float(times[1])
+                s.integration_time_red = float(times[2])
+                s.integration_time_nir = float(times[3])
+                s.integration_time_ms = sum(float(t) for t in times[:4]) / 4.0
                 return {"success": True}
-            return {"success": False, "message": "Invalid integration times"}
+            return {"success": False, "error_code": 0x0003,
+                    "message": "Invalid integration times"}
 
         elif command == "set_detector_gain":
-            # Set detector gain/offset per band
+            # Phase E WP-3: REJECT out-of-envelope gain (never clamp — the
+            # readback must equal the command bit-for-bit or refuse).
             gain = float(cmd.get("gain", 1.0))
-            s.detector_gain = max(0.1, min(10.0, gain))
+            if not (0.1 <= gain <= 10.0):
+                return {"success": False, "error_code": 0x0003,
+                        "message": f"Detector gain {gain:.3f} outside "
+                                   "0.100-10.000"}
+            s.detector_gain = gain
             return {"success": True}
 
         elif command == "set_cooler_setpoint":
             # Adjust cooler temperature target
-            target = float(cmd.get("setpoint", -15.0))
-            if -20.0 <= target <= 0.0:
+            env = self._fpa_env
+            target = float(cmd.get("setpoint", env.setpoint_default_c))
+            if env.setpoint_min_c <= target <= env.setpoint_max_c:
                 self._fpa_target = target
                 s.cooler_setpoint_c = target
                 return {"success": True}
-            return {"success": False, "message": "Invalid cooler setpoint (-20C to 0C)"}
+            return {"success": False, "error_code": 0x0003,
+                    "message": f"Cooler setpoint {target:.2f} C outside the "
+                               f"Peltier envelope ({env.setpoint_min_c:.0f} C "
+                               f"to {env.setpoint_max_c:.0f} C)"}
 
         elif command == "start_calibration":
-            # Begin calibration sequence
+            # Begin calibration sequence. Phase E WP-7: `mode` selects the
+            # phase set — 0 = DARK only (COM-011 step 2), 1 = FLAT only,
+            # 2 = BOTH (legacy dark-then-flat sequence).
             if s.calibration_active:
                 return {"success": False, "message": "Calibration already in progress"}
             if s.mode != 2:
                 return {"success": False, "message": "Must be in IMAGING mode"}
+            cal_mode = int(cmd.get("mode", 2))
+            if cal_mode not in (0, 1, 2):
+                return {"success": False, "error_code": 0x0003,
+                        "message": f"Unknown calibration mode {cal_mode} "
+                                   "(0=DARK, 1=FLAT, 2=BOTH)"}
             s.calibration_active = True
-            s.calibration_state = 1  # DARK_FRAME
+            s.calibration_mode = cal_mode
+            s.calibration_state = 2 if cal_mode == 1 else 1
             s.calibration_progress = 0.0
-            s.calibration_timer = s.calibration_duration_s / 2  # Half duration for DARK_FRAME phase (Defect 1)
+            s.calibration_timer = s.calibration_duration_s / 2  # Half duration per phase (Defect 1)
             s.dark_frame_count = 0  # Initialize frame counters
             s.flat_frame_count = 0
             return {"success": True, "message": "Calibration started"}
+
+        elif command == "set_cal_lamp":
+            # Phase E WP-7 — PAYLOAD_CAL_LAMP (func 95). Honours the S2
+            # device gate: an unpowered lamp (device 0x0602 off) cannot light.
+            on = bool(cmd.get("on", False))
+            if on and not s.device_states.get(0x0602, True):
+                return {"success": False, "error_code": 0x0007,
+                        "message": "Calibration lamp device (0x0602) is "
+                                   "powered off"}
+            s.cal_lamp_on = on
+            return {"success": True}
 
         elif command == "stop_calibration":
             # Abort calibration
@@ -921,11 +1244,22 @@ class PayloadBasicModel(SubsystemModel):
             return {"success": True, "message": "Calibration aborted"}
 
         elif command == "set_compression":
-            # Override compression ratio and algorithm (Defect 3 — payload.md §3.6)
+            # Override compression ratio and algorithm (Defect 3 — payload.md §3.6).
+            # Phase E WP-3: the algorithm octet is now on the wire (func 39
+            # octet 1); ratio must be 0 (AUTO) or within the scene model's
+            # 1.0-4.0 envelope — rejected otherwise, never clamped.
             algo = int(cmd.get("algorithm", s.compression_algorithm))
-            if 0 <= algo <= 3:
-                s.compression_algorithm = algo
+            if not (0 <= algo <= 3):
+                return {"success": False, "error_code": 0x0003,
+                        "message": f"Unknown compression algorithm {algo} "
+                                   "(0=NONE, 1=CCSDS-121, 2=CCSDS-122, "
+                                   "3=CCSDS-123)"}
             ratio = float(cmd.get("ratio", 0.0))
+            if ratio != 0.0 and not (1.0 <= ratio <= 4.0):
+                return {"success": False, "error_code": 0x0003,
+                        "message": f"Compression ratio {ratio:.1f} outside "
+                                   "1.0-4.0 (0 = auto)"}
+            s.compression_algorithm = algo
             s.compression_override = ratio
             if ratio > 0:
                 s.compression_ratio = ratio
@@ -1052,14 +1386,19 @@ class PayloadBasicModel(SubsystemModel):
 
     def get_state(self) -> dict[str, Any]:
         import dataclasses
+        from smo_common.state import rng_state_to_json
         d = dataclasses.asdict(self._state)
         # image_catalog contains dicts, already serializable
+        d["_rng_state"] = rng_state_to_json(self.rng.getstate())
         return d
 
     def set_state(self, state: dict[str, Any]) -> None:
-        for k, v in state.items():
-            if hasattr(self._state, k):
-                setattr(self._state, k, v)
+        # Container fields are deep-copied by restore_dataclass_state: the
+        # plain setattr this used to do aliased the snapshot's own dicts and
+        # lists into live model state (G2-f).
+        from smo_common.state import restore_dataclass_state, restore_rng
+        restore_rng(self.rng, state.get("_rng_state"))
+        restore_dataclass_state(self._state, state, skip=("_rng_state",))
 
     # S2 Device Access — device-level on/off control
     def set_device_state(self, device_id: int, on_off: bool) -> bool:

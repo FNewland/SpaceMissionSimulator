@@ -206,7 +206,8 @@
 <tr><td>Period</td><td>~94 min (15.24 rev/day)</td></tr>
 <tr><td>Ground Stations</td><td>Iqaluit (63.7&deg;N, 68.5&deg;W), Troll (72.0&deg;S, 2.5&deg;E)</td></tr>
 <tr><td>Payload</td><td>4-band multispectral camera (ocean colour)</td></tr>
-<tr><td>Downlink</td><td>S-band, 64 kbps high / 1 kbps low rate</td></tr>
+<tr><td>Downlink</td><td>S-band 2200 MHz. Three-rung TM data-rate ladder: BEACON 1 kbps (BPSK conv+RS, bootloader only), LOW 16 kbps (BPSK conv+RS, routine operations), HIGH 128 kbps (QPSK RS(255,223), dumps only &mdash; requires antenna deployed, DOWNLINK mode and elevation &ge; 10&deg;)</td></tr>
+<tr><td>Uplink</td><td>S-band 2025 MHz, fixed 4 kbps telecommand (not on the TM ladder)</td></tr>
 <tr><td>Power</td><td>6 body-mounted GaAs panels, 120 Wh Li-ion battery</td></tr>
 <tr><td>Redundancy</td><td>Cold-redundant: transceiver, PDM, OBC (A/B), magnetometers (A/B)</td></tr>
 </table>

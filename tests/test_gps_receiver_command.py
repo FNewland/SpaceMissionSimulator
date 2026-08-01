@@ -51,7 +51,10 @@ def test_gps_device_on_reacquires_cold():
     # Switch back ON: receiver re-acquires from a cold start
     assert m.set_device_state(GPS_DEVICE, True) is True
     m._tick_gyro_and_gps(m._state, 1.0, SimpleNamespace())
-    assert m._state.gps_fix == 0          # still acquiring just after re-power
+    # Still acquiring just after re-power: no 3D fix yet (the exact search
+    # sat count is an RNG draw — 0-3 sats gives fix 0 or 1, never 2/3).
+    assert m._state.gps_fix <= 1
+    assert m._state.gps_ttff_timer <= 2.0
     _acquire(m)                            # let TTFF elapse
     assert m._state.gps_fix == 3           # full 3D+velocity fix restored
 

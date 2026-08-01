@@ -45,7 +45,7 @@ The separation sequence follows a 7-phase state machine implemented in the OBC:
 | POWER_STABILIZE   | Unswitchable PDM active    | ~30 s      | OBC boots; RX powers on           |
 | TIMER_WAIT        | OBC boot complete          | ~30 min    | No RF transmissions; OBC in BOOTLOADER |
 | ANTENNA_DEPLOY    | 30-min timer expires       | ~60 s      | Burn wire commanded; antenna deploys |
-| BEACON_START      | Antenna deploy confirmed   | ~10 s      | TX enabled; beacon SID 11 at 1 kbps |
+| BEACON_START      | Antenna deploy confirmed   | ~10 s      | TX enabled; beacon SID 11 on the BEACON tier (1 kbps) |
 | NOMINAL           | Beacon transmission active | —          | Ready for ground contact          |
 
 ### 3.2 Unswitchable Line Power-On
@@ -90,7 +90,7 @@ Once the antenna is deployed:
 
 1. The TX switchable PDM line (SW-1) is enabled.
 2. The transmitter and power amplifier power on.
-3. The OBC begins transmitting beacon packets (**SID 11**) at 1 kbps low-rate, sourced from the **bootloader APID (0x002)**. This is the ONLY HK packet emitted in bootloader mode — SIDs 1–6 remain silent until application boot. No TM storage, no attitude control, and no payload operations are possible while in bootloader.
+3. The OBC begins transmitting beacon packets (**SID 11**) on the **BEACON tier** of the TM rate ladder — 1 kbps, 1 kBd, BPSK with conv(7,1/2)+RS, ~3.1 kHz occupied bandwidth — sourced from the **bootloader APID (0x002)**. This is the ONLY HK packet emitted in bootloader mode — SIDs 1–6 remain silent until application boot. No TM storage, no attitude control, and no payload operations are possible while in bootloader. BEACON is a lifeline rung, not an operations rate: at 1 kbps it carries SID 11 with over 100x headroom but cannot carry the 1557 bps periodic housekeeping stream at all.
 4. The 15-minute TX auto-off timer starts, but is reset each time a beacon is transmitted.
 
 The spacecraft is now ready for ground acquisition.
@@ -106,8 +106,10 @@ The spacecraft is now ready for ground acquisition.
 Before the expected first contact window:
 
 1. Configure ground station antenna for VHF/UHF acquisition at predicted AOS azimuth/elevation.
-2. Set receiver for low-rate mode (1 kbps BPSK demodulation).
-3. Load EOSAT-1 frequency plan (401.5 MHz downlink, 449.0 MHz uplink).
+2. Set the demodulator to the BEACON tier: 1 kBd, BPSK, conv(7,1/2)+RS. This is the only
+   waveform the bootloader transmits; a demodulator configured for the LOW tier (16 kBd)
+   will not lock it.
+3. Load EOSAT-1 frequency plan (2200.0 MHz downlink, 2025.0 MHz uplink, S-band).
 4. Prepare pre-planned LEOP command sequence.
 
 ### 4.2 Beacon TM Interpretation
@@ -436,7 +438,10 @@ Before declaring the spacecraft operational, verify the following:
 4. Enable all S12 monitoring definitions (if not already enabled).
 5. Enable all S19 event-action definitions.
 6. Command full-rate housekeeping telemetry (1 Hz, all SIDs).
-7. Switch TTC to high-rate mode (64 kbps).
+7. Confirm the TM rate ladder is at **LOW (16 kbps)** — the `default_tier` and the rate
+   routine operations run at. `ttc.tm_data_rate` (0x0506) = 16000 and `ttc.tm_tier`
+   (0x0539) = 1. Do NOT leave the spacecraft commanded to HIGH: that tier is raised per
+   dump (NOM-011 / NOM-003) and released afterwards.
 8. Record transition time for mission log.
 
 **GO/NO-GO Checkpoint 9: Transition to Nominal Operations**

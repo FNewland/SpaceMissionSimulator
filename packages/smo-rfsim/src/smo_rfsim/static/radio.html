@@ -41,6 +41,16 @@ canvas { width:100% !important; height:100% !important; }
 .stat-box .big { font-size:18px; font-weight:bold; color:var(--accent); }
 .stat-box .lbl { font-size:10px; color:var(--dim); }
 .aig-footer { text-align:center; margin-top:10px; opacity:0.5; font-size:10px; }
+.ctl-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:6px 12px; }
+.ctl-grid label { display:flex; flex-direction:column; gap:2px; font-size:11px; }
+.ctl-grid input[type=range] { width:100%; }
+.ctl-grid input, .ctl-grid select { background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:3px; padding:2px 4px; font-family:inherit; font-size:11px; }
+.btn { background:var(--border); color:var(--text); border:1px solid var(--border); border-radius:3px; padding:3px 10px; font-family:inherit; font-size:11px; cursor:pointer; }
+.btn.primary { background:var(--accent); color:var(--bg); font-weight:bold; }
+.btn:hover { filter:brightness(1.2); }
+.placeholder { color:var(--dim); font-size:11px; }
+.diag-grid { display:grid; grid-template-columns:1fr auto; gap:0 8px; font-size:11px; }
+.diag-grid .k { color:var(--dim); }
 </style>
 </head>
 <body>
@@ -167,6 +177,65 @@ canvas { width:100% !important; height:100% !important; }
   <div class="panel">
     <h2>Ground Equipment</h2>
     <div class="row"><span class="label">GS Eb/N0 Penalty</span><span id="gs-penalty" class="value">0.0 dB</span></div>
+    <div class="row"><span class="label">Symbol Rate</span><span id="pl-symrate" class="value">-- kBd</span></div>
+    <div class="row"><span class="label">RX SNR (EVM)</span><span id="pl-evm" class="value">-- dB</span></div>
+    <div class="row"><span class="label">Achieved TM</span><span id="pl-thr" class="value">-- kbps</span></div>
+  </div>
+
+  <!-- Radio Configuration (control plane) -->
+  <div class="panel two-col" id="config-panel" style="display:none;">
+    <h2>Radio Config <span id="cfg-state" class="value" style="color:var(--dim)"></span></h2>
+    <div class="ctl-grid">
+      <label class="label">Eb/N0 <span id="cfg-ebn0-val" class="value">10.0</span> dB
+        <input id="cfg-ebn0" type="range" min="-5" max="25" step="0.5" value="10"></label>
+      <label class="label">Doppler <span id="cfg-dopp-val" class="value">0</span> Hz
+        <input id="cfg-dopp" type="range" min="-60000" max="60000" step="500" value="0"></label>
+      <label class="label">Modulation
+        <select id="cfg-mod">
+          <option value="0">BPSK</option><option value="1">QPSK</option>
+          <option value="2">8PSK</option><option value="3">OQPSK</option>
+          <option value="4">16-APSK</option><option value="5">&pi;/4-DQPSK</option>
+          <option value="6">GMSK</option><option value="7">GFSK</option>
+        </select></label>
+      <label class="label">Symbol rate (Bd)
+        <input id="cfg-symrate" type="number" min="250" max="200000" step="250" value="32000"></label>
+      <label class="label"><input id="cfg-awgn" type="checkbox" checked> AWGN</label>
+      <label class="label"><input id="cfg-pn" type="checkbox"> Phase noise</label>
+      <label class="label">PN linewidth (Hz)
+        <input id="cfg-pn-lw" type="number" min="0" max="10000" step="1" value="10"></label>
+      <label class="label"><input id="cfg-fade" type="checkbox"> Rician fading</label>
+      <label class="label">Fading K (dB)
+        <input id="cfg-fade-k" type="number" min="-30" max="40" step="1" value="10"></label>
+      <label class="label">Fade rate (Hz)
+        <input id="cfg-fade-fd" type="number" min="0" max="1000" step="1" value="50"></label>
+    </div>
+    <div style="margin-top:8px;">
+      <div class="label">Interferers</div>
+      <div class="ctl-grid">
+        <label class="label">Type
+          <select id="cfg-int-type"><option value="cw">CW</option><option value="wideband">Wideband</option></select></label>
+        <label class="label">Offset (Hz)
+          <input id="cfg-int-off" type="number" step="500" value="20000"></label>
+        <label class="label">Power (dBm)
+          <input id="cfg-int-pwr" type="number" step="1" value="-35"></label>
+        <label class="label">Bandwidth (Hz)
+          <input id="cfg-int-bw" type="number" step="1000" value="50000"></label>
+      </div>
+      <div id="cfg-int-list" class="label" style="margin-top:4px;">none</div>
+      <button id="cfg-int-add" class="btn">Add interferer</button>
+      <button id="cfg-int-clear" class="btn">Clear all</button>
+    </div>
+    <div style="margin-top:8px;">
+      <button id="cfg-apply" class="btn primary">Apply</button>
+      <button id="cfg-release" class="btn">Release to sim</button>
+      <span id="cfg-msg" class="label"></span>
+    </div>
+  </div>
+
+  <!-- Pipeline Diagnostics -->
+  <div class="panel" id="diag-panel">
+    <h2>Pipeline Diagnostics</h2>
+    <div id="diag-body" class="label">no data</div>
   </div>
 </div>
 <div id="status-bar">Connecting...</div>
@@ -369,15 +438,34 @@ function connect() {
     setTxt('ch-fading-k', (d.fading_k_db || 10).toFixed(1) + ' dB');
     setTxt('ch-interferers', '' + (d.n_interferers || 0));
 
-    // Spectrum analyzer
-    if (d.spectrum_db && d.spectrum_db.length > 4) {
+    // Pipeline figures
+    setTxt('pl-symrate', ((d.symbol_rate_bd || 0) / 1000).toFixed(2) + ' kBd');
+    setTxt('pl-evm', (d.evm_snr_db || 0).toFixed(1) + ' dB');
+    setTxt('pl-thr', ((d.throughput_bps || 0) / 1000).toFixed(2) + ' kbps');
+
+    // Spectrum analyzer — the sample stream only exists in RF mode
+    if (d.mode !== 'RF') {
+      canvasNote('spectrum-chart', 'Spectrum: RF mode only (current mode: ' + d.mode + ')');
+      canvasNote('eye-diagram', 'Eye diagram: RF mode only');
+    } else if (d.spectrum_db && d.spectrum_db.length > 4) {
       drawSpectrum(d.spectrum_db, d.spectrum_freq_range_hz || 256000);
+    } else {
+      canvasNote('spectrum-chart', 'No spectrum data (spectrum_db empty)');
     }
 
-    // Eye diagram
-    if (d.eye_i && d.eye_i.length > 4) {
-      drawEyeDiagram(d.eye_i, d.eye_q || []);
+    // Eye diagram (I and Q rails; for OQPSK the Q eye is offset by half a symbol)
+    if (d.mode === 'RF') {
+      if (d.eye_i && d.eye_i.length > 4) {
+        drawEyeDiagram(d.eye_i, d.eye_q || [], d.eye_sps || 8);
+      } else {
+        canvasNote('eye-diagram', 'No eye data (eye_i empty)');
+      }
     }
+
+    // Pipeline diagnostics
+    renderDiagnostics(d.diagnostics || {});
+    // Configuration panel (only when the control plane is enabled)
+    syncConfigPanel(d);
 
     document.getElementById('status-bar').textContent = 'Last update: ' + new Date(d.timestamp * 1000).toLocaleTimeString();
   };
@@ -456,7 +544,21 @@ function drawSpectrum(specDb, freqRange) {
   ctx.fillText('0', w/2, h-2);
 }
 
-function drawEyeDiagram(eyeI, eyeQ) {
+// "No data" placeholder so a future breakage is visible rather than silent
+function canvasNote(id, msg) {
+  const c = document.getElementById(id);
+  if (!c) return;
+  const ctx = c.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const w = c.clientWidth || c.width, h = c.clientHeight || c.height;
+  if (c.clientWidth) { c.width = w * dpr; c.height = h * dpr; ctx.scale(dpr, dpr); }
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = '#0a0e14'; ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = '#6b7d8d'; ctx.font = '11px monospace';
+  ctx.fillText(msg, 8, h / 2);
+}
+
+function drawEyeDiagram(eyeI, eyeQ, sps) {
   const c = document.getElementById('eye-diagram');
   if (!c) return;
   const ctx = c.getContext('2d');
@@ -465,34 +567,154 @@ function drawEyeDiagram(eyeI, eyeQ) {
   ctx.fillStyle = '#0a0e14';
   ctx.fillRect(0, 0, w, h);
 
-  // Grid
-  ctx.strokeStyle = '#1e2a36'; ctx.lineWidth = 0.5;
-  ctx.beginPath(); ctx.moveTo(0,h/2); ctx.lineTo(w,h/2); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(w/2,0); ctx.lineTo(w/2,h); ctx.stroke();
-
-  // Draw I-channel eye traces (green)
   if (eyeI.length < 4) return;
-  const period = 16; // 2× symbol period at SPS=8
+  const period = 2 * (sps || 8);   // fold at 2× symbol period
   const nTraces = Math.min(30, Math.floor(eyeI.length / period));
   const scale = h / 4;
 
-  ctx.strokeStyle = 'rgba(79,195,247,0.3)'; ctx.lineWidth = 1;
-  for (let t=0; t<nTraces; t++) {
-    ctx.beginPath();
-    for (let i=0; i<period && t*period+i<eyeI.length; i++) {
-      const x = (i/period) * w;
-      const y = h/2 - eyeI[t*period + i] * scale;
-      i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  // Grid + decision instant. Traces are aligned by the backend so the
+  // decision instant sits at the centre of each trace.
+  ctx.strokeStyle = '#1e2a36'; ctx.lineWidth = 0.5;
+  ctx.beginPath(); ctx.moveTo(0,h/2); ctx.lineTo(w,h/2); ctx.stroke();
+  ctx.strokeStyle = '#ff9800'; ctx.setLineDash([3,3]);
+  ctx.beginPath(); ctx.moveTo(w/2,0); ctx.lineTo(w/2,h); ctx.stroke();
+  ctx.setLineDash([]);
+
+  const rails = [
+    { data: eyeI, color: 'rgba(79,195,247,0.35)' },   // I — blue
+    { data: eyeQ || [], color: 'rgba(76,175,80,0.35)' } // Q — green
+  ];
+  for (const rail of rails) {
+    if (!rail.data || rail.data.length < period) continue;
+    ctx.strokeStyle = rail.color; ctx.lineWidth = 1;
+    for (let t=0; t<nTraces; t++) {
+      ctx.beginPath();
+      for (let i=0; i<period && t*period+i<rail.data.length; i++) {
+        const x = (i/(period-1)) * w;
+        const y = h/2 - rail.data[t*period + i] * scale;
+        i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+      }
+      ctx.stroke();
     }
-    ctx.stroke();
   }
 
   // Labels
-  ctx.fillStyle = '#6b7d8d'; ctx.font = '9px monospace';
-  ctx.fillText('I-channel', 5, 12);
+  ctx.fillStyle = '#4fc3f7'; ctx.font = '9px monospace';
+  ctx.fillText('I', 5, 12);
+  ctx.fillStyle = '#4caf50';
+  ctx.fillText('Q', 16, 12);
+  ctx.fillStyle = '#ff9800';
+  ctx.fillText('decision', w/2 + 4, 12);
+  ctx.fillStyle = '#6b7d8d';
   ctx.fillText('+1', w-18, h/2-scale+5);
   ctx.fillText('-1', w-18, h/2+scale+5);
 }
+
+function renderDiagnostics(diag) {
+  const el = document.getElementById('diag-body');
+  if (!el) return;
+  const keys = Object.keys(diag);
+  if (keys.length === 0) { el.textContent = 'no data'; return; }
+  let html = '<div class="diag-grid">';
+  for (const k of keys) {
+    html += '<span class="k">' + k.replace(/_/g,' ') + '</span><span class="value">' + diag[k] + '</span>';
+  }
+  el.innerHTML = html + '</div>';
+}
+
+// --- Radio configuration control plane ---
+let cfgInterferers = [];
+let cfgInitialised = false;
+const $ = (id) => document.getElementById(id);
+
+function syncConfigPanel(d) {
+  const panel = $('config-panel');
+  if (!panel) return;
+  if (!d.control_enabled) {
+    panel.style.display = 'none';
+    return;
+  }
+  panel.style.display = '';
+  $('cfg-state').textContent = '(control enabled)';
+  if (cfgInitialised) return;
+  cfgInitialised = true;
+  const cfg = d.config || {};
+  const ch = cfg.channel || {}, pl = cfg.pipeline || {};
+  const set = (id, v) => { const e = $(id); if (e !== null && v !== undefined && v !== null) e.value = v; };
+  const chk = (id, v) => { const e = $(id); if (e) e.checked = !!v; };
+  set('cfg-ebn0', ch.eb_n0_db); set('cfg-dopp', ch.doppler_hz);
+  set('cfg-mod', pl.modulation); set('cfg-symrate', pl.symbol_rate);
+  chk('cfg-awgn', ch.awgn_enabled); chk('cfg-pn', ch.phase_noise_enabled);
+  set('cfg-pn-lw', ch.phase_noise_linewidth_hz);
+  chk('cfg-fade', ch.fading_enabled); set('cfg-fade-k', ch.fading_k_factor_db);
+  set('cfg-fade-fd', ch.fading_max_doppler_hz);
+  cfgInterferers = (ch.interferers || []).slice();
+  renderInterferers();
+  $('cfg-ebn0-val').textContent = Number(ch.eb_n0_db || 10).toFixed(1);
+  $('cfg-dopp-val').textContent = Math.round(ch.doppler_hz || 0);
+}
+
+function renderInterferers() {
+  const el = $('cfg-int-list');
+  if (!el) return;
+  el.textContent = cfgInterferers.length === 0 ? 'none'
+    : cfgInterferers.map(i => i.type + ' @ ' +
+        (i.freq_offset_hz ?? i.center_offset_hz ?? 0) + ' Hz, ' +
+        i.power_dbm + ' dBm').join(' | ');
+}
+
+async function postCfg(path, body) {
+  const msg = $('cfg-msg');
+  try {
+    const r = await fetch(path, { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body) });
+    const j = await r.json();
+    msg.textContent = r.ok ? 'applied' : ('error: ' + (j.error || r.status));
+    msg.style.color = r.ok ? 'var(--green)' : 'var(--red)';
+  } catch (e) {
+    msg.textContent = 'error: ' + e;
+    msg.style.color = 'var(--red)';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  const ebn0 = $('cfg-ebn0'), dopp = $('cfg-dopp');
+  if (ebn0) ebn0.oninput = () => $('cfg-ebn0-val').textContent = Number(ebn0.value).toFixed(1);
+  if (dopp) dopp.oninput = () => $('cfg-dopp-val').textContent = dopp.value;
+  const addBtn = $('cfg-int-add');
+  if (addBtn) addBtn.onclick = () => {
+    const type = $('cfg-int-type').value;
+    const spec = { type: type, power_dbm: Number($('cfg-int-pwr').value) };
+    if (type === 'cw') spec.freq_offset_hz = Number($('cfg-int-off').value);
+    else { spec.center_offset_hz = Number($('cfg-int-off').value);
+           spec.bandwidth_hz = Number($('cfg-int-bw').value); }
+    cfgInterferers.push(spec);
+    renderInterferers();
+  };
+  const clearBtn = $('cfg-int-clear');
+  if (clearBtn) clearBtn.onclick = () => { cfgInterferers = []; renderInterferers(); };
+  const apply = $('cfg-apply');
+  if (apply) apply.onclick = async () => {
+    await postCfg('/api/channel', {
+      eb_n0_db: Number($('cfg-ebn0').value),
+      doppler_hz: Number($('cfg-dopp').value),
+      awgn_enabled: $('cfg-awgn').checked,
+      phase_noise_enabled: $('cfg-pn').checked,
+      phase_noise_linewidth_hz: Number($('cfg-pn-lw').value),
+      fading_enabled: $('cfg-fade').checked,
+      fading_k_factor_db: Number($('cfg-fade-k').value),
+      fading_max_doppler_hz: Number($('cfg-fade-fd').value),
+      interferers: cfgInterferers
+    });
+    await postCfg('/api/pipeline', {
+      modulation: Number($('cfg-mod').value),
+      symbol_rate: Number($('cfg-symrate').value)
+    });
+  };
+  const release = $('cfg-release');
+  if (release) release.onclick = () => postCfg('/api/channel', { release: 'all' });
+});
 
 function drawConstellation(samples, modulation) {
   const c = document.getElementById('constellation');

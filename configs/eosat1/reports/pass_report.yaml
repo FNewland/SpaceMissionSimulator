@@ -1,0 +1,113 @@
+# EOSAT-1 Pass Report — the artefact written after every contact.
+#
+# A real Pass/Contact Report records, per contact: station, AOS/LOS, max
+# elevation, planned vs achieved activities, TM volume received against
+# expected, every uplinked command with its verification outcome, limit
+# violations during the pass, stored TM dumped and its completeness, and the
+# handover actions for the next shift. The sections below mirror that
+# structure; the narrative blocks tell the operator what to write in each.
+#
+# All period selection is on-board CUC (sim time) — the dump filename
+# timestamp is wall clock and unrelated under time acceleration.
+schema_version: 1
+report:
+  id: pass_report
+  title: "EOSAT-1 Pass Report"
+  subtitle: "{{period.station}} — {{period.start_utc}} to {{period.end_utc}}"
+  audience: operator
+  classification: "TRAINING — NOT FOR FLIGHT"
+source:
+  dumps: { mode: auto, store_ids: [1, 2, 3, 4] }
+  ground_archive: { enabled: true, use_for: [commands, alarms, gap_reference] }
+  catalogs: { config_dir: configs/eosat1 }
+period:
+  kind: pass
+  pass: { select: latest, station: any, pad_before_s: 300, pad_after_s: 300,
+          source: events }
+  timebase: cuc
+  zero_cuc_policy: interpolate
+parameter_sets:
+  eps_vitals: [eps.bat_soc, eps.bus_voltage, eps.bat_current]
+  link:       [ttc.tm_tier, ttc.tm_tier_cmd, ttc.tm_data_rate,
+               ttc.contact_elevation, ttc.link_status]
+  thermal:    [tcs.temp_battery, tcs.temp_fpa]
+sections:
+  - { type: header, id: cover,
+      include: [period, dumps_used, packet_totals, crc_errors, generated_at] }
+  - type: narrative
+    id: summary
+    title: "Pass summary"
+    text: |
+      **Station:** {{period.station}}  **AOS:** {{period.start_utc}}  **LOS:** {{period.end_utc}}
+      **Duration:** {{period.duration_min}} min
+
+      Data return {{gaps.received_pct}} % of expected. {{counts.commands.total}} commands
+      uplinked, {{counts.commands.rejected}} rejected. {{counts.events.severity_3plus}}
+      events of severity 3 or above.
+
+      *Operator: record here what you were trying to achieve this pass, what you actually
+      achieved, and what the next shift must pick up. A pass report that only lists numbers
+      is not a pass report.*
+  - type: completeness
+    id: gaps
+    title: "Telemetry received vs expected"
+    sids: [1, 2, 3, 4, 5, 6]
+    expected_cadence: from_config
+    gap_threshold_multiple: 3.0
+    breakdown: [per_sid]
+    show: [expected, received, missing_pct, longest_gap_s, gap_list,
+           store_wrap, crc_errors]
+    correlate_with: [contacts, store_overflow]
+  - type: plot
+    id: link
+    title: "Link and geometry"
+    style: multi_axis
+    axes:
+      - { label: "Elevation / deg", parameters: [ttc.contact_elevation],
+          range: [0, 90] }
+      - { label: "Rate / bps", parameters: [ttc.tm_data_rate], side: right,
+          log: true }
+    annotations: { contacts: true, events: [0x0001, 0x0002] }
+  - { type: plot, id: tier, style: step,
+      parameters: [ttc.tm_tier, ttc.tm_tier_cmd, ttc.downlink_mode],
+      show_transitions_table: true }
+  - { type: plot, id: power, style: multi_axis,
+      axes: [ { label: "SoC / %", parameters: [eps.bat_soc], range: [0, 100] },
+              { label: "Bus / V", parameters: [eps.bus_voltage], side: right } ],
+      annotations: { eclipse: true } }
+  - { type: stats, id: vitals, title: "Vitals over the pass",
+      groups: [ { label: "EPS", parameters: parameter_sets.eps_vitals },
+                { label: "TCS", parameters: parameter_sets.thermal },
+                { label: "Link", parameters: parameter_sets.link } ],
+      columns: [count, min, min_at, max, max_at, mean, stddev, first, last,
+                ool_red_s],
+      limits_from: mcs/limits.yaml }
+  - { type: commands, id: commands, title: "Commands uplinked this pass",
+      source: [s1_verification],
+      show: [utc, seq, apid, accept, execute, error_code, error_text, reason],
+      flag_rule: "outcome in [REJECTED, FAILED, NO_VERIFICATION]" }
+  - { type: events, id: events, title: "Events", severity_min: 2,
+      include_synthetic_s12: true, resolve_names: event_catalog,
+      group_by: severity,
+      correlate: { window_s: 60, with: [commands, s12_transitions] } }
+  - { type: alarms, id: alarms, title: "Limit violations", severity_min: 2,
+      pair_entries_and_clears: true, unpaired_policy: report,
+      s19_correlation: { enabled: true,
+                         rules_from: monitoring/s19_rules.yaml } }
+  - { type: table, id: stores, title: "On-board stores at dump",
+      source: s15_store_status,
+      columns: [id, name, count, capacity, fill_pct, overflow, circular,
+                wrap_count] }
+  - type: narrative
+    id: handover
+    title: "Actions and handover"
+    text: |
+      | # | Action | Owner | Due |
+      |---|--------|-------|-----|
+      |   |        |       |     |
+
+      Open anomalies carried forward:
+      Next contact: {{next_pass.station}} at {{next_pass.aos_utc}}
+  - { type: appendix, id: raw,
+      include: [packet_counts_by_service, apids, undecodable, spec_yaml] }
+output: { formats: [html], self_contained: true, save_to: workspace/reports }

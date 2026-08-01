@@ -1,0 +1,26 @@
+name: "Propulsion Latch Valve Stuck Open"
+difficulty: ADVANCED
+duration_s: 3600
+briefing: |
+  During routine post-pass housekeeping, latch valve branch A fails stuck
+  open at T+300s and the flow-control valve seat begins to seep — a slow
+  continuous propellant loss (~20 mg/s). The absolute tank-pressure band
+  will not alarm for a long time; the DELTA (rate) monitor on
+  prop.tank_pressure (0x0B01) is what makes the loss visible. The crew must
+  recognise the signature (pressure AND propellant mass falling together),
+  isolate per CTG-028, recognise that branch A reports FAULT and did not
+  close, and bound the remaining usable delta-V — the debris-avoidance
+  reserve is the number the Flight Director needs.
+events:
+  - time_offset_s: 300
+    action: inject
+    params:
+      subsystem: prop
+      failure: latch_stuck_open
+      magnitude: 1.0
+      branch: 0
+      rate_mg_s: 20.0
+expected_responses:
+  - { category: detect, description: "Detect the 0x0B01 pressure-rate (delta) alarm and PROP_VALVE_FAULT / PROP_LEAK_DETECTED events" }
+  - { category: isolate, description: "PROP_ISO_CLOSE both branches (CTG-028 step 2); recognise branch A state 2 = stuck, isolation partial" }
+  - { category: recover, description: "Bound remaining usable delta-V (0x0B0C corrected for the stuck branch), latch the ground inhibit, ticket" }

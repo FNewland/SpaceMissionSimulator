@@ -14,6 +14,8 @@ import time
 from enum import IntEnum
 from typing import Any, Callable, Coroutine
 
+from smo_common.procedures import describe_step, to_canonical
+
 logger = logging.getLogger(__name__)
 
 
@@ -58,6 +60,7 @@ class ProcedureRunner:
         self.state = ProcedureState.IDLE
         self.procedure_name: str = ""
         self.procedure_ref: str = ""
+        self.scheduled_start_time: str | None = None
         self.steps: list[dict] = []
         self.current_step: int = -1
         self.step_results: list[dict] = []
@@ -76,14 +79,29 @@ class ProcedureRunner:
         steps: list[dict],
         procedure_ref: str = "",
         step_by_step: bool = False,
+        start_time: str | None = None,
     ) -> dict:
-        """Load a procedure/command sequence for execution."""
+        """Load a procedure/command sequence for execution.
+
+        ``start_time`` (ISO 8601, optional) is the planner-scheduled start of
+        the activity. The ground-side runner still executes on operator
+        start, but the scheduled time is preserved and surfaced in status()
+        so it is no longer discarded at the planner→MCS interface (defect
+        #44). Time-correct on-board execution uses the S11 upload path
+        (MCS /api/schedule/s11-upload) instead.
+        """
         if self.state in (ProcedureState.RUNNING, ProcedureState.PAUSED):
             return {"error": "A procedure is currently active. Abort it first."}
 
         self.procedure_name = name
         self.procedure_ref = procedure_ref
-        self.steps = list(steps)
+        self.scheduled_start_time = start_time
+        # Normalise every accepted dialect into the ONE canonical step schema
+        # (smo_common.procedures, defect #83) before execution, so the runner
+        # has a single shape to reason about and the operator sees a single
+        # rendering. The untagged and tagged branches in _execute_step remain
+        # as a safety net for anything constructed directly in a test.
+        self.steps = to_canonical(steps)
         self.current_step = -1
         self.step_by_step = step_by_step
         self.step_results = [
@@ -182,6 +200,7 @@ class ProcedureRunner:
             "state_code": int(self.state),
             "procedure_name": self.procedure_name,
             "procedure_ref": self.procedure_ref,
+            "scheduled_start_time": self.scheduled_start_time,
             "total_steps": len(self.steps),
             "current_step": self.current_step,
             "step_by_step": self.step_by_step,
@@ -394,7 +413,33 @@ class ProcedureRunner:
 
     @staticmethod
     def _build_data_hex(step: dict) -> str:
-        """Build data_hex from step fields (func_id, sid, store_id, etc.)."""
+        """Build data_hex from step fields (func_id, sid, store_id, etc.).
+
+        Phase E (brief 04 WP-1/WP-6): a step may carry named ``args`` in
+        ENGINEERING units — they are packed by the shared catalogue encoder
+        (``smo_common.commanding.encode``), the same code path the OBCP
+        loader, the planner expander and the S11 embedder use, so the five
+        ground-side encoders cannot diverge. The old hard-coded
+        ``parameters{target_lat, target_lon} -> struct.pack('>ff', ...)``
+        special case is gone with the lat/lon capture encoding itself.
+        """
+        # ── Named engineering args -> shared catalogue encoder ──
+        if isinstance(step.get("args"), dict) and \
+                ("service" in step or "command" in step):
+            try:
+                from smo_common.commanding import encode
+                if step.get("command"):
+                    return encode(str(step["command"]), step["args"]).hex()
+                svc = int(step.get("service", 8))
+                sub = int(step.get("subtype", 1))
+                fid = step.get("func_id")
+                if isinstance(fid, str):
+                    fid = int(fid, 16) if fid.startswith("0x") else int(fid)
+                return encode((svc, sub, fid), step["args"]).hex()
+            except Exception as exc:
+                logger.warning("catalogue encode failed for step %s: %s",
+                               step.get("description", step), exc)
+                # fall through to the legacy positional packing
         parts = bytearray()
         if "func_id" in step:
             fid = step["func_id"]
@@ -437,12 +482,11 @@ class ProcedureRunner:
 
 
 def _step_desc(step: dict) -> str:
-    """Generate a human-readable description for a step."""
-    if "wait_s" in step:
-        return f"Wait {step['wait_s']}s"
-    if "wait_for" in step:
-        wf = step["wait_for"]
-        return f"Wait for {wf.get('parameter', '?')} == {wf.get('value', '?')}"
-    if "service" in step:
-        return step.get("description", f"S{step['service']}.{step['subtype']}")
-    return str(step)
+    """Human-readable description for a step, in any dialect.
+
+    Delegates to the one canonical renderer (defect #83). It used to fall
+    through to ``str(step)`` for every ``type``-tagged step, so the MCS step
+    list showed operators raw Python dicts for builder-authored waits,
+    telemetry checks and GO/NO-GO gates.
+    """
+    return describe_step(step)

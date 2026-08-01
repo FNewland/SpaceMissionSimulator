@@ -27,8 +27,8 @@ for mission operations.
 **GO/NO-GO:** Bus voltage regulated within specification
 
 ### Step 2 — Battery Voltage and State of Charge
-**TC:** `GET_PARAM(0x0100)` (Service 20, Subtype 1) — battery voltage
-**TC:** `GET_PARAM(0x0101)` (Service 20, Subtype 1) — battery SOC
+**TC:** `GET_PARAM(0x0100)` (Service 20, Subtype 3) — battery voltage
+**TC:** `GET_PARAM(0x0101)` (Service 20, Subtype 3) — battery SOC
 **Verify:** `eps.bat_voltage` (0x0100) in range [14.4V, 16.8V] within 10s
 **Verify:** `eps.bat_soc` (0x0101) > 70% within 10s
 **Action:** Record values. Li-Ion 40Ah battery nominal voltage range is 14.4V (empty) to 16.8V (full).
@@ -60,7 +60,7 @@ for mission operations.
 
 ### Step 6 — Power Budget Verification
 **Action:** Calculate total spacecraft power consumption from telemetry. Compare against power generation and battery capacity. Verify positive energy balance over one complete orbit.
-**TC:** `GET_PARAM(0x0108)` (Service 20, Subtype 1) — total load power
+**TC:** `GET_PARAM(0x0108)` (Service 20, Subtype 3) — total load power
 **Verify:** Orbit-average power generation > orbit-average power consumption
 **Verify:** End-of-eclipse SOC > 50% under nominal load
 **Action:** Document power budget with margins for commissioning and nominal operations.

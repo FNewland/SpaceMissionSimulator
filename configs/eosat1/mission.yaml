@@ -27,9 +27,18 @@ payload:
   bands: [443, 560, 665, 865]  # nm — ocean color
   target: ocean_current_monitoring
 
-ground_segment:
-  stations: [Iqaluit, Troll]
-  band: S
+# Ground segment — deliberately NOT declared here (brief 08 finding 19 / X-11).
+#
+# This file used to carry a `ground_segment: {stations: [...], band: S}` block
+# that `MissionConfig` does not declare and pydantic silently dropped, with a
+# comment asking the reader to keep the station list in step with orbit.yaml
+# by hand. A second, unenforced copy of the station list is exactly the drift
+# this project's most expensive defects came from, so the copy is gone.
+#
+# THE canonical station list (names + geometry) is `orbit.yaml: ground_stations`,
+# loaded by the simulator's contact model, the planner and the MCS via
+# `load_orbit_config`. RF-only augmentation (G/T, frequencies, antenna size)
+# lives in `planning/ground_stations.yaml`.
 
 network:
   tc_port: 8001

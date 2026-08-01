@@ -20,6 +20,7 @@ rich = ["rich>=13.0"]
 
 [project.scripts]
 smo-rfsim = "smo_rfsim.bridge:main"
+smo-rfsim-record = "smo_rfsim.recording.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/smo_rfsim"]

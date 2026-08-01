@@ -148,21 +148,45 @@ class TMFrameBuilder:
         return self._drain_frames(vcid)
 
     def flush(self, vcid: int = 0) -> list[TMFrame]:
-        """Flush remaining data as a padded frame (idle fill)."""
+        """Flush remaining data as a padded frame (idle fill).
+
+        The flushed frame's FHP is the offset of the first packet *header*
+        inside the leftover data, not a hard-coded 0: when the leftover is the
+        tail of a packet that spanned the previous frame boundary, byte 0 is a
+        continuation, and advertising FHP=0 makes the receiver try to parse a
+        packet header out of continuation bytes.
+
+        Flushing also drops the recorded packet-start offsets along with the
+        buffer they refer to. Leaving them behind made every subsequent frame
+        inherit a stale offset and emit a wrong FHP, which desynchronised the
+        receiver's reassembly buffer and silently lost whole frames of
+        telemetry (root cause of the intermittent acceptance-test ACK loss).
+        """
         buf = self._get_buffer(vcid)
+        offsets = self._get_pkt_offsets(vcid)
         if not buf:
+            # Nothing buffered: any offsets still recorded are stale.
+            offsets.clear()
             return []
         frames = self._drain_frames(vcid)
         # If there's still leftover data, pad to fill a frame
         if buf:
             remaining = bytes(buf)
+            # Offsets are kept relative to the current buffer start by
+            # _drain_frames, so they index directly into `remaining`.
+            fhp = FIRST_HEADER_POINTER_IDLE
+            for off in offsets:
+                if 0 <= off < len(remaining):
+                    fhp = off
+                    break
             buf.clear()
+            offsets.clear()
             pad_len = self.data_zone_length - len(remaining)
             data_zone = remaining + (b'\xFE' * pad_len)
-            # FHP = 0: a packet starts at the beginning of this data zone
-            fhp = 0
             frame = self._build_frame(vcid, data_zone, fhp)
             frames.append(frame)
+        else:
+            offsets.clear()
         return frames
 
     def build_idle_frame(self, vcid: int = 7) -> TMFrame:

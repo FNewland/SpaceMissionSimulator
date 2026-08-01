@@ -6,19 +6,28 @@
 
 ## Purpose
 Activate the Focal Plane Array (FPA) cooler on the multispectral imager. Monitor
-the cooldown from ambient temperature to the operational temperature of -15C.
-Verify cooler power consumption, cooldown rate, and thermal stability. The FPA must
-reach and maintain the operational temperature before imaging operations can begin.
+the cooldown from the uncooled equilibrium to the commanded setpoint (default
+-15C). Verify cooler power consumption, cooldown rate, and thermal stability. The
+FPA must reach and hold the setpoint — `payload.fpa_ready` (0x0610) = 1 — before
+imaging operations can begin.
+
+> **Timings revised (build 2026-08).** Every temperature and interval in this
+> procedure is measured off the corrected single-node FPA model. The previous
+> revision described a 30-minute cooldown that passed through -20C on its way to
+> -15C: it was written against the pre-Phase-B model, in which the setpoint was
+> applied as an *additive environment offset* so the node ran away to ambient
+> minus 35 K. The real loop settles in about 10 minutes and never overshoots the
+> setpoint.
 
 ## Prerequisites
-- [ ] COM-101 (Payload Power-On) completed — payload in STANDBY (mode 1)
+- [ ] COM-009 (Payload Power-On) completed — payload in STANDBY (mode 1)
 - [ ] Payload self-test PASS confirmed
-- [ ] `payload.fpa_temp` (0x0601) at ambient baseline (+5C to +25C)
-- [ ] `eps.bat_soc` (0x0101) > 70% (cooler adds ~10W continuous load)
+- [ ] `payload.fpa_temp` (0x0601) at the uncooled equilibrium (+8C to +14C)
+- [ ] `eps.bat_soc` (0x0101) > 70% (cooler adds 15 W continuous load)
 - [ ] `eps.power_gen` (0x0107) > 40W (sunlit phase, wings deployed)
 - [ ] AOCS in SAFE_POINT (mode 2) or NOMINAL_POINT (mode 3)
 - [ ] Bidirectional S-band link active
-- [ ] Ground station pass covers at least 20 minutes (or multiple passes available)
+- [ ] Ground station pass covers at least 15 minutes (or multiple passes available)
 - [ ] Payload and thermal engineers on console
 
 ## Procedure Steps
@@ -26,89 +35,99 @@ reach and maintain the operational temperature before imaging operations can beg
 ### Step 1 — Record Pre-Activation Thermal State
 **TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 27)
 **TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27)
-**Verify:** `payload.fpa_temp` (0x0601) in range [+5C, +25C] within 10s
+**Verify:** `payload.fpa_temp` (0x0601) in range [+8C, +14C] within 10s
 **Verify:** `tcs.temp_fpa` (0x0408) consistent with `payload.fpa_temp` within 10s
 **Verify:** `payload.mode` (0x0600) = 1 (STANDBY) within 10s
 **Action:** Record baseline FPA temperature and timestamp. This marks cooldown T=0.
 **GO/NO-GO:** FPA at ambient temperature, payload in STANDBY
 
 ### Step 2 — Enable FPA Cooler
-**TC:** `SET_PARAM(0x0620, 1)` (Service 20, Subtype 3) — FPA cooler enable
-**Verify:** FPA cooler status = ON (value 1) within 10s via `GET_PARAM(0x0620)`
-**Action:** Cooler compressor starts. Expect slight increase in payload power draw (~8-12W additional). Audible vibration signature may appear in accelerometer data — this is normal.
+**TC:** `FPA_COOLER(on=1)` (Service 8, Subtype 1, func_id 43) — FPA cooler enable  
+**Wire:** `2B 01`
+**Verify:** `tcs.cooler_fpa` (0x040C) = 1 within 10 s via `GET_PARAM(0x040C)` (Service 20, Subtype 3)
+**Action:** The thermo-electric cooler starts. Expect the payload power draw to rise by 15 W (`subsystems/payload.yaml: fpa_cooler_power_w`), reported at `payload.cooler_pwr` (0x0602). Cooling begins immediately — this is a Peltier stack, not a mechanical compressor, so there is no start-up transient and no vibration signature.
 **GO/NO-GO:** FPA cooler enabled and running
 
 ### Step 3 — Verify Cooler Power Draw
 **TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
-**TC:** `GET_PARAM(0x0108)` (Service 20, Subtype 1) — total load power
-**Verify:** Total power increase is 8-12W relative to pre-cooler baseline within 30s
+**TC:** `GET_PARAM(0x0108)` (Service 20, Subtype 3) — total load power
+**Verify:** Total power increase is 14-16W relative to the pre-cooler baseline within 30s
 **Verify:** `eps.bus_voltage` (0x0105) > 27.0V (bus stable under additional load) within 10s
 **GO/NO-GO:** Cooler power draw within specification, bus stable
 
-### Step 4 — Monitor Cooldown (First 10 Minutes)
-**Action:** Sample FPA temperature every 2 minutes during initial cooldown.
-**TC:** `GET_PARAM(0x0601)` (Service 20, Subtype 1) — at T+2 min
-**Verify:** `payload.fpa_temp` < initial temperature (cooling trend) within 10s
-**TC:** `GET_PARAM(0x0601)` (Service 20, Subtype 1) — at T+5 min
-**Verify:** `payload.fpa_temp` < +15C within 10s (expected cooldown rate ~2-3C/min initially)
-**TC:** `GET_PARAM(0x0601)` (Service 20, Subtype 1) — at T+10 min
-**Verify:** `payload.fpa_temp` < 0C within 10s
-**Action:** Record cooldown curve data points. Initial cooldown rate should be 2-3C per minute, slowing as temperature decreases.
-**GO/NO-GO:** FPA temperature decreasing at expected rate
+### Step 4 — Monitor Cooldown (First 5 Minutes)
+**Action:** Sample FPA temperature every minute during the initial ramp.
+**TC:** `GET_PARAM(0x0601)` (Service 20, Subtype 3) — at T+2 min
+**Verify:** `payload.fpa_temp` < +4C within 10s (initial rate is about 4C/min)
+**TC:** `GET_PARAM(0x0601)` (Service 20, Subtype 3) — at T+5 min
+**Verify:** `payload.fpa_temp` < -8C within 10s
+**Action:** Record cooldown curve data points. The ramp is exponential, not
+linear: the rate falls as the node approaches the setpoint, so a slower reading
+at T+5 than at T+2 is expected and is not a fault.
+**GO/NO-GO:** FPA temperature decreasing at the expected rate
 
-### Step 5 — Monitor Cooldown (10-30 Minutes)
-**Action:** Continue monitoring at 5-minute intervals as cooldown rate decreases.
-**TC:** `GET_PARAM(0x0601)` (Service 20, Subtype 1) — at T+15 min
-**Verify:** `payload.fpa_temp` < -10C within 10s
-**TC:** `GET_PARAM(0x0601)` (Service 20, Subtype 1) — at T+20 min
-**Verify:** `payload.fpa_temp` < -20C within 10s
-**TC:** `GET_PARAM(0x0601)` (Service 20, Subtype 1) — at T+30 min
-**Verify:** `payload.fpa_temp` < -13C within 10s
-**GO/NO-GO:** FPA approaching operational temperature
+### Step 5 — Monitor Settling (5-15 Minutes)
+**Action:** Continue monitoring at 5-minute intervals as the loop closes.
+**TC:** `GET_PARAM(0x0601)` (Service 20, Subtype 3) — at T+10 min
+**Verify:** `payload.fpa_temp` in range [-16.0C, -14.0C] within 10s
+**TC:** `GET_PARAM(0x0601)` (Service 20, Subtype 3) — at T+15 min
+**Verify:** `payload.fpa_temp` in range [-16.0C, -15.0C] within 10s
+**Note:** The detector never goes *below* the setpoint band. A reading colder
+than -16.5C is a control fault, not an over-performing cooler; the cooler
+regulates to the setpoint, it does not run open-loop.
+**GO/NO-GO:** FPA at the commanded setpoint
 
 ### Step 6 — Verify Operational Temperature Reached
-**TC:** `GET_PARAM(0x0601)` (Service 20, Subtype 1)
-**Verify:** `payload.fpa_temp` (0x0601) in range [-17C, -13C] within 10s
-**Action:** Wait for temperature to stabilize at -15C +/- 2C. The cooler control loop regulates to the setpoint.
-**TC:** `GET_PARAM(0x0621)` (Service 20, Subtype 1) — cooler setpoint
+**TC:** `GET_PARAM(0x0601)` (Service 20, Subtype 3)
+**Verify:** `payload.fpa_temp` (0x0601) in range [-16.5C, -14.5C] within 10s
+**TC:** `GET_PARAM(0x0610)` (Service 20, Subtype 3) — `payload.fpa_ready`
+**Verify:** `payload.fpa_ready` (0x0610) = 1 within 60s of reaching the band
+**Action:** The readiness flag, not a remembered temperature, is the gate for
+imaging: it means the loop has settled about the **active** setpoint (-1 K /
++5 K) and the detector is at or below -3.0C. It carries a 60 s hysteresis, so
+expect it to set about a minute after the temperature arrives.
+**TC:** `GET_PARAM(0x0631)` (Service 20, Subtype 3) — cooler setpoint readback (0x0621 is the GREEN-band SNR, not the setpoint)
 **Verify:** Cooler setpoint = -15C within 10s
-**GO/NO-GO:** FPA at operational temperature -15C +/- 2C
+**GO/NO-GO:** FPA at the commanded setpoint, `fpa_ready` = 1
 
 ### Step 7 — Verify Temperature Stability
 **Action:** Monitor FPA temperature for 10 minutes to confirm stable regulation at setpoint.
-**TC:** `GET_PARAM(0x0601)` (Service 20, Subtype 1) — at T+35 min
-**TC:** `GET_PARAM(0x0601)` (Service 20, Subtype 1) — at T+40 min
-**TC:** `GET_PARAM(0x0601)` (Service 20, Subtype 1) — at T+45 min
-**Verify:** `payload.fpa_temp` remains in range [-17C, -13C] across all samples
-**Verify:** Temperature variation < 1C peak-to-peak over 10 minutes
-**Action:** Record stability data. Peak-to-peak variation < 0.5C indicates excellent cooler control.
+**TC:** `GET_PARAM(0x0601)` (Service 20, Subtype 3) — at T+35 min
+**TC:** `GET_PARAM(0x0601)` (Service 20, Subtype 3) — at T+40 min
+**TC:** `GET_PARAM(0x0601)` (Service 20, Subtype 3) — at T+45 min
+**Verify:** `payload.fpa_temp` remains in range [-16.5C, -14.5C] across all samples
+**Verify:** Temperature variation < 1.0C peak-to-peak over 10 minutes
+**Action:** Record stability data. The regulated node holds 3 sigma = 0.5 K
+about its setpoint, so peak-to-peak below 0.5C is normal control performance
+and above 1.0C indicates a degraded loop.
 **GO/NO-GO:** FPA temperature stable at operational setpoint
 
 ### Step 8 — Monitor Through Eclipse (if applicable)
 **Action:** If pass spans an eclipse, verify cooler maintains FPA temperature.
-**TC:** `GET_PARAM(0x0601)` (Service 20, Subtype 1) — during eclipse
-**Verify:** `payload.fpa_temp` remains in range [-17C, -13C] within 10s
+**TC:** `GET_PARAM(0x0601)` (Service 20, Subtype 3) — during eclipse
+**Verify:** `payload.fpa_temp` remains in range [-16.5C, -14.5C] within 10s
 **Verify:** `eps.bus_voltage` (0x0105) > 27.0V (bus holds with cooler load) within 10s
 **GO/NO-GO:** Cooler maintains setpoint through eclipse with adequate power
 
 ### Step 9 — Generate Cooler Activation Report
 **Action:** Compile complete cooldown curve (temperature vs time), cooler power consumption, thermal stability data, and eclipse performance. Distribute FPA Cooler Activation Report. FPA is now ready for imaging.
-**GO/NO-GO:** FPA cooler activated and stable — ready for COM-103
+**GO/NO-GO:** FPA cooler activated and stable — ready for COM-012
 
 ## Off-Nominal Handling
-- If FPA temperature not decreasing after 5 minutes: Verify cooler status via `GET_PARAM(0x0620)`. If cooler ON but not cooling, check cooler power draw — zero draw indicates compressor failure. Power off cooler, power off payload. Escalate to payload thermal engineer.
-- If cooldown rate slower than 1C/min from start: May indicate reduced cooler efficiency or higher thermal load than predicted. Allow additional time. If FPA cannot reach -13C within 60 minutes, log anomaly. Imaging may still be possible at higher FPA temperature with reduced performance.
-- If bus voltage drops below 27.0V with cooler running: Disable cooler via `SET_PARAM(0x0620, 0)`. Check battery SOC. Wait for higher charge state or better illumination. Retry during next sunlit pass with full battery.
-- If FPA temperature oscillating > 2C at setpoint: Cooler control loop may need tuning. Check setpoint via `GET_PARAM(0x0621)`. If oscillation persists, adjust cooler gain via `SET_PARAM(0x0622, <value>)` per payload manufacturer guidance.
+- If FPA temperature not decreasing after 2 minutes: Verify cooler status via `GET_PARAM(0x040C)`. If cooler ON but not cooling, check cooler power draw — zero draw indicates compressor failure. Power off cooler, power off payload. Escalate to payload thermal engineer.
+- If the cooldown rate is slower than 2C/min over the first two minutes: this indicates reduced cooler efficiency or a higher thermal load than predicted. Allow additional time. If the FPA cannot reach -14.5C within 20 minutes, log an anomaly. Imaging is still possible at a warmer setpoint down to -3.0C with reduced SNR — re-command the setpoint rather than waiting indefinitely.
+- If bus voltage drops below 27.0V with cooler running: Disable cooler via `FPA_COOLER(on=0)` (func_id 43, wire `2B 00`). Check battery SOC. Wait for higher charge state or better illumination. Retry during next sunlit pass with full battery.
+- If FPA temperature oscillating > 1C peak-to-peak at setpoint: Cooler control loop may need tuning. Check setpoint via `GET_PARAM(0x0631)`. If the oscillation persists, re-command the setpoint with `PAYLOAD_COOLER_SETPOINT(setpoint=-15.00 degC)` (func_id 36, wire `24 64 D7`) — there is no commandable cooler-gain parameter.
 - If cooler introduces excessive vibration (detected via accelerometer jitter): Compare AOCS attitude jitter with cooler ON vs OFF. If jitter exceeds pointing requirement, schedule cooler operation for non-imaging periods. Consult AOCS engineer for filter tuning.
 
 ## Post-Conditions
 - [ ] FPA cooler activated and running
-- [ ] FPA temperature stable at -15C +/- 2C
-- [ ] Temperature stability < 1C peak-to-peak
-- [ ] Cooler power draw 8-12W within specification
+- [ ] FPA temperature stable at the commanded setpoint (-15C, band -16.5C to -14.5C)
+- [ ] `payload.fpa_ready` (0x0610) = 1
+- [ ] Temperature stability < 1.0C peak-to-peak
+- [ ] Cooler power draw 14-16W within specification
 - [ ] Bus voltage maintained under cooler load
 - [ ] Cooldown curve documented
 - [ ] Eclipse performance verified (if tested)
 - [ ] FPA Cooler Activation Report distributed
-- [ ] GO decision for COM-103 (First Light Acquisition)
+- [ ] GO decision for COM-012 (First Light)

@@ -70,6 +70,19 @@ class RFSimBridge:
         self._sim_eb_n0: float = config.channel.eb_n0_db
         self._sim_rssi: float = -120.0
 
+        # Display producer rate limiting (spectrum/eye FFT work)
+        self._last_display_update = 0.0
+        self._display_min_period_s = 0.2   # <= 5 Hz
+        # Achieved-throughput measurement
+        self._last_throughput_t = 0.0
+        self._last_good_frames = 0
+        # Operator overrides from the control API take precedence over
+        # sim WS feedback until explicitly released.
+        self._manual_overrides: set[str] = set()
+        self._commanded_data_rate_bps: Optional[float] = None
+        #: Name of the spacecraft's active TM rate tier, from the sim WS feed.
+        self._commanded_tier_name: Optional[str] = None
+
         if self.mode == RFSimMode.FRAME:
             self._init_frame_mode()
         elif self.mode == RFSimMode.RF:
@@ -391,6 +404,9 @@ class RFSimBridge:
                     self._pipeline.good_frames,
                     self._pipeline.bad_frames)
 
+                # Spectrum, eye, channel model, link budget, diagnostics
+                self._update_displays()
+
             elif self.mode == RFSimMode.FRAME:
                 eb_n0 = self.config.channel.eb_n0_db
                 if self._channel:
@@ -420,6 +436,169 @@ class RFSimBridge:
                 self.radio.update_rf(99.0)
 
             await asyncio.sleep(1.0)
+
+    # ── Live display producers (RF mode) ──
+
+    def _update_displays(self, force: bool = False) -> bool:
+        """Feed the spectrum analyser, eye diagram, channel-model and
+        link-budget panels from the live pipeline.
+
+        Rate limited to ``1 / _display_min_period_s`` (≤ 5 Hz) so the FFT
+        and eye folding never swamp the bridge loop. Returns True when an
+        update was produced.
+        """
+        if not self._pipeline:
+            return False
+        now = time.monotonic()
+        if not force and (now - self._last_display_update) < self._display_min_period_s:
+            return False
+        self._last_display_update = now
+
+        # Spectrum: post-impairment samples, exactly what a GS SDR sees
+        try:
+            samples = self._pipeline.get_spectrum_samples()
+            self.radio.update_spectrum(samples,
+                                       sample_rate=self._pipeline.sample_rate)
+        except Exception as e:                       # pragma: no cover
+            logger.debug("Spectrum update failed: %s", e)
+
+        # Eye: oversampled post-matched-filter waveform
+        try:
+            eye = self._pipeline.get_eye_samples()
+            self.radio.update_eye_diagram(
+                eye, sps=self._pipeline.sps,
+                timing_offset=self._pipeline.eye_timing_offset)
+        except Exception as e:                       # pragma: no cover
+            logger.debug("Eye update failed: %s", e)
+
+        # Channel model + link budget panels
+        try:
+            self.radio.update_channel_status(self._pipeline.get_channel_status())
+            self.radio.update_link_budget(self._pipeline.get_link_budget())
+        except Exception as e:                       # pragma: no cover
+            logger.debug("Channel/link-budget update failed: %s", e)
+
+        # Achieved throughput: good frames/s × payload bits per frame
+        try:
+            good = self._pipeline.good_frames
+            if self._last_throughput_t > 0:
+                dt = now - self._last_throughput_t
+                if dt > 0:
+                    frame_bits = self.config.ccsds.tm_frame_length * 8
+                    thr = (good - self._last_good_frames) * frame_bits / dt
+                    self.radio.update_pipeline_status(throughput_bps=max(0.0, thr))
+            self._last_throughput_t = now
+            self._last_good_frames = good
+            self.radio.update_pipeline_status(
+                symbol_rate_bd=self._pipeline.symbol_rate,
+                evm_snr_db=self._pipeline.evm_db)
+            self.radio.update_diagnostics(self._pipeline.get_diagnostics())
+            self.radio.update_config(
+                self.config.to_dict(),
+                control_enabled=self.config.network.radio_control_enabled)
+        except Exception as e:                       # pragma: no cover
+            logger.debug("Pipeline status update failed: %s", e)
+        return True
+
+    # ── Runtime control plane (radio web UI POST routes) ──
+
+    def get_effective_config(self) -> dict:
+        """Current effective configuration plus live channel state."""
+        out = self.config.to_dict()
+        out["control_enabled"] = self.config.network.radio_control_enabled
+        out["manual_overrides"] = sorted(self._manual_overrides)
+        if self._pipeline:
+            out["channel_status"] = self._pipeline.get_channel_status()
+            out["link_budget"] = self._pipeline.get_link_budget()
+            out["symbol_rate_bd"] = self._pipeline.symbol_rate
+        return out
+
+    def get_diagnostics(self) -> dict:
+        if not self._pipeline:
+            return {}
+        return self._pipeline.get_diagnostics()
+
+    _CHANNEL_KEYS = (
+        "eb_n0_db", "doppler_hz", "awgn_enabled",
+        "phase_noise_enabled", "phase_noise_linewidth_hz",
+        "fading_enabled", "fading_k_factor_db", "fading_max_doppler_hz",
+        "multipath_enabled", "multipath_taps", "interferers",
+    )
+
+    def apply_channel(self, payload: dict) -> dict:
+        """POST /api/channel — set Eb/N0, Doppler and RF impairments.
+
+        Any key present here is marked as a manual override so the 1 Hz sim
+        WS feedback does not stomp the operator's setting a second later.
+        Pass ``{"release": ["eb_n0_db"]}`` (or ``"all"``) to hand control
+        back to the simulator.
+        """
+        if not self.config.network.radio_control_enabled:
+            raise PermissionError("Radio control plane disabled "
+                                  "(start the bridge with --radio-control)")
+        if not self._pipeline:
+            raise RuntimeError("Channel control requires RF mode")
+
+        release = payload.get("release")
+        if release == "all":
+            self._manual_overrides.clear()
+        elif isinstance(release, (list, tuple)):
+            self._manual_overrides.difference_update(release)
+
+        updates = {k: payload[k] for k in self._CHANNEL_KEYS if k in payload}
+        if updates:
+            self._pipeline.set_impairments(**updates)
+            self._manual_overrides.update(updates)
+            if "eb_n0_db" in updates:
+                self.config.channel.eb_n0_db = float(updates["eb_n0_db"])
+            if "doppler_hz" in updates:
+                self.config.channel.doppler_hz = float(updates["doppler_hz"])
+                self._pipeline.set_doppler(float(updates["doppler_hz"]))
+        self._update_displays(force=True)
+        return self.get_effective_config()
+
+    def apply_pipeline(self, payload: dict) -> dict:
+        """POST /api/pipeline — modulation / symbol rate / data rate."""
+        if not self.config.network.radio_control_enabled:
+            raise PermissionError("Radio control plane disabled "
+                                  "(start the bridge with --radio-control)")
+        if not self._pipeline:
+            raise RuntimeError("Pipeline control requires RF mode")
+
+        mod = payload.get("modulation")
+        if mod is not None:
+            mod = int(mod)
+            self._pipeline.reconfigure(modulation=mod)
+            self.radio.update_modulation(mod)
+            self._manual_overrides.add("modulation")
+        if payload.get("data_rate_bps") is not None:
+            self._pipeline.set_data_rate_bps(float(payload["data_rate_bps"]))
+            self._manual_overrides.add("symbol_rate")
+        elif payload.get("symbol_rate") is not None:
+            self._pipeline.reconfigure(symbol_rate=float(payload["symbol_rate"]))
+            self._manual_overrides.add("symbol_rate")
+        if payload.get("track_data_rate") is not None:
+            self.config.pipeline.track_data_rate = bool(payload["track_data_rate"])
+        self._update_displays(force=True)
+        return self.get_effective_config()
+
+    def apply_link(self, payload: dict) -> dict:
+        """POST /api/link — pass gating and ground-station selection."""
+        if not self.config.network.radio_control_enabled:
+            raise PermissionError("Radio control plane disabled "
+                                  "(start the bridge with --radio-control)")
+        if not self._pipeline:
+            raise RuntimeError("Link control requires RF mode")
+        if payload.get("in_view") is not None:
+            self._pipeline.set_link_in_view(bool(payload["in_view"]))
+            self._manual_overrides.add("in_view")
+        if payload.get("transmitting") is not None:
+            self._pipeline.set_transmitting(bool(payload["transmitting"]))
+            self._manual_overrides.add("transmitting")
+        if payload.get("ground_station") is not None:
+            self._pipeline.set_ground_station(str(payload["ground_station"]))
+        self._update_displays(force=True)
+        return self.get_effective_config()
 
     # ── Sim WS feedback ──
 
@@ -457,8 +636,20 @@ class RFSimBridge:
         if not ttc:
             return
 
+        # Ground station in contact — selects the per-station G/T used by
+        # the link budget (configs/eosat1/planning/ground_stations.yaml).
+        station = state.get("contact_station") or state.get("ground_station")
+        if not station:
+            contact = state.get("contact")
+            if isinstance(contact, dict):
+                station = contact.get("station") or contact.get("gs_name")
+        if station and self._pipeline:
+            self._pipeline.set_ground_station(str(station))
+
         # Eb/N0 (ignore 0 = not yet computed)
         eb_n0 = ttc.get("eb_n0_db")
+        if "eb_n0_db" in self._manual_overrides:
+            eb_n0 = None
         if eb_n0 is not None and float(eb_n0) != 0.0:
             self._sim_eb_n0 = float(eb_n0)
             self.config.channel.eb_n0_db = float(eb_n0)
@@ -469,6 +660,8 @@ class RFSimBridge:
 
         # Doppler
         doppler = ttc.get("doppler_hz")
+        if "doppler_hz" in self._manual_overrides:
+            doppler = None
         if doppler is not None:
             self.config.channel.doppler_hz = float(doppler)
             if self._pipeline:
@@ -514,12 +707,51 @@ class RFSimBridge:
                     LockState.LOCKED if bit_sync else LockState.UNLOCKED,
                     LockState.LOCKED if frame_sync else LockState.UNLOCKED)
 
+        # ── TM data-rate ladder (defect #85) ──
+        # The tier drives the modulation AND the bit rate, so both are applied
+        # here, modulation first: the symbol rate is bit rate / bits-per-symbol
+        # and must be recomputed with the tier's NEW modulation. Changing tier
+        # is therefore visible in the radio UI as a different constellation, a
+        # different occupied bandwidth and a different eye.
+        tier_changed = False
+        tier_name = ttc.get("tm_tier_name")
+        if tier_name is not None:
+            tier_changed = tier_name != self._commanded_tier_name
+            self._commanded_tier_name = tier_name
+            self.radio.update_tm_tier(
+                tier=int(ttc.get("tm_tier", 0) or 0),
+                tier_name=str(tier_name),
+                coding=str(ttc.get("tm_coding", "RS") or "RS"))
+            if tier_changed:
+                logger.info("Sim TM tier -> %s (%s, %s)", tier_name,
+                            ttc.get("data_rate_bps"), ttc.get("tm_coding"))
+
         # Modulation mode
         mod_mode = ttc.get("modulation_mode")
-        if mod_mode is not None:
+        if mod_mode is not None and "modulation" not in self._manual_overrides:
+            if int(mod_mode) != int(self.radio.status.modulation):
+                tier_changed = True
             self.radio.update_modulation(int(mod_mode))
             if self._pipeline:
-                self._pipeline.reconfigure(modulation=int(mod_mode))
+                try:
+                    self._pipeline.reconfigure(modulation=int(mod_mode))
+                except ValueError as e:
+                    # Loud, not silent: a mode with no receiver would
+                    # otherwise produce plausible-looking garbage.
+                    logger.error("Commanded modulation rejected: %s", e)
+
+        # Per-tier FEC. `convolutional_follow_tier` is opt-in because the
+        # pure-Python Viterbi decoder is far too slow to run at the HIGH tier;
+        # when it is on, only the BEACON and LOW tiers (which code
+        # conv(7,1/2)+RS) switch it on and the rate is low enough to afford it.
+        coding = ttc.get("tm_coding")
+        if coding is not None and getattr(
+                self.config.ccsds, "convolutional_follow_tier", False):
+            want = str(coding).upper() == "CONV_RS"
+            if want != bool(self.config.ccsds.convolutional_enabled):
+                self.config.ccsds.convolutional_enabled = want
+                logger.info("TM tier %s -> convolutional coding %s",
+                            tier_name, "ON" if want else "OFF")
 
         # Ground segment penalty
         gs_penalty = ttc.get("gs_penalty_db")
@@ -536,6 +768,23 @@ class RFSimBridge:
         data_rate = ttc.get("data_rate_bps")
         if data_rate is not None:
             self.radio.status.data_rate_kbps = float(data_rate) / 1000.0
+            # Retune the RF pipeline to the commanded rate instead of only
+            # relabelling a text box. The symbol rate, the TX frame cadence,
+            # the channel sample rate, the occupied bandwidth on the
+            # spectrum analyser and the RX all follow it now (defect #55).
+            # `tier_changed` forces the retune even when the bit rate is
+            # unchanged: a modulation change at the same bit rate HALVES the
+            # symbol rate, and without this the cached rate would suppress it.
+            if (self._pipeline and float(data_rate) > 0
+                    and "symbol_rate" not in self._manual_overrides
+                    and (tier_changed
+                         or self._commanded_data_rate_bps != float(data_rate))):
+                self._commanded_data_rate_bps = float(data_rate)
+                sr = self._pipeline.set_data_rate_bps(float(data_rate))
+                logger.info("Sim commanded %.0f bps → pipeline %.0f Bd",
+                            float(data_rate), sr)
+                self.radio.update_tm_tier(
+                    occupied_bw_hz=sr * (1.0 + self.config.pipeline.rrc_rolloff))
 
         # Push RF updates to Radio
         self.radio.update_rf(
@@ -564,6 +813,10 @@ def main():
     parser.add_argument("--eb-n0", type=float, default=None)
     parser.add_argument("--radio-ui", action="store_true")
     parser.add_argument("--radio-web", action="store_true")
+    parser.add_argument("--radio-control", action="store_true",
+                        help="Enable the radio UI control plane (POST routes "
+                             "for channel/pipeline/link). Off by default so "
+                             "the radio UI stays purely observational.")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -580,6 +833,8 @@ def main():
         config.mode = RFSimMode(args.mode)
     if args.eb_n0 is not None:
         config.channel.eb_n0_db = args.eb_n0
+    if args.radio_control:
+        config.network.radio_control_enabled = True
 
     bridge = RFSimBridge(config)
 
@@ -591,7 +846,8 @@ def main():
         if args.radio_web:
             from .radio.web_ui import run_web_ui
             tasks.append(asyncio.create_task(
-                run_web_ui(bridge.radio, port=config.network.radio_port)))
+                run_web_ui(bridge.radio, port=config.network.radio_port,
+                           control=bridge)))
         await asyncio.gather(*tasks)
 
     try:

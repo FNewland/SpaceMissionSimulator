@@ -121,3 +121,36 @@ async def test_s20_param_value_report_populates_cache():
     assert 0x0143 in server._param_cache
     assert abs(server._param_cache[0x0143]["value"] - 1.234) < 1e-3
     assert server._param_cache[0x0143]["sid"] == -1
+
+
+@pytest.mark.asyncio
+async def test_sid7_aocs_determination_round_trip():
+    """Phase C WP-8: the new SID 7 AOCS_DETERMINATION packet round-trips
+    through the MCS decoder with the scaled values intact."""
+    hk_defs = load_hk_structures(CONFIG_DIR)
+    d7 = next(h for h in hk_defs if h.sid == 7)
+    structure = [(p.param_id, p.pack_format, p.scale) for p in d7.parameters]
+    builder = TMBuilder(apid=100)
+    inputs = {
+        0x02A7: 51.7,     # knowledge_err_3sig arcsec (scale 10, H)
+        0x02A8: 0.062,    # control_err deg (scale 1000, H)
+        0x02AA: 0.065,    # total pointing 3sig deg
+        0x02BA: 42.3,     # h_env_frac % (scale 10, H)
+        0x02C5: 0.0,      # fine_ready mask
+        0x02C6: 1.0,      # fidelity_mode (secular)
+        0x02C8: 15.0,     # aocs power W (scale 10, H)
+    }
+    full = {pid: inputs.get(pid, 0.0) for pid, _, _ in structure}
+    pkt = builder.build_hk_packet(sid=7, params=full, hk_structure=structure)
+    assert pkt is not None
+    parsed = decommutate_packet(pkt)
+    assert parsed is not None and parsed.secondary.service == 3
+
+    server = MCSServer(config_dir=CONFIG_DIR)
+    await server._process_tm(parsed)
+    cache = server._param_cache
+    assert cache[0x02A7]["value"] == pytest.approx(51.7, abs=0.1)
+    assert cache[0x02A8]["value"] == pytest.approx(0.062, abs=0.001)
+    assert cache[0x02BA]["value"] == pytest.approx(42.3, abs=0.1)
+    assert cache[0x02C6]["value"] == pytest.approx(1.0)
+    assert cache[0x02C8]["value"] == pytest.approx(15.0, abs=0.1)

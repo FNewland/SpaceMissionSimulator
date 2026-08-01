@@ -31,6 +31,7 @@ def _register_builtins() -> None:
         "obdh_basic": "smo_simulator.models.obdh_basic.OBDHBasicModel",
         "ttc_basic": "smo_simulator.models.ttc_basic.TTCBasicModel",
         "payload_basic": "smo_simulator.models.payload_basic.PayloadBasicModel",
+        "prop_basic": "smo_simulator.models.prop_basic.PropBasicModel",
     }
     for name, qualname in builtins.items():
         module_path, class_name = qualname.rsplit(".", 1)
@@ -67,6 +68,16 @@ def discover_models() -> dict[str, Type[SubsystemModel]]:
     if not _registry:
         logger.info("No entry points found for %s, loading built-in models", ENTRY_POINT_GROUP)
         _register_builtins()
+    elif "prop_basic" not in _registry:
+        # Stale installed metadata (pip install -e predating Phase D) lists
+        # only the original six models; top up the missing builtin without
+        # clobbering any entry-point-registered model.
+        try:
+            import importlib
+            mod = importlib.import_module("smo_simulator.models.prop_basic")
+            _registry["prop_basic"] = getattr(mod, "PropBasicModel")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to register builtin prop_basic: %s", e)
     return dict(_registry)
 
 

@@ -117,14 +117,17 @@ s12_definitions:
     severity: WARNING
     description: "Reaction wheel 4 speed exceeds ±5000 RPM"
 
-  # Total angular momentum saturation monitoring
-  - param_id: 0x025B  # aocs.total_momentum
-    name: "AOCS Total Momentum Saturated"
+  # Momentum-envelope monitoring (Phase C WP-9). The old monitor sat on
+  # 0x025B at ±90 N·m·s — units confused with percent against an 11.5 N·m·s
+  # scalar max, so it could never trip and S19 rule 2001 was dead autonomy.
+  # 0x02BA is the per-axis-aware envelope fraction in percent.
+  - param_id: 0x02BA  # aocs.h_env_frac (%)
+    name: "AOCS Momentum Envelope High"
     check_type: 0  # absolute
-    low_limit: -90.0
-    high_limit: 90.0
+    low_limit: -1.0
+    high_limit: 70.0
     severity: WARNING
-    description: "Total system angular momentum exceeds 90% saturation"
+    description: "Wheel momentum above 70% of envelope — desaturation required"
 
   # Attitude error monitoring
   - param_id: 0x0217  # aocs.att_error
@@ -178,22 +181,34 @@ s12_definitions:
     description: "Gyroscope Z-axis bias estimate exceeds ±0.5 deg/s"
 
   # ===== TCS (0x0400-0x0417) =====
-  # FPA temperature monitoring (target ~-10°C, acceptable range -15 to -3°C)
+  # FPA temperature monitoring. DERIVED from subsystems/tcs.yaml
+  # `fpa_envelope` (DECISIONS §3, ruled in G3-d) — do not hand-edit; change
+  # the envelope and re-derive. Legitimate states of the single FPA node:
+  # cooler ON -> anywhere in the COMMANDABLE -20..0 C setpoint envelope
+  # (±3 sigma = 0.5 K), cooler OFF -> internal ambient, measured peak
+  # +12.4 C. The bands bracket both; imaging readiness is the separate
+  # fpa_ready flag, not a limit violation.
+  #   warning: setpoint_min - 3sigma - 1.5 K .. uncooled_max + 1.5 K
+  #   alarm:   setpoint_min - 3sigma - 5.0 K .. uncooled_max + 5.0 K
+  # History: the "Low" rule once had INVERTED limits (low -15 / high -20 —
+  # an empty admissible set) and fired at t=0 every session; Phase B fixed
+  # that but pinned the band to a -15 C setpoint that Phase E then made
+  # commandable, so a legal -20 C command sat exactly on the low limit.
   - param_id: 0x0408  # tcs.temp_fpa
-    name: "TCS FPA Temperature High"
+    name: "TCS FPA Temperature Warning"
     check_type: 0  # absolute
-    low_limit: -15.0
-    high_limit: -3.0
+    low_limit: -22.0
+    high_limit: 14.0
     severity: WARNING
-    description: "FPA temperature above -3°C (degraded performance)"
+    description: "FPA temperature outside -22..+14°C (overcooled or overheating)"
 
-  - param_id: 0x0408  # tcs.temp_fpa (different rule)
-    name: "TCS FPA Temperature Low"
+  - param_id: 0x0408  # tcs.temp_fpa (alarm tier)
+    name: "TCS FPA Temperature Alarm"
     check_type: 0  # absolute
-    low_limit: -15.0
-    high_limit: -20.0
-    severity: WARNING
-    description: "FPA temperature below -15°C (risk of over-cooling)"
+    low_limit: -25.5
+    high_limit: 17.5
+    severity: ALARM
+    description: "FPA temperature outside -25.5..+17.5°C (thermal anomaly)"
 
   # Battery temperature monitoring (internal to TCS)
   - param_id: 0x0407  # tcs.temp_battery
@@ -213,14 +228,16 @@ s12_definitions:
     severity: ALARM
     description: "OBC temperature exceeds 60°C"
 
-  # Heater power monitoring (all heaters combined)
+  # Heater power monitoring (all heaters combined). Phase B set 12.5 W for
+  # battery 8 + OBC 4 (no thruster heater then); Phase D adds the real 12 W
+  # thruster catbed heater, so installed heater power is 24 W -> 24.5 limit.
   - param_id: 0x0411  # tcs.htr_total_power
     name: "TCS Heater Power Limit"
     check_type: 0  # absolute
     low_limit: 0.0
-    high_limit: 50.0
+    high_limit: 24.5
     severity: WARNING
-    description: "Total heater power consumption exceeds 50W"
+    description: "Total heater power above 24.5W (exceeds installed 24W — sensor/model fault)"
 
   # ===== TTC (0x0500-0x0524) =====
   # RSSI monitoring (typical range -95 to -60 dBm; below -95 is poor)
@@ -306,14 +323,22 @@ s12_definitions:
     description: "Memory error count exceeds 5"
 
   # ===== Payload (0x0600-0x0629) =====
-  # FPA temperature (payload-specific; target ~-10°C)
+  # Detector cold finger (0x0601 = TCS FPA node + detector_offset_c, -0.5 K).
+  # DERIVED from subsystems/tcs.yaml `fpa_envelope` (G3-d): the 0x0408 bands
+  # shifted by that offset. History: the original low limit (-15.0) sat
+  # exactly ON the cooler setpoint and chattered S19 rule 6002 at ~50 % of
+  # samples; Phase B moved it to -16.5 for 6 sigma of clearance below a
+  # -15.5 C operating point, which was correct until Phase E made the
+  # setpoint commandable to -20 C — after which a LEGAL command produced a
+  # standing violation. The high limit is an overheat bound, not a "not yet
+  # cooled" tripwire (readiness is fpa_ready).
   - param_id: 0x0601  # payload.fpa_temp
-    name: "Payload FPA Temperature High"
+    name: "Payload FPA Temperature"
     check_type: 0  # absolute
-    low_limit: -15.0
-    high_limit: -3.0
+    low_limit: -22.5
+    high_limit: 13.5
     severity: WARNING
-    description: "Payload FPA temperature above -3°C"
+    description: "Payload detector outside -22.5..+13.5°C (overcooled or overheating)"
 
   # Storage utilization monitoring
   - param_id: 0x0604  # payload.store_used
@@ -341,3 +366,71 @@ s12_definitions:
     high_limit: 100.0
     severity: WARNING
     description: "Signal-to-noise ratio below 25 dB"
+
+  # ===== PROP (0x0B00-0x0B1B) — Phase D =====
+  # Tank pressure operating band (WARNING) and CTG-028 "out-of-band" (ALARM)
+  - param_id: 0x0B01  # prop.tank_pressure
+    name: "PROP Tank Pressure Band"
+    check_type: 0  # absolute
+    low_limit: 6.0
+    high_limit: 24.0
+    severity: WARNING
+    description: "Tank pressure outside the 6-24 bar operating band"
+
+  - param_id: 0x0B01  # prop.tank_pressure (alarm band)
+    name: "PROP Tank Pressure Out-of-Band"
+    check_type: 0  # absolute
+    low_limit: 4.0
+    high_limit: 26.0
+    severity: ALARM
+    description: "Tank pressure critically out of band (CTG-028)"
+
+  # Delta check — THE leak/burst-disc detector: a slow leak never crosses the
+  # absolute band quickly, but its pressure RATE is visible immediately.
+  - param_id: 0x0B01  # prop.tank_pressure (rate)
+    name: "PROP Tank Pressure Rate"
+    check_type: 1  # delta
+    low_limit: -0.20
+    high_limit: 0.20
+    severity: ALARM
+    description: "Tank pressure changing faster than 0.20 bar per check — leak or overpressure transient"
+
+  - param_id: 0x0B05  # prop.catbed_temp
+    name: "PROP Catbed Temperature Band"
+    check_type: 0  # absolute
+    low_limit: -20.0
+    high_limit: 300.0
+    severity: WARNING
+    description: "Catalyst bed outside -20..300 C"
+
+  - param_id: 0x0B05  # prop.catbed_temp (alarm)
+    name: "PROP Catbed Overtemp"
+    check_type: 0  # absolute
+    low_limit: -30.0
+    high_limit: 350.0
+    severity: ALARM
+    description: "Catalyst bed critically out of band (abort threshold)"
+
+  - param_id: 0x0B02  # prop.propellant_mass
+    name: "PROP Propellant Low"
+    check_type: 0  # absolute
+    low_limit: 20.0
+    high_limit: 401.0
+    severity: WARNING
+    description: "Propellant below 20 g — plan remaining dV budget (debris-avoidance reserve)"
+
+  - param_id: 0x0B09  # prop.thrust_est
+    name: "PROP Low Thrust"
+    check_type: 0  # absolute
+    low_limit: 100.0
+    high_limit: 400.0
+    severity: WARNING
+    description: "Thrust estimate below 100 mN while firing — the CTG-028 'low thrust' trigger"
+
+  - param_id: 0x0B0C  # prop.dv_remaining
+    name: "PROP dV Envelope Low"
+    check_type: 0  # absolute
+    low_limit: 5.0
+    high_limit: 100.0
+    severity: WARNING
+    description: "Remaining delta-V below 5 m/s — collision-avoidance reserve at risk"

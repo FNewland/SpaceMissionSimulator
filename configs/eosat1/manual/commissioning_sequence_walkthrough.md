@@ -208,7 +208,7 @@ All OFF lines are expected — we haven't powered them on yet.
 |-----------|--------|---------------------|-----------------|
 | `temp_obc` | 0x0406 | ~20°C | [-5, +45]°C |
 | `temp_battery` | 0x0407 | ~15°C | [0, +35]°C |
-| `temp_fpa` | 0x0408 | ~5°C (ambient, uncooled) | [-10, +30]°C |
+| `temp_fpa` | 0x0408 | ~+11.5°C (internal ambient, uncooled) | [-22.0, +14.0]°C (yellow band) |
 | Panel temps | 0x0400–0x0405 | 8–20°C range | [-40, +60]°C |
 
 ### 4.7 Verify AOCS and Payload are OFF
@@ -671,7 +671,13 @@ ST2 is now verified working; return to single-tracker operations to save power. 
 
 ### 15.4 Activate FPA Cooler
 
-**TC:** `TCS_FPA_COOLER(on=1)` (S8.1, func_id 43, data byte = 1)
+**TC:** `FPA_COOLER(on=1)` (S8.1, func_id 43, data byte = 1) — wire `2B 01`
+
+To regulate at a temperature other than the -15 °C default, follow with
+`PAYLOAD_COOLER_SETPOINT(setpoint = -10.00 degC)` (S8.1, func_id 36) — wire
+`24 66 CB`. The setpoint is unsigned **centi-kelvin** on the wire
+(`raw = (T_degC + 273.15) x 100`), so a negative Celsius value never
+requires a two's-complement raw. Readback: `payload.fpa_setpoint` (0x0631).
 
 **MCS screen: tcs tab**
 - `cooler_fpa` (0x040C) = 1 (ACTIVE)
@@ -692,7 +698,15 @@ Prerequisites: AOCS in FINE_POINT (Phase 12.5), FPA stable at setpoint.
 **MCS screen: payload tab**
 - `mode` (0x0600) = 2 (IMAGING)
 
-**TC:** `PAYLOAD_CAPTURE(lat, lon)` (S8.1, func_id 28) — trigger image capture
+**TC:** `PAYLOAD_CAPTURE(scene_id=1, lines=2048)` (S8.1, func_id 28) — trigger image capture  
+**Wire:** `1C 00 01 08 00`
+
+The WHERE is set by the WHEN: schedule this TC with S11.4 at the target
+overpass. Geolocation is **not** an argument — the spacecraft stamps the
+sub-satellite lat/lon into the image catalogue entry at shutter open, from
+the propagated ephemeris, exactly as a real line-scan imager does.
+`scene_id` 0 lets the payload auto-assign; a ground-assigned id lets the
+same plan pre-book the downlink (`PAYLOAD_DOWNLOAD_IMAGE` addresses it).
 
 **MCS screen: payload tab**
 - `image_count` (0x0605) increments to 1

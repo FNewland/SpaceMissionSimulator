@@ -57,6 +57,7 @@ PROC_DIR = CFG / "procedures"
 TC_CATALOG = CFG / "commands" / "tc_catalog.yaml"
 PARAMS = CFG / "telemetry" / "parameters.yaml"
 HK = CFG / "telemetry" / "hk_structures.yaml"
+EVENTS = CFG / "events" / "event_catalog.yaml"
 
 OUT_DIR = REPO / "workspace" / "audit"
 
@@ -77,17 +78,55 @@ RE_HEX_PARAM = re.compile(r"\(\s*(0x[0-9A-Fa-f]{3,4})\s*\)")
 RE_DOTTED = re.compile(r"\b([a-z]{2,8}\.[a-z][a-z0-9_]+)\b")
 RE_SERVICE = re.compile(r"\(\s*Service\s+(\d+)\s*\)")
 
+# "PROP_BURN_START (0x0803)" / "event PROP_ARMED (0x0800)". Procedures cite
+# event ids in the same parenthesised-hex shape as parameter ids (G3-e).
+RE_EVENT_NAMED = re.compile(
+    r"\b([A-Z][A-Z0-9_]{3,})\s*\(\s*(0x[0-9A-Fa-f]{3,4})\s*\)")
+
+# "GET_PARAM ... Subtype 1". The S20 pair was inverted across the payload and
+# AOCS procedures. THIS suite's S20 is `service_dispatch._handle_s20`:
+#   subtype 1 = SET parameter (param_id + float32 value)
+#   subtype 3 = GET parameter (param_id -> S20.2 value report)
+# which is a documented deviation from ECSS-E-ST-70-41 (where 20,1 is the
+# report *request* and 20,3 is the set) — see docs/PUS_SERVICE_REFERENCE.md
+# Service 20. The procedures must match the wire, not the standard, because
+# it is the wire the student's command reaches.
+RE_S20_SUBTYPE = re.compile(
+    r"`?(GET_PARAM|SET_PARAM)`?[^\n]{0,120}?[Ss]ubtype\s+(\d+)")
+S20_SUBTYPE = {"GET_PARAM": 3, "SET_PARAM": 1}
+
+# Phase E (brief 04 drift gate 4): a procedure that names a mnemonic and a
+# func_id must agree with tc_catalog.yaml. This is the check that would have
+# flagged corrupted_image.md's "PAYLOAD_CAPTURE ... func_id 22" and
+# battery_cell_failure.md's "HEATER_SET_SETPOINT ... func 34" — 19 procedure
+# files carried a whole stale numbering scheme in which every S8 annotation
+# named the wrong function.
+RE_FUNC_ANNOT = re.compile(
+    r"`?([A-Z][A-Z0-9_]{2,})(?:\([^`\n]*\))?`?[^\n]{0,80}?"
+    r"\(func(?:_id)?\s+(\d+)\)")
+RE_FUNC_TABLE_ROW = re.compile(
+    r"^\|\s*([A-Z][A-Z0-9_]{2,})\s*\|\s*8\s*\|\s*1\s*\|\s*(\d+)\s*\|", re.M)
+
 
 # ---------- catalog loading ----------
 @dataclass
 class Catalog:
     tc_names: set[str] = field(default_factory=set)
     tc_services: dict[str, tuple[int, int]] = field(default_factory=dict)
+    #: mnemonic (and alias) -> S8.1 func_id, for the annotation cross-check
+    #: added in Phase E (brief 04 drift gate 4).
+    tc_func_ids: dict[str, int] = field(default_factory=dict)
     param_by_id: dict[int, dict] = field(default_factory=dict)
     param_by_name: dict[str, dict] = field(default_factory=dict)
     hk_param_ids: set[int] = field(default_factory=set)
     hk_sids_for_param: dict[int, list[int]] = field(default_factory=dict)
     on_demand_ids: set[int] = field(default_factory=set)
+    #: Event id -> name. A procedure legitimately cites event ids in the same
+    #: `(0x0803)` shape as parameter ids — the auditor used to report all nine
+    #: Phase D propulsion event references as PARAM_UNKNOWN, which is a false
+    #: positive that costs more attention than the defects it hides (G3-e).
+    event_by_id: dict[int, str] = field(default_factory=dict)
+    event_by_name: dict[str, int] = field(default_factory=dict)
 
     def load(self) -> None:
         with TC_CATALOG.open() as f:
@@ -102,9 +141,17 @@ class Catalog:
                     int(cmd.get("service", 0)), int(cmd.get("subtype", 0)))
             except Exception:
                 pass
+            if cmd.get("func_id") is not None:
+                try:
+                    self.tc_func_ids[name.upper()] = int(cmd["func_id"])
+                except Exception:
+                    pass
             for alias_key in ("aliases", "short_names"):
                 for a in cmd.get(alias_key, []) or []:
                     self.tc_names.add(str(a).upper())
+                    if cmd.get("func_id") is not None:
+                        self.tc_func_ids.setdefault(str(a).upper(),
+                                                    int(cmd["func_id"]))
 
         with PARAMS.open() as f:
             pdata = yaml.safe_load(f) or {}
@@ -119,6 +166,20 @@ class Catalog:
                 self.param_by_name[nm] = p
             if bool(p.get("on_demand", False)):
                 self.on_demand_ids.add(pid)
+
+        if EVENTS.exists():
+            with EVENTS.open() as f:
+                edata = yaml.safe_load(f) or {}
+            for e in edata.get("events", []) or []:
+                try:
+                    eid = int(e["id"]) if isinstance(e["id"], int) \
+                        else int(str(e["id"]), 0)
+                except Exception:
+                    continue
+                nm = str(e.get("name", "")).strip().upper()
+                self.event_by_id[eid] = nm
+                if nm:
+                    self.event_by_name[nm] = eid
 
         with HK.open() as f:
             hk = yaml.safe_load(f) or {}
@@ -138,7 +199,9 @@ class Catalog:
 @dataclass
 class Finding:
     procedure: str
-    category: str  # TC_UNKNOWN, PARAM_UNKNOWN, PARAM_NOT_REACHABLE
+    #: TC_UNKNOWN, FUNC_ID_MISMATCH, PARAM_UNKNOWN, PARAM_NOT_REACHABLE,
+    #: EVENT_NAME_MISMATCH, SUBTYPE_INVERTED
+    category: str
     detail: str
     context: str = ""
 
@@ -150,8 +213,12 @@ class ProcedureReport:
     tc_refs: list[str] = field(default_factory=list)
     param_refs: list[str] = field(default_factory=list)
     tc_unknown: list[str] = field(default_factory=list)
+    func_id_mismatch: list[str] = field(default_factory=list)
     param_unknown: list[str] = field(default_factory=list)
     param_not_reachable: list[str] = field(default_factory=list)
+    event_refs: list[str] = field(default_factory=list)
+    event_mismatch: list[str] = field(default_factory=list)
+    subtype_inverted: list[str] = field(default_factory=list)
 
 
 def audit_procedures(cat: Catalog) -> tuple[list[ProcedureReport], list[Finding]]:
@@ -175,6 +242,73 @@ def audit_procedures(cat: Catalog) -> tuple[list[ProcedureReport], list[Finding]
                 findings.append(Finding(rel, "TC_UNKNOWN", tok,
                                         context=text[max(0, m.start()-30):m.end()+30]))
 
+        # func_id annotations must match the catalogue (drift gate 4)
+        for rx in (RE_FUNC_ANNOT, RE_FUNC_TABLE_ROW):
+            for m in rx.finditer(text):
+                mnemonic = m.group(1).upper()
+                if mnemonic in GENERIC_TC_LABELS:
+                    continue
+                want = cat.tc_func_ids.get(mnemonic)
+                if want is None:
+                    continue
+                got = int(m.group(2))
+                if got != want:
+                    detail = (f"{mnemonic} annotated func_id {got}, "
+                              f"tc_catalog.yaml says {want}")
+                    if detail not in rep.func_id_mismatch:
+                        rep.func_id_mismatch.append(detail)
+                        findings.append(Finding(
+                            rel, "FUNC_ID_MISMATCH", detail,
+                            context=text[max(0, m.start() - 30):m.end() + 30]))
+
+        # Named event references: "PROP_BURN_START (0x0803)". Checked BEFORE
+        # the parameter sweep, because an event id in a procedure is not a
+        # defect — citing the wrong NAME for it is (G3-e).
+        event_hexes: set[str] = set()
+        for m in RE_EVENT_NAMED.finditer(text):
+            nm, hx = m.group(1).upper(), m.group(2)
+            try:
+                eid = int(hx, 16)
+            except ValueError:
+                continue
+            # Event ids and parameter ids share the hex space, so the NAME
+            # is what makes this an event reference. Without that test,
+            # "GET_PARAM(0x0601)" reads as a citation of event 0x0601.
+            if nm not in cat.event_by_name:
+                continue
+            event_hexes.add(hx.lower())
+            rep.event_refs.append(f"{nm} ({hx})")
+            want = cat.event_by_id.get(eid)
+            if want is not None and want != nm:
+                detail = f"{nm} cited as {hx}, but {hx} is {want}"
+                if detail not in rep.event_mismatch:
+                    rep.event_mismatch.append(detail)
+                    findings.append(Finding(
+                        rel, "EVENT_NAME_MISMATCH", detail,
+                        context=text[max(0, m.start() - 40):m.end() + 20]))
+            elif want is None:
+                detail = (f"{nm} is event "
+                          f"0x{cat.event_by_name[nm]:04X}, cited as {hx}")
+                if detail not in rep.event_mismatch:
+                    rep.event_mismatch.append(detail)
+                    findings.append(Finding(rel, "EVENT_NAME_MISMATCH", detail))
+
+        # S20 subtype annotations. GET_PARAM is S20.1 -> report S20.2;
+        # SET_PARAM is S20.3. The payload procedures systematically inverted
+        # the pair (Phase E audit, fixed in three commissioning procedures
+        # only), so an operator following the card sent the wrong subtype.
+        for m in RE_S20_SUBTYPE.finditer(text):
+            mnemonic, sub = m.group(1).upper(), int(m.group(2))
+            want = S20_SUBTYPE.get(mnemonic)
+            if want is None or sub == want:
+                continue
+            detail = f"{mnemonic} annotated Subtype {sub}, S20 says {want}"
+            if detail not in rep.subtype_inverted:
+                rep.subtype_inverted.append(detail)
+                findings.append(Finding(
+                    rel, "SUBTYPE_INVERTED", detail,
+                    context=text[max(0, m.start() - 40):m.end() + 20]))
+
         # Hex TM params
         for m in RE_HEX_PARAM.finditer(text):
             hx = m.group(1)
@@ -182,8 +316,15 @@ def audit_procedures(cat: Catalog) -> tuple[list[ProcedureReport], list[Finding]
                 pid = int(hx, 16)
             except ValueError:
                 continue
+            if hx.lower() in event_hexes:
+                continue           # already resolved as a catalogued event
             rep.param_refs.append(hx)
             if pid not in cat.param_by_id:
+                if pid in cat.event_by_id:
+                    # An event id cited without its name. Not an error, but it
+                    # is worth not calling it a missing parameter.
+                    rep.event_refs.append(f"{cat.event_by_id[pid]} ({hx})")
+                    continue
                 rep.param_unknown.append(hx)
                 findings.append(Finding(rel, "PARAM_UNKNOWN", hx))
                 continue
@@ -265,21 +406,33 @@ def render(reports: list[ProcedureReport], findings: list[Finding]) -> str:
 
     per_proc_html = []
     for r in reports:
-        bad = len(r.tc_unknown) + len(r.param_unknown) + len(r.param_not_reachable)
+        bad = (len(r.tc_unknown) + len(r.param_unknown)
+               + len(r.param_not_reachable) + len(r.func_id_mismatch)
+               + len(r.event_mismatch) + len(r.subtype_inverted))
         cls = "err" if bad else "ok"
         per_proc_html.append(
             f"<details><summary class='{cls}'>"
             f"<span class='cat'>{r.category}</span> {r.rel_path} — "
             f"{len(r.tc_refs)} TCs, {len(r.param_refs)} TMs, "
+            f"{len(r.event_refs)} events, "
             f"<b>{bad}</b> issues</summary>"
             f"<ul>"
             + (f"<li class='err'>Unknown TCs: {', '.join(r.tc_unknown)}</li>"
                if r.tc_unknown else "")
+            + (f"<li class='err'>func_id annotations contradicting the catalogue: "
+               f"{'; '.join(r.func_id_mismatch)}</li>"
+               if r.func_id_mismatch else "")
             + (f"<li class='err'>Unknown TM params: {', '.join(r.param_unknown)}</li>"
                if r.param_unknown else "")
             + (f"<li class='warn'>TM params not reachable: "
                f"{', '.join(r.param_not_reachable)}</li>"
                if r.param_not_reachable else "")
+            + (f"<li class='err'>Event name/id mismatches: "
+               f"{'; '.join(r.event_mismatch)}</li>"
+               if r.event_mismatch else "")
+            + (f"<li class='err'>S20 subtype inverted: "
+               f"{'; '.join(r.subtype_inverted)}</li>"
+               if r.subtype_inverted else "")
             + "</ul></details>"
         )
 

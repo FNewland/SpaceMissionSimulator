@@ -53,7 +53,7 @@ control with any three operational wheels at slightly relaxed pointing accuracy.
 | SET_PARAM | 20 | 1 | — | Set onboard parameter |
 | AOCS_3W_MODE | 8 | 1 | 5 | Configure three-wheel control mode |
 | AOCS_SET_MODE | 8 | 1 | 0 | Set AOCS mode |
-| AOCS_DESATURATE | 8 | 1 | 3 | Command magnetorquer momentum dump |
+| AOCS_DESATURATE | 8 | 1 | 1 | Command magnetorquer momentum dump |
 
 ## Procedure Steps
 
@@ -218,7 +218,7 @@ ops confirmed as permanent configuration.
   asymmetric momentum bias that requires updated control parameters.
 - If disabled wheel temperature continues to rise above 70 deg-C: Risk of thermal
   damage to adjacent components. Power off the wheel power line completely:
-  `EPS_POWER_OFF(line_index=7)` (func_id 14) — note this disables ALL wheels on
+  `EPS_POWER_OFF(line_index=7)` (func_id 20) — note this disables ALL wheels on
   that power line. If wheels are on separate lines, isolate only the affected wheel
   via SET_PARAM.
 - If magnetometer is not valid (needed for desaturation): Switch to redundant mag

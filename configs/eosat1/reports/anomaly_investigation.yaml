@@ -1,0 +1,126 @@
+# EOSAT-1 Anomaly Report (AR).
+#
+# A real Anomaly Report carries: identification, a dual-timescale timeline
+# (ground UTC and on-board time), symptom plots with pre/post windows around
+# T0, the event and alarm sequence, autonomous (S12/S19/FDIR) actions,
+# ground recovery commands and their outcomes, telemetry gaps during the
+# event, current status, hypotheses and follow-up actions.
+#
+# The `vars:` block is supplied by the UI form / API body; defaults below
+# make the template render standalone.
+schema_version: 1
+report:
+  id: anomaly_investigation
+  title: "EOSAT-1 Anomaly Report"
+  subtitle: "{{vars.anomaly_id}} — {{vars.title}}"
+  audience: instructor
+  classification: "TRAINING — NOT FOR FLIGHT"
+vars:
+  anomaly_id: "ANO-001"
+  title: "Battery undervoltage during eclipse"
+  t0: "2026-03-10T04:18:22Z"
+  suspect_subsystems: [eps, tcs]
+source:
+  dumps: { mode: auto, store_ids: [1, 2, 3, 4] }
+  ground_archive: { enabled: true, use_for: [commands, alarms, events] }
+  catalogs: { config_dir: configs/eosat1 }
+period:
+  kind: relative
+  relative: { anchor: "{{vars.t0}}", before_s: 3600, after_s: 3600 }
+  timebase: cuc
+  zero_cuc_policy: interpolate
+parameter_sets:
+  suspects: [eps.bat_soc, eps.bus_voltage, eps.bat_current, eps.bat_temp,
+             eps.power_gen, eps.power_cons, eps.sa_a_current,
+             eps.sa_b_current]
+  context:  [tcs.temp_battery, obdh.mode, ttc.tm_tier, aocs.mode]
+defaults:
+  plot: { height_px: 260, show_limits: true, show_eclipse: true,
+          marker_events: ["severity>=2"] }
+sections:
+  - { type: header, id: cover,
+      include: [period, dumps_used, packet_totals, generated_at] }
+  - type: narrative
+    id: identification
+    title: "1. Identification"
+    text: |
+      | Field | Value |
+      |---|---|
+      | Anomaly ID | {{vars.anomaly_id}} |
+      | Title | {{vars.title}} |
+      | T0 (on-board) | {{vars.t0}} |
+      | Detected by | (operator / on-board FDIR / post-pass review) |
+      | Subsystems | {{vars.suspect_subsystems}} |
+      | Severity | |
+      | Status | OPEN |
+  - type: narrative
+    id: timeline_intro
+    title: "2. Timeline"
+    text: |
+      Every entry below is stamped with **on-board CUC** rendered as UTC.
+      Note that S1 verification and S12 transition packets carry no on-board
+      timestamp (tm_builder default CUC 0); those rows are placed by archive
+      order between their bracketing timestamped neighbours and are marked ~.
+  - { type: events, id: timeline, title: "Event timeline", severity_min: 1,
+      include_synthetic_s12: true, resolve_names: event_catalog,
+      group_by: none,
+      show: [utc, cuc, id, name, severity, subsystem, aux_text],
+      correlate: { window_s: 30, with: [s12_transitions, s19_fires, commands,
+                                        parameter_steps] } }
+  - { type: plot, id: symptom,
+      title: "3. Symptoms — suspect parameters around T0",
+      style: multi_axis,
+      axes: [ { label: "V", parameters: [eps.bus_voltage] },
+              { label: "%", parameters: [eps.bat_soc], side: right,
+                range: [0, 100] },
+              { label: "A", parameters: [eps.bat_current, eps.sa_a_current,
+                                         eps.sa_b_current] } ],
+      annotations: { eclipse: true, contacts: true,
+                     t0_marker: "{{vars.t0}}" } }
+  - { type: plot, id: context, title: "Context", style: time_series,
+      parameters: parameter_sets.context }
+  - { type: plot, id: states, style: step,
+      parameters: [obdh.mode, aocs.mode, payload.mode, eps.load_shed_stage,
+                   ttc.tm_tier],
+      show_transitions_table: true }
+  - { type: stats, id: prepost, title: "4. Suspect parameter statistics",
+      groups: [ { label: "Suspects", parameters: parameter_sets.suspects } ],
+      columns: [count, min, min_at, max, max_at, mean, stddev, first, last,
+                ool_red_s],
+      split_at: "{{vars.t0}}",
+      limits_from: mcs/limits.yaml }
+  - { type: alarms, id: autonomy, title: "5. On-board autonomy response",
+      severity_min: 1, pair_entries_and_clears: true, unpaired_policy: report,
+      show_definition: true,
+      s19_correlation: { enabled: true,
+                         rules_from: monitoring/s19_rules.yaml,
+                         show: [ea_id, trigger_kind, trigger_id,
+                                action_func_id, fired_at, latency_s] } }
+  - { type: commands, id: recovery, title: "6. Ground response",
+      source: [s1_verification],
+      show: [utc, seq, apid, accept, execute, error_code, error_text,
+             reason] }
+  - { type: completeness, id: gaps,
+      title: "7. Telemetry availability during the anomaly",
+      sids: [1, 2, 3, 4, 5, 6], expected_cadence: from_config,
+      gap_threshold_multiple: 2.0, breakdown: [per_sid],
+      show: [expected, received, missing_pct, longest_gap_s, gap_list,
+             store_wrap, crc_errors],
+      correlate_with: [contacts, store_overflow] }
+  - type: narrative
+    id: analysis
+    title: "8. Analysis, root cause and actions"
+    text: |
+      **Observed behaviour:**
+      **Expected behaviour (design reference):**
+      **Candidate causes** (list, each with the evidence that supports or refutes it):
+      **Root cause:**
+      **Immediate recovery actions taken:**
+      **Corrective/preventive actions:**
+      **Recurrence check** — re-run this report over a wider period and state whether the
+      signature appears elsewhere.
+  - { type: appendix, id: raw,
+      include: [packet_counts_by_service, apids, undecodable, spec_yaml,
+                dataset_json],
+      embed_dataset: true }
+output: { formats: [html], self_contained: true, save_to: workspace/reports }

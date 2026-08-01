@@ -157,15 +157,18 @@ class TestImagingPlanner:
 
     def test_compute_opportunities_detects_target(self):
         planner = ImagingPlanner(SAMPLE_TARGETS)
-        # Ground track passes through Gulf Stream region
+        # Ground track passes through Gulf Stream region in daylight.
+        # (14:00Z at 65W is ~09:40 local solar time, sun ~42 deg up; the old
+        # 10:00Z samples were before local sunrise and are now correctly
+        # rejected by the enforced min_solar_elevation_deg — defect #61.)
         track = [
-            {"utc": "2026-03-11T10:00:00Z", "lat": 30.0, "lon": -65.0,
+            {"utc": "2026-03-11T14:00:00Z", "lat": 30.0, "lon": -65.0,
              "alt_km": 450.0, "in_eclipse": False},
-            {"utc": "2026-03-11T10:01:00Z", "lat": 32.0, "lon": -63.0,
+            {"utc": "2026-03-11T14:01:00Z", "lat": 32.0, "lon": -63.0,
              "alt_km": 450.0, "in_eclipse": False},
-            {"utc": "2026-03-11T10:02:00Z", "lat": 34.0, "lon": -61.0,
+            {"utc": "2026-03-11T14:02:00Z", "lat": 34.0, "lon": -61.0,
              "alt_km": 450.0, "in_eclipse": False},
-            {"utc": "2026-03-11T10:03:00Z", "lat": 50.0, "lon": -40.0,
+            {"utc": "2026-03-11T14:03:00Z", "lat": 50.0, "lon": -40.0,
              "alt_km": 450.0, "in_eclipse": False},
         ]
         opps = planner.compute_opportunities(track)
@@ -176,11 +179,11 @@ class TestImagingPlanner:
     def test_opportunity_has_duration(self):
         planner = ImagingPlanner(SAMPLE_TARGETS)
         track = [
-            {"utc": "2026-03-11T10:00:00+00:00", "lat": 30.0, "lon": -65.0,
+            {"utc": "2026-03-11T14:00:00+00:00", "lat": 30.0, "lon": -65.0,
              "alt_km": 450.0, "in_eclipse": False},
-            {"utc": "2026-03-11T10:01:00+00:00", "lat": 32.0, "lon": -63.0,
+            {"utc": "2026-03-11T14:01:00+00:00", "lat": 32.0, "lon": -63.0,
              "alt_km": 450.0, "in_eclipse": False},
-            {"utc": "2026-03-11T10:02:00+00:00", "lat": 50.0, "lon": -40.0,
+            {"utc": "2026-03-11T14:02:00+00:00", "lat": 50.0, "lon": -40.0,
              "alt_km": 450.0, "in_eclipse": False},
         ]
         opps = planner.compute_opportunities(track)
@@ -203,15 +206,15 @@ class TestImagingPlanner:
         """Track that passes through two target regions."""
         planner = ImagingPlanner(SAMPLE_TARGETS)
         track = [
-            # Gulf Stream
-            {"utc": "2026-03-11T10:00:00Z", "lat": 35.0, "lon": -65.0,
+            # Gulf Stream (14:00Z at 65W = ~09:40 local solar time)
+            {"utc": "2026-03-11T14:00:00Z", "lat": 35.0, "lon": -65.0,
              "alt_km": 450.0, "in_eclipse": False},
-            {"utc": "2026-03-11T10:01:00Z", "lat": 50.0, "lon": -40.0,
+            {"utc": "2026-03-11T14:01:00Z", "lat": 50.0, "lon": -40.0,
              "alt_km": 450.0, "in_eclipse": False},
-            # Agulhas Current
-            {"utc": "2026-03-11T10:30:00Z", "lat": -30.0, "lon": 30.0,
+            # Agulhas Current (14:30Z at 30E = ~16:30 local solar time)
+            {"utc": "2026-03-11T14:30:00Z", "lat": -30.0, "lon": 30.0,
              "alt_km": 450.0, "in_eclipse": False},
-            {"utc": "2026-03-11T10:31:00Z", "lat": 0.0, "lon": 50.0,
+            {"utc": "2026-03-11T14:31:00Z", "lat": 0.0, "lon": 50.0,
              "alt_km": 450.0, "in_eclipse": False},
         ]
         opps = planner.compute_opportunities(track)
@@ -244,13 +247,17 @@ class TestCaptureSequence:
         capture = planner.generate_capture_sequence(
             "OCM-001", "2026-03-11T10:00:00Z"
         )
-        # Find the capture command (third step)
-        cmd = capture["command_sequence"][2]
+        # Capture command is the final step; func 28 (0x1C) is the real
+        # payload capture per service_dispatch routing (defect #45 — the
+        # old 0x16 landed on an EPS no-op).
+        cmd = capture["command_sequence"][3]
         assert cmd["service"] == 8
         assert cmd["subtype"] == 1
-        assert cmd["func_id"] == 0x16
-        assert "parameters" in cmd
-        assert cmd["parameters"]["target_id"] == "OCM-001"
+        assert cmd["func_id"] == 0x1C
+        # Phase E WP-1: named engineering args (scene_id assigned at plan
+        # time so the downlink can be pre-booked; lines = reference frame).
+        assert cmd["args"]["scene_id"] == capture["scene_id"] > 0
+        assert cmd["args"]["lines"] == 2048
 
     def test_capture_custom_lat_lon(self):
         planner = ImagingPlanner(SAMPLE_TARGETS)

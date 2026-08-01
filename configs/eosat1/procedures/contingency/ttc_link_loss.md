@@ -65,7 +65,7 @@ and link restoration before escalating to emergency autonomous operations.
 **GO/NO-GO:** If no link after two consecutive passes, escalate to EMG-001 (Loss of Communication Emergency)
 
 ## Off-Nominal Handling
-- If link restores but RSSI < -95 dBm or margin < 1.5 dB: Reduce data rate via `SET_PARAM(param_id=ttc.data_rate, value=1)` (low rate) to improve margin
+- If link restores but RSSI < -95 dBm or margin < 1.5 dB: Step the TM rate ladder down to LOW (16 kbps) via `TTC_SET_DATA_RATE(rate=0)` (func_id 65) to improve margin. LOW is the routine operations rung — the link keeps full housekeeping, it just cannot dump
 - If OBC is found in SAFE mode after link restoration: Execute CTG-005 or CTG-010 as appropriate before resuming nominal operations
 - If redundant transponder also fails: Spacecraft will rely on autonomous safe mode; coordinate multi-station recovery campaign via EMG-001
 - If link is intermittent (toggling): Suspect antenna deployment anomaly or attitude issue — request AOCS telemetry and check `aocs.att_error` (0x0217)

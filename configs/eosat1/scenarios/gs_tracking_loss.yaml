@@ -14,12 +14,14 @@ briefing: |
   Start with: SMO_RF_MODE=FRAME ./start.sh
 
 events:
+  # Ground-segment failure — injected from the Radio UI (rfsim), not by the
+  # simulator's failure manager. See gs_rf_degradation.yaml (defect #52).
   - time_offset_s: 30
-    action: ground_failure
+    action: message
     params:
-      failure: tracking_loss
-      magnitude: 1.0
-    note: "Complete antenna tracking loss — 15 dB penalty, total signal loss"
+      text: >-
+        INSTRUCTOR CUE: inject ground failure tracking_loss magnitude 1.0 from the
+        Radio UI (rfsim) — complete antenna tracking loss, 15 dB penalty.
 
   - time_offset_s: 300
     action: inject

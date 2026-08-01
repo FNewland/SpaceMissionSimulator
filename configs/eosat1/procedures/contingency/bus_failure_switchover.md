@@ -34,7 +34,7 @@ the redundant bus, and verifies that all subsystem housekeeping resumes on the n
 | Command | Service | Subtype | Func ID | Description |
 |---|---|---|---|---|
 | HK_REQUEST | 3 | 27 | — | Request one-shot HK report |
-| OBC_SELECT_BUS | 8 | 1 | 44 | Select active CAN bus (0=A, 1=B) |
+| OBC_SELECT_BUS | 8 | 1 | 54 | Select active CAN bus (0=A, 1=B) |
 
 ## Procedure Steps
 
@@ -70,8 +70,8 @@ rather than bus-related.
 
 ### Step 3: Command Bus Switchover
 **Action:** Command switchover to the redundant bus:
-- If currently on Bus A (0x030E = 0): `OBC_SELECT_BUS(bus=1)` (func_id 44) — switch to Bus B
-- If currently on Bus B (0x030E = 1): `OBC_SELECT_BUS(bus=0)` (func_id 44) — switch to Bus A
+- If currently on Bus A (0x030E = 0): `OBC_SELECT_BUS(bus=1)` (func_id 54) — switch to Bus B
+- If currently on Bus B (0x030E = 1): `OBC_SELECT_BUS(bus=0)` (func_id 54) — switch to Bus A
 **Note:** CAUTION — This command will briefly interrupt all bus communications during
 the switchover. Expect a 5-10 s communication gap with subsystems.
 **Verify:** Wait 15 s for switchover to complete.
@@ -128,11 +128,11 @@ Any failure of the remaining bus is mission-critical.
   subsystem-level fault. For subsystems still missing, investigate whether their bus
   interface has failed independently.
 - If OBC does not respond to the bus select command: The OBC may be in a degraded state.
-  Attempt `OBC_REBOOT` (func_id 42) as a last resort. If OBC is unresponsive, follow
+  Attempt `OBC_REBOOT` (func_id 52) as a last resort. If OBC is unresponsive, follow
   CTG-011 (OBC Redundancy Switchover).
 - If a subsystem mode changed during switchover (e.g., AOCS went to safe mode): The
   brief bus interruption may have triggered a subsystem-level timeout. Restore the
   affected subsystem to its pre-switchover mode after verifying bus stability.
 - If bus switchover causes continuous OBC reboots: OBC may be detecting bus errors on
-  both buses. Command `OBC_BOOT_INHIBIT(inhibit=1)` (func_id 46) to stay in bootloader
+  both buses. Command `OBC_BOOT_INHIBIT(inhibit=1)` (func_id 56) to stay in bootloader
   and prevent auto-reboot. Investigate from bootloader.

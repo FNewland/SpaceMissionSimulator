@@ -118,7 +118,7 @@ diagnostics.
 ### Step 8: Restore Nominal Configuration
 **Action:** Command AOCS back to nominal nadir pointing: `AOCS_SET_MODE(mode=4)` (func_id 0)
 **Verify:** `aocs.mode` (0x020F) = 4 (NOMINAL_NADIR) within 30 s
-**Verify:** `aocs.att_error` (0x0217) < 0.1 deg within 120 s
+**Verify:** `aocs.att_error` (0x0217) < 0.1 deg within 300 s (Phase C: gyro-only eclipse drift must be re-estimated and the PD re-converges at its real settling time)
 **Action:** Re-enable FPA cooler if imaging is planned: `FPA_COOLER(on=1)` (func_id 43)
 **Verify:** `tcs.cooler_fpa` (0x040C) = 1 (ACTIVE) within 5 s
 **Action:** Restore heater setpoints to nominal if they were modified:

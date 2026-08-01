@@ -8,6 +8,7 @@ Runs the simulation engine and exposes:
 import asyncio
 import json
 import logging
+import os
 import argparse
 from pathlib import Path
 from typing import Optional
@@ -32,6 +33,11 @@ class SimulatorServer:
         self._tc_port = self._config.get("tc_port", 8001)
         self._tm_port = self._config.get("tm_port", 8002)
         self._http_port = self._config.get("http_port", 8080)
+        # Bind address (D-2). start.sh printed "LOCAL mode: services bound to
+        # loopback where supported" while this hard-coded 0.0.0.0 regardless,
+        # so the banner was untrue. `--host` / $SMO_BIND now decide.
+        self._bind_host = (self._config.get("bind_host")
+                           or os.environ.get("SMO_BIND") or "0.0.0.0")
         self._running = False
         self.tm_packets_broadcast: int = 0
 
@@ -40,22 +46,22 @@ class SimulatorServer:
         self.engine.start()
 
         # Start TCP servers
-        tc_server = await asyncio.start_server(self._handle_tc_client, "0.0.0.0", self._tc_port)
-        tm_server = await asyncio.start_server(self._handle_tm_client, "0.0.0.0", self._tm_port)
+        tc_server = await asyncio.start_server(
+            self._handle_tc_client, self._bind_host, self._tc_port)
+        tm_server = await asyncio.start_server(
+            self._handle_tm_client, self._bind_host, self._tm_port)
 
         # Start HTTP/WS server using instructor app (serves UI + all APIs)
         self._app = create_instructor_app(self.engine)
         app = self._app
-        # Add additional server-specific routes
-        app.router.add_get("/api/catalog", self._handle_api_catalog)
-
         runner = web.AppRunner(app)
         await runner.setup()
-        site = web.TCPSite(runner, "0.0.0.0", self._http_port)
+        site = web.TCPSite(runner, self._bind_host, self._http_port)
         await site.start()
 
-        logger.info("Simulator server started — TC:%d TM:%d HTTP:%d",
-                     self._tc_port, self._tm_port, self._http_port)
+        logger.info("Simulator server started on %s — TC:%d TM:%d HTTP:%d",
+                    self._bind_host, self._tc_port, self._tm_port,
+                    self._http_port)
 
         # Run TM broadcast loop
         await asyncio.gather(
@@ -140,14 +146,13 @@ class SimulatorServer:
             for ws in disconnected:
                 ws_clients.remove(ws)
 
-    async def _handle_api_catalog(self, request):
-        return web.json_response({"failures": [], "commands": []})
-
-
 def main():
     parser = argparse.ArgumentParser(description="SMO Spacecraft Simulator")
     parser.add_argument("--config", default="configs/eosat1/", help="Config directory path")
     parser.add_argument("--speed", type=float, default=1.0, help="Simulation speed multiplier")
+    parser.add_argument("--host", default=None,
+                        help="Bind address for TC/TM/HTTP (default $SMO_BIND "
+                             "or 0.0.0.0; use 127.0.0.1 for loopback only)")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -155,6 +160,7 @@ def main():
     engine = SimulationEngine(config_dir=args.config, speed=args.speed)
     server = SimulatorServer(engine, config={
         "tc_port": 8001, "tm_port": 8002, "http_port": 8080,
+        "bind_host": args.host,
     })
     asyncio.run(server.start())
 

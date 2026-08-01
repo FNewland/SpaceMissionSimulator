@@ -44,17 +44,38 @@
 
 ### Commands
 
-#### Payload Function Commands (S8, func_ids 20-26)
+#### Payload Function Commands (S8.1, func_ids 26-39 + 92-95)
 
-| Command | func_id | Description | Fields |
-|---|---|---|---|
-| PAYLOAD_SET_MODE | 20 | Set payload mode | mode: 0=off, 1=standby, 2=imaging |
-| PAYLOAD_SET_SCENE | 21 | Set scene ID for imaging | scene_id (uint16) |
-| PAYLOAD_CAPTURE | 22 | Trigger image capture | scene_id, lines (CCD lines to capture) |
-| PAYLOAD_DOWNLOAD_IMAGE | 23 | Queue image for downlink | scene_id |
-| PAYLOAD_DELETE_IMAGE | 24 | Delete image from payload memory | scene_id |
-| PAYLOAD_MARK_BAD_SEGMENT | 25 | Mark memory segment as unusable | segment_id (0-79) |
-| PAYLOAD_GET_IMAGE_CATALOG | 26 | Request stored image catalog | (none) |
+The whole block below was documented at func_ids 20-26 — a stale numbering
+scheme in which every entry named the wrong function and seven of the
+fourteen commands were missing. Encodings are the authoritative ones from
+`commands/tc_catalog.yaml`; the generated `manual/09_command_reference.md`
+carries the full argument tables.
+
+| Command | func_id | Description | Arguments (engineering) | Wire example |
+|---|---|---|---|---|
+| PAYLOAD_SET_MODE | 26 (0x1A) | Set payload mode | mode enum 0=OFF, 1=STANDBY, 2=IMAGING | `1A 02` |
+| PAYLOAD_SET_SCENE | 27 (0x1B) | Pre-set scene id (deprecated — CAPTURE carries its own) | scene_id uint16 | `1B 04 12` |
+| PAYLOAD_CAPTURE | 28 (0x1C) | Trigger one acquisition | scene_id uint16 (0=auto), lines uint16 (256-20000) | `1C 04 12 08 00` |
+| PAYLOAD_DOWNLOAD_IMAGE | 29 (0x1D) | Queue image for downlink | scene_id uint16 | `1D 04 12` |
+| PAYLOAD_DELETE_IMAGE | 30 (0x1E) | Delete image from payload memory | scene_id uint16 | `1E 04 12` |
+| PAYLOAD_MARK_BAD_SEGMENT | 31 (0x1F) | Mark memory segment unusable | segment_id uint8 (0-7) | `1F 03` |
+| PAYLOAD_GET_IMAGE_CATALOG | 32 (0x20) | Request stored image catalog | (none) | `20` |
+| PAYLOAD_SET_BAND_CONFIG | 33 (0x21) | Spectral band enable mask | mask bitfield b0 BLUE, b1 GREEN, b2 RED, b3 NIR (mask != 0) | `21 0F` |
+| PAYLOAD_SET_INTEGRATION_TIME | 34 (0x22) | Per-band integration times | 4x uint16, 0.01 ms/LSB, 0.10-655.35 ms | `22 03 20 04 B0 06 40 07 D0` (8/12/16/20 ms) |
+| PAYLOAD_SET_GAIN | 35 (0x23) | Detector gain | gain uint16, 0.001x/LSB, 0.100-10.000 | `23 03 E8` (1.000x) |
+| PAYLOAD_COOLER_SETPOINT | 36 (0x24) | FPA TEC regulation setpoint | setpoint uint16 centi-KELVIN, -20.0 to 0.0 degC | `24 64 D7` (-15.00 degC) |
+| PAYLOAD_START_CALIBRATION | 37 (0x25) | Begin calibration | mode enum 0=DARK, 1=FLAT, 2=BOTH | `25 00` (dark only) |
+| PAYLOAD_STOP_CALIBRATION | 38 (0x26) | Abort calibration | (none) | `26` |
+| PAYLOAD_SET_COMPRESSION | 39 (0x27) | Compression algorithm + ratio | algorithm enum 0-3, ratio uint8 0.1x/LSB (0=AUTO) | `27 03 00` |
+| PAYLOAD_SELECT_FILTER | 92 (0x5C) | Filter wheel position | position enum 0=CLEAR, 1=ND2, 2=DIFFUSER, 3=DARK | `5C 00` |
+| PAYLOAD_CYCLE_SHUTTER | 93 (0x5D) | Shutter cycle test | cycles uint8 1-100 | `5D 05` |
+| PAYLOAD_INITIATE_TRANSFER | 94 (0x5E) | Start on-board transfer of a stored scene | scene_id uint16 | `5E 04 12` |
+| PAYLOAD_CAL_LAMP | 95 (0x5F) | Calibration lamp on/off | on enum 0/1 | `5F 01` |
+
+Payload devices are additionally reachable over **S2.1** (FPA 0x0600, cooler
+0x0601, cal lamp 0x0602, shutter 0x0603, compression unit 0x0604) — service 2
+is granted to this position.
 
 #### General Services
 

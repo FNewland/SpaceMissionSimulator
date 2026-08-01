@@ -145,7 +145,24 @@ mode and deactivated when the payload is set to OFF.
 |-----------------|------------|-------------|---------|----------|
 | temp_obc (C)    | 5          | 60          | 0       | 70       |
 | temp_battery (C)| 2          | 40          | 0       | 45       |
-| temp_fpa (C)    | -18        | 8           | -20     | 12       |
+| temp_fpa (C)    | -22.0      | 14.0        | -25.5   | 17.5     |
+
+These bands are **derived**, not chosen: `subsystems/tcs.yaml: fpa_envelope`
+is the single source and `smo_common.config.fpa_envelope` computes the rest
+(DECISIONS §3). The FPA node has two legitimate resting states — regulated
+anywhere in the commandable **-20…0 deg C** setpoint envelope
+(`PAYLOAD_COOLER_SETPOINT`, S8 func 36), and uncooled at about **+11.5 deg C**
+(measured peak +12.4). The band brackets both, plus 3 sigma of control noise
+(0.5 K) and a 1.5 K margin for yellow, 5.0 K for red. The previous
+-18/+8, -20/+12 table predated the commandable setpoint and turned a legal
+-20 deg C command into a standing red alarm.
+
+**Being cold enough to image is not a limit.** That is the `fpa_ready` flag
+(0x0610) and the `FPA_THERMAL_READY` / `FPA_THERMAL_NOT_READY` events
+(0x040A / 0x040B): the loop settled about the *active* setpoint (-1 K / +5 K)
+**and** the detector at or below **-3.0 deg C**. A decontamination bake-out
+(+50 deg C) will breach the red high — deliberately. You have taken the
+detector outside its operating envelope and the console should say so.
 
 ## 7. Commands
 

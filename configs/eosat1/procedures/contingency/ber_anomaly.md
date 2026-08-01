@@ -31,19 +31,23 @@ rate reduction and transponder switchover if the primary unit is degraded.
 | ttc.carrier_lock | 0x0510 | 1 (locked) |
 | ttc.bit_sync | 0x0511 | 1 (synchronized) |
 | ttc.frame_sync | 0x0512 | 1 (synchronized) |
-| ttc.tm_data_rate | 0x0506 | Current data rate |
-| ttc.contact_elevation | 0x050A | Current elevation |
+| ttc.tm_data_rate | 0x0506 | Active information rate (BEACON 1000 / LOW 16000 / HIGH 128000 bps) |
+| ttc.tm_tier | 0x0539 | ACTIVE tier index (0=BEACON, 1=LOW, 2=HIGH) |
+| ttc.tm_tier_cmd | 0x053A | COMMANDED tier index |
+| ttc.downlink_mode | 0x053C | 1 while a dump is in progress |
+| ttc.contact_elevation | 0x050A | Current elevation (HIGH needs >= 10 deg) |
 
 ## Required Commands
 | Command | Service | Subtype | Func ID | Description |
 |---|---|---|---|---|
 | HK_REQUEST | 3 | 27 | — | Request one-shot HK report |
-| TTC_SET_DATA_RATE | 8 | 1 | 52 | Reduce data rate |
-| TTC_SWITCH_REDUNDANT | 8 | 1 | 51 | Switch to redundant transponder |
-| TTC_SWITCH_PRIMARY | 8 | 1 | 50 | Switch back to primary transponder |
-| TTC_PA_OFF | 8 | 1 | 54 | Disable power amplifier |
-| TTC_PA_ON | 8 | 1 | 53 | Enable power amplifier |
-| TTC_SET_TX_POWER | 8 | 1 | 55 | Adjust transmit power level |
+| TTC_SET_DATA_RATE | 8 | 1 | 65 | Step down the TM rate ladder (0=LOW 16 kbps, 1=HIGH 128 kbps) |
+| TTC_SET_DOWNLINK_MODE | 8 | 1 | 79 | Leave DOWNLINK mode when abandoning a high-rate dump |
+| TTC_SWITCH_REDUNDANT | 8 | 1 | 64 | Switch to redundant transponder |
+| TTC_SWITCH_PRIMARY | 8 | 1 | 63 | Switch back to primary transponder |
+| TTC_PA_OFF | 8 | 1 | 67 | Disable power amplifier |
+| TTC_PA_ON | 8 | 1 | 66 | Enable power amplifier |
+| TTC_SET_TX_POWER | 8 | 1 | 68 | Adjust transmit power level |
 
 ## Procedure Steps
 
@@ -75,39 +79,51 @@ atmospheric attenuation and low gain. Wait for higher elevation before declaring
 
 ### Step 3: PA Overheating — Thermal Mitigation
 **Action:** If PA temperature > 55 C, reduce thermal load:
-- Command PA off: `TTC_PA_OFF` (func_id 54)
+- Command PA off: `TTC_PA_OFF` (func_id 67)
 - Wait 120 s for cooldown
 - Request TTC housekeeping: `HK_REQUEST(sid=5)`
 - **Verify:** `ttc.pa_temp` (0x050F) trending downward
-- Command PA back on: `TTC_PA_ON` (func_id 53)
+- Command PA back on: `TTC_PA_ON` (func_id 66)
 - **Verify:** `ttc.pa_on` (0x0516) = 1 within 5 s
 **Action:** If PA temperature is still > 50 C after PA-on, reduce TX power level:
-`TTC_SET_TX_POWER(level=0)` (func_id 55) — set to low power (1 W)
+`TTC_SET_TX_POWER(level=0)` (func_id 68) — set to low power (1 W)
 **Verify:** `ttc.pa_temp` (0x050F) stabilizing
 **Verify:** `ttc.ber` (0x050C) — check if BER improves with cooler PA
 **Note:** If PA overheating persists, follow EMG-006 for thermal investigation
 of the transponder zone.
 **GO/NO-GO:** If BER improved, continue monitoring. If not, proceed to Step 4.
 
-### Step 4: Try Data Rate Reduction
-**Action:** Reduce data rate to LOW: `TTC_SET_DATA_RATE(rate=0)` (func_id 52)
-**Verify:** `ttc.tm_data_rate` (0x0506) = 1000 bps within 10 s
+### Step 4: Step Down the Rate Ladder
+**Note:** Only worth doing if the ACTIVE tier (0x0539) is above LOW. A step from HIGH
+(128 kbps) to LOW (16 kbps) buys 9.03 dB of Eb/N0 — the `-10*log10(R)` term — and also
+changes the waveform from QPSK RS(255,223) to BPSK conv(7,1/2)+RS, worth a further
+1.5 dB of coding gain. If the link is already at LOW there is no operational rung below
+it: BEACON is the bootloader lifeline and is not commandable here, so skip to Step 5.
+**Action:** Step down to LOW: `TTC_SET_DATA_RATE(rate=0)` (func_id 65)
+**TC:** `TTC_SET_DATA_RATE` rate=0 (Service 8, Subtype 1, func_id 65)
+**Verify:** `ttc.tm_data_rate` (0x0506) = 16000 bps within 10 s
+**Verify:** `ttc.tm_tier` (0x0539) = 1 (LOW) and equal to `ttc.tm_tier_cmd` (0x053A)
+**Verify:** `ttc.tm_symbol_rate` (0x053B) = 16000 Bd (BPSK)
 **Verify:** `ttc.carrier_lock` (0x0510) = 1
 **Verify:** `ttc.bit_sync` (0x0511) = 1
+**Action:** If a dump was in progress, release the gate as well:
+**TC:** `TTC_SET_DOWNLINK_MODE` on=0 (Service 8, Subtype 1, func_id 79)
+**Verify:** `ttc.downlink_mode` (0x053C) = 0
 **Action:** Wait 30 s for BER to stabilize, then request TTC housekeeping:
 `HK_REQUEST(sid=5)` (Service 3, Subtype 27)
-**Verify:** `ttc.ber` (0x050C) < -5 (BER improved at lower rate)
-**Verify:** `ttc.eb_n0` (0x0519) > 10 dB at lower rate
+**Verify:** `ttc.ber` (0x050C) < -5 (BER improved at the lower rung)
+**Verify:** `ttc.eb_n0` (0x0519) > 10 dB at the lower rung
 **Action:** If BER improved:
-- Root cause is likely insufficient link margin at the higher rate.
-- Continue at low rate for this contact. Reassess link budget before next high-rate
-  attempt.
-**Action:** If BER did NOT improve at low rate: The issue is deeper than data rate.
+- Root cause is likely insufficient link margin at HIGH for this pass geometry.
+- Continue at LOW for this contact — LOW is the routine operations rate, so nothing is
+  lost except the dump. Re-plan the dump onto a higher pass and reassess the link
+  budget (`tools/link_budget_ladder.py`) before the next high-rate attempt.
+**Action:** If BER did NOT improve at LOW: the issue is deeper than data rate.
 Proceed to Step 5 (transponder switchover).
-**GO/NO-GO:** If BER acceptable at low rate, monitor and log. If not, proceed to Step 5.
+**GO/NO-GO:** If BER acceptable at LOW, monitor and log. If not, proceed to Step 5.
 
 ### Step 5: Try Transponder Switchover
-**Action:** Switch to redundant transponder: `TTC_SWITCH_REDUNDANT` (func_id 51)
+**Action:** Switch to redundant transponder: `TTC_SWITCH_REDUNDANT` (func_id 64)
 **Verify:** Wait 15 s for redundant transponder to initialize
 **Action:** Request TTC housekeeping: `HK_REQUEST(sid=5)` (Service 3, Subtype 27)
 **Verify:** `ttc.carrier_lock` (0x0510) = 1 (re-acquired on redundant unit)
@@ -118,8 +134,8 @@ Proceed to Step 5 (transponder switchover).
 **Action:** If BER improved on redundant transponder: The primary transponder is degraded.
 Log as hardware anomaly. Continue operations on redundant unit.
 **Action:** If BER NOT improved: Issue is likely external (interference, ground segment,
-or antenna issue). Revert to primary transponder: `TTC_SWITCH_PRIMARY` (func_id 50).
-Continue at low rate and escalate for ground segment investigation.
+or antenna issue). Revert to primary transponder: `TTC_SWITCH_PRIMARY` (func_id 63).
+Continue at LOW (16 kbps) and escalate for ground segment investigation.
 **GO/NO-GO:** Transponder assessment complete. Log findings and proceed with best
 configuration.
 
@@ -134,13 +150,14 @@ configuration.
 ## Contingency
 - If link is lost during transponder switchover: Ground station should sweep for signal
   on new transponder frequency. Wait up to 60 s for re-acquisition. If no link after
-  60 s, attempt to switch back: `TTC_SWITCH_PRIMARY` (func_id 50). If still no link,
+  60 s, attempt to switch back: `TTC_SWITCH_PRIMARY` (func_id 63). If still no link,
   follow CTG-003.
-- If both transponders show degraded BER: Suspect antenna or feed network issue. Reduce
-  to minimum data rate, increase TX power to high: `TTC_SET_TX_POWER(level=2)`.
+- If both transponders show degraded BER: Suspect antenna or feed network issue. Hold
+  at LOW (16 kbps — the lowest commandable operational rung; BEACON is bootloader-only)
+  and increase TX power to high: `TTC_SET_TX_POWER(level=2)`.
   Escalate to engineering team.
 - If PA fails to re-enable after cooldown: PA may have permanent failure. Switch to
-  redundant transponder which has its own PA: `TTC_SWITCH_REDUNDANT` (func_id 51).
+  redundant transponder which has its own PA: `TTC_SWITCH_REDUNDANT` (func_id 64).
 - If BER continues to degrade during the contact: Risk of complete link loss. Uplink
   any critical commands immediately while link remains. Prepare for autonomous
   operations until next contact.

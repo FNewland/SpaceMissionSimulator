@@ -87,28 +87,39 @@ class TestCommandedTorqueScaling:
         assert t[2] == pytest.approx(axis[2] * magnitude * 3.0)
 
     def test_nominal_control_law_responds_more_strongly_with_higher_gain(self):
-        """A higher X gain produces a larger X-axis attitude change per tick
-        in the NOMINAL control law, with the same starting error."""
+        """Phase C rewrite (brief 02 WP-10): the old test poked the removed
+        kinematic `_target_q` and asserted on the quaternion nudge; the PD
+        control law now commands a real TORQUE, so assert directly that a
+        higher X gain scales the commanded X-axis torque for the same
+        attitude error."""
+        import numpy as np
         from smo_simulator.models import aocs_basic as ab
 
-        def x_step(gain: float) -> float:
+        def x_torque(gain: float) -> float:
             m = AOCSBasicModel()
             m.configure({})
-            # Pure X-axis attitude error toward target.
-            m._state.q = [0.0, 0.0, 0.0, 1.0]
-            m._target_q = [0.2, 0.0, 0.0, 0.9797959]
-            m._state.mode = ab.MODE_NOMINAL
+            orbit = MagicMock()
+            orbit.in_eclipse = False
+            orbit.solar_beta_deg = 20.0
+            orbit.lat_deg = 0.0
+            orbit.lon_deg = 0.0
+            orbit.alt_km = 450.0
+            orbit.vel_x = orbit.vel_y = orbit.vel_z = 0.0
+            m.tick(1.0, orbit, {})   # establish environment/estimator state
             m.set_torque_gain("x", gain)
-            q0x = m._state.q[0]
-            # Many small ticks; suppress the tiny gaussian jitter by averaging.
-            steps = 50
-            for _ in range(steps):
-                m._tick_nominal(m._state, 1.0)
-            return abs(m._state.q[0] - q0x)
+            s = m._state
+            m._omega_est = np.zeros(3)
+            # 5° pure-X error between the estimate and the reference
+            q_ref = np.array([0.0436194, 0.0, 0.0, 0.9990482])
+            m._ekf.q = np.array([0.0, 0.0, 0.0, 1.0])
+            m._ekf.initialised = True
+            tau = m._pd_torque(s, q_ref, np.zeros(3), 0.04, 0.7)
+            return float(tau[0])
 
-        strong = x_step(3.0)
-        weak = x_step(1.0)
-        assert strong > weak
+        strong = x_torque(3.0)
+        weak = x_torque(1.0)
+        assert weak > 0.0
+        assert strong == pytest.approx(3.0 * weak, rel=1e-6)
 
 
 # ── (b) MEM_LOAD / MEM_DUMP round-trip through the dispatcher ───────────
@@ -214,3 +225,50 @@ def test_gains_persist_through_get_set_state():
     assert m2.get_torque_gain("x") == 2.0
     assert m2.get_torque_gain("y") == 0.5
     assert m2.get_torque_gain("z") == 3.5
+
+
+# ── gain_corruption failure (CERISE scenario fault vector) ──────────────
+
+class TestGainCorruptionFailure:
+    """The gain_corruption failure drives the fault through the real S6-managed
+    torque-gain register, so it is diagnosable via MEM_DUMP and reversible via
+    MEM_LOAD — the mechanism the CERISE scenario relies on."""
+
+    def test_inject_corrupts_named_axis_gain(self, aocs):
+        aocs.inject_failure("gain_corruption", axis="y", factor=10)
+        assert aocs.get_torque_gain("y") == 10.0
+        # Other axes untouched.
+        assert aocs.get_torque_gain("x") == 1.0
+        assert aocs.get_torque_gain("z") == 1.0
+
+    def test_default_axis_and_factor(self, aocs):
+        # Defaults: axis=y, factor=10.
+        aocs.inject_failure("gain_corruption")
+        assert aocs.get_torque_gain("y") == 10.0
+
+    def test_clear_restores_pre_fault_gain(self, aocs):
+        aocs.inject_failure("gain_corruption", axis="y", factor=10)
+        aocs.clear_failure("gain_corruption", axis="y")
+        assert aocs.get_torque_gain("y") == 1.0
+
+    def test_clear_restores_operator_set_gain_not_unity(self, aocs):
+        # If the operator had a deliberate non-unity gain, clearing restores it.
+        aocs.set_torque_gain("z", 1.5)
+        aocs.inject_failure("gain_corruption", axis="z", factor=8)
+        assert aocs.get_torque_gain("z") == 8.0
+        aocs.clear_failure("gain_corruption", axis="z")
+        assert aocs.get_torque_gain("z") == 1.5
+
+    def test_corruption_amplifies_commanded_torque(self, aocs):
+        axis = [1.0, 1.0, 1.0]
+        base = aocs._commanded_control_torque(axis, 0.1)
+        aocs.inject_failure("gain_corruption", axis="y", factor=10)
+        scaled = aocs._commanded_control_torque(axis, 0.1)
+        assert scaled[1] == pytest.approx(10.0 * base[1])
+        assert scaled[0] == pytest.approx(base[0])
+
+    def test_invalid_axis_is_noop(self, aocs):
+        aocs.inject_failure("gain_corruption", axis="w", factor=10)
+        assert aocs.get_torque_gain("x") == 1.0
+        assert aocs.get_torque_gain("y") == 1.0
+        assert aocs.get_torque_gain("z") == 1.0

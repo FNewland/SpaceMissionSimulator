@@ -232,6 +232,16 @@ html, body {
   }
 }
 
+/* Wide-screen wall display (/wide). This used to be a second, 1822-line
+   copy of this page (static/index-wide.html) that drifted independently —
+   planner_audit.md records the two being fixed separately. /wide is now a
+   layout mode of the one page. */
+body.wide-mode .main-bottom { grid-template-columns: repeat(6, 1fr); }
+@media (min-width: 3000px) {
+  body.wide-mode .main-bottom { grid-template-columns: repeat(8, 1fr); }
+  body.wide-mode { font-size: 15px; }
+}
+
 /* Panels */
 .panel {
   background: var(--bg);
@@ -779,6 +789,13 @@ html, body {
 </style>
 </head>
 <body>
+<script>
+// /wide serves this same page with ?layout=wide (Phase G): one UI, one set of
+// fixes. The old /wide page was a divergent copy.
+if (new URLSearchParams(location.search).get('layout') === 'wide') {
+  document.body.classList.add('wide-mode');
+}
+</script>
 <div id="app">
 
   <!-- Header -->
@@ -791,6 +808,7 @@ html, body {
       <span class="utc-label">UTC</span>
       <span class="utc-date" id="utcDate">---</span>
       <span class="utc-clock" id="utcClock">--:--:--</span>
+      <span class="sim-badge" id="clockSourceBadge" title="Planner clock source">SIM</span>
       <span class="sc-state-badge sunlit" id="scStateBadge">SUNLIT</span>
     </div>
     <div class="header-right">
@@ -805,6 +823,16 @@ html, body {
       <div class="orbit-param">
         <div class="orbit-param-label">Period</div>
         <div class="orbit-param-value">~94.7 min</div>
+      </div>
+      <!-- Phase F: read-only mission-config browser served by this planner
+           (relative href — works from any client machine). Editing happens
+           on the instructor console (8080) only; this view lets students
+           read the configuration and its change history. -->
+      <div class="orbit-param">
+        <div class="orbit-param-label">Mission</div>
+        <div class="orbit-param-value"><a id="config-link" href="/config"
+             target="_blank" rel="noopener" style="color:inherit;"
+             title="Browse mission configuration and its history (read-only)">CONFIG</a></div>
       </div>
     </div>
   </div>
@@ -896,6 +924,13 @@ html, body {
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><line x1="6" y1="1" x2="6" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="1" y1="6" x2="11" y2="6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
               Add Activity
             </button>
+            <div style="display:flex;gap:6px;">
+              <select class="form-control" id="templateSelect" style="flex:1;font-size:10px;padding:4px;">
+                <option value="">Standard activities...</option>
+              </select>
+              <button class="btn" onclick="loadStandardActivities()" style="flex:0 0 auto;font-size:10px;" title="Instantiate the selected template at the current sim time, on real passes">Load</button>
+              <button class="btn" onclick="clearSchedule()" style="flex:0 0 auto;font-size:10px;" title="Remove every activity">Clear</button>
+            </div>
             <div style="display:flex;gap:6px;">
               <button class="btn" onclick="validateSchedule()" style="flex:1;font-size:10px;">Validate</button>
               <button class="btn" onclick="uploadToMCS()" style="flex:1;font-size:10px;">Upload to MCS</button>
@@ -1042,15 +1077,37 @@ const POLL_INTERVAL_MS = 30000;
 const SC_REFRESH_MS = 5000;
 
 // ==================== State ====================
-let useSimulatedContacts = true;
-let useSimulatedSchedule = true;
+// Resolved planner time-source mode ("sim" or "real"), fetched from
+// /api/time-source. Authoritative for every data-source badge. Defaults
+// to "sim" until the fetch resolves so badges don't falsely read LIVE.
+let timeSource = 'sim';
 let apiContacts = [];
 let apiSchedule = [];
-let simulatedContacts = [];
-let simulatedActivities = [];
 let groundTrackData = [];
 let scState = null;
+// Ground stations come ONLY from /api/ground-stations (which serves
+// orbit.yaml, the canonical list). There is deliberately no hard-coded
+// fallback list in this page any more (defect #57): a failed fetch shows an
+// error instead of inventing a network.
 let groundStations = [];
+let groundStationsError = false;
+
+// ── Server clock (defect #58) ──────────────────────────────────
+// The page must run on the PLANNER's clock, not the operator's wall clock:
+// in sim mode that is the simulator's sim_time, extrapolated locally between
+// polls of /api/time-source. simNow() returns ms since epoch on that clock.
+let simAnchorMs = null;      // server "now" at the last successful poll
+let simAnchorWallMs = null;  // browser Date.now() at that moment
+let simSpeed = 1.0;
+let clockDegraded = false;   // sim unreachable / anchor stale / API down
+let clockNote = '';
+
+function simNow() {
+  if (simAnchorMs === null) return Date.now();   // never reached the API yet
+  return simAnchorMs + (Date.now() - simAnchorWallMs) * simSpeed;
+}
+
+function simNowDate() { return new Date(simNow()); }
 
 // ==================== SVG World Map ====================
 let map = null;
@@ -1080,9 +1137,6 @@ function initMap() {
   // Draw initial day/night terminator
   updateTerminator();
   setInterval(updateTerminator, 60000);
-
-  // Load ground stations from API
-  loadGroundStations();
 
   // Load initial ground track
   loadGroundTrack();
@@ -1126,7 +1180,7 @@ function terminatorLatAtLon(lonDeg, subsolar) {
 
 function updateTerminator() {
   if (!map) return;
-  const now = new Date();
+  const now = simNowDate();
   const subsolar = computeSubsolarPoint(now);
   // Sample terminator latitude at each longitude across the whole map.
   const samples = [];
@@ -1148,23 +1202,23 @@ function updateTerminator() {
   });
 }
 
+// The ground-station network has exactly ONE source in this page:
+// /api/ground-stations, which the server builds from orbit.yaml (canonical,
+// defect #42). No JS fallback list — if the fetch fails we say so.
 async function loadGroundStations() {
   try {
     const res = await fetch('/api/ground-stations');
-    if (!res.ok) return;
+    if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     groundStations = data.ground_stations || [];
-    updateGroundStationMarkers();
-    updateStationDropdown();
+    groundStationsError = groundStations.length === 0;
   } catch (e) {
-    // Use fallback stations
-    groundStations = [
-      { name: 'Iqaluit', lat_deg: 63.747, lon_deg: -68.518, min_elevation_deg: 5 },
-      { name: 'Troll', lat_deg: -72.012, lon_deg: 2.535, min_elevation_deg: 5 },
-    ];
-    updateGroundStationMarkers();
-    updateStationDropdown();
+    groundStations = [];
+    groundStationsError = true;
+    console.error('Ground-station fetch failed — no station list available:', e);
   }
+  updateGroundStationMarkers();
+  updateStationDropdown();
 }
 
 function updateStationDropdown() {
@@ -1238,7 +1292,7 @@ function drawGroundTrack() {
   }
 
   console.log('drawGroundTrack: processing', groundTrackData.length, 'points');
-  const nowMs = Date.now();
+  const nowMs = simNow();
   let currentSegment = [];
   let currentEclipse = groundTrackData[0].in_eclipse;
   let currentIsPast = new Date(groundTrackData[0].utc).getTime() < nowMs;
@@ -1358,7 +1412,7 @@ function updateHeaderState() {
 
 // ==================== Clock ====================
 function updateClock() {
-  const now = new Date();
+  const now = simNowDate();
   const h = String(now.getUTCHours()).padStart(2, '0');
   const m = String(now.getUTCMinutes()).padStart(2, '0');
   const s = String(now.getUTCSeconds()).padStart(2, '0');
@@ -1369,69 +1423,94 @@ function updateClock() {
   const mon = months[now.getUTCMonth()];
   const yr = now.getUTCFullYear();
   document.getElementById('utcDate').textContent = day + ' ' + mon + ' ' + yr;
+  updateClockBadge();
 }
 
-// ==================== Simulated Fallback Data ====================
-const GROUND_STATIONS_FALLBACK = [
-  { id: 'svalbard',  name: 'Svalbard',   lat: 78.229,  lon: 15.407,   minEl: 5, contactOffset: 0,  contactDur: 10, maxEl: 32 },
-  { id: 'troll',     name: 'Troll',      lat: -72.012, lon: 2.532,    minEl: 5, contactOffset: 50, contactDur: 8,  maxEl: 24 },
-  { id: 'inuvik',    name: 'Inuvik',     lat: 68.318,  lon: -133.549, minEl: 5, contactOffset: 30, contactDur: 12, maxEl: 45 },
-  { id: 'ohiggins',  name: "O'Higgins",  lat: -63.321, lon: -57.902,  minEl: 5, contactOffset: 70, contactDur: 7,  maxEl: 18 }
-];
+// Say honestly which clock the page is showing.
+function updateClockBadge() {
+  const el = document.getElementById('clockSourceBadge');
+  if (!el) return;
+  if (clockDegraded) {
+    el.className = 'sim-badge';
+    el.style.background = 'var(--red-dim)';
+    el.style.color = 'var(--red)';
+    el.textContent = 'WALL CLOCK';
+    el.title = clockNote || 'Planner sim clock unavailable — showing browser wall clock';
+  } else {
+    el.style.background = '';
+    el.style.color = '';
+    el.className = (timeSource === 'sim') ? 'sim-badge' : 'live-badge';
+    el.textContent = (timeSource === 'sim') ? 'SIM TIME' : 'UTC (REAL)';
+    el.title = 'Clock source: ' + timeSource +
+      (simSpeed !== 1.0 ? ' at x' + simSpeed : '');
+  }
+}
 
-const SAMPLE_ACTIVITIES = [
-  { name: 'Imaging Pass',      durationMin: 12, station: 'Svalbard',  priority: 'high',   offsetMin: 15 },
-  { name: 'Data Dump',         durationMin: 18, station: 'Inuvik',    priority: 'high',   offsetMin: 45 },
-  { name: 'Orbit Maintenance', durationMin: 25, station: null,         priority: 'medium', offsetMin: 120 },
-  { name: 'Calibration',       durationMin: 8,  station: 'Troll',     priority: 'low',    offsetMin: 200 },
-  { name: 'Data Dump',         durationMin: 15, station: 'Svalbard',  priority: 'high',   offsetMin: 290 },
-  { name: 'Imaging Pass',      durationMin: 10, station: "O'Higgins", priority: 'medium', offsetMin: 380 },
-  { name: 'Housekeeping',      durationMin: 5,  station: null,         priority: 'low',    offsetMin: 500 },
-  { name: 'Software Upload',   durationMin: 20, station: 'Svalbard',  priority: 'high',   offsetMin: 600 },
-  { name: 'Calibration',       durationMin: 10, station: 'Inuvik',    priority: 'medium', offsetMin: 750 },
-];
-
-function generateSimulatedContacts() {
-  const now = Date.now();
-  const contacts = [];
-  const windowMs = 24 * 60 * 60 * 1000;
-
-  GROUND_STATIONS_FALLBACK.forEach(gs => {
-    const offsetMs = gs.contactOffset * 60 * 1000;
-    const durMs = gs.contactDur * 60 * 1000;
-    let t = now - ORBIT_PERIOD_MS + offsetMs;
-    while (t < now + windowMs) {
-      const aos = new Date(t);
-      const los = new Date(t + durMs);
-      const elVar = Math.floor(Math.random() * 20) + gs.maxEl - 10;
-      const maxEl = Math.max(gs.minEl + 2, Math.min(85, elVar));
-      contacts.push({
-        station: gs.name,
-        stationId: gs.id,
-        aos: aos,
-        los: los,
-        durationMin: gs.contactDur,
-        maxEl: maxEl,
-        simulated: true
-      });
-      t += ORBIT_PERIOD_MS;
-    }
+// ==================== Data-source badges ====================
+// The badge names the CLOCK the data is computed against, not its fidelity:
+// every panel below is served by the planner from real SGP4 propagation and
+// the real schedule. "SIM CLOCK" = anchored to the simulator's sim_time,
+// "UTC" = wall clock, "WALL CLOCK" (red) = sim mode but the simulator is
+// unreachable, so the times on screen are drifting from sim time.
+function applyDataSourceBadges() {
+  const sim = (timeSource === 'sim');
+  const cls = clockDegraded ? 'sim-badge' : (sim ? 'sim-badge' : 'live-badge');
+  const shortText = clockDegraded ? 'WALL' : (sim ? 'SIM' : 'UTC');
+  const longText = clockDegraded ? 'WALL CLOCK' : (sim ? 'SIM CLOCK' : 'REAL UTC');
+  const shortBadges = ['mapDataBadge', 'powerDataBadge', 'dataDataBadge', 'imagingDataBadge'];
+  shortBadges.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.className = cls;
+    el.textContent = shortText;
+    el.title = clockNote || ('Clock source: ' + timeSource);
   });
-
-  contacts.sort((a, b) => a.aos - b.aos);
-  return contacts;
+  const longBadges = ['contactDataBadge', 'activityDataBadge'];
+  longBadges.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.className = cls;
+    el.textContent = longText;
+    el.title = clockNote || ('Clock source: ' + timeSource);
+  });
 }
 
-function generateSimulatedActivities() {
-  const now = Date.now();
-  return SAMPLE_ACTIVITIES.map(a => ({
-    name: a.name,
-    start: new Date(now + a.offsetMin * 60 * 1000),
-    durationMin: a.durationMin,
-    station: a.station,
-    priority: a.priority,
-    simulated: true
-  }));
+// Poll the planner's clock and re-anchor the page's simNow().
+// /api/time-source returns the resolved mode, the planner's current time,
+// the sim speed and whether the simulator is actually reachable — the last
+// one used to be silent, so the badge said SIM over wall-clock data.
+async function loadTimeSource() {
+  try {
+    const res = await fetch('/api/time-source');
+    if (res.ok) {
+      const data = await res.json();
+      if (data && (data.time_source === 'sim' || data.time_source === 'real')) {
+        timeSource = data.time_source;
+      }
+      const serverNow = data && (data.now || data.sim_time);
+      if (serverNow) {
+        simAnchorMs = new Date(serverNow).getTime();
+        simAnchorWallMs = Date.now();
+      }
+      if (data && typeof data.speed === 'number') simSpeed = data.speed;
+      clockDegraded = !!(data && (data.degraded || data.wall_clock_fallback));
+      clockNote = '';
+      if (data && data.wall_clock_fallback) {
+        clockNote = 'Simulator at ' + (data.sim_state_url || 'the configured URL') +
+          ' is unreachable — planner is running on wall-clock UTC';
+      } else if (data && data.degraded) {
+        clockNote = 'Sim clock anchor is stale (' + data.anchor_age_s + ' s old)';
+      }
+    } else {
+      clockDegraded = true;
+      clockNote = 'Planner /api/time-source returned HTTP ' + res.status;
+    }
+  } catch (e) {
+    clockDegraded = true;
+    clockNote = 'Planner API unreachable — page is on browser wall clock';
+  }
+  applyDataSourceBadges();
+  updateClockBadge();
 }
 
 // ==================== API Polling ====================
@@ -1439,50 +1518,41 @@ async function pollAPIs() {
   let contactsOk = false;
   let scheduleOk = false;
 
+  // time_source selects a CLOCK, not a data fidelity. The contact windows and
+  // the schedule below are always the server's real, SGP4-computed,
+  // sim-time-anchored data — there is no browser-side substitute any more.
   try {
     const res = await fetch('/api/contacts');
     if (res.ok) {
       const data = await res.json();
-      if (data.contacts && data.contacts.length > 0) {
-        apiContacts = data.contacts.map(c => ({
-          station: c.gs_name,
-          aos: new Date(c.aos),
-          los: new Date(c.los),
-          maxEl: c.max_elevation_deg,
-          durationMin: Math.round((c.duration_s || 0) / 60),
-          simulated: false
-        }));
-        useSimulatedContacts = false;
-      } else {
-        useSimulatedContacts = true;
-      }
+      apiContacts = (data.contacts || []).map(c => ({
+        station: c.gs_name,
+        aos: new Date(c.aos),
+        los: new Date(c.los),
+        maxEl: c.max_elevation_deg,
+        durationMin: Math.round((c.duration_s || 0) / 60)
+      }));
       contactsOk = true;
     }
   } catch (e) {
-    useSimulatedContacts = true;
+    apiContacts = [];
   }
 
   try {
     const res = await fetch('/api/schedule');
     if (res.ok) {
       const data = await res.json();
-      if (data.schedule && data.schedule.length > 0) {
-        apiSchedule = data.schedule.map(s => ({
-          ...s,
-          id: s.id,
-          start: new Date(s.start_time),
-          durationMin: Math.round((s.duration_s || 300) / 60),
-          state_name: s.state_name || 'PLANNED',
-          simulated: false
-        }));
-        useSimulatedSchedule = false;
-      } else {
-        useSimulatedSchedule = true;
-      }
+      apiSchedule = (data.schedule || []).map(s => ({
+        ...s,
+        id: s.id,
+        start: new Date(s.start_time),
+        durationMin: Math.round((s.duration_s || 300) / 60),
+        state_name: s.state_name || 'PLANNED'
+      }));
       scheduleOk = true;
     }
   } catch (e) {
-    useSimulatedSchedule = true;
+    apiSchedule = [];
   }
 
   // Update API status
@@ -1490,17 +1560,14 @@ async function pollAPIs() {
   const apiText = document.getElementById('apiStatusText');
   if (contactsOk && scheduleOk) {
     apiDot.className = 'api-dot connected';
-    apiText.textContent = 'API: connected';
+    apiText.textContent = clockDegraded ? 'API: connected (wall clock)' : 'API: connected';
   } else {
     apiDot.className = 'api-dot error';
-    apiText.textContent = 'API: simulated data';
+    apiText.textContent = 'API: unavailable';
   }
 
-  // Update badges
-  document.getElementById('contactDataBadge').className = useSimulatedContacts ? 'sim-badge' : 'live-badge';
-  document.getElementById('contactDataBadge').textContent = useSimulatedContacts ? 'SIMULATED' : 'LIVE DATA';
-  document.getElementById('activityDataBadge').className = useSimulatedSchedule ? 'sim-badge' : 'live-badge';
-  document.getElementById('activityDataBadge').textContent = useSimulatedSchedule ? 'SIMULATED' : 'LIVE DATA';
+  // Update badges (time_source authoritative; re-applied each poll).
+  applyDataSourceBadges();
 
   updateTimeline();
 
@@ -1539,10 +1606,10 @@ function drawTimeline() {
   const marginBottom = 18;
   const plotW = w - marginLeft - marginRight;
   const plotH = h - marginTop - marginBottom;
-  const gsCount = GROUND_STATIONS_FALLBACK.length;
+  const gsCount = Math.max(groundStations.length, 1);
   const rowH = plotH / gsCount;
 
-  const now = Date.now();
+  const now = simNow();
   const windowMs = 24 * 60 * 60 * 1000;
 
   function timeToX(t) {
@@ -1589,10 +1656,10 @@ function drawTimeline() {
     eclipseT += ORBIT_PERIOD_MS;
   }
 
-  // Contact windows
-  const contacts = useSimulatedContacts ? simulatedContacts : apiContacts;
+  // Contact windows (real, from /api/contacts)
+  const contacts = apiContacts;
   contacts.forEach(c => {
-    const stIdx = GROUND_STATIONS_FALLBACK.findIndex(gs => gs.id === c.stationId || gs.name === c.station);
+    const stIdx = groundStations.findIndex(gs => gs.name === c.station);
     if (stIdx === -1) return;
 
     const aosMs = c.aos.getTime();
@@ -1638,7 +1705,7 @@ function drawTimeline() {
   ctx.font = '10px "JetBrains Mono", monospace';
   ctx.textAlign = 'right';
   ctx.textBaseline = 'middle';
-  GROUND_STATIONS_FALLBACK.forEach((gs, i) => {
+  groundStations.forEach((gs, i) => {
     ctx.fillText(gs.name, marginLeft - 8, marginTop + i * rowH + rowH / 2);
   });
 
@@ -1665,7 +1732,20 @@ function drawTimeline() {
   ctx.fillStyle = '#ef4444';
   ctx.font = 'bold 9px "JetBrains Mono", monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('NOW', marginLeft + 3, marginTop - 4);
+  ctx.fillText('NOW' + (clockDegraded ? ' (wall clock)' : ''), marginLeft + 3, marginTop - 4);
+
+  // Say so rather than drawing an empty or invented grid.
+  if (groundStations.length === 0 || contacts.length === 0) {
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '11px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(
+      groundStationsError ? 'Ground-station list unavailable — check /api/ground-stations'
+        : (groundStations.length === 0 ? 'No ground stations configured — check orbit.yaml'
+          : 'No contact windows — check configuration'),
+      marginLeft + plotW / 2, marginTop + plotH / 2);
+  }
 }
 
 function updateTimeline() {
@@ -1674,8 +1754,8 @@ function updateTimeline() {
 
 // ==================== Contact Table ====================
 function updateContactsTable() {
-  const now = Date.now();
-  const contacts = useSimulatedContacts ? simulatedContacts : apiContacts;
+  const now = simNow();
+  const contacts = apiContacts;
 
   const upcoming = contacts
     .filter(c => c.los.getTime() > now)
@@ -1739,9 +1819,19 @@ const STATE_COLORS = {
 };
 
 function updateActivityList() {
-  const activities = useSimulatedSchedule ? simulatedActivities : apiSchedule;
+  // The real schedule, which is EMPTY until the operator adds an activity or
+  // loads a standard-activity template (defect #57).
+  const activities = apiSchedule;
   const container = document.getElementById('activityList');
   container.innerHTML = '';
+
+  if (activities.length === 0) {
+    container.innerHTML =
+      '<div style="color:var(--text-muted);font-size:10px;padding:8px;">' +
+      'No activities planned. Use "Add Activity", or load a standard ' +
+      'activity set below.</div>';
+    return;
+  }
 
   activities.forEach(a => {
     const h = String(a.start.getUTCHours()).padStart(2, '0');
@@ -1826,16 +1916,33 @@ async function uploadToMCS() {
     alert('Activity has no ID (simulated?)');
     return;
   }
-  const stepMode = confirm('Use step-by-step mode?');
+  // OK = schedule on board via S11 at the planned start time (default);
+  // Cancel = load as an immediate procedure for manual execution.
+  const useS11 = confirm(
+    'Schedule on-board (S11) at planned start time ' + act.start_time +
+    '?\nOK = time-tagged on-board schedule.\nCancel = load as immediate MCS procedure.');
+  let stepMode = false;
+  if (!useS11) stepMode = confirm('Use step-by-step mode?');
   try {
     const res = await fetch('/api/schedule/upload', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ activity_id: act.id, step_by_step: stepMode })
+      body: JSON.stringify({
+        activity_id: act.id,
+        mode: useS11 ? 's11' : 'immediate',
+        step_by_step: stepMode
+      })
     });
     const data = await res.json();
     if (data.error) {
       alert('Upload failed: ' + data.error);
+    } else if (useS11) {
+      const n = data.count !== undefined ? data.count : '?';
+      alert('Activity "' + act.name + '" scheduled on board: ' + n +
+            ' time-tagged command(s) at ' + act.start_time +
+            (data.skipped && data.skipped.length ?
+              '\n(' + data.skipped.length + ' telemetry-check step(s) skipped — ground-only)' : ''));
+      pollAPIs();
     } else {
       alert('Activity "' + act.name + '" uploaded to MCS. Switch to MCS Procedures tab to execute.');
       pollAPIs();
@@ -1896,9 +2003,14 @@ function onActivityTypeChange() {
 // ==================== Modal ====================
 function openModal() {
   document.getElementById('modalOverlay').classList.add('active');
-  const now = new Date();
-  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
-  document.getElementById('actStartTime').value = local.toISOString().slice(0, 16);
+  // Prefill with the PLANNER's current time (sim time in sim mode), not the
+  // operator's wall clock: with sim time at T-0 and wall clock months later,
+  // the old default scheduled activities that could never execute (defect #58).
+  // datetime-local has no timezone, and submitActivity() re-reads it as local
+  // time, so compensate for the browser offset both ways.
+  const now = simNowDate();
+  const shifted = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+  document.getElementById('actStartTime').value = shifted.toISOString().slice(0, 16);
 }
 
 function closeModal() {
@@ -1929,20 +2041,78 @@ async function submitActivity() {
     if (res.ok) {
       closeModal();
       pollAPIs();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      alert('Could not add activity: ' + (err.error || ('HTTP ' + res.status)));
     }
   } catch (e) {
-    // Fallback: add to simulated list
-    simulatedActivities.push({
-      name: name,
-      start: new Date(startTime),
-      durationMin: duration,
-      station: station,
-      priority: priority,
-      simulated: true
+    alert('Could not add activity — planner API unreachable: ' + e);
+  }
+}
+
+// ==================== Standard activity templates ====================
+let planTemplates = [];
+
+async function loadPlanTemplates() {
+  try {
+    const res = await fetch('/api/schedule/templates');
+    if (!res.ok) return;
+    const data = await res.json();
+    planTemplates = data.templates || [];
+    const sel = document.getElementById('templateSelect');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">Standard activities...</option>';
+    planTemplates.forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t.id;
+      opt.textContent = t.name + ' (' + t.activity_count + ')';
+      opt.title = t.description || '';
+      if (t.id === data.default_template) opt.selected = true;
+      sel.appendChild(opt);
     });
-    simulatedActivities.sort((a, b) => a.start - b.start);
-    closeModal();
-    updateActivityList();
+  } catch (e) {
+    console.warn('Plan template fetch failed:', e);
+  }
+}
+
+// Instantiate a config-defined template at the planner's CURRENT time, snapped
+// to the REAL contact windows / sunlit arcs. Replaces the hard-coded activity
+// fixtures that used to be drawn instead of the real schedule (defect #57).
+async function loadStandardActivities() {
+  const sel = document.getElementById('templateSelect');
+  const id = sel ? sel.value : '';
+  if (!id) { alert('Select a standard activity set first.'); return; }
+  try {
+    const res = await fetch('/api/schedule/load-template', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ template: id })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      alert('Could not load "' + id + '": ' + (data.error || res.status));
+      return;
+    }
+    let msg = 'Loaded ' + data.added + ' activities from "' + data.template +
+              '" at ' + data.t0;
+    if (data.warnings && data.warnings.length) {
+      msg += '\n\n' + data.warnings.join('\n');
+    }
+    alert(msg);
+    pollAPIs();
+  } catch (e) {
+    alert('Could not load standard activities: ' + e);
+  }
+}
+
+async function clearSchedule() {
+  if (!confirm('Remove every planned activity?')) return;
+  try {
+    const res = await fetch('/api/schedule', { method: 'DELETE' });
+    const data = await res.json();
+    if (data.removed !== undefined) pollAPIs();
+  } catch (e) {
+    alert('Could not clear the schedule: ' + e);
   }
 }
 
@@ -1980,13 +2150,20 @@ function updateImagingOpportunitiesPanel() {
 
   let html = '<div style="font-size: 11px;">';
   imagingOpportunities.slice(0, 8).forEach((opp, idx) => {
-    const startTime = new Date(opp.start_utc).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    const captureUtc = opp.capture_utc || opp.start_utc;
+    const startTime = new Date(captureUtc).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'UTC' });
     const duration = Math.round(opp.duration_s / 60);
     const priorityColor = opp.priority === 'high' ? '#ef4444' : '#eab308';
+    // The capture is aimed at the ACCESS POINT (closest point of the region to
+    // the ground track) and centred on closest approach — not the box centre.
+    const aim = (opp.access_lat !== undefined)
+      ? `${opp.access_lat.toFixed(2)}\u00B0, ${opp.access_lon.toFixed(2)}\u00B0`
+      : '';
     html += `<div style="margin: 6px 0; padding: 6px; background: var(--panel); border-left: 3px solid ${priorityColor}; border-radius: 2px;">
       <div style="color: var(--accent); font-weight: 600; font-size: 10px;">${opp.target_name}</div>
-      <div style="color: var(--text-muted); font-size: 9px;">${startTime} | ${duration} min</div>
-      <button class="btn btn-small" onclick="scheduleImagingActivity('${opp.target_id}', '${opp.start_utc}')" style="margin-top: 4px; font-size: 9px; padding: 3px 8px;">Schedule</button>
+      <div style="color: var(--text-muted); font-size: 9px;">${startTime}Z | ${duration} min access</div>
+      <div style="color: var(--text-muted); font-size: 9px;">aim ${aim} | off-nadir ${opp.off_nadir_deg !== undefined ? opp.off_nadir_deg.toFixed(1) : '?'}\u00B0 | sun ${opp.solar_elevation_deg !== undefined ? opp.solar_elevation_deg.toFixed(0) : '?'}\u00B0</div>
+      <button class="btn btn-small" onclick="scheduleImagingActivity('${opp.target_id}', '${captureUtc}')" style="margin-top: 4px; font-size: 9px; padding: 3px 8px;">Schedule</button>
     </div>`;
   });
   html += '</div>';
@@ -2094,12 +2271,20 @@ async function loadDataBudget() {
 
 function updateDataBudgetPanel() {
   const panel = document.getElementById('dataBudgetPanel');
-  if (!panel || !dataBudgetData.utilization_percent) return;
+  // utilization_percent is a NUMBER: 0 is falsy, so the old `!x` guard left
+  // this panel on "Loading..." forever for an empty plan (defect #60).
+  if (!panel) return;
+  if (dataBudgetData.utilization_percent === undefined) {
+    panel.innerHTML = '<div style="color: var(--text-muted); padding: 8px;">Data budget unavailable</div>';
+    return;
+  }
 
   const util = dataBudgetData.utilization_percent || 0;
+  const peakUtil = dataBudgetData.peak_utilization_percent;
   const onboard = dataBudgetData.onboard_data_mb || 0;
-  const capacity = dataBudgetData.storage_capacity_mb || 1024;
+  const capacity = dataBudgetData.storage_capacity_mb || 0;
   const downlink = dataBudgetData.planned_downlink_mb || 0;
+  const closes = dataBudgetData.plan_closes;
 
   let html = '<div style="font-size: 10px;">';
 
@@ -2115,14 +2300,37 @@ function updateDataBudgetPanel() {
     </div>
   </div>`;
 
-  // Data flow
+  // Data flow + feasibility
+  const rateKbps = (dataBudgetData.effective_downlink_rate_bps || 0) / 1000;
   html += `<div style="background: var(--panel); padding: 8px; border-radius: 3px; margin-bottom: 10px;">
-    <div style="color: var(--text-muted); font-size: 9px; margin-bottom: 4px;">Data Flow (24h)</div>
+    <div style="color: var(--text-muted); font-size: 9px; margin-bottom: 4px;">Data Flow (horizon ${(dataBudgetData.horizon_hours || 0).toFixed(1)} h)</div>
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 9px;">
       <div><span style="color: var(--text-muted);">Generate:</span> <span style="color: var(--accent);">${dataBudgetData.planned_generation_mb?.toFixed(0) || 0} MB</span></div>
       <div><span style="color: var(--text-muted);">Downlink:</span> <span style="color: var(--green);">${downlink.toFixed(0)} MB</span></div>
+      <div><span style="color: var(--text-muted);">Peak fill:</span> ${(dataBudgetData.peak_onboard_mb || 0).toFixed(0)} MB${peakUtil !== undefined ? ' (' + peakUtil.toFixed(1) + '%)' : ''}</div>
+      <div><span style="color: var(--text-muted);">Backlog:</span> ${(dataBudgetData.backlog_growth_mb || 0).toFixed(0)} MB</div>
+      <div><span style="color: var(--text-muted);">Pass capacity:</span> ${(dataBudgetData.daily_downlink_capacity_mb || 0).toFixed(0)} MB/day</div>
+      <div><span style="color: var(--text-muted);">Rate:</span> ${rateKbps.toFixed(1)} kbps eff.</div>
     </div>
+    <div style="margin-top:6px;font-size:9px;color:${closes === false ? '#ef4444' : '#22c55e'};font-weight:600;">
+      ${closes === false ? 'PLAN DOES NOT CLOSE' + ((dataBudgetData.days_to_drain || 0) > 0 ? ' — ' + dataBudgetData.days_to_drain.toFixed(1) + ' days of contact needed to drain' : '') : 'Plan closes'}
+    </div>
+    ${dataBudgetData.first_overflow_utc ? `<div style="margin-top:4px;font-size:9px;color:#ef4444;">First overflow: ${dataBudgetData.first_overflow_utc} (${(dataBudgetData.overflow_mb || 0).toFixed(0)} MB lost)</div>` : ''}
   </div>`;
+
+  // Per-pass downlink table (previously computed and rendered nowhere).
+  const passes = dataBudgetData.pass_downlink || [];
+  if (passes.length > 0) {
+    html += '<div style="color: var(--text-muted); font-size: 9px; margin-bottom: 4px;">Per-pass downlink (next 5):</div>';
+    passes.slice(0, 5).forEach(p => {
+      html += `<div style="display: grid; grid-template-columns: 1.2fr 1fr 1fr 0.8fr; gap: 6px; padding: 3px 0; border-bottom: 1px solid var(--border); font-size: 9px;">
+        <div style="color: var(--text-dim);">${p.gs_name}</div>
+        <div style="color: var(--text-muted);">${(p.duration_s / 60).toFixed(1)} min</div>
+        <div style="color: var(--text-muted);">${p.capacity_mb.toFixed(1)} MB cap</div>
+        <div style="color: ${p.dump_scheduled ? '#22c55e' : 'var(--text-muted)'};">${p.dump_scheduled ? p.planned_dump_mb.toFixed(1) + ' MB' : '—'}</div>
+      </div>`;
+    });
+  }
 
   // Warnings
   const warnings = dataBudgetData.warnings || [];
@@ -2164,26 +2372,34 @@ async function validateConstraints() {
 }
 
 // ==================== Initialization ====================
-function init() {
-  simulatedContacts = generateSimulatedContacts();
-  simulatedActivities = generateSimulatedActivities();
-
+async function init() {
   updateClock();
   setInterval(updateClock, 1000);
 
   initMap();
-
-  drawTimeline();
-  updateContactsTable();
-  updateActivityList();
 
   window.addEventListener('resize', function() {
     drawTimeline();
   });
 
   loadActivityTypes();
+  loadPlanTemplates();
+
+  // Resolve the planner clock AND the ground-station list before the first
+  // paint: both are hard dependencies of the timeline, and neither has a
+  // browser-side substitute any more.
+  await loadTimeSource();
+  await loadGroundStations();
+
+  drawTimeline();
+  updateContactsTable();
+  updateActivityList();
+
   pollAPIs();
   setInterval(pollAPIs, POLL_INTERVAL_MS);
+  // Re-anchor the page clock more often than the full poll so a sim jump,
+  // a speed change or a pause shows up quickly.
+  setInterval(loadTimeSource, 5000);
 
   setInterval(function() {
     updateContactsTable();

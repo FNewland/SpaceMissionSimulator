@@ -1,0 +1,37 @@
+# OBCP 2 — Safe-mode entry (safe-ing script)
+#
+# Autonomous safe-ing: EPS to SAFE, payload powered down (EPS-side mode and
+# power line), FPA cooler line off, then AOCS to SAFE. All func_ids are real
+# S8 routes (EPS 83/16/20, AOCS 0). The AOCS step is deliberately LAST: it is
+# power-gated on the aocs_wheels line, so if the wheels are unpowered the
+# step fails (OBCP_STEP_FAILED event) after all EPS safe-ing has completed.
+procedure:
+  id: 2
+  name: safe_mode_entry
+  description: "EPS SAFE, payload off + unpowered, cooler off, AOCS SAFE"
+  steps:
+    - delay_s: 0          # EPS set mode SAFE (1)
+      service: 8
+      subtype: 1
+      func_id: 83
+      data_hex: "01"
+    - delay_s: 1          # EPS payload mode OFF
+      service: 8
+      subtype: 1
+      func_id: 16
+      data_hex: "00"
+    - delay_s: 1          # EPS power_line_off(payload)
+      service: 8
+      subtype: 1
+      func_id: 20
+      data_hex: "03"
+    - delay_s: 1          # EPS power_line_off(fpa_cooler)
+      service: 8
+      subtype: 1
+      func_id: 20
+      data_hex: "04"
+    - delay_s: 1          # AOCS set mode SAFE (2)
+      service: 8
+      subtype: 1
+      func_id: 0
+      data_hex: "02"

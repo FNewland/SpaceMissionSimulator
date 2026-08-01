@@ -102,7 +102,7 @@ Command AOCS to coarse sun sensor mode: `AOCS_SET_MODE(mode=3)` (func_id 0) — 
 **Verify:** `aocs.att_error` (0x0217) — will be larger in this mode (< 5 deg acceptable)
 **Action:** Notify Flight Director: "Both star trackers failed. Operating in COARSE_SUN
 mode. Fine pointing capability is LOST. Payload imaging is NOT possible."
-**Action:** Command payload to OFF if still active: `PAYLOAD_SET_MODE(mode=0)` (func_id 20)
+**Action:** Command payload to OFF if still active: `PAYLOAD_SET_MODE(mode=0)` (func_id 26)
 **Note:** COARSE_SUN mode provides sun-pointing for power safety but does not support
 nadir pointing or payload operations. This is a mission-degrading configuration.
 **GO/NO-GO:** COARSE_SUN mode active, spacecraft safe. Escalate to engineering team

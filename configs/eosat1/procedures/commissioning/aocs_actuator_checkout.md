@@ -31,51 +31,51 @@ magnetorquers.
 **GO/NO-GO:** All four wheels responding with valid speed readings
 
 ### Step 2 — Reaction Wheel 1 Spin-Up Test
-**TC:** `SET_PARAM(0x0280, 2000)` (Service 20, Subtype 3) — command RW1 to +2000 RPM
+**TC:** `SET_PARAM(0x0280, 2000)` (Service 20, Subtype 1) — command RW1 to +2000 RPM
 **Verify:** `aocs.rw1_speed` (0x0207) reaches 1800-2200 RPM within 60s
 **Action:** Monitor attitude disturbance — remaining wheels should compensate.
 **Verify:** `aocs.att_error` (0x0217) < 5.0 deg within 60s
-**TC:** `SET_PARAM(0x0280, -2000)` (Service 20, Subtype 3) — command RW1 to -2000 RPM
+**TC:** `SET_PARAM(0x0280, -2000)` (Service 20, Subtype 1) — command RW1 to -2000 RPM
 **Verify:** `aocs.rw1_speed` (0x0207) reaches -2200 to -1800 RPM within 120s
-**TC:** `SET_PARAM(0x0280, 0)` (Service 20, Subtype 3) — return RW1 to zero
+**TC:** `SET_PARAM(0x0280, 0)` (Service 20, Subtype 1) — return RW1 to zero
 **Verify:** `aocs.rw1_speed` (0x0207) returns to < 100 RPM within 60s
 **GO/NO-GO:** RW1 speed control verified in both directions
 
 ### Step 3 — Reaction Wheel 2 Spin-Up Test
-**TC:** `SET_PARAM(0x0281, 2000)` (Service 20, Subtype 3) — command RW2 to +2000 RPM
+**TC:** `SET_PARAM(0x0281, 2000)` (Service 20, Subtype 1) — command RW2 to +2000 RPM
 **Verify:** `aocs.rw2_speed` (0x0208) reaches 1800-2200 RPM within 60s
 **Verify:** `aocs.att_error` (0x0217) < 5.0 deg within 60s
-**TC:** `SET_PARAM(0x0281, -2000)` (Service 20, Subtype 3) — command RW2 to -2000 RPM
+**TC:** `SET_PARAM(0x0281, -2000)` (Service 20, Subtype 1) — command RW2 to -2000 RPM
 **Verify:** `aocs.rw2_speed` (0x0208) reaches -2200 to -1800 RPM within 120s
-**TC:** `SET_PARAM(0x0281, 0)` (Service 20, Subtype 3) — return RW2 to zero
+**TC:** `SET_PARAM(0x0281, 0)` (Service 20, Subtype 1) — return RW2 to zero
 **Verify:** `aocs.rw2_speed` (0x0208) returns to < 100 RPM within 60s
 **GO/NO-GO:** RW2 speed control verified in both directions
 
 ### Step 4 — Reaction Wheel 3 Spin-Up Test
-**TC:** `SET_PARAM(0x0282, 2000)` (Service 20, Subtype 3) — command RW3 to +2000 RPM
+**TC:** `SET_PARAM(0x0282, 2000)` (Service 20, Subtype 1) — command RW3 to +2000 RPM
 **Verify:** `aocs.rw3_speed` (0x0209) reaches 1800-2200 RPM within 60s
 **Verify:** `aocs.att_error` (0x0217) < 5.0 deg within 60s
-**TC:** `SET_PARAM(0x0282, -2000)` (Service 20, Subtype 3) — command RW3 to -2000 RPM
+**TC:** `SET_PARAM(0x0282, -2000)` (Service 20, Subtype 1) — command RW3 to -2000 RPM
 **Verify:** `aocs.rw3_speed` (0x0209) reaches -2200 to -1800 RPM within 120s
-**TC:** `SET_PARAM(0x0282, 0)` (Service 20, Subtype 3) — return RW3 to zero
+**TC:** `SET_PARAM(0x0282, 0)` (Service 20, Subtype 1) — return RW3 to zero
 **Verify:** `aocs.rw3_speed` (0x0209) returns to < 100 RPM within 60s
 **GO/NO-GO:** RW3 speed control verified in both directions
 
 ### Step 5 — Reaction Wheel 4 Spin-Up Test
-**TC:** `SET_PARAM(0x0283, 2000)` (Service 20, Subtype 3) — command RW4 to +2000 RPM
+**TC:** `SET_PARAM(0x0283, 2000)` (Service 20, Subtype 1) — command RW4 to +2000 RPM
 **Verify:** `aocs.rw4_speed` (0x020A) reaches 1800-2200 RPM within 60s
 **Verify:** `aocs.att_error` (0x0217) < 5.0 deg within 60s
-**TC:** `SET_PARAM(0x0283, -2000)` (Service 20, Subtype 3) — command RW4 to -2000 RPM
+**TC:** `SET_PARAM(0x0283, -2000)` (Service 20, Subtype 1) — command RW4 to -2000 RPM
 **Verify:** `aocs.rw4_speed` (0x020A) reaches -2200 to -1800 RPM within 120s
-**TC:** `SET_PARAM(0x0283, 0)` (Service 20, Subtype 3) — return RW4 to zero
+**TC:** `SET_PARAM(0x0283, 0)` (Service 20, Subtype 1) — return RW4 to zero
 **Verify:** `aocs.rw4_speed` (0x020A) returns to < 100 RPM within 60s
 **GO/NO-GO:** RW4 speed control verified in both directions
 
 ### Step 6 — Check Wheel Temperatures
-**TC:** `GET_PARAM(0x028A)` (Service 20, Subtype 1) — RW1 temperature
-**TC:** `GET_PARAM(0x028B)` (Service 20, Subtype 1) — RW2 temperature
-**TC:** `GET_PARAM(0x028C)` (Service 20, Subtype 1) — RW3 temperature
-**TC:** `GET_PARAM(0x028D)` (Service 20, Subtype 1) — RW4 temperature
+**TC:** `GET_PARAM(0x028A)` (Service 20, Subtype 3) — RW1 temperature
+**TC:** `GET_PARAM(0x028B)` (Service 20, Subtype 3) — RW2 temperature
+**TC:** `GET_PARAM(0x028C)` (Service 20, Subtype 3) — RW3 temperature
+**TC:** `GET_PARAM(0x028D)` (Service 20, Subtype 3) — RW4 temperature
 **Verify:** All wheel temperatures in range [-10C, +55C] within 10s
 **Action:** Post-test temperatures may be slightly elevated. Record for trending.
 **GO/NO-GO:** All wheel temperatures within operational limits

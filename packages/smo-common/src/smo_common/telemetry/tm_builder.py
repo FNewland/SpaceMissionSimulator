@@ -13,8 +13,16 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from ..protocol.ecss_packet import crc16_ccitt, TIME_EPOCH
+from ..protocol.pus_services import encode_failure_reason
 
 logger = logging.getLogger(__name__)
+
+# Maximum length of an S5 event report's auxiliary text, in octets. The field
+# is length-prefixed with one octet in both the builder and every parser, so
+# this is a free parameter; 120 is enough to carry a rejected command's
+# identity together with the on-board software's reason for refusing it
+# (defect #87 — 32 octets truncated the reason to uselessness).
+EVENT_AUX_TEXT_MAX = 120
 
 
 class TMBuilder:
@@ -68,7 +76,7 @@ class TMBuilder:
                            aux_text: str, params: dict) -> Optional[bytes]:
         """Build a Service 5 Event Report TM packet."""
         cuc = self._get_cuc(params)
-        aux = aux_text.encode('ascii', errors='ignore')[:32]
+        aux = aux_text.encode('ascii', errors='ignore')[:EVENT_AUX_TEXT_MAX]
         data = struct.pack('>HB', event_id, severity)
         data += struct.pack('>I', cuc)
         data += struct.pack('>B', len(aux)) + aux
@@ -87,17 +95,33 @@ class TMBuilder:
         return self._pack_tm(service=1, subtype=7, data=data)
 
     def build_verification_failure(self, tc_apid: int, tc_seq: int,
-                                   error_code: int) -> bytes:
-        """Build Service 1 subtype 2 — Acceptance Failure."""
+                                   error_code: int, reason: str = "") -> bytes:
+        """Build Service 1 subtype 2 — Acceptance Failure.
+
+        Wire format:  request_id(u32) error_code(u16) [failure notice]
+
+        The optional failure notice is ``reason_len(u8) + UTF-8 reason`` and is
+        appended STRICTLY AFTER the historical fields, so a parser that reads
+        only ``>IH`` is unaffected (defect #87).
+        """
         request_id = ((tc_apid & 0x7FF) << 14) | (tc_seq & 0x3FFF)
         data = struct.pack('>IH', request_id, error_code)
+        data += encode_failure_reason(reason)
         return self._pack_tm(service=1, subtype=2, data=data)
 
     def build_execution_failure(self, tc_apid: int, tc_seq: int,
-                                error_code: int) -> bytes:
-        """Build Service 1 subtype 8 — Execution Failure."""
+                                error_code: int, reason: str = "") -> bytes:
+        """Build Service 1 subtype 8 — Execution Failure.
+
+        Wire format:  request_id(u32) error_code(u16) [failure notice]
+
+        Same strictly-appended failure notice as S1.2 (defect #87): this is
+        what carries "TM rate is forced to the beacon tier in beacon mode"
+        to the ground instead of a bare ``1,8 ERR=7``.
+        """
         request_id = ((tc_apid & 0x7FF) << 14) | (tc_seq & 0x3FFF)
         data = struct.pack('>IH', request_id, error_code)
+        data += encode_failure_reason(reason)
         return self._pack_tm(service=1, subtype=8, data=data)
 
     def build_time_report(self, cuc: int) -> bytes:

@@ -36,6 +36,7 @@ SUBSYSTEM_ENTRY_POINTS = {
     "TCS": ["Step", "UpdateThermal", "UpdateHeaters"],
     "TTC": ["Step", "UpdateLink", "UpdateTransponder"],
     "Payload": ["Step", "UpdateImager", "UpdateStorage"],
+    "Prop": ["Step", "UpdateBurn", "UpdateTank"],
 }
 
 # SMP2 type names for pack formats
@@ -134,6 +135,11 @@ def _build_subsystem_catalogue(sub_name, params, commands, s12_rules,
             _el(field, "Description", text=full_desc)
 
     # Input fields (from TC command arguments)
+    #
+    # Phase E WP-11: the field description now carries the whole argument
+    # schema — engineering unit, raw unit, raw<->eng conversion, valid range
+    # and enum/bit labels — so the SMDL export is as informative as the
+    # catalogue instead of a bare type name.
     for cmd in commands:
         for field_def in cmd.get("fields", []):
             fname = f"tc_{cmd['name']}_{field_def['name']}"
@@ -149,8 +155,31 @@ def _build_subsystem_catalogue(sub_name, params, commands, s12_rules,
                     Uuid=smdl_uuid(f"field_{sub_name}_{fname}"),
                     Type=smp_type,
                     Kind="Input")
+            parts = []
             if field_def.get("description"):
-                _el(f, "Description", text=field_def["description"])
+                parts.append(str(field_def["description"]))
+            if field_def.get("unit"):
+                parts.append(f"[{field_def['unit']}]")
+            cal = field_def.get("calibration") or {}
+            if str(cal.get("type", "")).lower() == "linear":
+                scale = cal.get("scale", 1.0)
+                offset = cal.get("offset", 0.0)
+                raw_u = field_def.get("raw_unit") or "raw"
+                parts.append(f"eng = raw*{scale}"
+                             + (f" + {offset}" if offset else "")
+                             + f" ({raw_u})")
+            rng = field_def.get("range")
+            if rng:
+                parts.append(f"range [{rng['min']}, {rng['max']}]")
+            if field_def.get("default") is not None:
+                parts.append(f"default {field_def['default']}")
+            for e in field_def.get("enum") or []:
+                parts.append(f"{e['value']}={e['label']}")
+            for b in field_def.get("bits") or []:
+                if not b.get("reserved"):
+                    parts.append(f"bit{b['bit']}={b['name']}")
+            if parts:
+                _el(f, "Description", text=" | ".join(parts))
 
     # Entry points
     entry_points = SUBSYSTEM_ENTRY_POINTS.get(sub_name, ["Step"])
@@ -198,7 +227,7 @@ def generate_smdl(output_dir: Path):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Per-subsystem catalogues
-    subsystems = ["EPS", "AOCS", "OBDH", "TCS", "TTC", "Payload"]
+    subsystems = ["EPS", "AOCS", "OBDH", "TCS", "TTC", "Payload", "Prop"]
     generated = []
 
     for sub_name in subsystems:

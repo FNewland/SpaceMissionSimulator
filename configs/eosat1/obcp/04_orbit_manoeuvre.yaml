@@ -1,0 +1,57 @@
+# OBCP 4 — Orbit manoeuvre (Phase D)
+#
+# On-board timed burn sequence: energise the propulsion line, preheat the
+# catbed (12 W for 20 min), load a 0.85 m/s prograde drag-make-up burn,
+# arm, execute, disarm and power down. All func_ids are real S8 routes
+# (EPS 19/20, TCS 42, PROP 108-118 — the Phase D block; the brief's 85-95
+# was taken by the Phase C AOCS commands).
+#
+# The arm step lands 10 s after PROP_SET_BURN — inside the 300 s arm window.
+# If any interlock fails (catbed cold, attitude, SoC, eclipse) PROP_ARM is
+# refused with a distinct code and the OBCP raises OBCP_STEP_FAILED — the
+# on-board sequence never fires an unarmed thruster.
+procedure:
+  id: 4
+  name: orbit_manoeuvre
+  description: "Prop line on, catbed preheat, set burn, arm, execute, disarm, power down"
+  steps:
+    - delay_s: 0          # EPS power_line_on(prop) — line index 8
+      service: 8
+      subtype: 1
+      func_id: 19
+      data_hex: "08"
+    - delay_s: 2          # HEATER_THRUSTER ON (catbed preheat)
+      service: 8
+      subtype: 1
+      func_id: 42
+      data_hex: "01"
+    - delay_s: 1200       # PROP_SET_BURN 0.85 m/s prograde, dv cut-off, t=0
+      service: 8
+      subtype: 1
+      func_id: 110
+      data_hex: "3F59999A000100000000"
+    - delay_s: 10         # PROP_ARM (code 0xA5C3)
+      service: 8
+      subtype: 1
+      func_id: 108
+      data_hex: "A5C3"
+    - delay_s: 10         # PROP_EXECUTE
+      service: 8
+      subtype: 1
+      func_id: 111
+      data_hex: ""
+    - delay_s: 120        # PROP_DISARM (burn is ~32 s; margin included)
+      service: 8
+      subtype: 1
+      func_id: 109
+      data_hex: ""
+    - delay_s: 5          # HEATER_THRUSTER OFF
+      service: 8
+      subtype: 1
+      func_id: 42
+      data_hex: "00"
+    - delay_s: 2          # EPS power_line_off(prop)
+      service: 8
+      subtype: 1
+      func_id: 20
+      data_hex: "08"

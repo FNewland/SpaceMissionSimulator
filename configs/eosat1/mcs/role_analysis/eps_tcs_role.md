@@ -70,7 +70,7 @@
 | HEATER_OBC | 31 | OBC heater on/off |
 | HEATER_THRUSTER | 32 | Thruster heater on/off |
 | FPA_COOLER | 33 | FPA cooler on/off |
-| HEATER_SET_SETPOINT | 34 | Modify heater thermostat setpoints (circuit, on_temp, off_temp) |
+| HEATER_SET_SETPOINT | 44 | Modify heater thermostat setpoints (circuit, on_temp, off_temp) |
 | HEATER_AUTO_MODE | 35 | Return heater to autonomous thermostat control |
 
 #### General Services

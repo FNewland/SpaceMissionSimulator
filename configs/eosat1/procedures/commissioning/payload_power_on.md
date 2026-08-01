@@ -45,28 +45,28 @@ the baseline payload state required for subsequent cooler activation and imaging
 **TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
 **Action:** Compare bus voltage and power consumption with pre-power-on baseline.
 **Verify:** `eps.bus_voltage` (0x0105) > 27.0V within 10s (bus maintained under new load)
-**TC:** `GET_PARAM(0x0108)` (Service 20, Subtype 1) — total load power
+**TC:** `GET_PARAM(0x0108)` (Service 20, Subtype 3) — total load power
 **Verify:** Total load increase is 10-20W relative to baseline within 10s
 **GO/NO-GO:** Payload power draw within expected range
 
 ### Step 5 — Verify Payload Electronics Health
 **TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27)
-**TC:** `GET_PARAM(0x0602)` (Service 20, Subtype 1) — payload firmware version
-**TC:** `GET_PARAM(0x0603)` (Service 20, Subtype 1) — payload self-test result
+**TC:** `GET_PARAM(0x0602)` (Service 20, Subtype 3) — payload firmware version
+**TC:** `GET_PARAM(0x0603)` (Service 20, Subtype 3) — payload self-test result
 **Verify:** Payload firmware version matches expected value within 10s
 **Verify:** Payload self-test result = PASS (value 0) within 10s
 **GO/NO-GO:** Payload electronics healthy — firmware and self-test nominal
 
 ### Step 6 — Check FPA Temperature (Pre-Cooler)
-**TC:** `GET_PARAM(0x0601)` (Service 20, Subtype 1) — FPA temperature
+**TC:** `GET_PARAM(0x0601)` (Service 20, Subtype 3) — FPA temperature
 **Verify:** `payload.fpa_temp` (0x0601) in range [+5C, +30C] within 10s
-**Action:** Record FPA ambient temperature before cooler activation (COM-102).
+**Action:** Record FPA ambient temperature before cooler activation (COM-010).
 **GO/NO-GO:** FPA temperature at expected ambient level
 
 ### Step 7 — Verify Payload Data Interface
-**TC:** `GET_PARAM(0x0604)` (Service 20, Subtype 1) — data interface status
+**TC:** `GET_PARAM(0x0604)` (Service 20, Subtype 3) — data interface status
 **Verify:** Data interface status = READY (value 1) within 10s
-**TC:** `GET_PARAM(0x0605)` (Service 20, Subtype 1) — onboard storage free (MB)
+**TC:** `GET_PARAM(0x0605)` (Service 20, Subtype 3) — onboard storage free (MB)
 **Verify:** Onboard storage free > 90% of capacity within 10s
 **Action:** Confirm payload can write image data to mass memory.
 **GO/NO-GO:** Data interface operational, storage available
@@ -82,14 +82,14 @@ the baseline payload state required for subsequent cooler activation and imaging
 
 ### Step 9 — Log Payload Power-On Report
 **Action:** Record all power-on telemetry including timing, power draw, firmware version, self-test results, FPA temperature, and data interface status. Distribute Payload Power-On Report.
-**GO/NO-GO:** Payload successfully powered on in STANDBY — ready for COM-102
+**GO/NO-GO:** Payload successfully powered on in STANDBY — ready for COM-010
 
 ## Off-Nominal Handling
 - If `payload.mode` does not transition to STANDBY within 90s: Retry `PAYLOAD_SET_MODE(mode=1)` once. If still no transition, check payload power bus via `GET_PARAM(0x0610)`. If power bus OFF, investigate EPS switch. If power ON but payload unresponsive, power off via `PAYLOAD_SET_MODE(mode=0)` and escalate.
 - If bus voltage drops below 27.0V on payload power-on: Immediately power off payload via `PAYLOAD_SET_MODE(mode=0)`. Check battery SOC. If SOC < 60%, wait for higher charge state. If bus regulation issue, investigate EPS before retry.
 - If payload self-test fails: Record failure code via `GET_PARAM(0x0603)`. Power off payload via `PAYLOAD_SET_MODE(mode=0)`. Do not proceed to cooler activation. Escalate to payload engineer with self-test diagnostic data.
 - If payload power draw > 25W in STANDBY: Unexpected current draw may indicate electronics fault. Monitor for 5 minutes. If trending upward, power off payload. If stable at higher-than-expected level, consult payload manufacturer specifications.
-- If FPA temperature reading anomalous: Check thermistor via `GET_PARAM(0x0611)`. If thermistor fault, note limitation for COM-102 (cooler activation will rely on alternative monitoring).
+- If FPA temperature reading anomalous: Check thermistor via `GET_PARAM(0x0611)`. If thermistor fault, note limitation for COM-010 (cooler activation will rely on alternative monitoring).
 
 ## Post-Conditions
 - [ ] Payload in STANDBY mode (mode 1)
@@ -100,4 +100,4 @@ the baseline payload state required for subsequent cooler activation and imaging
 - [ ] Data interface operational, storage available
 - [ ] Bus voltage stable under payload load
 - [ ] Payload Power-On Report distributed
-- [ ] GO decision for COM-102 (FPA Cooler Activation)
+- [ ] GO decision for COM-010 (FPA Cooler Activation)

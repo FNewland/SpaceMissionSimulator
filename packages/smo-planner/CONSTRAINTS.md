@@ -182,22 +182,43 @@ Auto-insertion of desaturation activities when momentum threshold exceeded.
 
 ### Data Generation
 
-- **Imaging Pass**: 800 MB per pass
-- **Calibration**: 50 MB
-- **Housekeeping**: 10 MB per collection
+- **Imaging Pass**: 4 MB per capture (`payload.yaml image_size_mb`, defect #82)
+- **Calibration**: 0.5 MB
+- **Housekeeping**: 0.05 MB per collection
 
-### Downlink Rates
+### Downlink Rates — the ladder, not a rate (defect #86)
 
-- **Nominal Rate**: 64 kbps
-- **Protocol Overhead**: 20%
-- **Effective Rate**: 51.2 kbps
-- **Elevation Dependence**: Efficiency factor based on pass max elevation
+The planner reads two rungs of `subsystems/ttc.yaml tm_rate_tiers` and never a
+single flat rate:
 
-Pass elevation categories:
-- ≤ 5°: 30% efficiency (marginal)
-- 5-10°: 50% efficiency
-- 10-30°: 60-90% (interpolated)
-- > 30°: 90-100% (interpolated)
+| Role | Tier | Rate | Effective (after 20 % protocol overhead) | Used by |
+|---|---|---|---|---|
+| Routine | `default_tier` = LOW | 16 000 bps | 12 800 bps | Housekeeping, events, everything that is not a bulk playback. Ungated |
+| Dump | top rung = HIGH | 128 000 bps | 102 400 bps | `data_dump` activities only, and only above the tier's `min_elevation_deg` |
+
+**Elevation gate.** HIGH carries `min_elevation_deg: 10.0`, which the spacecraft
+enforces by rejecting the tier. A pass therefore does not have "a capacity": it
+has a capacity that depends on how much of its window sits above the gate. That
+fraction is derived from spherical geometry
+(`budget_tracker.fraction_above_elevation`), not from a table of efficiency
+factors:
+
+| Pass max elevation | Fraction of the window above 10° |
+|---|---|
+| 7° | 0.00 — can never dump at HIGH |
+| 12° | 0.47 |
+| 30° | 0.76 |
+| 45° | 0.78 |
+| 90° | 0.79 (even a zenith pass has wings below 10°) |
+
+Per-pass capacity is `usable_seconds × [f_high × 128 kbps + (1 − f_high) × 16 kbps]
+× 0.8`, where `usable_seconds` is the window less the station's
+`setup_time_s + teardown_time_s`.
+
+The budget also reports the two figures that make the trade visible:
+`hk_contact_fraction_percent` (a day of housekeeping costs 36 % of the network's
+contact time at LOW and 4.5 % at HIGH) and `dump_contact_fraction_percent` (how
+much of the day the plan has already committed to dumps).
 
 ## Configuration Updates
 

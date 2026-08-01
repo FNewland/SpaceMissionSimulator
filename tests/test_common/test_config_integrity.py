@@ -25,9 +25,12 @@ VALID_TAB_IDS = {
     "system_dashboard", "power_monitor", "fdir_panel", "contact_schedule", "procedure_panel",
     "overview", "eps", "aocs", "tcs", "obdh", "ttc",
     "payload", "commanding", "pus", "procedures", "manual",
+    "trends",   # Phase G WP-4 parameter-history / trending page
 }
 
-VALID_SUBSYSTEM_NAMES = {"eps", "aocs", "tcs", "obdh", "ttc", "payload", "fdir"}
+VALID_SUBSYSTEM_NAMES = {"eps", "aocs", "tcs", "obdh", "ttc", "payload",
+                         "prop",  # Phase D propulsion
+                         "fdir"}
 
 VALID_PUS_SERVICES = set(range(1, 21))
 
@@ -121,8 +124,9 @@ class TestAllDiskProceduresAreIndexed:
             if relative.parts[0] == "custom":
                 continue
             disk_files.append(str(relative))
-        assert len(disk_files) == 64, (
-            f"Expected 64 procedure files, found {len(disk_files)}"
+        # Phase D added NOM-004, NOM-013 and CTG-028 (64 -> 67).
+        assert len(disk_files) == 67, (
+            f"Expected 67 procedure files, found {len(disk_files)}"
         )
 
     def test_new_procedure_files_exist(self):

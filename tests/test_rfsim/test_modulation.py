@@ -91,14 +91,23 @@ class TestTTCModulation:
         assert TTCBasicModel.MODULATION_PARAMS[2]["bits_per_symbol"] == 3
 
     def test_set_modulation_command(self):
+        """Modulation moves the SYMBOL rate, not the bit rate (defect #85).
+
+        The tier's bps is the information rate. The old model multiplied it by
+        bits-per-symbol, so selecting QPSK on the 128 kbps NOMINAL tier made
+        it report 256 kbps.
+        """
         from smo_simulator.models.ttc_basic import TTCBasicModel
         model = TTCBasicModel()
         model.configure({})
+        bit_rate = model._state.tm_data_rate          # NOMINAL, 128 kbps
         result = model.handle_command({"command": "set_modulation", "mode": 2})
         assert result["success"]
         assert model._state.modulation_mode == 2
-        # Data rate should triple (8PSK = 3 bits/symbol)
-        assert model._state.tm_data_rate == 64000 * 3
+        assert model._state.tm_data_rate == bit_rate  # bit rate UNCHANGED
+        # 8PSK = 3 bits/symbol, so the symbol rate is a third of the bit rate
+        assert result["symbol_rate_bd"] == bit_rate / 3
+        assert model.active_symbol_rate_bd == bit_rate / 3
 
     def test_set_modulation_invalid(self):
         from smo_simulator.models.ttc_basic import TTCBasicModel
@@ -111,8 +120,11 @@ class TestTTCModulation:
         from smo_simulator.models.ttc_basic import TTCBasicModel
         model = TTCBasicModel()
         model.configure({})
+        bit_rate = model._state.tm_data_rate
         model.handle_command({"command": "set_modulation", "mode": 2})
-        assert model._state.tm_data_rate == 64000 * 3
+        assert model._state.tm_data_rate == bit_rate
+        assert model.active_symbol_rate_bd == bit_rate / 3
         model.handle_command({"command": "set_modulation", "mode": 0})
-        assert model._state.tm_data_rate == 64000
+        assert model._state.tm_data_rate == bit_rate
+        assert model.active_symbol_rate_bd == bit_rate  # BPSK: 1 bit/symbol
         assert model._state.modulation_mode == 0

@@ -84,8 +84,8 @@ The EOSAT-1 imager carries four spectral bands specifically selected for ocean c
 |---|---|---|
 | Total storage | 20,000 MB (20 GB) | `payload.mem_total_mb` (0x060A) |
 | Memory segments | 8 segments, 2,500 MB each | Simulator model |
-| Image size (per frame) | 800 MB (raw, pre-compression) | `payload.yaml` |
-| Maximum stored images | ~25 images (at 800 MB/image) | Derived |
+| Image size (per frame) | 4 MB (raw, pre-compression) | `payload.yaml` |
+| Maximum stored images | ~5,000 raw images (at 4 MB/image); ~10,000 compressed | Derived |
 | Storage utilisation | Percentage | `payload.store_used` (0x0604) |
 | Bad segment count | Count | `payload.mem_segments_bad` (0x0612) |
 | Checksum algorithm | CRC-32 | `06_payload.md` |
@@ -190,7 +190,7 @@ The Payload Operations Engineer shall also monitor the following parameters from
 | S3 | 25/27 | `HK_REQUEST` | Request one-shot housekeeping report (SID 5 for Payload, SID 3 for TCS) |
 | S5 | 5/6/7/8 | Event reports | Enable/disable event reporting for payload events |
 | S8 | 1 | `PAYLOAD_SET_MODE` | Set payload mode (OFF/STANDBY/IMAGING) -- func_id 20 |
-| S8 | 1 | `PAYLOAD_CAPTURE` | Trigger image capture -- func_id 22 |
+| S8 | 1 | `PAYLOAD_CAPTURE` | Trigger image capture -- func_id 28, `scene_id uint16 + lines uint16` |
 | S8 | 1 | `PAYLOAD_DELETE_IMAGE` | Delete image by scene_id -- func_id 24 |
 | S8 | 1 | `PAYLOAD_MARK_BAD_SEGMENT` | Mark memory segment unusable -- func_id 25 |
 | S8 | 1 | `FPA_COOLER` | Control FPA cooler ON/OFF -- func_id 33 |

@@ -1,0 +1,116 @@
+# EOSAT-1 Daily Operations Report (DOR).
+#
+# A real DOR covers 24 h: configuration at start and end, per-subsystem
+# min/max/mean against limits, power budget with min SoC per eclipse, thermal
+# extremes, pointing performance, pass-by-pass data return, all out-of-limit
+# events with disposition, command count and rejections, autonomy/FDIR
+# actions, open anomalies and the plan for the next period. It is read by
+# people who will only read the executive summary — the decisions go there.
+schema_version: 1
+report:
+  id: daily_ops_review
+  title: "EOSAT-1 Daily Operations Report"
+  subtitle: "MET day {{period.met_day}} — {{period.start_utc}} to {{period.end_utc}}"
+  audience: operator
+  classification: "TRAINING — NOT FOR FLIGHT"
+source:
+  dumps: { mode: auto, store_ids: [1, 2, 3, 4] }
+  ground_archive: { enabled: true,
+                    use_for: [commands, alarms, events, gap_reference] }
+  catalogs: { config_dir: configs/eosat1 }
+period:
+  kind: day
+  day: { select: latest_utc, count: 1, boundary: "00:00:00Z" }
+  timebase: cuc
+  zero_cuc_policy: interpolate
+parameter_sets:
+  eps:     [eps.bat_soc, eps.bus_voltage, eps.bat_current, eps.bat_temp,
+            eps.bat_dod]
+  power:   [eps.power_gen, eps.power_cons]
+  thermal: [tcs.temp_battery, tcs.temp_fpa, tcs.temp_obc]
+  aocs:    [aocs.att_error, aocs.rw1_speed, aocs.rw2_speed, aocs.rw3_speed,
+            aocs.total_momentum]
+  payload: [payload.store_used, payload.mode]
+defaults:
+  plot: { height_px: 200, show_limits: true, show_eclipse: true,
+          show_contacts: true }
+sections:
+  - { type: header, id: cover,
+      include: [period, dumps_used, packet_totals, crc_errors, generated_at] }
+  - type: narrative
+    id: exec
+    title: "Executive summary"
+    text: |
+      Spacecraft mode at period start / end. Overall health assessment in one paragraph,
+      then the exceptions. A DOR is read by people who will only read this box — put the
+      decisions here, not the data.
+
+      Min SoC {{stats.eps.bat_soc.min}} % at {{stats.eps.bat_soc.min_at}}.
+      {{counts.passes}} passes, mean data return {{gaps.received_pct}} %.
+      {{counts.events.severity_4}} critical events. {{counts.commands.rejected}} command rejections.
+  - { type: completeness, id: gaps, title: "Data completeness",
+      sids: [1, 2, 3, 4, 5, 6], expected_cadence: from_config,
+      gap_threshold_multiple: 3.0,
+      breakdown: [per_sid, per_pass, per_orbit],
+      show: [expected, received, missing_pct, longest_gap_s, gap_list,
+             store_wrap, crc_errors],
+      correlate_with: [contacts, eclipse, store_overflow] }
+  - { type: plot, id: power_day, title: "Power over 24 h", style: multi_axis,
+      axes: [ { label: "SoC / %", parameters: [eps.bat_soc], range: [0, 100] },
+              { label: "W", parameters: parameter_sets.power, side: right } ],
+      annotations: { eclipse: true, contacts: true,
+                     events: [0x0106, 0x0107, 0x0108, 0x0102] } }
+  - { type: plot, id: thermal_day, title: "Thermal", style: time_series,
+      parameters: parameter_sets.thermal }
+  - { type: plot, id: aocs_day, title: "Attitude and momentum",
+      style: multi_axis,
+      axes: [ { label: "deg", parameters: [aocs.att_error] },
+              { label: "RPM", parameters: [aocs.rw1_speed, aocs.rw2_speed,
+                                           aocs.rw3_speed], side: right } ] }
+  - { type: plot, id: att_hist, title: "Pointing error distribution",
+      style: histogram, parameters: [aocs.att_error], bins: 50,
+      overlay: [p50, p95, p99] }
+  - { type: plot, id: modes, style: step,
+      parameters: [obdh.mode, aocs.mode, payload.mode, ttc.tm_tier,
+                   eps.load_shed_stage],
+      show_transitions_table: true }
+  - { type: stats, id: stats, title: "Parameter statistics (24 h)",
+      groups: [ { label: "EPS", parameters: parameter_sets.eps },
+                { label: "TCS", parameters: parameter_sets.thermal },
+                { label: "AOCS", parameters: parameter_sets.aocs },
+                { label: "Payload", parameters: parameter_sets.payload } ],
+      columns: [count, min, min_at, max, max_at, mean, stddev, first, last,
+                ool_yellow_s, ool_red_s, ool_pct, samples_expected,
+                samples_missing],
+      limits_from: mcs/limits.yaml,
+      flag_rule: "ool_red_s > 0 or ool_pct > 5" }
+  - { type: breakdown, id: orbits, title: "Orbit-by-orbit", by: orbit,
+      metrics: [min_soc, max_bat_temp, max_att_error, packets,
+                events_sev3plus, commands_sent] }
+  - { type: breakdown, id: passes, title: "Pass-by-pass", by: pass,
+      metrics: [duration_s, station, packets, commands_sent,
+                commands_rejected, events_sev3plus, min_soc] }
+  - { type: events, id: events, title: "Event review", severity_min: 2,
+      include_synthetic_s12: true, resolve_names: event_catalog,
+      group_by: subsystem,
+      correlate: { window_s: 120, with: [s12_transitions, s19_fires,
+                                         commands] } }
+  - { type: alarms, id: alarms, title: "Limit violations and autonomy",
+      severity_min: 2, pair_entries_and_clears: true, unpaired_policy: report,
+      s19_correlation: { enabled: true,
+                         rules_from: monitoring/s19_rules.yaml,
+                         show: [ea_id, trigger_kind, trigger_id,
+                                action_func_id, fired_at, latency_s] } }
+  - { type: commands, id: commands, title: "Commanding",
+      source: [s1_verification],
+      show: [utc, seq, apid, accept, execute, error_code, error_text],
+      flag_rule: "outcome in [REJECTED, FAILED]" }
+  - type: narrative
+    id: forward
+    title: "Open items and plan for next period"
+    text: |
+      Open anomalies (id, opened, severity, owner, status):
+      Configuration changes made this period:
+      Planned activities next period:
+      Constraints / cautions for the incoming shift:
+output: { formats: [html], self_contained: true, save_to: workspace/reports }

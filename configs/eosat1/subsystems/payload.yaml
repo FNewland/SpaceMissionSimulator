@@ -3,9 +3,41 @@ fpa_cooler_target_c: -15.0
 fpa_ambient_c: 5.0
 fpa_tau_cooling_s: 100.0
 fpa_tau_warming_s: 120.0
+# Documented detector (cold-finger) gradient below the TCS FPA bracket node
+# while the cooler runs (Phase B, brief 05 WP-1): TCS 0x0408 is the bracket,
+# payload 0x0601 = bracket + this offset is the detector side. The payload no
+# longer integrates an independent FPA temperature.
+detector_offset_c: -0.5
 fpa_cooler_power_w: 15.0
-image_size_mb: 800.0
+# Size of ONE capture (the raw frame that the capture command produces).
+#
+# 4 MB is the course textbook's figure (pp. 360, 404: "~4 MB per session",
+# "4 MB -> 32 s at 1 Mbps") and is now the mission's number (roadmap N-11,
+# defect #82). It replaces the previous 800 MB, which was unreachable at
+# S-band: 800 MB at the 64 kbps high TM rate x 0.8 protocol efficiency needs
+# ~36 h of *effective* contact, i.e. ~6.8 days of the whole five-station
+# network (116.7 MB/day). No plan containing a single image could ever close.
+# At 4 MB one image costs ~655 s of effective contact - about one good pass -
+# which is exactly the arithmetic the pass-planning lesson rests on.
+#
+# Definition: this is the RAW frame. The on-board CCSDS-123 compressor
+# (payload_basic.py, scene-dependent ratio 1.5-4.0) stores 1.0-2.7 MB of it,
+# so the planner's `imaging_pass data_volume_mb: 4` is the uncompressed worst
+# case. `data_rate_mbps` / `line_rate_hz` below describe the focal-plane
+# READOUT, not the whole 120 s acquisition window: a 4 MB frame is 0.4 s of
+# readout inside a window that is mostly slew, settle and cooler stabilisation.
+image_size_mb: 4.0
+# Store deliberately NOT rescaled with the image (see defect #82): keeping
+# 20 GB makes DOWNLINK, not storage, the binding constraint - which is the
+# lesson. One consequence to know about: the store now holds ~5000 raw images,
+# so a fill-the-store exercise must be driven from the instructor console
+# (store_used injection / payload_memory_failure scenario) rather than by
+# capturing images.
 total_storage_mb: 20000.0
+# Phase E WP-7: made EXPLICIT (the model always defaulted to 8; the old
+# "segment 0-79" documentation was never executable — valid range is 0-7,
+# and PAYLOAD_MARK_BAD_SEGMENT's catalogue range now says so).
+num_memory_segments: 8
 line_rate_hz: 500.0
 data_rate_mbps: 80.0
 

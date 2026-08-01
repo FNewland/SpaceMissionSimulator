@@ -132,25 +132,35 @@ class TestTTCBeaconMode:
     """Test TTC beacon mode during early operations."""
 
     def test_beacon_mode_low_rate(self):
-        """In beacon mode, TTC should use low data rate."""
+        """In beacon mode, TTC is pinned to the BEACON tier (1 kbps)."""
         ttc = TTCBasicModel()
         ttc.configure({})
         ttc.handle_command({"command": "set_beacon_mode", "on": True})
         params = {}
         orbit = make_orbit_state()
         ttc.tick(1.0, orbit, params)
-        assert ttc._state.tm_data_rate == ttc._tm_rate_lo
+        assert ttc.tier_name(ttc._state.tm_tier) == "BEACON"
+        assert ttc._state.tm_data_rate == 1000
 
     def test_antenna_deployment_increases_rate(self):
-        """After antenna deployment (beacon off), rate should increase."""
+        """Leaving beacon mode moves the spacecraft from the 1 kbps BEACON
+        lifeline to the LOW (16 kbps) routine-operations rate.
+
+        Deploying the antenna does NOT by itself unlock the HIGH tier: that
+        needs DOWNLINK/dump mode and elevation >= 10 deg (defect #85).
+        """
         ttc = TTCBasicModel()
         ttc.configure({})
+        ttc.handle_command({"command": "set_beacon_mode", "on": True})
+        ttc.tick(1.0, make_orbit_state(), {})
+        assert ttc._state.tm_data_rate == 1000
+
         ttc.handle_command({"command": "deploy_antennas"})
         ttc.handle_command({"command": "set_beacon_mode", "on": False})
         params = {}
-        orbit = make_orbit_state()
-        ttc.tick(1.0, orbit, params)
-        assert ttc._state.tm_data_rate == ttc._tm_rate_hi
+        ttc.tick(1.0, make_orbit_state(), params)
+        assert ttc.tier_name(ttc._state.tm_tier) == "LOW"
+        assert ttc._state.tm_data_rate == 16000
 
 
 class TestSequentialPowerOn:

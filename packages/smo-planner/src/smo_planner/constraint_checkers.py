@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from dataclasses import dataclass
 
+from smo_planner.budget_tracker import DUMP_RATE_BPS, MIN_DUMP_ELEVATION_DEG
 from smo_planner.utils import parse_iso as _parse_iso
 
 
@@ -535,21 +536,93 @@ class DataVolumeConstraintChecker:
         self,
         storage_capacity_mb: float = 20000.0,
         storage_margin_percent: float = 10.0,
-        downlink_rate_mbps: float = 0.5,
+        downlink_rate_bps: float = DUMP_RATE_BPS,
+        protocol_overhead: float = 0.20,
+        downlink_rate_mbps: float | None = None,
+        routine_rate_bps: float | None = None,
+        min_dump_elevation_deg: float = MIN_DUMP_ELEVATION_DEG,
+        dump_tier_name: str = "HIGH",
+        routine_tier_name: str = "LOW",
     ):
         """Initialize data volume constraint checker.
 
         Args:
             storage_capacity_mb: Total onboard storage capacity
+                (``payload.yaml total_storage_mb``)
             storage_margin_percent: Minimum margin to maintain
-            downlink_rate_mbps: Effective downlink rate (accounting for overhead)
+            downlink_rate_bps: Raw DUMP-tier bit rate — the top rung of
+                ``ttc.yaml tm_rate_tiers`` (HIGH, 128 000 bps). A ``data_dump``
+                is the only activity that reaches it.
+            protocol_overhead: Framing/coding overhead fraction
+            downlink_rate_mbps: DEPRECATED. Legacy Mbps figure; converted to
+                bits/s when given.
+            routine_rate_bps: Raw ROUTINE-tier bit rate (``default_tier``, LOW,
+                16 000 bps) — what a dump falls back to when the pass never
+                clears ``min_dump_elevation_deg``. Defaults to the dump rate,
+                which reproduces the old single-rate behaviour.
+            min_dump_elevation_deg: Elevation gate on the DUMP tier
+                (``tm_rate_tiers[HIGH].min_elevation_deg``).
+
+        Defect #60: this checker used to hard-code 0.5 Mbps — ~10x the
+        BudgetTracker's 51.2 kbps — so the two planner modules disagreed with
+        each other about how much a pass can shift. Both now take the rate from
+        ``ttc.yaml``, and the MB conversion below is a real bits->MB conversion
+        rather than "Mbps x minutes".
+
+        Defect #86: there is no longer ONE rate. The checker carries both rungs
+        it plans against and the elevation gate between them, so a dump booked
+        on a 7 deg pass is costed at LOW, not at HIGH.
         """
         self.storage_capacity_mb = storage_capacity_mb
         self.storage_margin_percent = storage_margin_percent
-        self.downlink_rate_mbps = downlink_rate_mbps
+        if downlink_rate_mbps is not None:
+            downlink_rate_bps = float(downlink_rate_mbps) * 1e6
+        self.downlink_rate_bps = float(downlink_rate_bps)
+        self.protocol_overhead = float(protocol_overhead)
+        self.effective_rate_bps = self.downlink_rate_bps * (1.0 - self.protocol_overhead)
+        self.dump_rate_bps = self.downlink_rate_bps
+        self.routine_rate_bps = float(
+            routine_rate_bps if routine_rate_bps is not None else downlink_rate_bps)
+        self.effective_routine_rate_bps = self.routine_rate_bps * (
+            1.0 - self.protocol_overhead)
+        self.min_dump_elevation_deg = float(min_dump_elevation_deg)
+        self.dump_tier_name = str(dump_tier_name)
+        self.routine_tier_name = str(routine_tier_name)
+        # Retained for callers/inspection; now derived, not an independent value.
+        self.downlink_rate_mbps = self.downlink_rate_bps / 1e6
         self.min_margin_mb = (
             storage_capacity_mb * storage_margin_percent / 100.0
         )
+
+    @classmethod
+    def from_params(cls, params: dict | None) -> "DataVolumeConstraintChecker":
+        """Build from ``budget_tracker.budget_params_from_config`` output."""
+        p = params or {}
+        return cls(
+            storage_capacity_mb=p.get("storage_capacity_mb", 20000.0),
+            storage_margin_percent=p.get("storage_margin_percent", 10.0),
+            downlink_rate_bps=p.get("downlink_rate_bps", DUMP_RATE_BPS),
+            protocol_overhead=p.get("protocol_overhead", 0.20),
+            routine_rate_bps=p.get("routine_rate_bps"),
+            min_dump_elevation_deg=p.get(
+                "default_min_dump_elevation_deg", MIN_DUMP_ELEVATION_DEG),
+            dump_tier_name=p.get("dump_tier_name", "HIGH"),
+            routine_tier_name=p.get("routine_tier_name", "LOW"),
+        )
+
+    def dump_rate_for_pass(self, max_elevation_deg: float | None) -> float:
+        """Raw bit rate a dump actually achieves on a pass of this geometry.
+
+        Above ``min_dump_elevation_deg`` the spacecraft accepts the DUMP tier;
+        below it the tier is REFUSED (ttc_basic `_tier_permission_error`) and
+        the dump runs at the routine tier. An unknown elevation is costed
+        optimistically at the dump rate, as before.
+        """
+        if max_elevation_deg is None:
+            return self.dump_rate_bps
+        return (self.dump_rate_bps
+                if float(max_elevation_deg) >= self.min_dump_elevation_deg
+                else self.routine_rate_bps)
 
     def check_storage_capacity(
         self,
@@ -616,10 +689,16 @@ class DataVolumeConstraintChecker:
                     suggested_fix="Schedule a data dump to reduce onboard data volume",
                 ))
 
-            # Subtract downlink during dump activities
+            # Subtract downlink during dump activities (bits -> MB). The rate is
+            # the ladder rung the pass can actually hold: HIGH above the
+            # elevation gate, LOW below it (defect #86).
             if "dump" in name.lower() or "downlink" in name.lower():
                 duration_s = activity.get("duration_s", 0)
-                downlink_mb = self.downlink_rate_mbps * (duration_s / 60.0)
+                rate = self.dump_rate_for_pass(
+                    activity.get("max_elevation_deg",
+                                 activity.get("pass_max_elevation_deg")))
+                downlink_mb = (rate * (1.0 - self.protocol_overhead) * duration_s
+                               ) / (8.0 * 1024 * 1024)
                 onboard_mb = max(0.0, onboard_mb - downlink_mb)
 
         return violations
@@ -797,6 +876,7 @@ def validate_plan(
     contacts: list[dict] | None = None,
     ground_track: list[dict] | None = None,
     battery_soc_percent: float = 80.0,
+    data_params: dict | None = None,
 ) -> ValidationResult:
     """Comprehensive plan validation across all constraints.
 
@@ -805,6 +885,10 @@ def validate_plan(
         contacts: Optional contact windows
         ground_track: Optional ground track for eclipse detection
         battery_soc_percent: Current battery state of charge
+        data_params: Resolved data-budget parameters (storage capacity,
+            downlink rate, overhead) from
+            ``budget_tracker.budget_params_from_config``. When omitted the
+            checker's built-in defaults are used.
 
     Returns:
         ValidationResult with all violations and status
@@ -841,7 +925,7 @@ def validate_plan(
     result.add_violations(thermal_cooldown_violations)
 
     # Data volume constraints
-    data_checker = DataVolumeConstraintChecker()
+    data_checker = DataVolumeConstraintChecker.from_params(data_params)
     data_violations = data_checker.check_storage_capacity(activities)
     result.add_violations(data_violations)
 

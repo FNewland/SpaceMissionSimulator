@@ -37,11 +37,11 @@ action including aborting imaging if necessary and re-capturing the scene.
 | Command | Service | Subtype | Func ID | Description |
 |---|---|---|---|---|
 | HK_REQUEST | 3 | 27 | — | Request one-shot HK report |
-| PAYLOAD_SET_MODE | 8 | 1 | 20 | Set payload mode |
-| PAYLOAD_CAPTURE | 8 | 1 | 22 | Re-trigger image capture |
-| PAYLOAD_DELETE_IMAGE | 8 | 1 | 24 | Delete corrupted image |
-| FPA_COOLER | 8 | 1 | 33 | Control FPA cooler |
-| PAYLOAD_MARK_BAD_SEGMENT | 8 | 1 | 25 | Mark memory segment as unusable |
+| PAYLOAD_SET_MODE | 8 | 1 | 26 | Set payload mode |
+| PAYLOAD_CAPTURE | 8 | 1 | 28 | Re-trigger image capture |
+| PAYLOAD_DELETE_IMAGE | 8 | 1 | 30 | Delete corrupted image |
+| FPA_COOLER | 8 | 1 | 43 | Control FPA cooler |
+| PAYLOAD_MARK_BAD_SEGMENT | 8 | 1 | 31 | Mark memory segment as unusable |
 
 ## Procedure Steps
 
@@ -72,10 +72,10 @@ same scene suggest a systematic issue.
 **GO/NO-GO:** FPA assessment complete — follow appropriate branch.
 
 ### Step 3: FPA Warm — Abort Imaging and Cool Down
-**Action:** If payload is in IMAGING mode, abort: `PAYLOAD_SET_MODE(mode=1)` (func_id 20)
+**Action:** If payload is in IMAGING mode, abort: `PAYLOAD_SET_MODE(mode=1)` (func_id 26)
 **Verify:** `payload.mode` (0x0600) = 1 (STANDBY) within 10 s
 **Action:** Verify cooler is active: If `tcs.cooler_fpa` (0x040C) = 0, enable:
-`FPA_COOLER(on=1)` (func_id 33)
+`FPA_COOLER(on=1)` (func_id 43)
 **Verify:** `tcs.cooler_fpa` (0x040C) = 1 within 5 s
 **Action:** Monitor FPA temperature cooldown at 60 s intervals: `HK_REQUEST(sid=6)`
 **Verify:** `payload.fpa_temp` (0x0601) trending downward toward target (-5 C cooler
@@ -99,7 +99,7 @@ setpoint, operational threshold -25 C)
 **GO/NO-GO:** Memory assessment complete — proceed to re-capture if appropriate.
 
 ### Step 5: Delete Corrupted Image and Re-Capture
-**Action:** Delete the corrupted image: `PAYLOAD_DELETE_IMAGE(scene_id=N)` (func_id 24)
+**Action:** Delete the corrupted image: `PAYLOAD_DELETE_IMAGE(scene_id=N)` (func_id 30)
 where N is the affected scene ID from Step 1.
 **Verify:** `payload.store_used` (0x0604) decreases (storage freed)
 **Verify:** `payload.image_count` (0x0605) decreases by 1
@@ -108,8 +108,11 @@ where N is the affected scene ID from Step 1.
 - `payload.fpa_ready` (0x0610) = 1
 - `payload.mem_segments_bad` (0x0612) = 0 (or bad segments marked)
 - `aocs.att_error` (0x0217) < 0.1 deg
-**Action:** Re-capture the scene: `PAYLOAD_CAPTURE(scene_id=N, lines=L)` (func_id 22)
-where N is the scene ID and L is the required number of CCD lines.
+**Action:** Re-capture the scene: `PAYLOAD_CAPTURE(scene_id=N, lines=L)` (func_id 28)  
+**Wire:** `1C <scene_id:uint16> <lines:uint16>` — e.g. scene 1042, 2048 lines = `1C 04 12 08 00`.
+`scene_id` 0 lets the payload auto-assign the next free id; `lines` is 256-20000 along-track
+detector lines (2048 = the 4-band 4.0 MB reference frame). Geolocation is NOT an argument —
+it is stamped on board from the propagated sub-satellite point at shutter open.
 **Verify:** `payload.image_count` (0x0605) increments by 1
 **Verify:** `payload.checksum_errors` (0x0609) does NOT increase
 **Verify:** `payload.last_scene_quality` (0x060D) — record quality metric for new image

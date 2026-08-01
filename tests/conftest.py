@@ -40,6 +40,7 @@ def mock_engine():
     engine.subsystems = {
         "aocs": MagicMock(), "eps": MagicMock(), "payload": MagicMock(),
         "tcs": MagicMock(), "obdh": MagicMock(), "ttc": MagicMock(),
+        "prop": MagicMock(),  # Phase D propulsion
     }
     engine._tc_scheduler = MagicMock()
     engine._tm_storage = MagicMock()

@@ -453,10 +453,10 @@
                         <tr>
                             <td class="step-num">14</td>
                             <td>T+03:32</td>
-                            <td>Set nominal data rate</td>
+                            <td>Set the routine-operations tier (LOW)</td>
                             <td class="pos-TTC" style="font-weight:600">TTC</td>
-                            <td class="cmd">S8 func_id=65 (TTC_SET_DATA_RATE)</td>
-                            <td class="tm">Confirm 1 kbps housekeeping rate</td>
+                            <td class="cmd">S8 func_id=65 (TTC_SET_DATA_RATE), rate=0 &rarr; LOW</td>
+                            <td class="tm">tm_data_rate (0x0506)=16000 bps; tm_tier (0x0539)=tm_tier_cmd (0x053A)=1 (LOW); tm_symbol_rate (0x053B)=16000&nbsp;Bd</td>
                             <td><span class="go-gate go">GO</span></td>
                         </tr>
                     </tbody>
@@ -1201,19 +1201,19 @@
                         <tr>
                             <td class="step-num">56</td>
                             <td>T+19:08</td>
-                            <td>Configure high-rate downlink</td>
+                            <td>Enter DOWNLINK mode, then raise to the HIGH tier</td>
                             <td class="pos-TTC" style="font-weight:600">TTC</td>
-                            <td class="cmd">S8 func_id=65 (TTC_SET_DATA_RATE)</td>
-                            <td class="tm">Data rate set to high-rate</td>
+                            <td class="cmd">S8 func_id=79 (TTC_SET_DOWNLINK_MODE) on=1, then S8 func_id=65 (TTC_SET_DATA_RATE) rate=1 &rarr; HIGH</td>
+                            <td class="tm">downlink_mode (0x053C)=1; tm_data_rate (0x0506)=128000 bps; tm_tier (0x0539)=2. Rejected (S1.8, error 0x0007) if elevation &lt; 10&deg;</td>
                             <td><span class="go-gate go">GO</span></td>
                         </tr>
                         <tr>
                             <td class="step-num">57</td>
                             <td>T+19:09</td>
-                            <td>Verify link margin at high rate</td>
+                            <td>Verify link margin at the HIGH tier</td>
                             <td class="pos-TTC" style="font-weight:600">TTC</td>
                             <td class="cmd">N/A</td>
-                            <td class="tm">link_margin (0x0503)>3dB at high rate</td>
+                            <td class="tm">link_margin (0x0503)&gt;3dB at HIGH. Expected 33.7&ndash;37.2&nbsp;dB at 5&deg; and 50.3&ndash;53.8&nbsp;dB at zenith, per station (see COM-006 baselines)</td>
                             <td><span class="go-gate go">GO</span></td>
                         </tr>
                         <tr>

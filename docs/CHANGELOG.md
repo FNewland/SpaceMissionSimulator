@@ -1,6 +1,247 @@
 # CHANGELOG — EOSAT-1 Spacecraft Simulator
 
-**Updated: April 2026**
+**Updated: 2026-08-01**
+
+Release history. `DEFECTS.md` is the defect register and carries the
+per-defect detail; `docs/STATUS.md` carries what is still open.
+
+> This file went untouched from April to August 2026 while ~90 defects landed,
+> and `DEFECTS.md` became the de-facto changelog. The 2026-08 entry below
+> closes that gap.
+
+---
+
+## 2026-08 — the evolution build
+
+Eight phases, landed in dependency order. The suite went from 3 923 to
+**4 900+ tests**, all green.
+
+### Phase A — Foundation
+
+Nothing downstream was verifiable until these three were true.
+
+* **Seeded, reproducible randomness.** `seed(` had *zero* hits in `packages/`.
+  Separation tumble, star counts, sun-sensor illumination, magnetometer and
+  gyro noise, gyro bias walk and failure flicker all drew from the global
+  `random`. Now one `random.Random` per component, derived from
+  `simulation.yaml: seed` via `smo_common.state.derive_rng`, and saved in
+  breakpoints. Same seed + same epoch + same command script ⇒ byte-identical
+  trace.
+* **Sub-stepped tick; √dt noise scaling.** `dt_sim = dt_real × speed` went
+  straight into the models, so at ×60 the battery, thermal RC, heater
+  hysteresis and wheel dynamics integrated 60-second Euler steps and gave
+  different answers; detumble diverged to 1.4e39 at dt = 1000. Process noise
+  scaled linearly in dt instead of √dt, so random-walk variance was off by a
+  factor of `speed`. Both fixed; ×1 and ×60 now agree on end-of-orbit SoC
+  (0.5 %), battery temperature (0.5 K) and eclipse entry (60 s).
+* **Complete state round-trip.** 93 engine attributes were assigned;
+  `breakpoints.py` touched about 12. A breakpoint load destroyed the entire
+  S11 on-board schedule, injected failures, the running scenario, the
+  bootloader phase, S12 enable flags and delta baselines, the load-shed stage
+  and every edge detector. Replaced with a `Stateful` protocol and an engine
+  registry: a registered component without state methods now fails the test,
+  and a partial save aborts the whole save.
+
+### Phase B — Power and thermal
+
+The power deficit was four stacked model defects, not a sizing problem.
+
+* Honest array performance: full loss stack (packing 0.85, temperature
+  coefficient −0.20 %/°C at 65 °C, harness 0.95, 3-year EOL 0.92);
+  `K: 389.5 → 267.9 W/m²`.
+* **The solar array drive is load-bearing.** The command, the device gate and
+  the telemetry parameter all existed and nothing read them. A single-axis
+  drive about the orbit normal converts the wings' `cos β · |sin φ|` duty into
+  continuous `cos β` — 1.56× the energy from the same area — and collapses the
+  run-to-run alignment spread from 8 W to 1 W. "SADA stuck" became a real
+  failure mode.
+* Hardware sheet rebalanced to a credible 6U: wings 0.300 → 0.180 m² each,
+  body areas corrected, battery 120 → 100 Wh, OBC 15 → 6 W, RX 5 → 1.5 W.
+* **Protection ladder un-inverted.** The FDIR bus rule tripped at 58 % SoC —
+  *inside* the nominal band, ahead of every gentler protection. Resulting
+  monotonic ladder: shed 45.5 % → EPS-safe 39 % → SoC stages 30/20/10 % →
+  AOCS-safe 22 %, locked by a test that converts every threshold to SoC
+  through the configured OCV curve.
+* Battery electrical model: the terminal-voltage sign was inverted
+  (`v = ocv − i·R` with `i > 0` on charge), so the bus sagged when charging.
+  Added coulombic efficiency 0.94 and a CV taper.
+* **Single FPA thermal node.** `tcs_basic` used the setpoint as an *additive
+  environment offset*, so TCS asymptoted to ambient − 35 K and never to the
+  setpoint; two independent integrators with two unlinked cooler flags sat
+  26.4 °C apart in the case the shipped COM-010 walks students through.
+* Battery heater made reachable (its thermostat had 9 °C of margin to a trip
+  point the node could never reach) and made to fail loudly when the EPS line
+  is off.
+* **EPS billed from actuator state, not line-switch position.** A 6 W phantom
+  battery-heater bill for a heater that could not energise, and up to 60 W of
+  payload + cooler completely unbilled when the operator used `PL_SET_MODE`.
+  Added tier-dependent TX power.
+* Fixed the false array-degraded alarm that fired on the first sunlit tick of
+  every run and latched.
+
+### Phase C — AOCS
+
+There was no attitude dynamics at all: no inertia tensor, no torque
+integration, no sensor that read anything but truth, no estimator, no INERTIAL
+mode.
+
+* RK4 rigid-body dynamics at fixed h = 0.5 s, four pyramid reaction wheels
+  integrated analytically, magnetorquers, disturbance torques (gravity
+  gradient, aero, SRP, residual dipole).
+* Attitude-dependent sensor models: star tracker, coarse sun sensors,
+  magnetometer, gyro with bias, noise, misalignment and FOV.
+* 6-state MEKF; quaternion-feedback PD with feed-forward; LVLH and inertial
+  reference generators; new mode 9 = INERTIAL.
+* **COARSE / NOMINAL / FINE became physically real**: total pointing 3σ of
+  ~5° / 0.065° / 0.013°, geolocation 39 km / 510 m / 100 m at 450 km. FINE
+  entry gained a precondition bitmask (0x02C5) and is **refused with TM(1,8)**
+  when unmet; the payload **refuses to capture** without it.
+* **SECULAR mode above ×60**, declared: the fast loop is bypassed, attitude is
+  sampled from the mode's own closed-loop error distribution, slow states
+  still integrate exactly, and an S5 event plus `aocs.fidelity_mode` make the
+  bypass visible.
+* Telemetry block 0x02A0–0x02C8, HK SID 7, MCS display.
+
+### Phase D — Propulsion
+
+1U green monopropellant (LMP-103S/ADN), blowdown, single thruster on −X
+firing along +X body so a retrograde burn needs a deliberate 180° yaw.
+Thrust 0.33 N BOL → 0.14 N EOL, Isp 220 → 196 s, 0.400 kg propellant,
+**total ΔV 66.9 m/s**. Funcs 108–118, TM block 0x0B00, events 0x0800, new S12
+monitors and S19 rules, a new EPS `prop` line last in the shed order, and
+`htr_thruster` made real in TCS.
+
+A ΔV **propagates**: a measured TLE re-fit bumps `epoch_version` and
+invalidates the planner and MCS caches, so passes, eclipse, power and imaging
+opportunities all move. The engine clamps speed to ×10 while FIRING.
+
+### Phase E — Command argument schema
+
+* **`PAYLOAD_CAPTURE` (func 28):** the catalogue said `scene_id + lines`; the
+  handler unpacked `lat/lon float32`; the planner sent no parameters at all —
+  so **every planner-scheduled image was taken at 0°N 0°E**. Handler changed to
+  the catalogue format.
+* **`TTC_SET_TX_POWER` (func 68):** everything documented a 1-byte level; the
+  handler read float32 watts, so three FDIR procedures were silently ignored.
+  Now an enumerated `level:uint8` with a corrected watt table.
+* **`TCFieldDef` extended** with per-argument type, offset, endianness,
+  engineering unit, raw↔engineering conversion, valid range, default and enum
+  labels, and made the single source consumed by the MCS builder, quick
+  commands, the procedure runner, OBCP, the planner and the S11 builder —
+  with four mechanical drift gates so the six consumers cannot diverge again.
+* **FPA setpoint** encoded as uint16 centi-kelvin, so a negative engineering
+  value never requires the operator to compute two's complement. The builder
+  shows live raw hex as you type and reverse-decodes pasted hex.
+* Payload settings that existed in the model but were unreachable are now
+  commandable, and gain / integration time / lines have radiometric
+  consequences (SNR and product size).
+
+### Phase F — Tooling
+
+* **Report generator**: daily ops review, pass report, anomaly investigation;
+  self-contained HTML; a library in `smo-common` so the standalone viewer, the
+  MCS and the simulator call the same code. All period selection is CUC-based.
+  *Archive minus MCS* is a report section in its own right.
+* **Configuration editor** on the simulator's instructor server (8080), with
+  read-only proxies on the MCS and planner. Shadow git repository at
+  `workspace/config-history/` with `configs/` as its work-tree, machine-readable
+  audit trailers, named baselines as annotated tags and **per-exercise variants
+  as branches**. Validation runs schema → range/plausibility → cross-file
+  consistency, with diff preview before apply.
+
+### Phase G — Everything else
+
+**Ground segment and autonomy**
+
+* `mcs/limits.yaml` had **zero** production consumers: 51 limit bands loaded
+  by nothing, `TMProcessor` constructed without limits, `pop_alarms()` with no
+  callers. Now live, feeding the alarm journal.
+* An alarm *system*: acknowledge-with-persistence, unacked counter in the
+  header, severity filter that survives a reload, alarm→procedure linkage.
+* **FDIR runs.** `FaultPropagator.detect_fault()` and
+  `ProcedureExecutor.start_procedure()` had zero call sites — nine cascades and
+  ten recovery procedures registered and never executed, so 7 of 8 catalogued
+  FDIR events could never be emitted.
+* **TRENDS page** over the TM archive: multi-parameter, windowed, with limit
+  bands and eclipse/contact shading. The archive, the storage and four
+  `/api/archive/*` endpoints already existed and had no client.
+* Command history archived; archive pruned on start and closed at shutdown.
+* Situational-awareness header.
+
+**Engineering quality**
+
+* `dispatch()` returns a result object; the `_last_error*` side-channels are
+  gone. With S11 release, S19 event-actions and S18 OBCP steps all nesting, an
+  inner command could clobber the outer command's flag.
+* S1.4 execution-start failures carry the real `request_id` (all 17 sites
+  passed a literal 0, so those rejections never attached to a verification-log
+  row).
+* Instructor snapshot built on the tick thread with deep copies; breakpoint
+  save/load routed through the instructor queue.
+* All 68 pydantic config schemas based on a `StrictModel` with
+  `extra="forbid"`, so a typo in configuration fails at boot instead of being
+  silently dropped.
+
+**Hygiene, contracts and deployment**
+
+* **Classroom launch hardened.** Readiness polling before every dependant, a
+  named abort if any service fails, first-child-exit supervision, `--host` /
+  `$SMO_BIND` honoured by the simulator, MCS and planner (all three used to
+  hard-code `0.0.0.0` while the banner claimed loopback), no network access
+  from any start script, and `deploy/start-all.sh` brought up to the same
+  contract and taught to start the five tool viewers it had been omitting.
+* **~18 800 lines of dead code deleted**: the `files/` legacy tree,
+  `old_index.html`, the planner's divergent `index-wide.html`, and three
+  unimported MCS display classes. `/wide` survives as a CSS layout mode of the
+  one planner page. Recorded in `docs/plan_2026-08/DELETED_FILES.md`.
+* **Config-contract test bundle complete**: parameter-chain closure,
+  limits-are-live, config-keys-have-consumers, catalogue↔dispatch bijection,
+  procedure refs, event-catalogue emissibility, endpoint reachability,
+  deployment consistency, and a strict-xfail register that makes an open
+  domain decision fail the build once it outlives its deadline.
+* **FPA thermal envelope single-sourced** (DECISIONS §3). Five files carried
+  five different answers and the textbook a sixth. The band is now *derived*
+  from the corrected model's measured behaviour, held in
+  `subsystems/tcs.yaml: fpa_envelope`, and propagated to the S12 monitors, the
+  MCS limits, the TCS event thresholds, the planner constraints, both models
+  and the manual — pinned by a content test. Imaging readiness was separated
+  from health limits, which is what the five-way disagreement was really made
+  of.
+* **Procedure audit is a CI gate.** It learned to tell an event id from a
+  parameter id (nine false positives on the Phase D propulsion events were
+  drowning the report) and to check S20 subtype annotations. It found and
+  fixed a systemic S20 inversion — 79 annotations across ten files, where the
+  card said "GET_PARAM (Subtype 1)" and the spacecraft *set* the parameter.
+  Also fixed: a stale `COM-101…COM-104` numbering scheme, COM-002's wrong
+  parameter ids, and COM-010's cool-down profile (which described a 30-minute
+  descent through −20 °C to a −15 °C setpoint — an artefact of the pre-Phase-B
+  bug).
+* **Documentation.** New: `docs/THREADING_AND_STATE.md`,
+  `docs/DETERMINISM.md`, generated `docs/PARAMETER_MAP.md`, `docs/STATUS.md`,
+  a root `README.md`, and `docs/plan_2026-08/TEXTBOOK_CHANGES.md`. Updated:
+  the instructor guide, the operations guide, the deployment guide and the
+  installation manual. The repository root went from 10 loose `.md` + 3 `.txt`
+  + 4 `.docx` + 5 `.skill` to `README.md`, `DEFECTS.md`, `LICENSE`,
+  `start.sh` and the packaging scaffolding, with everything else archived
+  under `docs/archive/YYYY-MM/` behind an index.
+
+### Final power budget (EOL, full loss stack, real propagator)
+
+Orbit-average, with **all nominal systems on**:
+
+| | worst β (49.8°) | max eclipse (β 24.2°) |
+|---|---|---|
+| Generation | 66.9 W | 51.1 W |
+| Nominal load | 34.2 W | 34.4 W |
+| **Margin ratio** | **1.95** | **1.48** |
+| Per-orbit minimum SoC | 81.1 % | 77.7 % |
+
+Franz's binding requirement — generation exceeds load with all nominal
+systems on — holds across the whole β sweep with no hardware change.
+
+---
+
+## April 2026 and earlier
 
 This document tracks all improvements and features added to the EOSAT-1 simulator since the initial development phase.
 

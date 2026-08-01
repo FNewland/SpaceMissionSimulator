@@ -1,10 +1,24 @@
 """Tests for the enhanced Payload model — image catalog with capture/download/
 delete, memory segment management, FPA thermal readiness, corrupted image
-handling, and failure injection."""
+handling, and failure injection.
+
+NOTE on the 800 MB frames used below: these are model-arithmetic unit tests
+that INJECT an image size through ``configure()``; 800 MB is kept only because
+it makes the storage/compression arithmetic legible (800/4 = 200 MB), not
+because it is the mission number. The mission's frame is 4 MB
+(``configs/eosat1/subsystems/payload.yaml image_size_mb``, defect #82) and
+``TestMissionConfiguredImageSize`` at the end of this file pins the model to it.
+"""
+from pathlib import Path
+
 import pytest
+import yaml
 from unittest.mock import MagicMock
 
 from smo_simulator.models.payload_basic import PayloadBasicModel
+
+PAYLOAD_YAML = (Path(__file__).resolve().parents[2] / "configs" / "eosat1"
+                / "subsystems" / "payload.yaml")
 
 
 def make_orbit_state():
@@ -404,7 +418,7 @@ class TestPayloadEnhanced:
             0x060B,  # mem_used_mb
             0x060C,  # last_scene_id
             0x060D,  # last_scene_quality
-            0x060F,  # fpa_ready
+            0x0610,  # fpa_ready (Phase B, brief 05 WP-7: was mis-published at 0x060F)
             0x0612,  # mem_segments_bad
             0x0613,  # duty_cycle_pct
         ]
@@ -809,3 +823,230 @@ class TestDefect5DownlinkIntegration:
         assert "bytes_sent" in result
         assert "progress_pct" in result
 
+
+
+class TestMissionConfiguredImageSize:
+    """The payload model must use the mission's configured frame size.
+
+    Defect #82 / roadmap N-11: the image is 4 MB (textbook pp. 360, 404), not
+    800 MB. This is the one place in the simulator tests that reads the real
+    config, so the model, the config and the planner cannot drift apart again.
+    """
+
+    @staticmethod
+    def _mission_config() -> dict:
+        return yaml.safe_load(PAYLOAD_YAML.read_text())
+
+    def test_config_declares_four_mb(self):
+        assert self._mission_config()["image_size_mb"] == 4.0
+
+    def test_model_defaults_match_the_config(self):
+        """A model configured with nothing must not fall back to 800 MB."""
+        model = PayloadBasicModel()
+        model.configure({})
+        assert model._state.image_size_mb == self._mission_config()["image_size_mb"]
+
+    def test_capture_stores_between_one_and_four_mb(self):
+        """Raw 4 MB in, 1.0-4.0 MB stored depending on the CCSDS-123 ratio."""
+        cfg = self._mission_config()
+        model = PayloadBasicModel()
+        model.configure(cfg)
+        model._state.mode = 2
+        model._state.fpa_ready = True
+        model._state.compression_enabled = True
+
+        before = model._state.mem_used_mb
+        result = model.handle_command({"command": "capture"})
+        assert result["success"] is True
+        stored = result["stored_size_mb"]
+        assert 1.0 <= stored <= 4.0, stored
+        assert model._state.mem_used_mb - before == pytest.approx(stored)
+
+    def test_a_capture_barely_moves_the_store_gauge(self):
+        """Consequence to be aware of: a 4 MB frame against a 20 GB store is
+        0.02% — a fill-the-store exercise must be driven from the instructor
+        console, not by capturing images (defect #82)."""
+        cfg = self._mission_config()
+        model = PayloadBasicModel()
+        model.configure(cfg)
+        model._state.mode = 2
+        model._state.fpa_ready = True
+        before = model._state.store_used_pct
+        model.handle_command({"command": "capture"})
+        assert model._state.store_used_pct - before < 0.1
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase E WP-8 (DECISIONS.md section 6) — gain, integration time and
+# lines have PHYSICAL consequences. Without these, four textbook
+# exercises (COM-011 dark/flat thresholds, COM-012 saturation decision,
+# the data-volume arithmetic) have no referent in the model.
+# ══════════════════════════════════════════════════════════════════════
+
+class TestRadiometricConsequences:
+    """SNR ∝ f(gain, t_int); stored size from lines x bands."""
+
+    def _imaging(self):
+        from smo_simulator.models.payload_basic import PayloadBasicModel
+        m = PayloadBasicModel()
+        m.configure({"image_size_mb": 4.0, "total_storage_mb": 20000.0})
+        m._state.mode = 2
+        m._state.fpa_ready = True
+        m._state.cooler_active = True
+        m._state.fpa_temp = -15.0
+        return m
+
+    def _tick(self, model):
+        class _Orbit:
+            in_eclipse = False
+            alt_km = 450.0
+            lat_deg = 45.0
+            lon_deg = -73.0
+        model.rng.seed(20260731)
+        model.tick(1.0, _Orbit(), {})
+        return model._state.band_snrs["green"]
+
+    def test_doubling_integration_time_raises_snr_about_3_db(self):
+        m = self._imaging()
+        m.handle_command({"command": "set_integration_time",
+                          "times": [2.0, 2.0, 2.0, 2.0]})
+        base = self._tick(m)
+        m.handle_command({"command": "set_integration_time",
+                          "times": [4.0, 4.0, 4.0, 4.0]})
+        doubled = self._tick(m)
+        assert doubled - base == pytest.approx(3.0, abs=0.6), (
+            f"doubling t_int moved SNR {doubled - base:.2f} dB, expected ~3 dB")
+
+    def test_halving_integration_time_costs_about_3_db(self):
+        m = self._imaging()
+        m.handle_command({"command": "set_integration_time",
+                          "times": [2.0, 2.0, 2.0, 2.0]})
+        base = self._tick(m)
+        m.handle_command({"command": "set_integration_time",
+                          "times": [1.0, 1.0, 1.0, 1.0]})
+        halved = self._tick(m)
+        assert base - halved == pytest.approx(3.0, abs=0.6)
+
+    def test_gain_changes_reported_snr(self):
+        m = self._imaging()
+        base = self._tick(m)
+        m.handle_command({"command": "set_detector_gain", "gain": 2.0})
+        gained = self._tick(m)
+        assert gained > base, "detector gain must move the reported SNR"
+        assert gained - base == pytest.approx(1.5, abs=0.5)
+
+    def test_over_exposure_collapses_snr(self):
+        """The COM-012 saturation decision point: gain x t_int past the
+        well depth loses signal instead of gaining it."""
+        m = self._imaging()
+        m.handle_command({"command": "set_integration_time",
+                          "times": [20.0, 20.0, 20.0, 20.0]})
+        m.handle_command({"command": "set_detector_gain", "gain": 8.0})
+        saturated = self._tick(m)
+        m.handle_command({"command": "set_integration_time",
+                          "times": [2.0, 2.0, 2.0, 2.0]})
+        m.handle_command({"command": "set_detector_gain", "gain": 1.0})
+        nominal = self._tick(m)
+        assert saturated < nominal, (
+            "an overexposed frame must report WORSE SNR than a nominal one")
+
+    def test_halving_lines_halves_stored_size(self):
+        m = self._imaging()
+        m._state.compression_enabled = False
+        r_full = m.handle_command({"command": "capture", "scene_id": 0,
+                                   "lines": 2048})
+        r_half = m.handle_command({"command": "capture", "scene_id": 0,
+                                   "lines": 1024})
+        assert r_full["stored_size_mb"] == pytest.approx(4.0)
+        assert r_half["stored_size_mb"] == pytest.approx(2.0)
+
+    def test_dropping_a_band_cuts_the_raw_volume(self):
+        m = self._imaging()
+        m._state.compression_enabled = False
+        four = m.handle_command({"command": "capture", "scene_id": 0,
+                                 "lines": 2048})["stored_size_mb"]
+        m.handle_command({"command": "set_band_config", "mask": 0x07})
+        three = m.handle_command({"command": "capture", "scene_id": 0,
+                                  "lines": 2048})["stored_size_mb"]
+        assert four == pytest.approx(4.0)
+        assert three == pytest.approx(3.0), "4.00 -> 3.00 MB dropping NIR"
+
+    def test_all_bands_off_is_rejected(self):
+        m = self._imaging()
+        r = m.handle_command({"command": "set_band_config", "mask": 0x00})
+        assert r["success"] is False
+        assert r["error_code"] == 0x0003
+
+    def test_out_of_envelope_gain_is_rejected_not_clamped(self):
+        m = self._imaging()
+        r = m.handle_command({"command": "set_detector_gain", "gain": 25.0})
+        assert r["success"] is False
+        assert m._state.detector_gain == 1.0, "gain must not be clamped silently"
+
+
+class TestCaptureArgumentsWP1:
+    """Phase E WP-1: scene_id + lines on the wire; geodesy stamped on board."""
+
+    def _imaging(self):
+        from smo_simulator.models.payload_basic import PayloadBasicModel
+        m = PayloadBasicModel()
+        m.configure({"image_size_mb": 4.0, "total_storage_mb": 20000.0})
+        m._state.mode = 2
+        m._state.fpa_ready = True
+        m._state.fpa_temp = -15.0
+        return m
+
+    def test_commanded_scene_id_is_honoured(self):
+        m = self._imaging()
+        r = m.handle_command({"command": "capture", "scene_id": 1042,
+                              "lines": 2048})
+        assert r["success"] and r["scene_id"] == 1042
+        assert m._state.last_scene_id == 1042
+        assert m._state.image_catalog[-1]["lines"] == 2048
+
+    def test_scene_id_zero_auto_assigns(self):
+        m = self._imaging()
+        r = m.handle_command({"command": "capture", "scene_id": 0,
+                              "lines": 2048})
+        assert r["success"] and r["scene_id"] > 0
+
+    def test_duplicate_scene_id_is_rejected(self):
+        m = self._imaging()
+        m.handle_command({"command": "capture", "scene_id": 7, "lines": 512})
+        r = m.handle_command({"command": "capture", "scene_id": 7, "lines": 512})
+        assert r["success"] is False and r["error_code"] == 0x0003
+
+    def test_lines_out_of_range_is_rejected(self):
+        m = self._imaging()
+        r = m.handle_command({"command": "capture", "scene_id": 0, "lines": 99})
+        assert r["success"] is False and r["error_code"] == 0x0003
+
+    def test_geolocation_is_stamped_from_the_orbit_not_commanded(self):
+        m = self._imaging()
+        m._state.orbit_lat_deg = 45.5
+        m._state.orbit_lon_deg = -73.6
+        r = m.handle_command({"command": "capture", "scene_id": 1,
+                              "lines": 2048})
+        assert r["lat"] == pytest.approx(45.5)
+        assert r["lon"] == pytest.approx(-73.6)
+        assert m._state.image_catalog[-1]["lat"] == pytest.approx(45.5)
+
+
+class TestCoolerSetpointWP3:
+    """Phase E WP-3: centi-kelvin encoding, rejection not clamping."""
+
+    def test_setpoint_accepted_inside_the_envelope(self):
+        from smo_simulator.models.payload_basic import PayloadBasicModel
+        m = PayloadBasicModel()
+        r = m.handle_command({"command": "set_cooler_setpoint",
+                              "setpoint": -10.0})
+        assert r["success"] and m._state.cooler_setpoint_c == -10.0
+
+    def test_minus_65_is_rejected_with_the_range_in_the_message(self):
+        from smo_simulator.models.payload_basic import PayloadBasicModel
+        m = PayloadBasicModel()
+        r = m.handle_command({"command": "set_cooler_setpoint",
+                              "setpoint": -65.0})
+        assert r["success"] is False
+        assert r["error_code"] == 0x0003
+        assert "-20" in r["message"] and "0 C" in r["message"]

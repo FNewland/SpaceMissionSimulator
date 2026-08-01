@@ -59,6 +59,7 @@ TC_TYPE_MAP = {
 SUBSYSTEM_NAMES = {
     "eps": "EPS", "aocs": "AOCS", "obdh": "OBDH", "tcs": "TCS",
     "ttc": "TTC", "payload": "Payload", "fdir": "FDIR",
+    "prop": "Prop",
     "spacecraft": "Spacecraft", "contact": "Spacecraft",
     "procedure": "Spacecraft", "sat": "Spacecraft",
 }
@@ -69,16 +70,24 @@ SID_SUBSYSTEM = {
     5: "Payload", 6: "TTC", 11: "Beacon",
 }
 
-# func_id ranges → subsystem
+# func_id ranges → subsystem. Kept in step with
+# service_dispatch._handle_s8's routing table; Phase E added the ranges
+# that Phases C/D and WP-7 allocated (79, 83, 84-91, 92-95, 108-118), which
+# had been silently landing in "Spacecraft" and so were absent from the
+# per-subsystem XTCE/SMDL exports.
 FUNC_ID_SUBSYSTEM = [
     (range(0, 16), "AOCS"),
     (range(16, 26), "EPS"),
     (range(26, 40), "Payload"),
     (range(40, 50), "TCS"),
     (range(50, 63), "OBDH"),
-    (range(63, 79), "TTC"),
+    (range(63, 80), "TTC"),        # 79 = TTC_SET_DOWNLINK_MODE
     (range(80, 83), "OBDH"),
+    (range(83, 84), "EPS"),        # 83 = EPS_SET_MODE
+    (range(84, 92), "AOCS"),       # Phase C pointing/estimator block
+    (range(92, 96), "Payload"),    # Phase E WP-7 payload extras
     (range(100, 108), "EPS"),
+    (range(108, 119), "Prop"),     # Phase D propulsion block
 ]
 
 

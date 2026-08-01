@@ -285,7 +285,17 @@ class TestOverride:
             lambda self: self._in_contact or self._override_passes
         )
         engine._get_power_lines_state = SimulationEngine._get_power_lines_state.__get__(engine)
+        # get_state_summary now returns the tick thread's published snapshot
+        # (roadmap N-2); with no snapshot published it builds one inline, so
+        # the builder has to be bound too.
+        engine._snapshot = None
+        engine._build_state_summary = SimulationEngine._build_state_summary.__get__(engine)
         engine.get_state_summary = SimulationEngine.get_state_summary.__get__(engine)
+        engine._current_tm_rate_bps = SimulationEngine._current_tm_rate_bps.__get__(engine)
+        engine._hk_enabled = {}
+        engine._rt_pending = []
+        engine.engine_fault = None
+        engine.engine_fault_count = 0
 
         summary = engine.get_state_summary()
         assert 'downlink_active' in summary
@@ -309,9 +319,12 @@ class TestS11Bypass:
         import inspect
 
         source = inspect.getsource(SimulationEngine._run_loop)
-        # The per-tick body now lives in _tick_once; include its source too.
+        # The per-tick body now lives in _tick_once, and (since the A-3
+        # sub-stepped tick) the subsystem chain in _tick_substep; include both.
         if hasattr(SimulationEngine, '_tick_once'):
             source += '\n' + inspect.getsource(SimulationEngine._tick_once)
+        if hasattr(SimulationEngine, '_tick_substep'):
+            source += '\n' + inspect.getsource(SimulationEngine._tick_substep)
         # Verify scheduler dispatches directly, not through _drain_tc_queue
         assert '_dispatch_tc(tc_pkt)' in source or '_dispatch_tc' in source
         # Verify the scheduled command dispatch is separate from tc_queue drain

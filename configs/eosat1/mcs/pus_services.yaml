@@ -66,6 +66,12 @@ services:
     label: "Connection Test"
     enabled: true
     description: "Echo-based link connectivity verification"
+  s18:
+    label: "On-Board Control Procedures"
+    enabled: true
+    max_procedures: 16
+    max_steps_per_procedure: 32
+    description: "On-board scripting (OBCP): load, activate, stop and report ordered sequences of delayed self-executed TCs. Boot procedures pre-loaded from configs/eosat1/obcp/."
   s19:
     label: "Event-Action"
     enabled: true

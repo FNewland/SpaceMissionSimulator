@@ -32,9 +32,9 @@ storage capacity.
 | Command | Service | Subtype | Func ID | Description |
 |---|---|---|---|---|
 | HK_REQUEST | 3 | 27 | — | Request one-shot HK report |
-| PAYLOAD_MARK_BAD_SEGMENT | 8 | 1 | 25 | Mark memory segment as unusable |
-| PAYLOAD_GET_IMAGE_CATALOG | 8 | 1 | 26 | Request stored image catalog |
-| PAYLOAD_DELETE_IMAGE | 8 | 1 | 24 | Delete image from affected segment |
+| PAYLOAD_MARK_BAD_SEGMENT | 8 | 1 | 31 | Mark memory segment as unusable |
+| PAYLOAD_GET_IMAGE_CATALOG | 8 | 1 | 32 | Request stored image catalog |
+| PAYLOAD_DELETE_IMAGE | 8 | 1 | 30 | Delete image from affected segment |
 | MEM_CHECK | 6 | 9 | — | Memory CRC check |
 
 ## Procedure Steps
@@ -53,7 +53,7 @@ A single bad segment reduces capacity by approximately 1.25%.
 
 ### Step 2: Identify Failed Segment
 **Action:** Request image catalog to determine which segment(s) may be affected:
-`PAYLOAD_GET_IMAGE_CATALOG` (func_id 26)
+`PAYLOAD_GET_IMAGE_CATALOG` (func_id 32)
 **Action:** Review the catalog for images that reported checksum errors. The segment
 hosting the corrupted image is the likely failed segment.
 **Action:** If the failed segment cannot be determined from the catalog, perform a
@@ -66,12 +66,15 @@ from onboard diagnostics, skip the manual CRC check.
 
 ### Step 3: Mark Bad Segment
 **Action:** Mark the failed segment as unusable:
-`PAYLOAD_MARK_BAD_SEGMENT(segment_id=N)` (func_id 25) where N is the segment index (0-79).
+`PAYLOAD_MARK_BAD_SEGMENT(segment_id=N)` (func_id 31) where N is the segment index (**0-7**;
+`num_memory_segments: 8` in `subsystems/payload.yaml` — the model REJECTS an index >= 8. The
+old '0-79' figure was never executable).  
+**Wire:** `1F 0N` — e.g. segment 3 = `1F 03`
 **Verify:** Request payload housekeeping: `HK_REQUEST(sid=6)` (Service 3, Subtype 27)
 **Verify:** `payload.mem_segments_bad` (0x0612) — confirm count reflects the newly marked segment
 **Note:** If multiple segments are bad, repeat this step for each identified segment.
 **Action:** If any images were stored in the bad segment, delete them:
-`PAYLOAD_DELETE_IMAGE(scene_id=X)` (func_id 24) for each affected scene.
+`PAYLOAD_DELETE_IMAGE(scene_id=X)` (func_id 30) for each affected scene.
 **GO/NO-GO:** Bad segment(s) marked and affected images cleaned up — proceed.
 
 ### Step 4: Verify Reduced Capacity
@@ -82,7 +85,8 @@ reduction (expected decrease of ~250 MB per bad segment)
 **Verify:** `payload.mem_used_mb` (0x060B) — confirm used memory is accurate
 **Action:** Calculate remaining usable capacity:
 - Usable capacity = Total capacity - (bad segments x 250 MB) - Used storage
-- Remaining images = Usable capacity / 800 MB per image
+- Remaining images = Usable capacity / 4 MB per raw image (`payload.yaml image_size_mb`;
+  1-2.7 MB once the on-board CCSDS-123 compressor has run)
 **Note:** Record the updated capacity figures for the operations log.
 **GO/NO-GO:** Reduced capacity verified and documented — proceed to plan adjustment.
 
@@ -113,7 +117,7 @@ reduction (expected decrease of ~250 MB per bad segment)
 ## Contingency
 - If bad segment count increases rapidly (multiple new failures in a short period):
   Suspect radiation-induced latch-up or systematic memory failure. Command payload
-  to OFF: `PAYLOAD_SET_MODE(mode=0)` (func_id 20). Power cycle payload after 60 s.
+  to OFF: `PAYLOAD_SET_MODE(mode=0)` (func_id 26). Power cycle payload after 60 s.
   If failures continue after power cycle, escalate to engineering team.
 - If more than 20% of segments are bad (> 16 segments): Payload memory is severely
   degraded. Assess whether the imager can still perform useful science. Consider

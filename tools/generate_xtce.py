@@ -41,6 +41,97 @@ def _el(parent, tag, attrib=None, text=None, **kwargs):
     return e
 
 
+# ── Phase E WP-11: per-argument XTCE types from the catalogue schema ──
+
+def _field_has_schema(field: dict) -> bool:
+    """True when the field carries Phase E argument-schema information.
+
+    Only these get a dedicated ArgumentType; everything else keeps the
+    shared `<type>_ArgType` so the export stays small.
+    """
+    return bool(field.get("calibration") or field.get("range")
+                or field.get("enum") or field.get("bits")
+                or field.get("unit") or field.get("raw_unit"))
+
+
+def _arg_type_name(cmd: dict, field: dict) -> str:
+    return f"{cmd['name']}_{field['name']}_ArgType"
+
+
+def _build_argument_type(ats, cmd: dict, field: dict):
+    """Emit one conformant ArgumentType for a schema-bearing TC field."""
+    ft = str(field.get("type", "uint8"))
+    ti = TC_TYPE_MAP.get(ft, TC_TYPE_MAP["uint8"])
+    name = _arg_type_name(cmd, field)
+    cal = field.get("calibration") or {}
+    cal_type = str(cal.get("type", "none")).lower()
+    unit = field.get("unit") or ""
+    rng = field.get("range")
+
+    if cal_type == "enum" and field.get("enum"):
+        at = _el(ats, "EnumeratedArgumentType", name=name)
+        _el(at, "IntegerDataEncoding", sizeInBits=str(ti["bits"]),
+            encoding="unsigned", byteOrder="mostSignificantByteFirst")
+        elist = _el(at, "EnumerationList")
+        for e in field["enum"]:
+            en = _el(elist, "Enumeration", value=str(int(e["value"])),
+                     label=str(e["label"]))
+            if e.get("description"):
+                en.set("shortDescription", str(e["description"]))
+        return at
+
+    if ti.get("binary"):
+        return _el(ats, "BinaryArgumentType", name=name)
+
+    if ti.get("float"):
+        at = _el(ats, "FloatArgumentType", name=name,
+                 sizeInBits=str(ti["bits"]))
+        if unit:
+            us = _el(at, "UnitSet")
+            _el(us, "Unit", text=unit)
+        _el(at, "FloatDataEncoding", sizeInBits=str(ti["bits"]),
+            byteOrder="mostSignificantByteFirst")
+        if rng:
+            _el(at, "ValidRange", minInclusive=str(rng["min"]),
+                maxInclusive=str(rng["max"]))
+        return at
+
+    signed = "true" if ti["signed"] else "false"
+    at = _el(ats, "IntegerArgumentType", name=name, signed=signed)
+    if unit:
+        us = _el(at, "UnitSet")
+        _el(us, "Unit", text=unit)
+    enc = _el(at, "IntegerDataEncoding", sizeInBits=str(ti["bits"]),
+              encoding="twosComplement" if ti["signed"] else "unsigned",
+              byteOrder="mostSignificantByteFirst")
+    # Raw -> engineering calibrator (eng = raw*scale + offset).
+    if cal_type == "linear":
+        scale = float(cal.get("scale", 1.0))
+        offset = float(cal.get("offset", 0.0))
+        if scale != 1.0 or offset != 0.0:
+            dc = _el(enc, "DefaultCalibrator")
+            poly = _el(dc, "PolynomialCalibrator")
+            if offset:
+                _el(poly, "Term", coefficient=str(offset), exponent="0")
+            _el(poly, "Term", coefficient=str(scale), exponent="1")
+    elif cal_type == "polynomial" and cal.get("coefficients"):
+        dc = _el(enc, "DefaultCalibrator")
+        poly = _el(dc, "PolynomialCalibrator")
+        for i, c in enumerate(cal["coefficients"]):
+            _el(poly, "Term", coefficient=str(c), exponent=str(i))
+    if rng:
+        _el(at, "ValidRange", minInclusive=str(rng["min"]),
+            maxInclusive=str(rng["max"]))
+    # Bitfields: declare the bit semantics so a ground tool can label them.
+    if cal_type == "bitfield" and field.get("bits"):
+        anc = _el(at, "AncillaryDataSet")
+        for b in field["bits"]:
+            _el(anc, "AncillaryData", name=f"bit{int(b['bit'])}",
+                text=("RESERVED" if b.get("reserved")
+                      else f"{b['name']}: {b.get('description', '')}".strip(": ")))
+    return at
+
+
 def _build_ccsds_system(root):
     """Build the CCSDS packet header SpaceSystem."""
     ss = _el(root, "SpaceSystem", name="CCSDS")
@@ -211,19 +302,27 @@ def _build_subsystem(root, subsystem_name, params, commands, hk_sid,
                     parameterRef=f"/EOSAT-1/{subsystem_name}/{p_def['xml_name']}")
 
     # ── Commands ──
+    #
+    # Phase E WP-11 (brief 04): the export is CONFORMANT and lossless —
+    # per-argument types carrying the catalogue's calibrator, ValidRange,
+    # EnumerationList and UnitSet, plus a CommandContainer whose
+    # FixedValueEntry pins the S8.1 func_id octet. It previously emitted
+    # exactly three shared argument types with no calibrators, no ranges,
+    # no enums and no byte layout, so no third-party tool (Yamcs, MOIS)
+    # could build a correct telecommand from it.
     if commands:
         cmd_meta = _el(ss, "CommandMetaData")
         ats = _el(cmd_meta, "ArgumentTypeSet")
         mcs = _el(cmd_meta, "MetaCommandSet")
 
-        # Argument types used by commands in this subsystem
-        arg_types_needed = set()
+        # Shared fallback types, for fields that carry no argument schema.
+        shared_types_needed = set()
         for cmd in commands:
             for field in cmd.get("fields", []):
-                ft = field.get("type", "uint8")
-                arg_types_needed.add(ft)
+                if not _field_has_schema(field):
+                    shared_types_needed.add(field.get("type", "uint8"))
 
-        for ft in sorted(arg_types_needed):
+        for ft in sorted(shared_types_needed):
             ti = TC_TYPE_MAP.get(ft)
             if not ti:
                 continue
@@ -239,6 +338,12 @@ def _build_subsystem(root, subsystem_name, params, commands, hk_sid,
                          signed=signed)
                 _el(at, "IntegerDataEncoding", sizeInBits=str(ti["bits"]),
                     encoding="twosComplement" if ti["signed"] else "unsigned")
+
+        # Per-argument types for every schema-bearing field.
+        for cmd in commands:
+            for field in cmd.get("fields", []):
+                if _field_has_schema(field):
+                    _build_argument_type(ats, cmd, field)
 
         for cmd in commands:
             mc = _el(mcs, "MetaCommand", name=cmd["name"])
@@ -256,10 +361,32 @@ def _build_subsystem(root, subsystem_name, params, commands, hk_sid,
                 al = _el(mc, "ArgumentList")
                 for field in args:
                     ft = field.get("type", "uint8")
-                    arg = _el(al, "Argument", name=field["name"],
-                              argumentTypeRef=f"{ft}_ArgType")
+                    type_ref = (_arg_type_name(cmd, field)
+                                if _field_has_schema(field)
+                                else f"{ft}_ArgType")
+                    # defect #40 class: a bare YAML `on:` key parses as the
+                    # boolean True and used to reach the XML as name="True".
+                    # The catalogue quotes it and this str() is the backstop.
+                    attrs = {"name": str(field["name"]),
+                             "argumentTypeRef": type_ref}
+                    if field.get("default") is not None:
+                        attrs["initialValue"] = str(field["default"])
+                    arg = _el(al, "Argument", attrs)
                     if field.get("description"):
                         _el(arg, "LongDescription", text=field["description"])
+
+            # CommandContainer: the real byte layout. For S8.1 the func_id
+            # octet is a FixedValueEntry — the piece that made the previous
+            # export unusable for building commands.
+            cc = _el(mc, "CommandContainer", name=f"{cmd['name']}_Container")
+            entries = _el(cc, "EntryList")
+            if (cmd.get("service"), cmd.get("subtype")) == (8, 1) \
+                    and cmd.get("func_id") is not None:
+                _el(entries, "FixedValueEntry", name="func_id",
+                    binaryValue=f"{int(cmd['func_id']):02X}", sizeInBits="8")
+            for field in args:
+                _el(entries, "ArgumentRefEntry",
+                    argumentRef=str(field["name"]))
 
     return ss
 
@@ -301,7 +428,7 @@ def generate_xtce(output_path: Path):
 
     # Per-subsystem SpaceSystems
     subsystem_order = ["EPS", "AOCS", "TCS", "OBDH", "TTC", "Payload",
-                       "Beacon", "FDIR", "Spacecraft"]
+                       "Prop", "Beacon", "FDIR", "Spacecraft"]
     for sub_name in subsystem_order:
         sub_params = param_groups.get(sub_name, [])
         sub_cmds = cmd_groups.get(sub_name, [])

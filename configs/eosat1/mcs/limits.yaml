@@ -24,7 +24,11 @@ limits:
   - { param_id: 0x0206, yellow_low: -0.5, yellow_high: 0.5, red_low: -2.0, red_high: 2.0, check_interval_s: 1 }
   - { param_id: 0x0207, yellow_low: -5000, yellow_high: 5000, red_low: -5500, red_high: 5500, check_interval_s: 4 }
   - { param_id: 0x0218, yellow_low: 0.0, yellow_high: 60.0, red_low: -5.0, red_high: 70.0, check_interval_s: 8 }
-  - { param_id: 0x025B, yellow_low: 0.0, yellow_high: 0.5, red_low: 0.0, red_high: 0.8, check_interval_s: 4 }
+  # Phase C: |h_body| vector magnitude. Envelope: 0.037 N·m·s (X/Y axis
+  # authority) — yellow at ~50%, red at ~80%. The old 0.5/0.8 was sized for
+  # the fictitious 2.88 N·m·s wheels and sat permanently green/red wrongly.
+  - { param_id: 0x025B, yellow_low: 0.0, yellow_high: 0.018, red_low: 0.0, red_high: 0.030, check_interval_s: 4 }
+  - { param_id: 0x02BA, yellow_low: 0.0, yellow_high: 70.0, red_low: 0.0, red_high: 90.0, check_interval_s: 4 }
 
   # AOCS Phase 4: Gyro temp, GPS PDOP
   - { param_id: 0x0273, yellow_low: 0.0, yellow_high: 50.0, red_low: -10.0, red_high: 60.0, check_interval_s: 8 }
@@ -33,10 +37,17 @@ limits:
   # ===== TCS =====
   - { param_id: 0x0406, yellow_low: 5.0, yellow_high: 60.0, red_low: 0.0, red_high: 70.0, check_interval_s: 8 }
   - { param_id: 0x0407, yellow_low: 2.0, yellow_high: 40.0, red_low: 0.0, red_high: 45.0, check_interval_s: 8 }
-  - { param_id: 0x0408, yellow_low: -18.0, yellow_high: 8.0, red_low: -20.0, red_high: 12.0, check_interval_s: 8 }
+  # FPA node. DERIVED from subsystems/tcs.yaml `fpa_envelope` (G3-d) —
+  # do not hand-edit; change the envelope and re-derive. The old -20.0 low
+  # sat exactly ON the coldest commandable setpoint, so a legal
+  # PAYLOAD_COOLER_SETPOINT(-20 C) chattered a yellow at ~50 % of samples.
+  #   yellow: setpoint_min - 3sigma - 1.5 K .. uncooled_max + 1.5 K
+  #   red:    setpoint_min - 3sigma - 5.0 K .. uncooled_max + 5.0 K
+  - { param_id: 0x0408, yellow_low: -22.0, yellow_high: 14.0, red_low: -25.5, red_high: 17.5, check_interval_s: 8 }
 
   # TCS Phase 4: Total heater power
-  - { param_id: 0x0411, yellow_low: 0.0, yellow_high: 15.0, red_low: 0.0, red_high: 18.0, check_interval_s: 8 }
+  # Phase B (brief 05 finding 16): installed heater power is 12 W max.
+  - { param_id: 0x0411, yellow_low: 0.0, yellow_high: 12.5, red_low: 0.0, red_high: 14.0, check_interval_s: 8 }
 
   # ===== OBDH =====
   - { param_id: 0x0302, yellow_low: 0.0, yellow_high: 85.0, red_low: 0.0, red_high: 98.0, check_interval_s: 8 }
@@ -60,8 +71,49 @@ limits:
   # TTC Phase 4: AGC level
   - { param_id: 0x051A, yellow_low: -80.0, yellow_high: -30.0, red_low: -100.0, red_high: -20.0, check_interval_s: 8 }
 
+  # ── TM data-rate ladder (defect #86) ──
+  # The ladder is BEACON 1 000 / LOW 16 000 / HIGH 128 000 bps
+  # (subsystems/ttc.yaml tm_rate_tiers). ROUTINE OPERATIONS SIT AT LOW, so LOW
+  # is the nominal value and BEACON is the alarm case, not the other way round.
+  #
+  # Active TM information rate (0x0506). Below 16 kbps means the link has
+  # dropped to the beacon lifeline — the spacecraft is in the bootloader or
+  # beacon mode and is not carrying housekeeping. Above the top rung, or any
+  # value not on the ladder, is a corrupt decode.
+  - { param_id: 0x0506, yellow_low: 16000.0, yellow_high: 128000.0, red_low: 900.0, red_high: 130000.0, check_interval_s: 8 }
+  # ACTIVE tier index (0x0539): 0 BEACON / 1 LOW / 2 HIGH. Yellow at 0 — being
+  # on the beacon tier is normal in LEOP and abnormal afterwards, so it warns
+  # rather than alarms; an index above the ladder is a decode fault (red).
+  - { param_id: 0x0539, yellow_low: 1.0, yellow_high: 2.0, red_low: -1.0, red_high: 2.5, check_interval_s: 8 }
+  # COMMANDED tier index (0x053A): same scale. Compare with 0x0539 — a
+  # persistent difference means a gate (antenna / DOWNLINK mode / 10 deg
+  # elevation) is refusing the tier the ground asked for.
+  - { param_id: 0x053A, yellow_low: 1.0, yellow_high: 2.0, red_low: -1.0, red_high: 2.5, check_interval_s: 8 }
+  # Symbol rate (0x053B): 1 kBd BEACON, 16 kBd LOW (BPSK), 64 kBd HIGH (QPSK).
+  # Below 16 kBd is the beacon lifeline (yellow); anything above 64 kBd is not
+  # a configured tier and does not fit the ground modem (red).
+  - { param_id: 0x053B, yellow_low: 16000.0, yellow_high: 64000.0, red_low: 900.0, red_high: 65000.0, check_interval_s: 8 }
+  # DOWNLINK mode (0x053C): a validity/range check. The parameter is a boolean;
+  # anything outside {0, 1} is a corrupt decode, not a spacecraft state.
+  - { param_id: 0x053C, yellow_low: 0.0, yellow_high: 1.0, red_low: 0.0, red_high: 1.0, check_interval_s: 8 }
+
   # ===== Payload =====
-  - { param_id: 0x0601, yellow_low: -18.0, yellow_high: 8.0, red_low: -20.0, red_high: 12.0, check_interval_s: 8 }
+  # Detector cold finger = TCS FPA node + detector_offset_c (-0.5 K).
+  # DERIVED from subsystems/tcs.yaml `fpa_envelope` (G3-d): the node bands
+  # shifted by that offset. The old -17.0/-20.0 pair predates the commandable
+  # setpoint and turned a legal -20 C command into a red alarm.
+  - { param_id: 0x0601, yellow_low: -22.5, yellow_high: 13.5, red_low: -26.0, red_high: 17.0, check_interval_s: 8 }
   # Payload Phase 4: SNR, detector temp
   - { param_id: 0x0616, yellow_low: 30.0, yellow_high: 55.0, red_low: 20.0, red_high: 60.0, check_interval_s: 8 }
-  - { param_id: 0x0617, yellow_low: -18.0, yellow_high: 8.0, red_low: -20.0, red_high: 12.0, check_interval_s: 8 }
+  # Detector die = cold finger + die_offset_c (+0.5 K), i.e. the bracket node.
+  # DERIVED from subsystems/tcs.yaml `fpa_envelope` (G3-d). The old
+  # -18/+8, -20/+12 pair was the operations manual's table, and was the fifth
+  # of the five disagreeing FPA bands.
+  - { param_id: 0x0617, yellow_low: -22.0, yellow_high: 14.0, red_low: -25.5, red_high: 17.5, check_interval_s: 8 }
+
+  # ===== PROP (Phase D) — mirrors monitoring/s12_definitions.yaml =====
+  - { param_id: 0x0B01, yellow_low: 6.0, yellow_high: 24.0, red_low: 4.0, red_high: 26.0, check_interval_s: 4 }
+  - { param_id: 0x0B02, yellow_low: 20.0, yellow_high: 401.0, red_low: 5.0, red_high: 401.0, check_interval_s: 8 }
+  - { param_id: 0x0B05, yellow_low: -20.0, yellow_high: 300.0, red_low: -30.0, red_high: 350.0, check_interval_s: 8 }
+  - { param_id: 0x0B09, yellow_low: 100.0, yellow_high: 400.0, red_low: 50.0, red_high: 450.0, check_interval_s: 4 }
+  - { param_id: 0x0B0C, yellow_low: 5.0, yellow_high: 100.0, red_low: 1.0, red_high: 100.0, check_interval_s: 8 }

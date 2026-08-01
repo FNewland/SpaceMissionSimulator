@@ -27,12 +27,15 @@ steps:
 
   - step_id: 3
     name: "TTC Minimal Power"
-    description: "Set TTC TX power to minimum"
+    description: "Set TTC TX power to minimum (LOW, 1.0 W RF)"
     delay_s: 1.0
     command: "s8_command"
     params:
       func_id: 68  # TTC_SET_TX_POWER
-      data: [0x01]  # minimal power level
+      # Phase E WP-2: level 0 = LOW (1.0 W) — the survival-mode minimum.
+      # The old [0x01] meant NOMINAL under the enumerated table and was in
+      # any case silently ignored by the float32-era handler.
+      data: [0x00]
 
   - step_id: 4
     name: "Battery Heater Only"

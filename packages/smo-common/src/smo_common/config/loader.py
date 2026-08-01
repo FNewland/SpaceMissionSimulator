@@ -10,8 +10,9 @@ from pydantic import BaseModel
 from .schemas import (
     MissionConfig, NetworkConfig, OrbitConfig, GroundStationConfig,
     EPSConfig, AOCSConfig, TCSConfig, OBDHConfig, TTCConfig, PayloadConfig,
+    PropConfig,
     FDIRConfig, HKStructureDef, ParameterDef, LimitDef, TCCommandDef,
-    ScenarioConfig, MCSDisplayConfig, PositionConfig,
+    ScenarioConfig, MCSDisplayConfig, PositionConfig, SimulationConfig,
     EventDefinition, EventCatalog,
     MemoryMapConfig, PUSServicesConfig, ProcedureIndex,
     ActivityTypesConfig, ActivityTypeConfig,
@@ -59,6 +60,7 @@ def load_all_subsystem_configs(config_dir: Path) -> dict[str, BaseModel]:
         "obdh": OBDHConfig,
         "ttc": TTCConfig,
         "payload": PayloadConfig,
+        "prop": PropConfig,
     }
     configs = {}
     for name, cls in mapping.items():
@@ -78,6 +80,22 @@ def load_fdir_config(config_dir: Path) -> FDIRConfig:
     if path.exists():
         return load_model(path, FDIRConfig)
     return FDIRConfig()
+
+
+def load_simulation_config(config_dir: Path) -> SimulationConfig:
+    """Load simulation.yaml — the simulation/scenario tuning layer.
+
+    Returns an all-defaults ``SimulationConfig`` when the file is absent, so
+    config directories that predate simulation.yaml (and unit tests that build
+    minimal config dirs) keep the previous hard-coded behaviour.
+    """
+    path = config_dir / "simulation.yaml"
+    if path.exists():
+        cfg = load_model(path, SimulationConfig)
+        logger.info("Loaded simulation config: %s", path)
+        return cfg
+    logger.info("No simulation.yaml in %s — using built-in defaults", config_dir)
+    return SimulationConfig()
 
 
 def load_hk_structures(config_dir: Path) -> list[HKStructureDef]:

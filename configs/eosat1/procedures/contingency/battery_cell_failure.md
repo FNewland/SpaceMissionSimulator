@@ -38,12 +38,12 @@ can safely complete an eclipse with the degraded battery.
 | Command | Service | Subtype | Func ID | Description |
 |---|---|---|---|---|
 | HK_REQUEST | 3 | 27 | — | Request one-shot HK report |
-| PAYLOAD_SET_MODE | 8 | 1 | 20 | Reduce payload load |
-| FPA_COOLER | 8 | 1 | 33 | Disable FPA cooler |
-| TTC_PA_OFF | 8 | 1 | 54 | Disable PA if needed |
-| HEATER_BATTERY | 8 | 1 | 30 | Control battery heater |
-| HEATER_SET_SETPOINT | 8 | 1 | 34 | Adjust battery heater setpoints |
-| EPS_POWER_OFF | 8 | 1 | 14 | Shed power lines if needed |
+| PAYLOAD_SET_MODE | 8 | 1 | 26 | Reduce payload load |
+| FPA_COOLER | 8 | 1 | 43 | Disable FPA cooler |
+| TTC_PA_OFF | 8 | 1 | 67 | Disable PA if needed |
+| HEATER_BATTERY | 8 | 1 | 40 | Control battery heater |
+| HEATER_SET_SETPOINT | 8 | 1 | 44 | Adjust battery heater setpoints |
+| EPS_POWER_OFF | 8 | 1 | 20 | Shed power lines if needed |
 
 ## Procedure Steps
 
@@ -71,7 +71,7 @@ cell voltage (~3.6 V nominal for Li-ion).
 - If battery temperature > 40 C: Anomalous heating. Possible internal short in failed
   cell. This is DANGEROUS — risk of thermal runaway.
   - Immediately reduce charge/discharge current by shedding loads.
-  - Disable battery heater: `HEATER_BATTERY(on=0)` (func_id 30)
+  - Disable battery heater: `HEATER_BATTERY(on=0)` (func_id 40)
   - Monitor temperature closely (every 30 s).
   - If temperature exceeds 50 C, execute EMERGENCY mode per EMG-006.
 - If battery temperature is within 0 to 35 C: Thermal condition is currently safe.
@@ -103,17 +103,17 @@ Load reduction required. Proceed to Step 4.
 
 ### Step 4: Reduce Loads If Needed
 **Action:** If eclipse survival margin is negative, reduce loads in priority order:
-1. Payload OFF (saves ~8-45 W): `PAYLOAD_SET_MODE(mode=0)` (func_id 20)
+1. Payload OFF (saves ~8-45 W): `PAYLOAD_SET_MODE(mode=0)` (func_id 26)
    **Verify:** `payload.mode` (0x0600) = 0 within 10 s
-2. FPA cooler OFF (saves ~15 W): `FPA_COOLER(on=0)` (func_id 33)
+2. FPA cooler OFF (saves ~15 W): `FPA_COOLER(on=0)` (func_id 43)
    **Verify:** `tcs.cooler_fpa` (0x040C) = 0 within 5 s
 3. TX OFF (saves ~20 W) — only if eclipse is imminent and load budget is still negative:
-   `TTC_PA_OFF` (func_id 54)
+   `TTC_PA_OFF` (func_id 67)
    **Verify:** `ttc.pa_on` (0x0516) = 0 within 5 s
 **Action:** After each load shed, recalculate eclipse survival margin.
 **Verify:** `eps.power_cons` (0x0106) — confirm reduced power consumption
 **Action:** Adjust battery heater setpoints to reduce heater duty cycle during eclipse:
-`HEATER_SET_SETPOINT(circuit=0, on_temp=-2.0, off_temp=2.0)` (func_id 34)
+`HEATER_SET_SETPOINT(circuit=0, on_temp=-2.0, off_temp=2.0)` (func_id 44)
 **Note:** This allows the battery to get slightly colder during eclipse to save energy,
 but still protects against dangerously low temperatures.
 **GO/NO-GO:** Eclipse survival margin is now positive — proceed to monitoring.

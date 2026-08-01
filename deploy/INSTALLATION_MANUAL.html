@@ -358,11 +358,39 @@ li { margin-bottom: 4px; color: var(--text-dim); }
 <h3>Auxiliary Tools</h3>
 <table>
   <tr><th>Tool</th><th>File</th><th>Default Port</th><th>Purpose</th></tr>
-  <tr><td>Delayed TM Viewer</td><td>tools/delayed_tm_viewer.py</td><td>8092</td><td>Browse stored TM dump files</td></tr>
-  <tr><td>Orbit Tools</td><td>tools/orbit_tools.py</td><td>8093</td><td>TLE/state vector to TC command converter</td></tr>
+  <tr><td>Delayed TM Viewer</td><td>tools/delayed_tm_viewer.py</td><td>8092</td><td>Browse and decode stored TM dump files; standalone report generator</td></tr>
+  <tr><td>Orbit Tools</td><td>tools/orbit_tools.py</td><td>8093</td><td>TLE/state vector to TC command converter (needs sgp4, numpy, aiohttp)</td></tr>
   <tr><td>Radio Web UI</td><td>(smo-rfsim built-in)</td><td>8094</td><td>Real-time RF link status dashboard</td></tr>
   <tr><td>Documentation Viewer</td><td>tools/doc_viewer.py</td><td>8095</td><td>Browse mission documentation in-browser</td></tr>
+  <tr><td>Scenario Generator</td><td>tools/scenario_generator.py</td><td>8096</td><td>Author <code>configs/eosat1/scenarios/*.yaml</code>. <strong>Instructor tool</strong></td></tr>
+  <tr><td>ADCS Failure Viewer</td><td>tools/adcs_sim_viewer.py</td><td>8097</td><td>Offline CERISE debris-strike explorer + CSV download</td></tr>
 </table>
+
+<p>Both <code>./start.sh</code> and <code>./deploy/start-all.sh</code> start all of these.
+In <code>deploy/smo-env.conf</code>, <code>START_TOOLS="no"</code> suppresses them and
+<code>TOOLS_BIND</code> chooses whether they are reachable from student machines.</p>
+
+<h3>Pages hosted inside the core services</h3>
+<p>These are not separate processes and need no extra ports.</p>
+<table>
+  <tr><th>Page</th><th>URL</th><th>Purpose</th></tr>
+  <tr><td>Configuration editor</td><td><code>http://&lt;server&gt;:8080/config</code></td><td><strong>Read-write.</strong> Schema-validated editing, diff preview, revision history, named baselines and per-exercise variants. The instructor's port only.</td></tr>
+  <tr><td>Configuration browser</td><td><code>http://&lt;server&gt;:9090/config</code>, <code>:9091/config</code></td><td>The same view, <strong>read-only</strong> — the mutating routes do not exist on those hosts. Students may browse configuration and its history.</td></tr>
+  <tr><td>Report generator</td><td><code>http://&lt;server&gt;:8080/reports</code>, <code>:9090/reports</code></td><td>Daily-ops review, pass report and anomaly-investigation templates rendered from the S15 archive as self-contained HTML.</td></tr>
+  <tr><td>Delayed-TM archive</td><td><code>http://&lt;server&gt;:9090/dumps</code>, <code>:8080/dumps</code></td><td>List, download and summarise every archived dump.</td></tr>
+</table>
+
+<div class="info-box note">
+  <strong>Binding and start-up (changed in Phase G)</strong>
+  The simulator, MCS and planner used to bind <code>0.0.0.0</code> regardless of any flag.
+  They now honour <code>--host</code> / <code>$SMO_BIND</code>, and <code>./start.sh</code>
+  defaults to <strong>loopback</strong> — a classroom server must be started with
+  <code>./start.sh --public</code> (or <code>--host=&lt;lab IP&gt;</code>) or students will not reach it.
+  Start-up is also ordered: each service is polled for readiness before its dependants start,
+  and the launch <strong>aborts with a named error</strong> if one fails, instead of leaving an
+  empty but plausible console up. The start scripts never reach the network; install once with
+  <code>deploy/install.sh</code>.
+</div>
 
 <div class="arch-diagram">
 ┌─────────────────────────────────────────────────────────────┐
@@ -583,12 +611,17 @@ echo "All core packages OK"</code></pre>
 <table>
   <tr><th>Service</th><th>URL</th><th>Purpose</th></tr>
   <tr><td>Instructor UI</td><td><code>http://localhost:8080</code></td><td>Control simulation, inject failures, run scenarios</td></tr>
-  <tr><td>MCS</td><td><code>http://localhost:9090</code></td><td>Operator interface (6 positions, 11 tabs)</td></tr>
+  <tr><td>Config editor</td><td><code>http://localhost:8080/config</code></td><td>Read-write configuration editing, diffs, history, baselines</td></tr>
+  <tr><td>Report generator</td><td><code>http://localhost:8080/reports</code></td><td>Daily-ops / pass / anomaly reports from the S15 archive</td></tr>
+  <tr><td>MCS</td><td><code>http://localhost:9090</code></td><td>Operator interface (6 positions, 11 tabs, TRENDS, alarms)</td></tr>
+  <tr><td>MCS reports / config</td><td><code>http://localhost:9090/reports</code>, <code>/config</code></td><td>Same report generator; read-only config browser</td></tr>
   <tr><td>Planner</td><td><code>http://localhost:9091</code></td><td>Mission planning, contacts, budgets</td></tr>
   <tr><td>Planner (Wide)</td><td><code>http://localhost:9091/wide</code></td><td>5760&times;1080 ultra-wide layout</td></tr>
   <tr><td>Delayed TM</td><td><code>http://localhost:8092</code></td><td>Stored TM dump browser</td></tr>
   <tr><td>Orbit Tools</td><td><code>http://localhost:8093</code></td><td>TLE/state vector utilities</td></tr>
   <tr><td>Documentation</td><td><code>http://localhost:8095</code></td><td>Mission manual viewer</td></tr>
+  <tr><td>Scenario Generator</td><td><code>http://localhost:8096</code></td><td>Instructor scenario authoring</td></tr>
+  <tr><td>ADCS Failure Sim</td><td><code>http://localhost:8097</code></td><td>CERISE debris-strike explorer</td></tr>
 </table>
 
 <h3>Manual Installation (Without install.sh)</h3>
@@ -732,7 +765,8 @@ Machine D (Gateway):     192.168.1.103  [optional]
   <tr><td><code>SIMULATOR_HOST</code></td><td>localhost</td><td>Hostname/IP where the simulator runs</td></tr>
   <tr><td><code>SIMULATOR_TC_PORT</code></td><td>8001</td><td>TCP port for telecommand uplink</td></tr>
   <tr><td><code>SIMULATOR_TM_PORT</code></td><td>8002</td><td>TCP port for telemetry downlink</td></tr>
-  <tr><td><code>SIMULATOR_HTTP_PORT</code></td><td>8080</td><td>HTTP port for instructor web UI</td></tr>
+  <tr><td><code>SIMULATOR_HTTP_PORT</code></td><td>8080</td><td>HTTP port for instructor web UI, <code>/config</code> and <code>/reports</code></td></tr>
+  <tr><td><code>SIMULATOR_BIND</code></td><td>0.0.0.0</td><td>Address the TC/TM/HTTP sockets bind to. Passed as <code>--host</code> since Phase G</td></tr>
   <tr><td><code>SIMULATOR_SPEED</code></td><td>1.0</td><td>Simulation speed (1.0 = real-time, 10.0 = 10x)</td></tr>
 </table>
 
@@ -740,6 +774,7 @@ Machine D (Gateway):     192.168.1.103  [optional]
 <table>
   <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
   <tr><td><code>MCS_HTTP_PORT</code></td><td>9090</td><td>HTTP port for the MCS web UI</td></tr>
+  <tr><td><code>MCS_BIND</code></td><td>0.0.0.0</td><td>Address the MCS HTTP server binds to. Passed as <code>--host</code> since Phase G (before that it was declared here and read by nobody)</td></tr>
   <tr><td><code>MCS_TM_HOST</code></td><td>${SIMULATOR_HOST}</td><td>Where MCS connects for TM data</td></tr>
   <tr><td><code>MCS_TM_PORT</code></td><td>${SIMULATOR_TM_PORT}</td><td>TM port to connect to</td></tr>
 </table>
@@ -748,6 +783,7 @@ Machine D (Gateway):     192.168.1.103  [optional]
 <table>
   <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
   <tr><td><code>PLANNER_HTTP_PORT</code></td><td>9091</td><td>HTTP port for the planner web UI</td></tr>
+  <tr><td><code>PLANNER_BIND</code></td><td>0.0.0.0</td><td>Address the planner HTTP server binds to. Passed as <code>--host</code> since Phase G</td></tr>
   <tr><td><code>PLANNER_REACHABLE_HOST</code></td><td>localhost</td><td>How the MCS can reach the planner</td></tr>
 </table>
 
@@ -756,12 +792,26 @@ Machine D (Gateway):     192.168.1.103  [optional]
   <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
   <tr><td><code>USE_GATEWAY</code></td><td>no</td><td>Set to "yes" to enable the gateway relay</td></tr>
   <tr><td><code>GATEWAY_HOST</code></td><td>localhost</td><td>Hostname/IP where the gateway runs</td></tr>
+  <tr><td><code>GATEWAY_BIND</code></td><td>0.0.0.0</td><td>Address the gateway's downstream listener binds to</td></tr>
   <tr><td><code>GATEWAY_LISTEN_PORT</code></td><td>10025</td><td>Port the gateway listens on</td></tr>
   <tr><td><code>GATEWAY_UPSTREAM_HOST</code></td><td>${SIMULATOR_HOST}</td><td>Upstream simulator host</td></tr>
   <tr><td><code>GATEWAY_UPSTREAM_PORT</code></td><td>${SIMULATOR_TM_PORT}</td><td>Upstream simulator TM port</td></tr>
 </table>
 
-<h3>6.5 RF Simulation Settings</h3>
+<h3>6.5 Auxiliary Tool Settings</h3>
+<p>Read by <code>deploy/start-all.sh</code>, which starts the tool viewers as of Phase G.</p>
+<table>
+  <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
+  <tr><td><code>START_TOOLS</code></td><td>yes</td><td>Set to "no" to start only the core services</td></tr>
+  <tr><td><code>TOOLS_BIND</code></td><td>0.0.0.0</td><td>Address the tool viewers bind to; <code>127.0.0.1</code> keeps them on the server console</td></tr>
+  <tr><td><code>DELAYED_TM_PORT</code></td><td>8092</td><td>Delayed TM viewer</td></tr>
+  <tr><td><code>ORBIT_TOOLS_PORT</code></td><td>8093</td><td>Orbit tools</td></tr>
+  <tr><td><code>DOC_VIEWER_PORT</code></td><td>8095</td><td>Documentation viewer</td></tr>
+  <tr><td><code>SCENARIO_GEN_PORT</code></td><td>8096</td><td>Scenario generator</td></tr>
+  <tr><td><code>ADCS_VIEWER_PORT</code></td><td>8097</td><td>ADCS failure viewer</td></tr>
+</table>
+
+<h3>6.6 RF Simulation Settings</h3>
 <p>RF simulation is configured in <code>configs/eosat1/rfsim.yaml</code>, not in smo-env.conf.</p>
 <table>
   <tr><th>Setting</th><th>Default</th><th>Description</th></tr>
@@ -775,13 +825,13 @@ Machine D (Gateway):     192.168.1.103  [optional]
   <tr><td><code>network.radio_port</code></td><td>8094</td><td>Radio web UI port</td></tr>
 </table>
 
-<h3>6.6 Mission Configuration</h3>
+<h3>6.7 Mission Configuration</h3>
 <table>
   <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
   <tr><td><code>MISSION_CONFIG</code></td><td>configs/eosat1/</td><td>Path to mission configuration directory</td></tr>
 </table>
 
-<h3>6.7 Environment Variable: SMO_RF_MODE</h3>
+<h3>6.8 Environment Variable: SMO_RF_MODE</h3>
 <p>Instead of using <code>--rf</code> on the command line, you can set the environment variable:</p>
 <pre><code># Enable CCSDS framing mode
 export SMO_RF_MODE=FRAME
@@ -812,17 +862,25 @@ export SMO_RF_MODE=RF
 <table>
   <tr><th>Service</th><th>URL</th></tr>
   <tr><td>Instructor UI</td><td><code>http://localhost:8080</code></td></tr>
+  <tr><td>Config editor (read-write)</td><td><code>http://localhost:8080/config</code></td></tr>
+  <tr><td>Report generator</td><td><code>http://localhost:8080/reports</code></td></tr>
   <tr><td>MCS (Operator UI)</td><td><code>http://localhost:9090</code></td></tr>
+  <tr><td>MCS reports / config browser</td><td><code>http://localhost:9090/reports</code>, <code>/config</code></td></tr>
   <tr><td>Planner (Standard)</td><td><code>http://localhost:9091</code></td></tr>
   <tr><td>Planner (Wide-Screen)</td><td><code>http://localhost:9091/wide</code></td></tr>
   <tr><td>Delayed TM Viewer</td><td><code>http://localhost:8092</code></td></tr>
   <tr><td>Orbit Tools</td><td><code>http://localhost:8093</code></td></tr>
   <tr><td>Documentation</td><td><code>http://localhost:8095</code></td></tr>
+  <tr><td>Scenario Generator</td><td><code>http://localhost:8096</code></td></tr>
+  <tr><td>ADCS Failure Sim</td><td><code>http://localhost:8097</code></td></tr>
 </table>
 
 <div class="info-box note">
   <strong>Note</strong>
-  Other computers on the same network can access these UIs by replacing <code>localhost</code> with this machine's IP address (e.g., <code>http://192.168.1.100:9090</code>).
+  Other computers on the same network can access these UIs by replacing <code>localhost</code>
+  with this machine's IP address (e.g., <code>http://192.168.1.100:9090</code>) — <em>provided the
+  suite was started with <code>./start.sh --public</code></em>. Since Phase G the services bind
+  loopback by default, so a plain <code>./start.sh</code> is reachable only from the server itself.
 </div>
 
 <!-- ══════════════════════ 8. DISTRIBUTED ══════════════════════ -->

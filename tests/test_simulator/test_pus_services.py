@@ -409,22 +409,25 @@ class TestS8NewRoutes:
         )
 
     def test_s8_payload_capture(self):
-        """S8.1 func_id=28 routes to payload capture with lat/lon."""
+        """S8.1 func_id=28 routes to payload capture with scene_id + lines.
+
+        Phase E WP-1: the catalogue/textbook form won (DECISIONS.md section
+        9) — geodesy is no longer a TC argument; geolocation is stamped on
+        board from orbit_state at shutter open.
+        """
         from smo_simulator.service_dispatch import ServiceDispatcher
         engine = make_mock_engine()
         d = ServiceDispatcher(engine)
 
-        lat = 45.5
-        lon = -73.6
-        # func_id=28 is first byte, followed by lat(float) + lon(float)
-        data = bytes([28]) + struct.pack('>ff', lat, lon)
+        # func_id=28 is first byte, followed by scene_id(u16) + lines(u16)
+        data = bytes([28]) + struct.pack('>HH', 1042, 2048)
         d.dispatch(8, 1, data, None)
 
         engine.subsystems["payload"].handle_command.assert_called_once()
         call_args = engine.subsystems["payload"].handle_command.call_args[0][0]
         assert call_args["command"] == "capture"
-        assert call_args["lat"] == pytest.approx(lat, abs=0.1)
-        assert call_args["lon"] == pytest.approx(lon, abs=0.1)
+        assert call_args["scene_id"] == 1042
+        assert call_args["lines"] == 2048
 
     def test_s8_heater_set_setpoint(self):
         """S8.1 func_id=44 routes to TCS set_setpoint with circuit and temps."""

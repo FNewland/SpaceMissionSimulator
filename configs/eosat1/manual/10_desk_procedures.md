@@ -29,7 +29,7 @@ GO/NO-GO gate.  They do not execute individual steps unless marked below.
 |-----------|------------------------------|------|-------------|-------------|
 | COM-001   | EPS Power System Checkout    | eps_tcs | fdir_systems | YES — before eclipse test, after power budget calc |
 | COM-002   | TCS Verification             | eps_tcs | payload_ops | YES — before heater actuation tests |
-| COM-102   | FPA Cooler Activation        | eps_tcs | payload_ops | YES — before cooler enable (power impact) |
+| COM-010   | FPA Cooler Activation        | eps_tcs | payload_ops | YES — before cooler enable (power impact) |
 
 **COM-001 — EPS Power System Checkout**
 - **Lead:** eps_tcs (EPS engineer)
@@ -49,7 +49,7 @@ GO/NO-GO gate.  They do not execute individual steps unless marked below.
   3. After orbit thermal profile assessment
 - **Key telemetry:** temp_obc (0x0406), temp_battery (0x0407), temp_fpa (0x0408), heater states (0x040A-0x040C)
 
-**COM-102 — FPA Cooler Activation**
+**COM-010 — FPA Cooler Activation**
 - **Lead:** eps_tcs (TCS engineer)
 - **Support:** payload_ops monitors FPA temperature convergence
 - **FD GO/NO-GO required:**
@@ -143,11 +143,11 @@ GO/NO-GO gate.  They do not execute individual steps unless marked below.
 
 | Proc ID   | Title                        | Lead | Support     | FD GO/NO-GO |
 |-----------|------------------------------|------|-------------|-------------|
-| COM-101   | Payload Power-On Sequence    | payload_ops | eps_tcs | YES — before power-on (power budget impact) |
-| COM-103   | First Light Acquisition      | payload_ops | aocs | YES — before image capture (FINE_POINT confirmed) |
-| COM-104   | Payload Radiometric Cal.     | payload_ops | aocs | YES — before cal site overpass imaging |
+| COM-009   | Payload Power-On Sequence    | payload_ops | eps_tcs | YES — before power-on (power budget impact) |
+| COM-012   | First Light Acquisition      | payload_ops | aocs | YES — before image capture (FINE_POINT confirmed) |
+| COM-011   | Payload Radiometric Cal.     | payload_ops | aocs | YES — before cal site overpass imaging |
 
-**COM-101 — Payload Power-On Sequence**
+**COM-009 — Payload Power-On Sequence**
 - **Lead:** payload_ops (Payload engineer)
 - **Support:** eps_tcs confirms power budget and monitors bus during boot
 - **FD GO/NO-GO required:**
@@ -155,7 +155,7 @@ GO/NO-GO gate.  They do not execute individual steps unless marked below.
   2. After self-test — payload_ops confirms firmware and interfaces nominal
 - **Key telemetry:** payload_mode (0x0600), fpa_temp (0x0601), bus_voltage (0x0105)
 
-**COM-103 — First Light Acquisition**
+**COM-012 — First Light Acquisition**
 - **Lead:** payload_ops (Payload engineer)
 - **Support:** aocs confirms FINE_POINT stability
 - **FD GO/NO-GO required:**
@@ -164,7 +164,7 @@ GO/NO-GO gate.  They do not execute individual steps unless marked below.
   3. After preview downlink — payload_ops assesses image quality
 - **Announce on ops loop:** "First light capture complete" with quality assessment
 
-**COM-104 — Payload Radiometric Calibration**
+**COM-011 — Payload Radiometric Calibration**
 - **Lead:** payload_ops (Calibration engineer)
 - **Support:** aocs for FINE_POINT nadir-pointing at cal site
 - **FD GO/NO-GO required:**

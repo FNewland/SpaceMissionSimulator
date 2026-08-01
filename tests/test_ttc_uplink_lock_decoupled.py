@@ -24,7 +24,8 @@ def _new_model(beacon: bool) -> TTCBasicModel:
     s.pa_on = True
     s.antenna_deployed = True
     s.beacon_mode = beacon
-    s.data_rate_mode = 0 if beacon else 1
+    # Commanded tier: BEACON in beacon mode, NOMINAL otherwise.
+    s.data_rate_mode = m._beacon_tier if beacon else m._default_tier
     s.uplink_lost = False
     return m
 
@@ -56,7 +57,10 @@ def test_uplink_lock_same_in_beacon_and_highrate():
 def test_low_uplink_rate_still_slows_lock():
     """The capability is preserved: a genuinely low UPLINK rate slows lock."""
     m = _new_model(beacon=False)
-    m._tc_uplink_rate_bps = m._tm_rate_lo  # force low uplink command rate
+    # Force a beacon-rate (1 kbps) uplink. The nominal TC rate is 4 kbps and
+    # is no longer inherited from the TM ladder (defect #85), so the "slow
+    # lock" threshold is expressed against the TC rate directly.
+    m._tc_uplink_rate_bps = m.TC_SLOW_LOCK_RATE_BPS
     params = {0x05FF: 1}
     t = -1
     for i in range(1, 80):

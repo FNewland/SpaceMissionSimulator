@@ -411,9 +411,9 @@ commands:
     aliases: [MEM_LOAD_START, MEM_LOAD_DATA, MEM_LOAD_ABORT]
     service: 6
     subtype: 2
-    description: "Load data to on-board memory (simplified)"
+    description: "Load data to on-board memory. Address must lie in an rw region of configs/eosat1/memory/memory_map.yaml; unmapped -> S1.8 code 0x0001, read-only -> 0x0002."
     fields:
-      - { name: memory_id, type: uint8, description: "0=SRAM, 1=EEPROM" }
+      - { name: memory_id, type: uint8, description: "0=SRAM, 1=EEPROM (informational; the address selects the region)" }
       - { name: address, type: uint32, description: "Start address" }
       - { name: data, type: bytes, description: "Data to load" }
   - name: MEM_DUMP
@@ -480,9 +480,28 @@ commands:
     service: 8
     subtype: 1
     func_id: 0
+    arg_schema_version: 1
     description: "Set AOCS mode"
+    readback: { param_id: 0x020F, description: "aocs.mode" }
     fields:
-      - { name: mode, type: uint8, description: "0=off,1=safe_boot,2=detumble,3=coarse_sun,4=nominal_nadir,5=fine_point,6=slew,7=desaturation,8=eclipse_propagate" }
+      - name: mode
+        type: uint8
+        offset: 1
+        unit: ""
+        calibration: { type: enum }
+        default: 4
+        enum:
+          - { value: 0, label: "OFF" }
+          - { value: 1, label: SAFE_BOOT }
+          - { value: 2, label: DETUMBLE }
+          - { value: 3, label: COARSE_SUN }
+          - { value: 4, label: NOMINAL_NADIR }
+          - { value: 5, label: FINE_POINT, description: "Refused with TM(1,8) unless aocs.fine_ready (0x02C5) == 0" }
+          - { value: 6, label: SLEW }
+          - { value: 7, label: DESATURATION }
+          - { value: 8, label: ECLIPSE_PROPAGATE }
+          - { value: 9, label: INERTIAL }
+        description: "0=off,1=safe_boot,2=detumble,3=coarse_sun,4=nominal_nadir,5=fine_point,6=slew,7=desaturation,8=eclipse_propagate,9=inertial. Mode 5 is refused with TM(1,8) unless the aocs.fine_ready (0x02C5) precondition bitmask is 0."
   - name: AOCS_DESATURATE
     service: 8
     subtype: 1
@@ -536,10 +555,10 @@ commands:
     service: 8
     subtype: 1
     func_id: 8
-    description: "Set reaction wheel speed bias"
+    description: "Set reaction wheel speed bias (added to the wheel's current speed)"
     fields:
-      - { name: wheel_idx, type: uint8 }
-      - { name: bias_rpm, type: int16, description: "Speed bias in RPM" }
+      - { name: wheel_idx, type: uint8, description: "Wheel index 0-3" }
+      - { name: bias_rpm, type: float32, description: "Speed bias in RPM, IEEE-754 big-endian" }
   - name: MTQ_ENABLE
     service: 8
     subtype: 1
@@ -595,18 +614,309 @@ commands:
     service: 8
     subtype: 1
     func_id: 15
-    description: "Set attitude error deadband threshold"
+    description: "Set the FINE-point control deadband (a REAL control deadband since Phase C; also writes the S5 ATTITUDE_ERROR_HIGH event threshold, preserving the historical wiring)"
     fields:
-      - { name: deadband_deg, type: float32, description: "Attitude error threshold (0-1 deg)" }
+      - { name: deadband_deg, type: float32, description: "Control deadband / event threshold (0-1 deg)" }
+
+  # ── Phase C AOCS pointing & estimator commands (funcs 84-91) ──
+  # Phase E: full TCFieldDef treatment (units / ranges / defaults / enums).
+  # The quaternion and geodetic arguments remain float32 — a documented
+  # exception to the "no float on the uplink" rule, grandfathered from
+  # Phase C (they predate the rule and are exercised by existing procedures).
+  - name: AOCS_SET_POINTING_FRAME
+    service: 8
+    subtype: 1
+    func_id: 85
+    arg_schema_version: 1
+    position: aocs
+    description: "Select the AOCS reference frame for NOMINAL/FINE pointing"
+    fields:
+      - name: frame
+        type: uint8
+        offset: 1
+        unit: ""
+        calibration: { type: enum }
+        default: 1
+        enum:
+          - { value: 0, label: INERTIAL, description: "Hold the AOCS_SET_TARGET_QUAT attitude" }
+          - { value: 1, label: LVLH_NADIR, description: "Local-vertical nadir pointing (default)" }
+          - { value: 2, label: TARGET_TRACK, description: "Track the AOCS_SET_TARGET_GEO ground target" }
+          - { value: 3, label: SUN, description: "Sun pointing" }
+        description: "0=INERTIAL, 1=LVLH_NADIR, 2=TARGET_TRACK, 3=SUN"
+
+  - name: AOCS_SET_TARGET_QUAT
+    service: 8
+    subtype: 1
+    func_id: 86
+    arg_schema_version: 1
+    position: aocs
+    description: "Set the inertial-hold target quaternion (used by INERTIAL mode 9 and frame 0)"
+    fields:
+      - { name: q_x, type: float32, offset: 1,  unit: "", range: { min: -1.0, max: 1.0 }, default: 0.0, description: "Target quaternion X" }
+      - { name: q_y, type: float32, offset: 5,  unit: "", range: { min: -1.0, max: 1.0 }, default: 0.0, description: "Target quaternion Y" }
+      - { name: q_z, type: float32, offset: 9,  unit: "", range: { min: -1.0, max: 1.0 }, default: 0.0, description: "Target quaternion Z" }
+      - { name: q_w, type: float32, offset: 13, unit: "", range: { min: -1.0, max: 1.0 }, default: 1.0, description: "Target quaternion W (scalar)" }
+
+  - name: AOCS_SET_TARGET_GEO
+    service: 8
+    subtype: 1
+    func_id: 87
+    arg_schema_version: 1
+    position: aocs
+    description: "Set a ground target for TARGET_TRACK pointing (off-nadir imaging)"
+    fields:
+      - { name: lat,   type: float32, offset: 1, unit: "deg",  range: { min: -90.0,  max: 90.0 },  default: 0.0, description: "Target latitude, deg" }
+      - { name: lon,   type: float32, offset: 5, unit: "degE", range: { min: -180.0, max: 180.0 }, default: 0.0, description: "Target longitude, deg east" }
+      - { name: alt_m, type: float32, offset: 9, unit: "m",    range: { min: -500.0, max: 9000.0 }, default: 0.0, description: "Target altitude above the reference sphere, m" }
+
+  - name: AOCS_SET_CONTROL_BW
+    service: 8
+    subtype: 1
+    func_id: 88
+    arg_schema_version: 1
+    position: aocs
+    description: "Override the controller bandwidth/damping (commissioning gain tuning; 0 restores per-mode defaults)"
+    fields:
+      - { name: omega_n, type: float32, offset: 1, unit: "rad/s", range: { min: 0.0, max: 0.2 }, default: 0.0, description: "Natural frequency, rad/s (0.001-0.2; 0 = per-mode default)" }
+      - { name: zeta,    type: float32, offset: 5, unit: "",      range: { min: 0.0, max: 2.0 }, default: 0.0, description: "Damping ratio (0.1-2.0; 0 = per-mode default)" }
+
+  - name: AOCS_FINE_READY_CHECK
+    service: 8
+    subtype: 1
+    func_id: 89
+    position: aocs
+    description: "Report the FINE-entry precondition bitmask (0x02C5) as TM(8,130); 0 = ready"
+    readback: { param_id: 0x02C5, description: "aocs.fine_ready" }
+    fields: []
+
+  - name: AOCS_SET_MOM_MGMT
+    service: 8
+    subtype: 1
+    func_id: 90
+    arg_schema_version: 1
+    position: aocs
+    description: "Configure autonomous momentum management (auto-DESAT thresholds)"
+    fields:
+      - name: enable
+        type: uint8
+        offset: 1
+        unit: ""
+        calibration: { type: enum }
+        default: 1
+        enum:
+          - { value: 0, label: DISABLE }
+          - { value: 1, label: ENABLE }
+        description: "0=disable, 1=enable"
+      - { name: entry_pct, type: uint8, offset: 2, unit: "%", calibration: { type: none }, range: { min: 10, max: 95 }, default: 70, description: "DESAT entry at this % of the momentum envelope (default 70)" }
+      - { name: exit_pct,  type: uint8, offset: 3, unit: "%", calibration: { type: none }, range: { min: 5,  max: 90 }, default: 20, description: "DESAT exit below this % (default 20)" }
+
+  - name: AOCS_EST_RESET
+    service: 8
+    subtype: 1
+    func_id: 91
+    arg_schema_version: 1
+    position: aocs
+    description: "Reinitialise the attitude estimator (after a time jump — see gps_time_sync_recovery)"
+    fields:
+      - name: mode
+        type: uint8
+        offset: 1
+        unit: ""
+        calibration: { type: enum }
+        default: 1
+        enum:
+          - { value: 0, label: COLD, description: "TRIAD/ST bootstrap" }
+          - { value: 1, label: WARM, description: "Keep attitude, re-inflate covariance" }
+        description: "0=cold (TRIAD/ST bootstrap), 1=warm (keep attitude, re-inflate covariance)"
 
   - name: AOCS_GPS_SET_START_MODE
     service: 8
     subtype: 1
     func_id: 84
+    arg_schema_version: 1
     description: "Select GPS receiver start mode (cold/warm/hot). Sets the time-to-first-fix profile used after the GPS receiver is powered on."
     position: aocs
     fields:
-      - { name: start_mode, type: uint8, description: "0=COLD (60s TTFF), 1=WARM (30s), 2=HOT (5s)" }
+      - name: start_mode
+        type: uint8
+        offset: 1
+        unit: ""
+        calibration: { type: enum }
+        default: 0
+        enum:
+          - { value: 0, label: COLD, description: "60 s TTFF" }
+          - { value: 1, label: WARM, description: "30 s TTFF" }
+          - { value: 2, label: HOT, description: "5 s TTFF" }
+        description: "0=COLD (60s TTFF), 1=WARM (30s), 2=HOT (5s)"
+
+  # ── Phase D propulsion commands (funcs 108-118) ──
+  # Brief 03 planned 85-95, but Phase C's AOCS pointing block took 85-91 and
+  # 100-107 are the legacy quick actions; 108-118 is the next clean
+  # contiguous block (free after this allocation: 92-99, 119-127).
+  # Debris-avoidance + drag-make-up propulsion; catbed preheat reuses
+  # HEATER_THRUSTER (func 42, TCS circuit 2).
+  - name: PROP_SET_BURN
+    service: 8
+    subtype: 1
+    func_id: 110
+    position: propulsion
+    arg_schema_version: 1
+    criticality: critical
+    description: "Load a manoeuvre: delta-V magnitude, direction and cut-off mode. The sim publishes the predicted burn duration (0x0B10) for FDS cross-check before arming. Must precede PROP_ARM by <= 300 s."
+    readback: { param_id: 0x0B0E, description: "prop.burn_dv_cmd" }
+    fields:
+      - { name: dv_m_s, type: float32, offset: 1, unit: "m/s", range: { min: 0.01, max: 20.0 }, default: 0.85, description: "Delta-V magnitude, m/s (0 < dv <= 20; checked against 0x0B0C remaining)" }
+      - name: direction
+        type: uint8
+        offset: 5
+        unit: ""
+        calibration: { type: enum }
+        default: 0
+        enum:
+          - { value: 0, label: PROGRADE, description: "+X body, nominal nadir attitude" }
+          - { value: 1, label: RETROGRADE, description: "Requires 180-deg yaw / INERTIAL hold" }
+        description: "0=prograde (+X body, nominal nadir attitude), 1=retrograde (requires 180-deg yaw / INERTIAL hold)"
+      - name: mode
+        type: uint8
+        offset: 6
+        unit: ""
+        calibration: { type: enum }
+        default: 1
+        enum:
+          - { value: 0, label: OPEN_LOOP, description: "Timed burn" }
+          - { value: 1, label: DV_CUTOFF, description: "Closed-loop dv cut-off (accelerometer-integrated within this burn only)" }
+        description: "0=open-loop timed, 1=closed-loop dv cut-off (accelerometer-integrated within this burn only)"
+      - { name: t_start_cuc, type: uint32, offset: 7, unit: "s(CUC)", calibration: { type: none }, default: 0, description: "Burn start CUC (0 = fire on PROP_EXECUTE; normally S11 time-tagged per NOM-004)" }
+
+  - name: PROP_ARM
+    service: 8
+    subtype: 1
+    func_id: 108
+    position: propulsion
+    arg_schema_version: 1
+    criticality: critical
+    description: "Arm the propulsion system (two-step: requires PROP_SET_BURN within 300 s and the arm code). Runs all interlocks — catbed >= 180 C, tank pressure band, propellant, AOCS mode/att error, SoC, phase, eclipse, valves; each failure returns a distinct S1(8) code and its bit in 0x0B15."
+    readback: { param_id: 0x0B00, description: "prop.state" }
+    fields:
+      - { name: arm_code, type: uint16, offset: 1, unit: "", calibration: { type: none }, default: 42435, description: "Fixed arm code 0xA5C3 (= 42435); any other value is rejected" }
+
+  - name: PROP_DISARM
+    service: 8
+    subtype: 1
+    func_id: 109
+    position: propulsion
+    description: "ARMED -> SAFED; closes the flow-control valve, leaves latch valves"
+    fields: []
+
+  - name: PROP_EXECUTE
+    service: 8
+    subtype: 1
+    func_id: 111
+    position: propulsion
+    description: "ARMED -> FIRING. Rejected (S1.8) when not ARMED. Normally delivered by the S11 time-tagged schedule (NOM-004 step 3)."
+    fields: []
+
+  - name: PROP_ABORT
+    service: 8
+    subtype: 1
+    func_id: 112
+    position: propulsion
+    description: "FIRING -> SAFED immediately; closes the FCV and latches abort_reason (0x0B14). Partial delta-V already delivered still perturbs the orbit."
+    fields: []
+
+  - name: PROP_ISO_OPEN
+    service: 8
+    subtype: 1
+    func_id: 113
+    position: propulsion
+    arg_schema_version: 1
+    description: "Open latch-valve branch(es)"
+    readback: { param_id: 0x0B06, description: "prop.latch_a_state" }
+    fields:
+      - name: branch
+        type: uint8
+        offset: 1
+        unit: ""
+        calibration: { type: enum }
+        default: 2
+        enum:
+          - { value: 0, label: A }
+          - { value: 1, label: B }
+          - { value: 2, label: BOTH }
+        description: "0=A, 1=B, 2=both"
+
+  - name: PROP_ISO_CLOSE
+    service: 8
+    subtype: 1
+    func_id: 114
+    position: propulsion
+    arg_schema_version: 1
+    description: "Close latch-valve branch(es) — CTG-028 step 2 isolates 'both branches' (branch=2)"
+    readback: { param_id: 0x0B06, description: "prop.latch_a_state" }
+    fields:
+      - name: branch
+        type: uint8
+        offset: 1
+        unit: ""
+        calibration: { type: enum }
+        default: 2
+        enum:
+          - { value: 0, label: A }
+          - { value: 1, label: B }
+          - { value: 2, label: BOTH }
+        description: "0=A, 1=B, 2=both"
+
+  - name: PROP_SET_LIMITS
+    service: 8
+    subtype: 1
+    func_id: 115
+    position: propulsion
+    arg_schema_version: 1
+    description: "Reconfigure the on-board burn-abort thresholds (also the FDIR configuration hook)"
+    fields:
+      - { name: att_err_max_deg, type: float32, offset: 1,  unit: "deg", range: { min: 0.1, max: 10.0 },   default: 2.0,   description: "Abort when 0x0217 exceeds this during a burn (default 2.0)" }
+      - { name: p_min_bar,       type: float32, offset: 5,  unit: "bar", range: { min: 1.0, max: 22.0 },   default: 4.0,   description: "Abort below this feed pressure (default 4.0)" }
+      - { name: catbed_max_c,    type: float32, offset: 9,  unit: "degC", range: { min: 200.0, max: 500.0 }, default: 350.0, description: "Abort above this catbed temperature (default 350)" }
+      - { name: t_burn_max_s,    type: float32, offset: 13, unit: "s",   range: { min: 10.0, max: 600.0 }, default: 300.0, description: "Burn watchdog timeout (default 300)" }
+
+  - name: PROP_INHIBIT_SET
+    service: 8
+    subtype: 1
+    func_id: 116
+    position: propulsion
+    arg_schema_version: 1
+    description: "Ground-latched propulsion inhibit (the deployer 'independent inhibits' lesson)"
+    readback: { param_id: 0x0B15, description: "prop.arm_inhibit_mask" }
+    fields:
+      - name: "on"
+        type: uint8
+        offset: 1
+        unit: ""
+        calibration: { type: enum }
+        default: 1
+        enum:
+          - { value: 0, label: CLEAR, description: "Clear ground inhibit" }
+          - { value: 1, label: SET, description: "Set ground inhibit" }
+        description: "0=clear ground inhibit, 1=set"
+
+  - name: PROP_INHIBIT_CLR
+    service: 8
+    subtype: 1
+    func_id: 117
+    position: propulsion
+    arg_schema_version: 1
+    description: "Clear both the ground inhibit and an FDIR/double-abort latched inhibit (INHIBIT(3) -> SAFED)"
+    readback: { param_id: 0x0B00, description: "prop.state" }
+    fields:
+      - { name: key, type: uint16, offset: 1, unit: "", calibration: { type: none }, default: 42435, description: "Clear key 0xA5C3 (= 42435)" }
+
+  - name: PROP_GET_STATUS
+    service: 8
+    subtype: 1
+    func_id: 118
+    position: propulsion
+    description: "On-demand propulsion status report -> TM(8,2): state, tank pressure, propellant, catbed, dv remaining, inhibit mask, abort reason"
+    fields: []
 
   # EPS commands (func_id 16-25)
   - name: EPS_PAYLOAD_MODE
@@ -674,9 +984,9 @@ commands:
     service: 8
     subtype: 1
     func_id: 24
-    description: "Control solar array drive angle"
+    description: "Set the frozen solar array drive angle. Phase B: load-bearing — with SADA tracking active the drive follows the sun automatically and this sets the park angle used if tracking stops; with tracking off the wings generate per the commanded angle (0 = legacy +Y orientation)."
     fields:
-      - { name: angle_deg, type: int16, description: "Drive angle in degrees (-90 to +90)" }
+      - { name: angle_deg, type: int16, description: "Drive angle in CENTI-degrees; the handler divides by 100 (-9000..+9000 = -90..+90 deg)" }
   - name: EPS_EMERGENCY_LOAD_SHED
     service: 8
     subtype: 1
@@ -685,50 +995,138 @@ commands:
     fields:
       - { name: stage, type: uint8, description: "Shed stage (0-3)" }
 
-  # Payload commands (func_id 26-39)
+  # Payload commands (func_id 26-39, extras 92-95)
+  # Phase E (brief 04): full argument schema — per-field offset, unit,
+  # raw<->eng calibration, range, default, enum/bit labels. RULE: no float32
+  # on a NEW uplink argument; engineering quantities are fixed-point integer
+  # + declared scale, so raw hex is always computable by inspection and the
+  # readback matches the command bit-for-bit.
   - name: PAYLOAD_SET_MODE
     service: 8
     subtype: 1
     func_id: 26
+    arg_schema_version: 1
     description: "Set payload mode"
+    readback: { param_id: 0x0600, description: "payload.mode" }
     fields:
-      - { name: mode, type: uint8, description: "0=off, 1=standby, 2=imaging" }
+      - name: mode
+        type: uint8
+        offset: 1
+        unit: ""
+        calibration: { type: enum }
+        default: 0
+        enum:
+          - { value: 0, label: "OFF", description: "Imager off, cooler released" }
+          - { value: 1, label: STANDBY, description: "FPA cooler on, detector idle" }
+          - { value: 2, label: IMAGING, description: "Detector integrating; capture enabled" }
+        description: "0=off, 1=standby, 2=imaging"
   - name: PAYLOAD_SET_SCENE
     service: 8
     subtype: 1
     func_id: 27
-    description: "Set scene ID for imaging"
+    arg_schema_version: 1
+    description: >-
+      DEPRECATED — pre-set the next scene id. Superseded by
+      PAYLOAD_CAPTURE's own scene_id argument, which overrides this value at
+      capture time; retained for backward compatibility only.
+    readback: { param_id: 0x0606, description: "payload.scene_id" }
     fields:
-      - { name: scene_id, type: uint16 }
+      - name: scene_id
+        type: uint16
+        offset: 1
+        unit: ""
+        calibration: { type: none }
+        range: { min: 0, max: 65535 }
+        default: 0
   - name: PAYLOAD_CAPTURE
     service: 8
     subtype: 1
     func_id: 28
-    description: "Trigger image capture with scene metadata"
+    arg_schema_version: 1
+    criticality: caution
+    description: >-
+      Trigger one image acquisition. The WHERE is set by the WHEN: schedule
+      this TC with S11.4 at the target overpass. Geolocation is stamped on
+      board from the propagated sub-satellite point at shutter open and
+      returned in the image catalogue — it is not an argument.
+    readback: { param_id: 0x060C, description: "payload.last_scene_id" }
     fields:
-      - { name: scene_id, type: uint16, description: "Scene identifier" }
-      - { name: lines, type: uint16, description: "Number of CCD lines to capture" }
+      - name: scene_id
+        type: uint16
+        offset: 1
+        endian: big
+        unit: ""
+        calibration: { type: none }
+        range: { min: 0, max: 65535 }
+        default: 0
+        description: >-
+          Ground-assigned product identifier, later used by
+          PAYLOAD_DOWNLOAD_IMAGE (29) and PAYLOAD_DELETE_IMAGE (30).
+          0x0000 = let the payload auto-assign the next free id.
+      - name: lines
+        type: uint16
+        offset: 3
+        endian: big
+        unit: "lines"
+        calibration: { type: none }
+        range: { min: 256, max: 20000 }
+        default: 2048
+        description: >-
+          Along-track detector lines. Acquisition time = lines / line_rate_hz
+          (500 Hz, subsystems/payload.yaml). Raw frame volume scales as
+          (lines/2048) x (active_bands/4) x image_size_mb; 2048 lines x 4
+          bands = 4.0 MB = subsystems/payload.yaml image_size_mb.
   - name: PAYLOAD_DOWNLOAD_IMAGE
     service: 8
     subtype: 1
     func_id: 29
+    arg_schema_version: 1
     description: "Queue image for downlink"
     fields:
-      - { name: scene_id, type: uint16, description: "Scene ID to download" }
+      - name: scene_id
+        type: uint16
+        offset: 1
+        unit: ""
+        calibration: { type: none }
+        range: { min: 0, max: 65535 }
+        default: 0
+        description: "Scene ID to download"
   - name: PAYLOAD_DELETE_IMAGE
     service: 8
     subtype: 1
     func_id: 30
+    arg_schema_version: 1
+    criticality: caution
     description: "Delete specific image from payload memory"
     fields:
-      - { name: scene_id, type: uint16, description: "Scene ID to delete" }
+      - name: scene_id
+        type: uint16
+        offset: 1
+        unit: ""
+        calibration: { type: none }
+        range: { min: 0, max: 65535 }
+        default: 0
+        description: "Scene ID to delete"
   - name: PAYLOAD_MARK_BAD_SEGMENT
     service: 8
     subtype: 1
     func_id: 31
+    arg_schema_version: 1
+    criticality: caution
     description: "Mark memory segment as unusable"
+    readback: { param_id: 0x0612, description: "payload.mem_segments_bad" }
     fields:
-      - { name: segment_id, type: uint8, description: "Segment index (0-79)" }
+      - name: segment_id
+        type: uint8
+        offset: 1
+        unit: ""
+        calibration: { type: none }
+        range: { min: 0, max: 7 }
+        default: 0
+        description: >-
+          Segment index 0-7 (subsystems/payload.yaml num_memory_segments: 8;
+          the model rejects >= 8. The old '0-79' documentation was never
+          executable).
   - name: PAYLOAD_GET_IMAGE_CATALOG
     service: 8
     subtype: 1
@@ -739,39 +1137,147 @@ commands:
     service: 8
     subtype: 1
     func_id: 33
+    arg_schema_version: 1
     description: "Set spectral band enable mask"
+    readback: { param_id: 0x0625, description: "payload.band_enable_mask" }
     fields:
-      - { name: mask, type: uint8, description: "Band mask (bits 0-3: blue/green/red/nir)" }
+      - name: mask
+        type: uint8
+        offset: 1
+        unit: ""
+        calibration: { type: bitfield }
+        range: { min: 1, max: 15 }
+        default: 15
+        bits:
+          - { bit: 0, name: BLUE,  description: "443 nm, 20 nm BW, SNR 40 dB - chlorophyll-a" }
+          - { bit: 1, name: GREEN, description: "560 nm, 20 nm BW, SNR 50 dB - turbidity" }
+          - { bit: 2, name: RED,   description: "665 nm, 20 nm BW, SNR 48 dB - atmos. correction" }
+          - { bit: 3, name: NIR,   description: "865 nm, 40 nm BW, SNR 42 dB - atmos. correction" }
+          - { bit: 4, name: RESERVED, reserved: true }
+          - { bit: 5, name: RESERVED, reserved: true }
+          - { bit: 6, name: RESERVED, reserved: true }
+          - { bit: 7, name: RESERVED, reserved: true }
+        description: >-
+          Each enabled band multiplies raw volume by lines x 5000 px x 2 B.
+          Bit order matches SPECTRAL_BANDS[].bit in payload_basic.py.
+          mask = 0x00 is REJECTED (at least one band required).
   - name: PAYLOAD_SET_INTEGRATION_TIME
     service: 8
     subtype: 1
     func_id: 34
-    description: "Set per-band detector integration times (4 floats)"
+    arg_schema_version: 1
+    description: >-
+      Set per-band detector integration times. Fixed point, 0.01 ms/LSB
+      (was 4x float32 = 16 argument octets; now 8). Longer integration
+      raises band SNR ~3 dB per doubling.
+    readback: { param_id: 0x0635, description: "payload.integration_ms (average)" }
     fields:
-      - { name: blue_ms, type: float32, description: "Blue band integration time (ms)" }
-      - { name: green_ms, type: float32, description: "Green band integration time (ms)" }
-      - { name: red_ms, type: float32, description: "Red band integration time (ms)" }
-      - { name: nir_ms, type: float32, description: "NIR band integration time (ms)" }
+      - name: blue_ms
+        type: uint16
+        offset: 1
+        unit: "ms"
+        raw_unit: "cs(0.01ms)"
+        calibration: { type: linear, scale: 0.01 }
+        range: { min: 0.1, max: 655.35 }
+        raw_range: { min: 10, max: 65535 }
+        default: 2.0
+        description: "Blue band integration time (ms)"
+      - name: green_ms
+        type: uint16
+        offset: 3
+        unit: "ms"
+        raw_unit: "cs(0.01ms)"
+        calibration: { type: linear, scale: 0.01 }
+        range: { min: 0.1, max: 655.35 }
+        raw_range: { min: 10, max: 65535 }
+        default: 2.0
+        description: "Green band integration time (ms)"
+      - name: red_ms
+        type: uint16
+        offset: 5
+        unit: "ms"
+        raw_unit: "cs(0.01ms)"
+        calibration: { type: linear, scale: 0.01 }
+        range: { min: 0.1, max: 655.35 }
+        raw_range: { min: 10, max: 65535 }
+        default: 2.0
+        description: "Red band integration time (ms)"
+      - name: nir_ms
+        type: uint16
+        offset: 7
+        unit: "ms"
+        raw_unit: "cs(0.01ms)"
+        calibration: { type: linear, scale: 0.01 }
+        range: { min: 0.1, max: 655.35 }
+        raw_range: { min: 10, max: 65535 }
+        default: 2.0
+        description: "NIR band integration time (ms)"
   - name: PAYLOAD_SET_GAIN
     service: 8
     subtype: 1
     func_id: 35
-    description: "Set detector gain/offset"
+    arg_schema_version: 1
+    description: >-
+      Set detector gain. Fixed point, 0.001x/LSB (was float32). Gain raises
+      reported SNR ~1.5 dB per doubling until saturation.
+    readback: { param_id: 0x0636, description: "payload.gain_code" }
     fields:
-      - { name: gain, type: float32, description: "Detector gain (0.1-10.0)" }
+      - name: gain
+        type: uint16
+        offset: 1
+        unit: "x"
+        raw_unit: "milli-x"
+        calibration: { type: linear, scale: 0.001 }
+        range: { min: 0.1, max: 10.0 }
+        raw_range: { min: 100, max: 10000 }
+        default: 1.0
+        description: "Detector gain 0.100-10.000 (raw = gain x 1000)"
   - name: PAYLOAD_COOLER_SETPOINT
     service: 8
     subtype: 1
     func_id: 36
-    description: "Adjust cooler target temperature"
+    arg_schema_version: 1
+    criticality: caution
+    description: >-
+      Set the FPA thermo-electric cooler regulation setpoint (drives the
+      TCS-owned FPA node). Encoded as unsigned CENTI-KELVIN so a negative
+      Celsius value never requires a two's-complement raw:
+      raw = round((T_degC + 273.15) x 100). -15.00 degC -> 25815 = 0x64D7.
+    readback: { param_id: 0x0631, description: "payload.fpa_setpoint" }
     fields:
-      - { name: setpoint_c, type: float32, description: "Target temperature (-20C to 0C)" }
+      - name: setpoint
+        type: uint16
+        offset: 1
+        endian: big
+        unit: "degC"
+        raw_unit: "cK"
+        calibration: { type: linear, scale: 0.01, offset: -273.15 }
+        range: { min: -20.0, max: 0.0 }
+        raw_range: { min: 25315, max: 27315 }
+        default: -15.0
+        description: >-
+          FPA regulation setpoint in degC (Peltier-class cooler envelope
+          -20..0 degC, subsystems/payload.yaml). Outside the envelope the TC
+          is REJECTED with S1.8 error 0x0003.
   - name: PAYLOAD_START_CALIBRATION
     service: 8
     subtype: 1
     func_id: 37
-    description: "Begin calibration sequence (dark frame + flat field)"
-    fields: []
+    arg_schema_version: 1
+    description: "Begin calibration sequence (dark frame / flat field / both)"
+    readback: { param_id: 0x062A, description: "payload.cal_active" }
+    fields:
+      - name: mode
+        type: uint8
+        offset: 1
+        unit: ""
+        calibration: { type: enum }
+        default: 2
+        enum:
+          - { value: 0, label: DARK, description: "Dark frames only (shutter closed)" }
+          - { value: 1, label: FLAT, description: "Flat field only (cal lamp)" }
+          - { value: 2, label: BOTH, description: "Dark then flat (legacy sequence)" }
+        description: "0=dark only, 1=flat only, 2=both (COM-011 step 2 uses DARK)"
   - name: PAYLOAD_STOP_CALIBRATION
     service: 8
     subtype: 1
@@ -782,9 +1288,113 @@ commands:
     service: 8
     subtype: 1
     func_id: 39
-    description: "Override compression ratio"
+    arg_schema_version: 1
+    description: >-
+      Select compression algorithm and ratio override (was a single float32
+      ratio; the algorithm octet was previously unreachable over the wire).
+    readback: { param_id: 0x0614, description: "payload.compression_ratio" }
     fields:
-      - { name: ratio, type: float32, description: "Compression ratio (0=auto, else manual)" }
+      - name: algorithm
+        type: uint8
+        offset: 1
+        unit: ""
+        calibration: { type: enum }
+        default: 3
+        enum:
+          - { value: 0, label: NONE, description: "No compression (ratio 1.0)" }
+          - { value: 1, label: CCSDS-121, description: "Lossless Rice" }
+          - { value: 2, label: CCSDS-122, description: "Image DWT" }
+          - { value: 3, label: CCSDS-123, description: "Multispectral predictor (default)" }
+        description: "Compression algorithm"
+      - name: ratio
+        type: uint8
+        offset: 2
+        unit: "x"
+        raw_unit: "deci-x"
+        calibration: { type: linear, scale: 0.1 }
+        range: { min: 0.0, max: 4.0 }
+        raw_range: { min: 0, max: 40 }
+        default: 0.0
+        description: "Ratio override x10 (0 = AUTO scene-dependent 1.5-4.0; 10-40 = 1.0-4.0)"
+
+  # Payload extras (func_id 92-95) — Phase E WP-7: settings that existed in
+  # the model but were unreachable over the wire (brief 04 settings table).
+  - name: PAYLOAD_SELECT_FILTER
+    service: 8
+    subtype: 1
+    func_id: 92
+    arg_schema_version: 1
+    position: payload
+    description: "Rotate the filter wheel to a position (2 s per 90 deg step)"
+    readback: { param_id: 0x063D, description: "payload.filter_pos" }
+    fields:
+      - name: position
+        type: uint8
+        offset: 1
+        unit: ""
+        calibration: { type: enum }
+        default: 0
+        enum:
+          - { value: 0, label: CLEAR, description: "Open position (imaging)" }
+          - { value: 1, label: ND2, description: "Neutral density 2 (solar cal)" }
+          - { value: 2, label: DIFFUSER, description: "Flat-field diffuser" }
+          - { value: 3, label: DARK, description: "Opaque (dark reference)" }
+        description: "Filter wheel position 0-3"
+  - name: PAYLOAD_CYCLE_SHUTTER
+    service: 8
+    subtype: 1
+    func_id: 93
+    arg_schema_version: 1
+    position: payload
+    description: "Run a shutter mechanism cycle test (COM-011 dark-frame prep)"
+    readback: { param_id: 0x063C, description: "payload.shutter_pos" }
+    fields:
+      - name: cycles
+        type: uint8
+        offset: 1
+        unit: "cycles"
+        calibration: { type: none }
+        range: { min: 1, max: 100 }
+        default: 1
+        description: "Number of open/close cycles (1-100)"
+  - name: PAYLOAD_INITIATE_TRANSFER
+    service: 8
+    subtype: 1
+    func_id: 94
+    arg_schema_version: 1
+    position: payload
+    description: >-
+      Start the on-board image transfer engine for a stored scene — the
+      bridge to the S13_CREATE_TRANSFER ground workflow (textbook section 6.7).
+    readback: { param_id: 0x062D, description: "payload.transfer_active" }
+    fields:
+      - name: scene_id
+        type: uint16
+        offset: 1
+        unit: ""
+        calibration: { type: none }
+        range: { min: 1, max: 65535 }
+        default: 1
+        description: "Stored scene to transfer"
+  - name: PAYLOAD_CAL_LAMP
+    service: 8
+    subtype: 1
+    func_id: 95
+    arg_schema_version: 1
+    position: payload
+    description: "Calibration lamp on/off (also reachable as S2 device 0x0602)"
+    readback: { param_id: 0x0615, description: "payload.cal_lamp_on" }
+    fields:
+      - name: "on"
+        type: uint8
+        offset: 1
+        unit: ""
+        calibration: { type: enum }
+        default: 0
+        enum:
+          - { value: 0, label: "OFF" }
+          - { value: 1, label: "ON" }
+        description: "0=off, 1=on"
 
   # TCS commands (func_id 40-51)
   - name: HEATER_BATTERY
@@ -963,6 +1573,13 @@ commands:
     func_id: 82
     description: "Query solar wing deployment status"
     fields: []
+  - name: EPS_SET_MODE
+    service: 8
+    subtype: 1
+    func_id: 83
+    description: "Set EPS operating mode. SAFE sheds the two least-essential loads, EMERGENCY sheds all of them; loads are restored by the operator, not automatically."
+    fields:
+      - { name: mode, type: uint8, description: "0=nominal, 1=safe, 2=emergency" }
 
   # GPS/time synchronisation (func_id 80)
   - name: OBC_GPS_TIME_SYNC
@@ -979,18 +1596,57 @@ commands:
     subtype: 1
     func_id: 63
     description: "Switch to primary transponder"
+    fields: []
   - name: TTC_SWITCH_REDUNDANT
     service: 8
     subtype: 1
     func_id: 64
     description: "Switch to redundant transponder"
+    fields: []
   - name: TTC_SET_DATA_RATE
     service: 8
     subtype: 1
     func_id: 65
-    description: "Set TM data rate"
+    description: >-
+      Select a rung of the TM data-rate ladder defined in
+      subsystems/ttc.yaml tm_rate_tiers. Sets data_rate_mode (the COMMANDED
+      tier), which the TTC tick resolves the active tier from, so the
+      commanded tier survives the tick and is authoritative. Three tiers:
+      LOW 16 kbps BPSK conv(7,1/2)+RS — ROUTINE OPERATIONS, and the safe-mode
+      / FDIR fallback; HIGH 128 kbps QPSK RS(255,223) — delayed-telemetry
+      playback and image dumps only; BEACON 1 kbps BPSK conv(7,1/2)+RS —
+      bootloader/beacon lifeline, entered with TTC_SET_BEACON_MODE, not
+      selectable here.
+      LEGACY ENCODING PRESERVED VERBATIM: rate=0 still means "the low rate"
+      and rate=1 still means "the high rate" — they now select LOW (16 kbps)
+      and HIGH (128 kbps) instead of 1 kbps and 64 kbps, so existing
+      procedures, OBCPs and the FDIR ttc_reduce_power action keep their
+      meaning.
+      Permission rules are enforced by REJECTION with an S1.8 execution
+      failure (error 0x0007), never by silent clamping: HIGH requires a
+      deployed antenna, DOWNLINK/dump mode (TTC_SET_DOWNLINK_MODE) and
+      elevation >= 10 deg, and every tier except BEACON is refused while
+      beacon mode is latched. An unknown tier code gives error 0x0003.
+    arg_schema_version: 1
+    readback: { param_id: 0x0510, description: "ttc.tm_data_rate" }
+    deprecated_aliases:
+      - form: "rate_bps uint32 (4 B)"
+        note: >-
+          Legacy 4-byte big-endian raw-bps form, still accepted by the
+          handler for older clients; a raw value matching a tier's bps
+          selects that tier. New consumers MUST use the 1-byte tier code.
     fields:
-      - { name: rate, type: uint8, description: "0=low(1kbps), 1=high(64kbps)" }
+      - name: rate
+        type: uint8
+        offset: 1
+        unit: ""
+        calibration: { type: enum }
+        default: 0
+        enum:
+          - { value: 0, label: LOW, description: "16 kbps BPSK conv(7,1/2)+RS - routine operations" }
+          - { value: 1, label: HIGH, description: "128 kbps QPSK RS(255,223) - dumps only (gated)" }
+          - { value: 255, label: BEACON, description: "1 kbps bootloader beacon - not selectable here" }
+        description: "Tier code: 0=LOW(16 kbps, routine operations), 1=HIGH(128 kbps, dumps only), 255=BEACON(1 kbps, bootloader only). Codes come from tm_rate_tiers[].command_code in subsystems/ttc.yaml."
   - name: TTC_PA_ON
     service: 8
     subtype: 1
@@ -1007,9 +1663,28 @@ commands:
     service: 8
     subtype: 1
     func_id: 68
-    description: "Set transmit power level"
+    arg_schema_version: 1
+    criticality: caution
+    description: >-
+      Select an SSPA operating point. Discrete steps only: the RF output of
+      a solid-state PA is a function of the commanded gain state, baseplate
+      temperature and VSWR, and is not a continuous ground-settable
+      quantity. Unknown codes are REJECTED with S1.8 error 0x0003, never
+      clamped. (The old '2 = 8 W' documentation was never executable:
+      set_tx_power rejects anything above pa_max_power_w = 5.0 W.)
+    readback: { param_id: 0x050D, description: "ttc.tx_fwd_power" }
     fields:
-      - { name: level, type: uint8, description: "0=low(1W), 1=nominal(5W), 2=high(8W)" }
+      - name: level
+        type: uint8
+        offset: 1
+        unit: ""
+        calibration: { type: enum }
+        default: 1
+        enum:
+          - { value: 0, label: LOW,     description: "1.0 W RF - link-margin-limited passes, FDIR power reduction" }
+          - { value: 1, label: NOMINAL, description: "2.0 W RF - routine operations (ttc.yaml pa_nominal_power_w)" }
+          - { value: 2, label: HIGH,    description: "5.0 W RF - ceiling (ttc.yaml pa_max_power_w); ~17 W DC at 30% PAE" }
+        description: "0=LOW (1.0 W), 1=NOMINAL (2.0 W), 2=HIGH (5.0 W)"
   - name: TTC_DEPLOY_ANTENNA
     service: 8
     subtype: 1
@@ -1035,21 +1710,33 @@ commands:
     func_id: 72
     description: "Set uplink frequency"
     fields:
-      - { name: freq_mhz, type: float32, description: "Uplink frequency in MHz (2000-2100)" }
+      - { name: freq_mhz, type: float32, description: "Uplink frequency in MHz (S-band 2025-2110, CCSDS 401.0-B)" }
   - name: TTC_SET_DL_FREQ
     service: 8
     subtype: 1
     func_id: 73
     description: "Set downlink frequency"
     fields:
-      - { name: freq_mhz, type: float32, description: "Downlink frequency in MHz (8400-8500)" }
+      - { name: freq_mhz, type: float32, description: "Downlink frequency in MHz (S-band 2200-2290, CCSDS 401.0-B)" }
   - name: TTC_SET_MODULATION
     service: 8
     subtype: 1
     func_id: 74
+    arg_schema_version: 1
     description: "Set modulation scheme. Changes symbol mapping and effective data rate. BPSK is the default safe mode. Higher-order schemes increase throughput but require better Eb/N0."
     fields:
-      - { name: mode, type: uint8, description: "0=BPSK (1 bit/sym, most robust), 1=QPSK (2 bit/sym), 2=8PSK (3 bit/sym, needs +3.6 dB), 3=OQPSK (2 bit/sym, offset timing)" }
+      - name: mode
+        type: uint8
+        offset: 1
+        unit: ""
+        calibration: { type: enum }
+        default: 0
+        enum:
+          - { value: 0, label: BPSK, description: "1 bit/sym, most robust" }
+          - { value: 1, label: QPSK, description: "2 bit/sym" }
+          - { value: 2, label: 8PSK, description: "3 bit/sym, needs +3.6 dB" }
+          - { value: 3, label: OQPSK, description: "2 bit/sym, offset timing" }
+        description: "0=BPSK (1 bit/sym, most robust), 1=QPSK (2 bit/sym), 2=8PSK (3 bit/sym, needs +3.6 dB), 3=OQPSK (2 bit/sym, offset timing)"
   - name: TTC_SET_RX_GAIN
     service: 8
     subtype: 1
@@ -1076,6 +1763,20 @@ commands:
     description: "Enable/disable coherent transponder mode"
     fields:
       - { name: "on", type: uint8, description: "0=off (non-coherent), 1=on (coherent)" }
+  - name: TTC_SET_DOWNLINK_MODE
+    service: 8
+    subtype: 1
+    func_id: 79
+    description: >-
+      Enter or leave DOWNLINK / payload-dump mode. This is the gate on the
+      HIGH tier of the TM data-rate ladder (TTC_SET_DATA_RATE): bulk downlink
+      has to be entered deliberately, so an S13 image dump or an S15 delayed-
+      telemetry playback is a planned pass activity rather than something the
+      spacecraft drifts into at 1 Mbps. Leaving DOWNLINK mode does NOT clear
+      the commanded tier — the active tier simply falls back to LOW until
+      DOWNLINK mode is re-entered.
+    fields:
+      - { name: "on", type: uint8, description: "0=leave DOWNLINK mode, 1=enter DOWNLINK/dump mode" }
 
   # ===== S9 Time Management =====
   - name: SET_TIME
@@ -1142,9 +1843,16 @@ commands:
   - name: MON_ADD_DEF
     service: 12
     subtype: 6
-    description: "Add parameter monitoring definition"
+    # 13 bytes. The previous entry declared 10 (param_id + two floats) while the
+    # handler read 11 (it also reads check_type), so a catalog-shaped command
+    # produced garbage limits — {'check_type': 63, 'low': -8.97e-44} (defect #69).
+    # mon_id is the DEFINITION id: a parameter may carry several monitors
+    # (e.g. a WARNING and an ALARM tier), and 12,3/12,4/12,7 address them by it.
+    description: "Add parameter monitoring definition (mon_id addresses the definition, not the parameter)"
     fields:
+      - { name: mon_id, type: uint16, description: "Definition ID (unique per monitor)" }
       - { name: param_id, type: uint16, description: "Parameter to monitor" }
+      - { name: check_type, type: uint8, description: "0=absolute (value in band), 1=delta (change since last check in band)" }
       - { name: low_limit, type: float32, description: "Low limit threshold" }
       - { name: high_limit, type: float32, description: "High limit threshold" }
   - name: MON_DELETE_DEF
@@ -1152,7 +1860,24 @@ commands:
     subtype: 7
     description: "Delete parameter monitoring definition"
     fields:
-      - { name: param_id, type: uint16, description: "Parameter ID to stop monitoring" }
+      - { name: mon_id, type: uint16, description: "Definition ID to delete" }
+  - name: MON_ENABLE_DEF
+    service: 12
+    subtype: 3
+    description: "Enable ONE monitoring definition (12,1 enables the whole service)"
+    fields:
+      - { name: mon_id, type: uint16, description: "Definition ID to enable" }
+  - name: MON_DISABLE_DEF
+    service: 12
+    subtype: 4
+    description: "Disable ONE monitoring definition (12,2 disables the whole service)"
+    fields:
+      - { name: mon_id, type: uint16, description: "Definition ID to disable" }
+  - name: MON_REPORT_DEFS
+    service: 12
+    subtype: 12
+    description: "Report all monitoring definitions -> TM(12,13)"
+    fields: []
 
   # ===== S13 Large Data Transfer =====
   - name: S13_CREATE_TRANSFER
@@ -1161,7 +1886,7 @@ commands:
     description: "Create download transfer session for image"
     fields:
       - { name: scene_id, type: uint16, description: "Scene ID to download" }
-      - { name: size_mb, type: uint16, description: "Image size in MB (0=default 800MB)" }
+      - { name: size_mb, type: uint16, description: "Image size in MB (0=configured payload image size, 4 MB)" }
   - name: S13_DOWNLOAD_SEGMENT
     service: 13
     subtype: 3
@@ -1221,14 +1946,64 @@ commands:
     description: "Send connection test, expect S17.2 response"
     fields: []
 
+  # ===== S18 On-Board Control Procedures (OBCP) =====
+  # Boot procedures 1-3 are pre-loaded from configs/eosat1/obcp/*.yaml.
+  # Full multi-step loads are a serialized blob (see docs/OBCP_GUIDE.md);
+  # the catalog exposes it as a raw-hex bytes field for advanced use —
+  # routine ops use start/stop/status/delete of the pre-loaded procedures.
+  # NOTE (defect #40): all field names quoted to avoid YAML boolean coercion.
+  - name: "OBCP_LOAD"
+    service: 18
+    subtype: 1
+    description: "Direct-load an OBCP (raw serialized blob: proc_id + name + steps; see docs/OBCP_GUIDE.md)"
+    criticality: caution
+    fields:
+      - { name: "obcp_blob", type: bytes, description: "Serialized OBCP load blob (hex)" }
+  - name: "OBCP_DELETE"
+    service: 18
+    subtype: 2
+    description: "Delete a loaded on-board control procedure (aborts it if running)"
+    fields:
+      - { name: "proc_id", type: uint16, description: "Procedure ID (boot: 1=pass_prep, 2=safe_mode, 3=payload_checkout)" }
+  - name: "OBCP_START"
+    service: 18
+    subtype: 3
+    description: "Activate (start) a loaded on-board control procedure"
+    fields:
+      - { name: "proc_id", type: uint16, description: "Procedure ID (boot: 1=pass_prep, 2=safe_mode, 3=payload_checkout)" }
+      - { name: "param", type: uint8, description: "Optional activation argument (0 if unused)" }
+  - name: "OBCP_STOP"
+    service: 18
+    subtype: 4
+    description: "Stop (abort) a running on-board control procedure"
+    criticality: caution
+    fields:
+      - { name: "proc_id", type: uint16, description: "Procedure ID (0 = stop ALL running procedures)" }
+  - name: "OBCP_STATUS_REPORT"
+    service: 18
+    subtype: 6
+    description: "Request OBCP status report — TM(18,7) lists every loaded procedure with run state and current step"
+    fields: []
+
   # ===== S19 Event-Action =====
   - name: EA_ADD
     service: 19
     subtype: 1
-    description: "Add event-action definition"
+    # 6 bytes. The handler used to read a 1-byte event_type, and every EOSAT-1
+    # event id is >= 0x0100, so no ground-added rule could ever fire. trigger_kind
+    # disambiguates the two id namespaces, which otherwise overlap in
+    # 0x0000-0x0FFF and made 17 of the 26 shipped rules dual-triggered (defect #70).
+    description: "Add event-action definition (trigger_kind 0=S5 event id, 1=S12 monitored parameter id)"
     fields:
-      - { name: event_id, type: uint16, description: "Triggering event ID" }
-      - { name: action_tc, type: bytes, description: "TC packet to execute on event" }
+      - { name: ea_id, type: uint16, description: "Event-action definition ID" }
+      - { name: trigger_kind, type: uint8, description: "0=event id (event_catalog.yaml), 1=parameter id (S12 limit violation)" }
+      - { name: trigger_id, type: uint16, description: "Triggering event ID or parameter ID, per trigger_kind" }
+      - { name: action_func_id, type: uint8, description: "S8 function dispatched when the rule fires" }
+  - name: EA_REPORT_DEFS
+    service: 19
+    subtype: 8
+    description: "Report all event-action definitions -> TM(19,128)"
+    fields: []
   - name: EA_DELETE
     service: 19
     subtype: 2
@@ -1322,3 +2097,105 @@ commands:
     description: "OBC heater OFF (legacy quick-action)"
     fields: []
     position: eps
+
+# ═════════════════════════════════════════════════════════════════════
+# Phase E (brief 04 WP-5) — the MCS QUICK COMMANDS panel, schema-driven.
+# Each entry names a catalogued command plus ENGINEERING argument values;
+# the hex is computed by the shared encoder (smo_common.commanding on the
+# ground, the mirrored JS encoder in the MCS page) — never hand-typed.
+# `name` is the send-path display name (defaults to `command`), `label`
+# the button text, `group` the panel section. `critical` renders the red
+# confirm-first style.
+# ═════════════════════════════════════════════════════════════════════
+quick_commands:
+  # ── AOCS MODES ──
+  - { group: "AOCS MODES", label: "Detumble",   command: AOCS_SET_MODE, name: AOCS_DETUMBLE,   args: { mode: 2 } }
+  - { group: "AOCS MODES", label: "Coarse Sun", command: AOCS_SET_MODE, name: AOCS_COARSE_SUN, args: { mode: 3 } }
+  - { group: "AOCS MODES", label: "Nominal",    command: AOCS_SET_MODE, name: AOCS_NOMINAL,    args: { mode: 4 } }
+  - { group: "AOCS MODES", label: "Fine Point", command: AOCS_SET_MODE, name: AOCS_FINE_POINT, args: { mode: 5 } }
+  - { group: "AOCS MODES", label: "Desaturate", command: AOCS_DESATURATE, name: AOCS_DESAT, args: {} }
+  # ── AOCS EQUIPMENT ──
+  - { group: "AOCS EQUIPMENT", label: "RW0 On",  command: AOCS_ENABLE_WHEEL,  name: RW0_ENABLE,  args: { wheel_idx: 0 } }
+  - { group: "AOCS EQUIPMENT", label: "RW1 On",  command: AOCS_ENABLE_WHEEL,  name: RW1_ENABLE,  args: { wheel_idx: 1 } }
+  - { group: "AOCS EQUIPMENT", label: "RW2 On",  command: AOCS_ENABLE_WHEEL,  name: RW2_ENABLE,  args: { wheel_idx: 2 } }
+  - { group: "AOCS EQUIPMENT", label: "RW3 On",  command: AOCS_ENABLE_WHEEL,  name: RW3_ENABLE,  args: { wheel_idx: 3 } }
+  - { group: "AOCS EQUIPMENT", label: "RW0 Off", command: AOCS_DISABLE_WHEEL, name: RW0_DISABLE, args: { wheel_idx: 0 } }
+  - { group: "AOCS EQUIPMENT", label: "RW1 Off", command: AOCS_DISABLE_WHEEL, name: RW1_DISABLE, args: { wheel_idx: 1 } }
+  - { group: "AOCS EQUIPMENT", label: "RW2 Off", command: AOCS_DISABLE_WHEEL, name: RW2_DISABLE, args: { wheel_idx: 2 } }
+  - { group: "AOCS EQUIPMENT", label: "RW3 Off", command: AOCS_DISABLE_WHEEL, name: RW3_DISABLE, args: { wheel_idx: 3 } }
+  - { group: "AOCS EQUIPMENT", label: "MTQ Enable",  command: MTQ_ENABLE, name: MTQ_ENABLE,  args: { enable: 1 } }
+  - { group: "AOCS EQUIPMENT", label: "MTQ Disable", command: MTQ_ENABLE, name: MTQ_DISABLE, args: { enable: 0 } }
+  - { group: "AOCS EQUIPMENT", label: "ST1 On",  command: ST1_POWER, name: ST1_ON,  args: { "on": 1 } }
+  - { group: "AOCS EQUIPMENT", label: "ST1 Off", command: ST1_POWER, name: ST1_OFF, args: { "on": 0 } }
+  - { group: "AOCS EQUIPMENT", label: "ST2 On",  command: ST2_POWER, name: ST2_ON,  args: { "on": 1 } }
+  - { group: "AOCS EQUIPMENT", label: "ST2 Off", command: ST2_POWER, name: ST2_OFF, args: { "on": 0 } }
+  - { group: "AOCS EQUIPMENT", label: "GPS Rx On",  command: S2_AOCS_GPS_RECEIVER, args: { device_id: 527, state: 1 } }
+  - { group: "AOCS EQUIPMENT", label: "GPS Rx Off", command: S2_AOCS_GPS_RECEIVER, args: { device_id: 527, state: 0 } }
+  - { group: "AOCS EQUIPMENT", label: "GPS Cold", command: AOCS_GPS_SET_START_MODE, name: AOCS_GPS_COLD, args: { start_mode: 0 } }
+  - { group: "AOCS EQUIPMENT", label: "GPS Warm", command: AOCS_GPS_SET_START_MODE, name: AOCS_GPS_WARM, args: { start_mode: 1 } }
+  - { group: "AOCS EQUIPMENT", label: "GPS Hot",  command: AOCS_GPS_SET_START_MODE, name: AOCS_GPS_HOT,  args: { start_mode: 2 } }
+  # ── EPS POWER LINES ──
+  - { group: "EPS POWER LINES", label: "TTC TX On",    command: EPS_POWER_ON,  name: EPS_LINE2_ON,  args: { line_index: 2 } }
+  - { group: "EPS POWER LINES", label: "TTC TX Off",   command: EPS_POWER_OFF, name: EPS_LINE2_OFF, args: { line_index: 2 } }
+  - { group: "EPS POWER LINES", label: "Payload On",   command: EPS_POWER_ON,  name: EPS_LINE3_ON,  args: { line_index: 3 } }
+  - { group: "EPS POWER LINES", label: "Payload Off",  command: EPS_POWER_OFF, name: EPS_LINE3_OFF, args: { line_index: 3 } }
+  - { group: "EPS POWER LINES", label: "FPA Cool On",  command: EPS_POWER_ON,  name: EPS_LINE4_ON,  args: { line_index: 4 } }
+  - { group: "EPS POWER LINES", label: "FPA Cool Off", command: EPS_POWER_OFF, name: EPS_LINE4_OFF, args: { line_index: 4 } }
+  - { group: "EPS POWER LINES", label: "Bat Htr On",   command: EPS_POWER_ON,  name: EPS_LINE5_ON,  args: { line_index: 5 } }
+  - { group: "EPS POWER LINES", label: "Bat Htr Off",  command: EPS_POWER_OFF, name: EPS_LINE5_OFF, args: { line_index: 5 } }
+  - { group: "EPS POWER LINES", label: "OBC Htr On",   command: EPS_POWER_ON,  name: EPS_LINE6_ON,  args: { line_index: 6 } }
+  - { group: "EPS POWER LINES", label: "OBC Htr Off",  command: EPS_POWER_OFF, name: EPS_LINE6_OFF, args: { line_index: 6 } }
+  - { group: "EPS POWER LINES", label: "AOCS Whl On",  command: EPS_POWER_ON,  name: EPS_LINE7_ON,  args: { line_index: 7 } }
+  - { group: "EPS POWER LINES", label: "AOCS Whl Off", command: EPS_POWER_OFF, name: EPS_LINE7_OFF, args: { line_index: 7 } }
+  - { group: "EPS POWER LINES", label: "Reset OC 0",   command: EPS_RESET_OC_FLAG, name: EPS_RESET_OC0, args: { line_index: 0 } }
+  # ── TCS ──
+  - { group: "TCS", label: "Bat Htr ON",   command: HEATER_BATTERY, name: HTR_BAT_ON,   args: { "on": 1 } }
+  - { group: "TCS", label: "Bat Htr OFF",  command: HEATER_BATTERY, name: HTR_BAT_OFF,  args: { "on": 0 } }
+  - { group: "TCS", label: "FPA Cool ON",  command: FPA_COOLER,     name: FPA_COOL_ON,  args: { "on": 1 } }
+  - { group: "TCS", label: "FPA Cool OFF", command: FPA_COOLER,     name: FPA_COOL_OFF, args: { "on": 0 } }
+  # ── TTC ──
+  - { group: "TTC", label: "PA ON",  command: TTC_PA_ON,  args: {} }
+  - { group: "TTC", label: "PA OFF", command: TTC_PA_OFF, args: {} }
+  - { group: "TTC", label: "DL Mode ON",  command: TTC_SET_DOWNLINK_MODE, args: { "on": 1 } }
+  - { group: "TTC", label: "DL Mode OFF", command: TTC_SET_DOWNLINK_MODE, args: { "on": 0 } }
+  - { group: "TTC", label: "Rate HIGH (128k)", command: TTC_SET_DATA_RATE, name: TTC_RATE_HIGH, args: { rate: 1 } }
+  - { group: "TTC", label: "Rate LOW (16k)",   command: TTC_SET_DATA_RATE, name: TTC_RATE_LOW,  args: { rate: 0 } }
+  - { group: "TTC", label: "TX Pwr LOW (1W)",  command: TTC_SET_TX_POWER, name: TTC_TX_PWR_LOW, args: { level: 0 } }
+  - { group: "TTC", label: "TX Pwr NOM (2W)",  command: TTC_SET_TX_POWER, name: TTC_TX_PWR_NOM, args: { level: 1 } }
+  - { group: "TTC", label: "TX Pwr HIGH (5W)", command: TTC_SET_TX_POWER, name: TTC_TX_PWR_HIGH, args: { level: 2 } }
+  # ── PAYLOAD (textbook section 6.7 / section 14 ops-card command set) ──
+  - { group: "PAYLOAD", label: "Standby", command: PAYLOAD_SET_MODE, name: PLD_STANDBY, args: { mode: 1 } }
+  - { group: "PAYLOAD", label: "Imaging", command: PAYLOAD_SET_MODE, name: PLD_IMAGING, args: { mode: 2 } }
+  - { group: "PAYLOAD", label: "Off",     command: PAYLOAD_SET_MODE, name: PLD_OFF,     args: { mode: 0 } }
+  - { group: "PAYLOAD", label: "Capture 2048 ln", command: PAYLOAD_CAPTURE, name: PLD_CAPTURE, args: { scene_id: 0, lines: 2048 } }
+  - { group: "PAYLOAD", label: "Cooler -15 C", command: PAYLOAD_COOLER_SETPOINT, name: PLD_COOLER_M15, args: { setpoint: -15.0 } }
+  - { group: "PAYLOAD", label: "Cooler -10 C", command: PAYLOAD_COOLER_SETPOINT, name: PLD_COOLER_M10, args: { setpoint: -10.0 } }
+  - { group: "PAYLOAD", label: "Bands ALL",  command: PAYLOAD_SET_BAND_CONFIG, name: PLD_BANDS_ALL, args: { mask: 15 } }
+  - { group: "PAYLOAD", label: "Bands VIS",  command: PAYLOAD_SET_BAND_CONFIG, name: PLD_BANDS_VIS, args: { mask: 7 } }
+  - { group: "PAYLOAD", label: "Gain 1.0x",  command: PAYLOAD_SET_GAIN, name: PLD_GAIN_1, args: { gain: 1.0 } }
+  - { group: "PAYLOAD", label: "Int 8/12/16/20 ms", command: PAYLOAD_SET_INTEGRATION_TIME, name: PLD_INT_TEXTBOOK, args: { blue_ms: 8.0, green_ms: 12.0, red_ms: 16.0, nir_ms: 20.0 } }
+  - { group: "PAYLOAD", label: "Cal DARK",  command: PAYLOAD_START_CALIBRATION, name: PLD_CAL_DARK, args: { mode: 0 } }
+  - { group: "PAYLOAD", label: "Cal BOTH",  command: PAYLOAD_START_CALIBRATION, name: PLD_CAL_BOTH, args: { mode: 2 } }
+  - { group: "PAYLOAD", label: "Cal STOP",  command: PAYLOAD_STOP_CALIBRATION, name: PLD_CAL_STOP, args: {} }
+  - { group: "PAYLOAD", label: "Cal Lamp On",  command: PAYLOAD_CAL_LAMP, name: PLD_LAMP_ON,  args: { "on": 1 } }
+  - { group: "PAYLOAD", label: "Cal Lamp Off", command: PAYLOAD_CAL_LAMP, name: PLD_LAMP_OFF, args: { "on": 0 } }
+  - { group: "PAYLOAD", label: "Shutter x5", command: PAYLOAD_CYCLE_SHUTTER, name: PLD_SHUTTER_5, args: { cycles: 5 } }
+  - { group: "PAYLOAD", label: "Filter CLEAR", command: PAYLOAD_SELECT_FILTER, name: PLD_FILTER_CLEAR, args: { position: 0 } }
+  - { group: "PAYLOAD", label: "Catalog Req", command: PAYLOAD_GET_IMAGE_CATALOG, name: PLD_CATALOG, args: {} }
+  # ── OBDH ──
+  - { group: "OBDH", label: "OBC Reboot", command: OBC_REBOOT,      name: OBC_REBOOT,   args: {}, critical: true }
+  - { group: "OBDH", label: "OBC Switch", command: OBC_SWITCH_UNIT, name: OBC_SWITCH,   args: {}, critical: true }
+  - { group: "OBDH", label: "Boot App",   command: OBC_BOOT_APP,    args: {} }
+  - { group: "OBDH", label: "Mem Scrub",  command: OBC_MEMORY_SCRUB, name: OBC_MEM_SCRUB, args: {} }
+  - { group: "OBDH", label: "GPS Time Sync", command: OBC_GPS_TIME_SYNC, args: {} }
+  # ── GENERAL ──
+  - { group: "GENERAL", label: "Conn Test",  command: CONNECTION_TEST, name: CONN_TEST, args: {} }
+  - { group: "GENERAL", label: "Deploy Ant", command: TTC_DEPLOY_ANTENNA, name: TTC_DEPLOY_ANT, args: {} }
+  - { group: "GENERAL", label: "WD Enable",  command: OBC_WATCHDOG_ENABLE, name: OBC_WD_ENABLE, args: {} }
+  # ── HK REQUESTS (S3.27) ──
+  - { group: "HK REQUESTS (S3.27)", label: "EPS (SID1)",     command: HK_REQUEST, name: HK_REQ_EPS,  args: { sid: 1 } }
+  - { group: "HK REQUESTS (S3.27)", label: "AOCS (SID2)",    command: HK_REQUEST, name: HK_REQ_AOCS, args: { sid: 2 } }
+  - { group: "HK REQUESTS (S3.27)", label: "TCS (SID3)",     command: HK_REQUEST, name: HK_REQ_TCS,  args: { sid: 3 } }
+  - { group: "HK REQUESTS (S3.27)", label: "OBDH (SID4)",    command: HK_REQUEST, name: HK_REQ_OBDH, args: { sid: 4 } }
+  - { group: "HK REQUESTS (S3.27)", label: "Payload (SID5)", command: HK_REQUEST, name: HK_REQ_PLD,  args: { sid: 5 } }
+  - { group: "HK REQUESTS (S3.27)", label: "TTC (SID6)",     command: HK_REQUEST, name: HK_REQ_TTC,  args: { sid: 6 } }

@@ -41,13 +41,13 @@ verification, PA commanding, antenna deployment checks, and transponder switchov
 | Command | Service | Subtype | Func ID | Description |
 |---|---|---|---|---|
 | HK_REQUEST | 3 | 27 | -- | Request one-shot HK report |
-| EPS_POWER_ON | 8 | 1 | 13 | Switch power line ON |
-| TTC_PA_ON | 8 | 1 | 53 | Enable power amplifier |
-| TTC_PA_OFF | 8 | 1 | 54 | Disable power amplifier |
+| EPS_POWER_ON | 8 | 1 | 19 | Switch power line ON |
+| TTC_PA_ON | 8 | 1 | 66 | Enable power amplifier |
+| TTC_PA_OFF | 8 | 1 | 67 | Disable power amplifier |
 | TTC_DEPLOY_ANTENNAS | 8 | 1 | 56 | Fire burn-wire antenna deployment |
-| TTC_SWITCH_REDUNDANT | 8 | 1 | 51 | Switch to redundant transponder |
-| TTC_SWITCH_PRIMARY | 8 | 1 | 50 | Switch to primary transponder |
-| TTC_SET_TX_POWER | 8 | 1 | 55 | Set transmit power level |
+| TTC_SWITCH_REDUNDANT | 8 | 1 | 64 | Switch to redundant transponder |
+| TTC_SWITCH_PRIMARY | 8 | 1 | 63 | Switch to primary transponder |
+| TTC_SET_TX_POWER | 8 | 1 | 68 | Set transmit power level |
 | CONNECTION_TEST | 17 | 1 | -- | S17 connection test (ping) |
 
 ## Procedure Steps
@@ -73,7 +73,7 @@ The purpose is to trigger downlink activity and check for faint signal.
 **Note:** The `eps.pl_ttc_tx` (0x0112) parameter indicates TX power line state, but this
 requires a working downlink to read. If the TX power line was tripped by an overcurrent
 event, the transponder has no power to transmit.
-**Action:** Send blind power-on command: `EPS_POWER_ON(line_index=2)` (func_id 13) —
+**Action:** Send blind power-on command: `EPS_POWER_ON(line_index=2)` (func_id 19) —
 this commands the TTC TX power line ON.
 **Verify:** Wait 30 s for transponder to power up and re-acquire.
 **Verify:** Check ground station receiver for downlink carrier.
@@ -81,23 +81,23 @@ this commands the TTC TX power line ON.
 
 ### Step 3: Command Transponder Switch (Blind)
 **Action:** The primary transponder may have failed. Attempt blind switchover:
-`TTC_SWITCH_REDUNDANT` (func_id 51) — blind command
+`TTC_SWITCH_REDUNDANT` (func_id 64) — blind command
 **Verify:** Wait 45 s for redundant transponder power-up and frequency lock.
 **Verify:** Check ground station receiver for downlink carrier on redundant transponder frequency.
 **Action:** If signal detected on redundant: proceed to Step 6 (link verification).
-**Action:** If still no signal: revert to primary: `TTC_SWITCH_PRIMARY` (func_id 50).
+**Action:** If still no signal: revert to primary: `TTC_SWITCH_PRIMARY` (func_id 63).
 Wait 30 s.
 **GO/NO-GO:** If neither transponder produces signal, proceed to Step 4 (PA check).
 
 ### Step 4: Command PA ON (Blind)
 **Action:** The PA may be disabled. Send blind PA enable command:
-`TTC_PA_ON` (func_id 53)
+`TTC_PA_ON` (func_id 66)
 **Verify:** Wait 15 s for PA power-up.
 **Verify:** Check ground station receiver for downlink carrier.
 **Action:** If signal detected: proceed to Step 6 (link verification).
 **Action:** If no signal: the PA enable may not have taken effect. Try cycling the PA:
-- `TTC_PA_OFF` (func_id 54) — wait 10 s
-- `TTC_PA_ON` (func_id 53) — wait 15 s
+- `TTC_PA_OFF` (func_id 67) — wait 10 s
+- `TTC_PA_ON` (func_id 66) — wait 15 s
 **Verify:** Check ground station receiver for downlink carrier.
 **GO/NO-GO:** If signal detected, proceed to Step 6. If still no signal, proceed to Step 5.
 
@@ -143,8 +143,7 @@ signal after all RF chain checks, proceed to Step 7 (escalation).
 **Action:** Notify Flight Director and Mission Director of sustained no-TM condition.
 **Action:** Confirm spacecraft autonomous safe mode timer is active (24h no-contact trigger).
 **Action:** Schedule next available ground station pass for re-acquisition attempt.
-**Action:** Consider increasing TX power for next attempt: prepare `TTC_SET_TX_POWER(level=2)`
-(func_id 55) — high power mode for improved link budget.
+**Action:** Consider increasing TX power for next attempt: prepare `TTC_SET_TX_POWER(level=2)` (func_id 68) — high power mode for improved link budget.
 **GO/NO-GO:** If no link after two consecutive pass attempts, escalate to EMG-004
 (Loss of Communication Emergency).
 
@@ -159,9 +158,10 @@ signal after all RF chain checks, proceed to Step 7 (escalation).
 - [ ] If unrecovered: EMG-004 escalation initiated
 
 ## Contingency
-- If link restores but RSSI < -95 dBm or margin < 1.5 dB: Reduce data rate via
-  `TTC_SET_DATA_RATE(rate=0)` (func_id 52) to improve margin. Investigate antenna
-  or PA degradation.
+- If link restores but RSSI < -95 dBm or margin < 1.5 dB: Step down to LOW
+  (16 kbps) via `TTC_SET_DATA_RATE(rate=0)` (func_id 65) to gain 9.03 dB of Eb/N0
+  plus 1.5 dB of coding gain. LOW is the routine operations rate, so this costs
+  nothing but the ability to dump. Investigate antenna or PA degradation.
 - If PA cycles on but immediately shuts down: PA may have a thermal or overcurrent
   protection trip. Check `ttc.pa_temp` (0x050F). If > 65 C, PA thermal protection
   is active. Wait for cooldown before retry.

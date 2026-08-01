@@ -208,7 +208,15 @@ class TestEPSPowerLines:
         assert not result['success']
 
     def test_power_consumption_changes(self):
-        """Toggling power lines should affect power consumption."""
+        """Toggling power lines should affect power consumption.
+
+        ``power_cons_w`` carries ±1 W of gaussian measurement noise per tick and
+        the wheel line is now billed at ``line_power_w.aocs_wheels`` (6 W in
+        simulation.yaml, down from a hard-coded 12 W), so a single-tick
+        comparison against a fixed 5 W margin was inside the noise floor.
+        Averaging over several ticks and comparing against the model's own
+        configured line power keeps the test meaningful when that value changes.
+        """
         from unittest.mock import MagicMock
         model = self._make_eps()
         orbit = MagicMock()
@@ -216,15 +224,23 @@ class TestEPSPowerLines:
         orbit.solar_beta_deg = 20.0
         params = {}
 
+        def _mean_consumption(ticks=25):
+            total = 0.0
+            for _ in range(ticks):
+                model.tick(1.0, orbit, params)
+                total += model._state.power_cons_w
+            return total / ticks
+
         # Turn AOCS wheels ON first (default is OFF in LEOP convention)
         model.handle_command({"command": "power_line_on", "line_index": 7})
-        model.tick(1.0, orbit, params)
-        cons_wheels_on = model._state.power_cons_w
+        cons_wheels_on = _mean_consumption()
 
         # Now turn AOCS wheels off
         model.handle_command({"command": "power_line_off", "line_index": 7})
-        model.tick(1.0, orbit, params)
-        cons_no_wheels = model._state.power_cons_w
+        cons_no_wheels = _mean_consumption()
 
-        # Power consumption should decrease by ~12W
-        assert cons_no_wheels < cons_wheels_on - 5
+        wheel_line_w = model._line_power_w.get("aocs_wheels", 6.0)
+        drop = cons_wheels_on - cons_no_wheels
+        assert drop == pytest.approx(wheel_line_w, abs=1.5), (
+            f"switching the AOCS wheel line off changed consumption by "
+            f"{drop:.2f} W; the line is billed at {wheel_line_w:.1f} W")

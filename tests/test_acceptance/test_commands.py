@@ -113,11 +113,13 @@ class TestPayloadCommandsRF:
         assert r["ack_11"]
 
     def test_set_detector_gain(self, harness):
-        r = harness.send_s8(35, struct.pack('>f', 2.0), "SET_GAIN_2.0")
+        # Phase E WP-3: uint16 milli-gain (2000 = 2.000x)
+        r = harness.send_s8(35, struct.pack('>H', 2000), "SET_GAIN_2.0")
         assert r["ack_11"]
 
     def test_set_cooler_setpoint(self, harness):
-        r = harness.send_s8(36, struct.pack('>f', -30.0), "SET_COOLER_-30C")
+        # Phase E WP-3: uint16 centi-kelvin; -10.00 C = 26315 = 0x66CB
+        r = harness.send_s8(36, struct.pack('>H', 26315), "SET_COOLER_-10C")
         assert r["ack_11"]
 
     def test_start_calibration(self, harness):
@@ -129,11 +131,13 @@ class TestPayloadCommandsRF:
         assert r["ack_11"]
 
     def test_set_compression(self, harness):
-        r = harness.send_s8(39, struct.pack('>f', 4.0), "SET_COMPRESSION_4")
+        # Phase E WP-3: algorithm(u8) + ratio_deci(u8); 40 = ratio 4.0
+        r = harness.send_s8(39, bytes([3, 40]), "SET_COMPRESSION_4")
         assert r["ack_11"]
 
     def test_capture_image(self, harness):
-        r = harness.send_s8(28, struct.pack('>ff', 45.0, 10.0), "CAPTURE_45_10")
+        # Phase E WP-1: scene_id(u16, 0=auto) + lines(u16)
+        r = harness.send_s8(28, struct.pack('>HH', 0, 2048), "CAPTURE_2048LN")
         assert r["ack_11"]
 
     def test_download_image(self, harness):
@@ -149,7 +153,8 @@ class TestPayloadCommandsRF:
         assert r["ack_11"]
 
     def test_set_integration_time(self, harness):
-        r = harness.send_s8(34, struct.pack('>ffff', 0.01, 0.02, 0.015, 0.025),
+        # Phase E WP-3: 4x uint16, 0.01 ms/LSB (800/1200/1600/2000 = 8/12/16/20 ms)
+        r = harness.send_s8(34, struct.pack('>HHHH', 800, 1200, 1600, 2000),
                             "SET_INT_TIMES")
         assert r["ack_11"]
 
@@ -277,11 +282,26 @@ class TestTTCCommandsRF:
         assert r["ack_11"]
 
     def test_set_tm_rate(self, harness):
-        r = harness.send_s8(65, struct.pack('>I', 64000), "SET_TM_RATE_64k")
+        """Catalogued form: one uint8 tier code (defect #85).
+
+        Code 0 = LOW (16 kbps), which is permitted with the antenna stowed, so
+        this exercises the command end-to-end whatever state the harness is in.
+        """
+        r = harness.send_s8(65, bytes([0x00]), "SET_TM_RATE_LOW_16k")
+        assert r["ack_11"]
+
+    def test_set_tm_rate_nominal_raw_bps(self, harness):
+        """The legacy 4-byte raw-bps form still decodes, against a real tier."""
+        r = harness.send_s8(65, struct.pack('>I', 128000), "SET_TM_RATE_128k")
+        assert r["ack_11"]
+
+    def test_set_downlink_mode(self, harness):
+        r = harness.send_s8(79, bytes([1]), "DOWNLINK_MODE_ON")
         assert r["ack_11"]
 
     def test_set_tx_power(self, harness):
-        r = harness.send_s8(68, struct.pack('>f', 1.5), "SET_TX_PWR_1.5W")
+        # Phase E WP-2: enumerated level u8 (0=LOW 1 W)
+        r = harness.send_s8(68, bytes([0]), "SET_TX_PWR_LOW")
         assert r["ack_11"]
 
     def test_set_rx_gain(self, harness):
@@ -412,8 +432,13 @@ class TestOBDHCommandsRF:
         Runs last, then re-boots application."""
         r = harness.send_s8(53, name="OBC_SWITCH_UNIT")
         assert r["ack_11"]
-        # OBC reboots into bootloader — re-boot app (func=55 is bootloader-allowed)
-        harness.send_s8(55, name="OBC_BOOT_APP_RESTORE", ticks=15, wait_s=3.0)
+        # OBC reboots into bootloader — re-boot app (func=55 is bootloader-allowed).
+        # Double the derived recovery budget: the reboot means the first
+        # telemetry after this command can be a couple of frames later than
+        # usual. Expressed as a multiple of the link-derived timeout, not as a
+        # constant, so it still holds if the data-rate tier changes.
+        harness.send_s8(55, name="OBC_BOOT_APP_RESTORE", ticks=15,
+                        wait_s=2 * harness.recovery_timeout_s)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -433,3 +458,89 @@ class TestConnectionTestRF:
     def test_beacon_hk_through_rf(self, harness):
         hk = harness.get_hk(11)
         assert hk is not None, "No Beacon HK recovered through RF"
+
+
+# ═══════════════════════════════════════════════════════════════
+# 8. PROPULSION COMMANDS (Phase D, func_id 108-118) — the burn
+#    chain itself is exercised in tests/test_simulator/test_prop_*;
+#    here every new TC goes through the real RF dispatch path and
+#    the catalogue byte counts are pinned.
+# ═══════════════════════════════════════════════════════════════
+
+class TestPropCommandsRF:
+
+    def test_tc_catalog_byte_counts(self):
+        """expected_data_bytes for the 11 prop commands (WP-4b).
+
+        Brief 03 planned funcs 85-95; Phase C took 85-91 for AOCS, so the
+        allocated block is 108-118. Byte counts (incl. the func_id byte):
+        ARM 3, DISARM 1, SET_BURN 11, EXECUTE 1, ABORT 1, ISO_OPEN 2,
+        ISO_CLOSE 2, SET_LIMITS 17, INHIBIT_SET 2, INHIBIT_CLR 3, STATUS 1.
+        """
+        import yaml
+        from pathlib import Path
+        from smo_mcs.tc_lengths import expected_data_bytes
+        catalog = yaml.safe_load(
+            (Path(__file__).parents[2] / "configs" / "eosat1" / "commands"
+             / "tc_catalog.yaml").read_text())["commands"]
+        expected = {
+            "PROP_ARM": (108, 3), "PROP_DISARM": (109, 1),
+            "PROP_SET_BURN": (110, 11), "PROP_EXECUTE": (111, 1),
+            "PROP_ABORT": (112, 1), "PROP_ISO_OPEN": (113, 2),
+            "PROP_ISO_CLOSE": (114, 2), "PROP_SET_LIMITS": (115, 17),
+            "PROP_INHIBIT_SET": (116, 2), "PROP_INHIBIT_CLR": (117, 3),
+            "PROP_GET_STATUS": (118, 1),
+        }
+        by_name = {c["name"]: c for c in catalog}
+        for name, (fid, nbytes) in expected.items():
+            entry = by_name.get(name)
+            assert entry is not None, f"{name} missing from tc_catalog"
+            assert entry["func_id"] == fid, f"{name}: wrong func_id"
+            got = expected_data_bytes(entry)["expected_data_bytes"]
+            assert got == nbytes, f"{name}: {got} bytes, expected {nbytes}"
+
+    def test_prop_get_status_returns_s8_2(self, harness):
+        r = harness.send_s8(118, name="PROP_GET_STATUS")
+        assert r["ack_11"], "No S1.1 for PROP_GET_STATUS"
+        s8_2 = any(p.secondary.service == 8 and p.secondary.subtype == 2
+                   for p in r["responses"])
+        assert s8_2, "No TM(8,2) propulsion status report"
+
+    def test_prop_iso_close_and_open_both(self, harness):
+        r = harness.send_s8(114, bytes([2]), "PROP_ISO_CLOSE_BOTH")
+        assert r["ack_11"]
+        r = harness.send_s8(113, bytes([0]), "PROP_ISO_OPEN_A")
+        assert r["ack_11"]
+
+    def test_prop_set_limits(self, harness):
+        data = struct.pack('>ffff', 2.0, 4.0, 350.0, 300.0)
+        r = harness.send_s8(115, data, "PROP_SET_LIMITS")
+        assert r["ack_11"]
+
+    def test_prop_set_burn_accepted(self, harness):
+        data = struct.pack('>fBBI', 0.2, 0, 1, 0)
+        r = harness.send_s8(110, data, "PROP_SET_BURN")
+        assert r["ack_11"]
+
+    def test_prop_execute_without_arm_fails_with_code(self, harness):
+        """WP-4e: PROP_EXECUTE when not ARMED must produce an explicit S1.8
+        failure, not silence (and never an S1.7 completion)."""
+        r = harness.send_s8(111, name="PROP_EXECUTE_UNARMED")
+        assert r["ack_11"], "acceptance ACK still expected"
+        s1_8 = any(p.secondary.service == 1 and p.secondary.subtype == 8
+                   for p in r["responses"])
+        assert s1_8, "expected S1.8 execution-failure for unarmed EXECUTE"
+
+    def test_prop_inhibit_set_and_keyed_clear(self, harness):
+        r = harness.send_s8(116, bytes([1]), "PROP_INHIBIT_SET")
+        assert r["ack_11"]
+        # wrong key -> S1.8
+        r = harness.send_s8(117, struct.pack('>H', 0x1111),
+                            "PROP_INHIBIT_CLR_BADKEY")
+        s1_8 = any(p.secondary.service == 1 and p.secondary.subtype == 8
+                   for p in r["responses"])
+        assert s1_8, "bad inhibit-clear key must fail loudly"
+        # right key clears
+        r = harness.send_s8(117, struct.pack('>H', 0xA5C3),
+                            "PROP_INHIBIT_CLR")
+        assert r["ack_11"]

@@ -60,6 +60,30 @@ structures:
       - { param_id: 0x0138, pack_format: B, scale: 1 }
       - { param_id: 0x0139, pack_format: h, scale: 100 }
 
+  # Phase B (brief 01 WP-11): EPS power-management SID — wing/SADA status,
+  # per-wing currents, total load current, eclipse flag, power margin and the
+  # per-subsystem power split. A dedicated 8 s structure rather than fields
+  # in the 1 Hz SID 1: at 1 Hz these 27 bytes would have cost ~215 bps of the
+  # 16 kbps LOW-tier channel; at 8 s they cost ~27 bps. Enabled during
+  # commissioning with the other subsystem SIDs (TC(3,5) HK_ENABLE sid=8).
+  - sid: 8
+    name: EPS Power Management
+    interval_s: 8.0
+    parameters:
+      - { param_id: 0x0144, pack_format: B, scale: 1 }     # wing_status
+      - { param_id: 0x0133, pack_format: h, scale: 100 }   # SADA angle
+      - { param_id: 0x0146, pack_format: H, scale: 1000 }  # +Y wing current
+      - { param_id: 0x0147, pack_format: H, scale: 1000 }  # -Y wing current
+      - { param_id: 0x0148, pack_format: H, scale: 1000 }  # total load current
+      - { param_id: 0x013A, pack_format: B, scale: 1 }     # eclipse_active
+      - { param_id: 0x013B, pack_format: h, scale: 10 }    # power_margin
+      - { param_id: 0x013C, pack_format: H, scale: 10 }    # subsys_power_eps
+      - { param_id: 0x013D, pack_format: H, scale: 10 }    # subsys_power_aocs
+      - { param_id: 0x013E, pack_format: H, scale: 10 }    # subsys_power_tcs
+      - { param_id: 0x013F, pack_format: H, scale: 10 }    # subsys_power_ttc
+      - { param_id: 0x0140, pack_format: H, scale: 10 }    # subsys_power_payload
+      - { param_id: 0x0141, pack_format: H, scale: 10 }    # subsys_power_obdh
+
   - sid: 2
     name: AOCS
     interval_s: 4.0
@@ -181,6 +205,9 @@ structures:
       - { param_id: 0x0304, pack_format: I, scale: 1 }
       - { param_id: 0x0305, pack_format: I, scale: 1 }
       - { param_id: 0x0306, pack_format: H, scale: 1 }
+      # Last TC failure code — sits next to the rejection counter it explains
+      # (defect #88). Two octets, appended to the SID 4 layout.
+      - { param_id: 0x0315, pack_format: H, scale: 1 }
       - { param_id: 0x0307, pack_format: I, scale: 1 }
       - { param_id: 0x0308, pack_format: I, scale: 1 }
       - { param_id: 0x0309, pack_format: I, scale: 1 }   # OBC CUC time
@@ -271,6 +298,101 @@ structures:
       - { param_id: 0x0520, pack_format: B, scale: 1 }
       - { param_id: 0x0521, pack_format: B, scale: 1 }
       - { param_id: 0x0522, pack_format: H, scale: 10 }
+      # Rate ladder (brief 08 finding 13). 0x0539-0x053C carry limit bands in
+      # mcs/limits.yaml but were in no HK structure — S20 poll only — so after
+      # defects #85/#86 made the tier ladder the core link lesson, the console
+      # could not show ACTIVE vs COMMANDED tier from routine housekeeping.
+      - { param_id: 0x0539, pack_format: B, scale: 1 }
+      - { param_id: 0x053A, pack_format: B, scale: 1 }
+      - { param_id: 0x053B, pack_format: I, scale: 1 }
+      - { param_id: 0x053C, pack_format: B, scale: 1 }
+
+  # Phase C (brief 02 WP-8): AOCS determination & control telemetry.
+  # Default DISABLED (enabled by TC(3,5) like SIDs 2-6) — SID 2 is NOT
+  # extended: it is referenced verbatim by procedures, tests and the
+  # textbook, and the beacon-tier bit budget would not survive SID growth.
+  - sid: 7
+    name: AOCS_DETERMINATION
+    interval_s: 4.0
+    parameters:
+      - { param_id: 0x02A0, pack_format: h, scale: 10000 }  # q_est x
+      - { param_id: 0x02A1, pack_format: h, scale: 10000 }  # q_est y
+      - { param_id: 0x02A2, pack_format: h, scale: 10000 }  # q_est z
+      - { param_id: 0x02A3, pack_format: h, scale: 10000 }  # q_est w
+      - { param_id: 0x02A4, pack_format: h, scale: 1000 }   # rate_est_x
+      - { param_id: 0x02A5, pack_format: h, scale: 1000 }   # rate_est_y
+      - { param_id: 0x02A6, pack_format: h, scale: 1000 }   # rate_est_z
+      - { param_id: 0x02A7, pack_format: H, scale: 10 }     # knowledge arcsec
+      - { param_id: 0x02A8, pack_format: H, scale: 1000 }   # control err deg
+      - { param_id: 0x02A9, pack_format: I, scale: 10 }     # control arcsec
+      - { param_id: 0x02AA, pack_format: H, scale: 1000 }   # total 3sig deg
+      - { param_id: 0x02AB, pack_format: h, scale: 10000 }  # q_ref x
+      - { param_id: 0x02AC, pack_format: h, scale: 10000 }  # q_ref y
+      - { param_id: 0x02AD, pack_format: h, scale: 10000 }  # q_ref z
+      - { param_id: 0x02AE, pack_format: h, scale: 10000 }  # q_ref w
+      - { param_id: 0x02AF, pack_format: B, scale: 1 }      # pointing frame
+      - { param_id: 0x02B0, pack_format: h, scale: 10000 }  # nadir_body x
+      - { param_id: 0x02B1, pack_format: h, scale: 10000 }  # nadir_body y
+      - { param_id: 0x02B2, pack_format: h, scale: 10000 }  # nadir_body z
+      - { param_id: 0x02B3, pack_format: h, scale: 10000 }  # sun_body_true x
+      - { param_id: 0x02B4, pack_format: h, scale: 10000 }  # sun_body_true y
+      - { param_id: 0x02B5, pack_format: h, scale: 10000 }  # sun_body_true z
+      - { param_id: 0x02B6, pack_format: h, scale: 10000 }  # h_body_x (0.1 mNms res)
+      - { param_id: 0x02B7, pack_format: h, scale: 10000 }  # h_body_y
+      - { param_id: 0x02B8, pack_format: h, scale: 10000 }  # h_body_z
+      - { param_id: 0x02B9, pack_format: H, scale: 10000 }  # |h_body|
+      - { param_id: 0x02BA, pack_format: H, scale: 10 }     # h_env_frac %
+      - { param_id: 0x02BB, pack_format: h, scale: 1000 }   # mtq dipole x
+      - { param_id: 0x02BC, pack_format: h, scale: 1000 }   # mtq dipole y
+      - { param_id: 0x02BD, pack_format: h, scale: 1000 }   # mtq dipole z
+      - { param_id: 0x02BE, pack_format: h, scale: 10 }     # tau_dist x uNm
+      - { param_id: 0x02BF, pack_format: h, scale: 10 }     # tau_dist y uNm
+      - { param_id: 0x02C0, pack_format: h, scale: 10 }     # tau_dist z uNm
+      - { param_id: 0x02C1, pack_format: B, scale: 1 }      # est_source
+      - { param_id: 0x02C2, pack_format: H, scale: 1 }      # innov rejects
+      - { param_id: 0x02C3, pack_format: H, scale: 10000 }  # rate stab 3sig
+      - { param_id: 0x02C4, pack_format: H, scale: 10 }     # settle time s
+      - { param_id: 0x02C5, pack_format: B, scale: 1 }      # fine_ready mask
+      - { param_id: 0x02C6, pack_format: B, scale: 1 }      # fidelity mode
+      - { param_id: 0x02C7, pack_format: I, scale: 10 }     # geoloc err m
+      - { param_id: 0x02C8, pack_format: H, scale: 10 }     # aocs power W
+
+  # SID 9 — Propulsion (Phase D). NOTE: brief 03 planned "SID 7", but Phase C
+  # took SID 7 for AOCS determination; SID 9 is the next free structure.
+  # ~26 parameters ≈ 45 bytes at 8 s ≈ 45 bps (+3 % of the 1351.5 bps HK
+  # total — safe at the LOW 16 kbps tier). Disabled at power-up like every
+  # subsystem SID (simulation.yaml default_enabled_sids: [1, 11]); commanded
+  # on with TC(3,5) HK_ENABLE sid=9 during commissioning / manoeuvre prep.
+  - sid: 9
+    name: PROP
+    interval_s: 8.0
+    parameters:
+      - { param_id: 0x0B00, pack_format: B, scale: 1 }      # state
+      - { param_id: 0x0B01, pack_format: H, scale: 100 }    # tank P (bar)
+      - { param_id: 0x0B02, pack_format: H, scale: 10 }     # propellant (g)
+      - { param_id: 0x0B03, pack_format: H, scale: 100 }    # propellant %
+      - { param_id: 0x0B04, pack_format: h, scale: 100 }    # tank temp
+      - { param_id: 0x0B05, pack_format: h, scale: 10 }     # catbed temp
+      - { param_id: 0x0B06, pack_format: B, scale: 1 }      # latch A
+      - { param_id: 0x0B07, pack_format: B, scale: 1 }      # latch B
+      - { param_id: 0x0B08, pack_format: B, scale: 1 }      # FCV
+      - { param_id: 0x0B09, pack_format: H, scale: 10 }     # thrust (mN)
+      - { param_id: 0x0B0A, pack_format: H, scale: 10 }     # Isp (s)
+      - { param_id: 0x0B0B, pack_format: H, scale: 100 }    # dv accum (m/s)
+      - { param_id: 0x0B0C, pack_format: H, scale: 100 }    # dv remaining
+      - { param_id: 0x0B0D, pack_format: B, scale: 1 }      # burn status
+      - { param_id: 0x0B0E, pack_format: H, scale: 100 }    # dv cmd
+      - { param_id: 0x0B0F, pack_format: H, scale: 100 }    # dv achieved
+      - { param_id: 0x0B10, pack_format: H, scale: 10 }     # t_burn cmd (s)
+      - { param_id: 0x0B11, pack_format: H, scale: 10 }     # t_burn elapsed
+      - { param_id: 0x0B12, pack_format: H, scale: 1 }      # burn count
+      - { param_id: 0x0B13, pack_format: H, scale: 10 }     # total on-time
+      - { param_id: 0x0B14, pack_format: B, scale: 1 }      # abort reason
+      - { param_id: 0x0B15, pack_format: H, scale: 1 }      # arm inhibit mask
+      - { param_id: 0x0B16, pack_format: H, scale: 100 }    # leak rate mg/s
+      - { param_id: 0x0B18, pack_format: H, scale: 1000 }   # sc mass (kg)
+      - { param_id: 0x0B19, pack_format: H, scale: 1 }      # epoch version
+      - { param_id: 0x0B1A, pack_format: I, scale: 100 }    # SMA (km)
 
   # SID 10 (BootLoader) removed — the bootloader emits only SID 11 (Beacon).
   # Per the flight-representative design, the bootloader has a single minimal
@@ -279,7 +401,20 @@ structures:
 
   - sid: 11
     name: Beacon
-    interval_s: 10.0
+    # 30 s, per the SpaceCDF operations manual (Ch 15, "SID 11 beacon @ 30 s")
+    # and every doc that quotes it (OPERATIONS_GUIDE, PUS_SERVICE_REFERENCE,
+    # architecture.md, tm_storage.py's store-sizing budget, and
+    # tests/test_integration/test_commissioning_rf.py, which already ticks 35
+    # times "because SID 11 interval is 30 s").  The file previously said 10 s,
+    # which was the sole outlier.  30 s is also the right platform answer: the
+    # beacon is the bootloader lifeline, sent at the BEACON tier (1 kbps)
+    # on the stowed-antenna link with the PA off, so its cadence is a power and
+    # link-budget decision, not a data-freshness one.  At 30 s an operator still
+    # gets 10-16 beacons in a typical 5-8 min polar pass — ample to confirm the
+    # OBC is alive, read the battery, and see the reboot counter — while a 10 s
+    # cadence triples the transmit duty cycle in exactly the mode where power is
+    # scarcest.
+    interval_s: 30.0
     # 6 parameters — matches bootloader emission (canonical per SPACECDF_RECONCILE item 8)
     parameters:
       - { param_id: 0x0100, pack_format: H, scale: 100 }    # bat_voltage

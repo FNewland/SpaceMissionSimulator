@@ -203,21 +203,38 @@ class TestDataBudget:
         assert budget["planned_generation_mb"] == 0
 
     def test_downlink_capacity_calculation(self):
-        """Verify per-pass downlink capacity with elevation-dependent efficiency."""
-        tracker = BudgetTracker(contacts=SAMPLE_CONTACTS)
-        budget = tracker.compute_data_budget()
-        # Pass 1: max_elevation_deg=45 -> efficiency = 0.9 + 0.1*(15/60) = 0.925
-        el_efficiency = 0.9 + 0.1 * min((45.0 - 30.0) / 60.0, 1.0)
-        expected_mb = (DOWNLINK_RATE_BPS * (1.0 - PROTOCOL_OVERHEAD) * 600 * el_efficiency) / (
-            8.0 * 1024 * 1024
+        """Per-pass capacity blends the ladder rungs across the elevation gate.
+
+        Defect #86: a pass no longer has "a rate". Above the dump-elevation
+        gate the spacecraft accepts the DUMP tier; below it the tier is refused
+        and the same seconds carry only the routine tier. The split is derived
+        from pass geometry, so this test derives it too rather than pinning a
+        table of fudge factors.
+        """
+        from smo_planner.budget_tracker import (
+            MIN_DUMP_ELEVATION_DEG, ROUTINE_RATE_BPS, fraction_above_elevation,
         )
+        tracker = BudgetTracker(contacts=SAMPLE_CONTACTS,
+                                routine_rate_bps=ROUTINE_RATE_BPS)
+        budget = tracker.compute_data_budget()
+        # Pass 1: max elevation 45 deg -> ~78 % of the window above 10 deg.
+        f_high = fraction_above_elevation(45.0, MIN_DUMP_ELEVATION_DEG)
+        assert 0.7 < f_high < 0.85
+        mean_bps = f_high * DOWNLINK_RATE_BPS + (1.0 - f_high) * ROUTINE_RATE_BPS
+        expected_mb = (mean_bps * (1.0 - PROTOCOL_OVERHEAD) * 600) / (8.0 * 1024 * 1024)
         assert abs(budget["pass_downlink"][0]["capacity_mb"] - round(expected_mb, 1)) < 0.2
-        # Verify elevation efficiency is reported
-        assert "elevation_efficiency" in budget["pass_downlink"][0]
+        assert budget["pass_downlink"][0]["elevation_efficiency"] == \
+            pytest.approx(f_high, abs=0.001)
+        assert budget["pass_downlink"][0]["dump_capable"] is True
 
     def test_storage_overflow_warning(self):
-        """Should warn when onboard data exceeds storage capacity."""
-        # Create enough imaging to exceed 1024 MB
+        """Should warn when onboard data exceeds storage capacity.
+
+        The default capacity now comes from payload.yaml (20000 MB, defect
+        #60), so this test pins the capacity it is testing against explicitly
+        rather than relying on the old hard-coded 1024 MB constant.
+        """
+        # Create enough imaging to exceed the 1024 MB capacity set below
         schedule = [
             {
                 "name": f"imaging_{i}",
@@ -230,9 +247,13 @@ class TestDataBudget:
             }
             for i in range(3)  # 3 * 600 = 1800 MB > 1024 MB
         ]
-        tracker = BudgetTracker(contacts=SAMPLE_CONTACTS, schedule=schedule)
+        tracker = BudgetTracker(contacts=SAMPLE_CONTACTS, schedule=schedule,
+                                storage_capacity_mb=1024.0)
         budget = tracker.compute_data_budget()
         assert any("exceeds storage" in w for w in budget["warnings"])
+        assert budget["overflow_mb"] > 0
+        assert budget["first_overflow_utc"] is not None
+        assert budget["plan_closes"] is False
 
     def test_dump_scheduled_detection(self):
         """Should detect when a data_dump is scheduled during a pass."""

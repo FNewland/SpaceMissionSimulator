@@ -26,23 +26,23 @@ housekeeping generation.
 **GO/NO-GO:** OBC responding in known mode
 
 ### Step 2 — Check CPU Utilization
-**TC:** `GET_PARAM(0x0302)` (Service 20, Subtype 1) — CPU load
+**TC:** `GET_PARAM(0x0302)` (Service 20, Subtype 3) — CPU load
 **Verify:** `obdh.cpu_load` (0x0302) in range [10%, 50%] within 10s
 **Action:** Record baseline CPU load. Nominal idle load is approximately 15-25%. Higher values indicate background tasks running.
 **GO/NO-GO:** CPU load within acceptable range
 
 ### Step 3 — Verify Memory Status
-**TC:** `GET_PARAM(0x0303)` (Service 20, Subtype 1) — RAM usage percentage
-**TC:** `GET_PARAM(0x0304)` (Service 20, Subtype 1) — EDAC error count
+**TC:** `GET_PARAM(0x0303)` (Service 20, Subtype 3) — RAM usage percentage
+**TC:** `GET_PARAM(0x0304)` (Service 20, Subtype 3) — EDAC error count
 **Verify:** RAM usage < 70% within 10s
 **Verify:** EDAC single-bit error count reported (record value) within 10s
 **Verify:** EDAC multi-bit error count = 0 within 10s
 **GO/NO-GO:** Memory healthy with no uncorrectable errors
 
 ### Step 4 — Check TC/TM Packet Counters
-**TC:** `GET_PARAM(0x0310)` (Service 20, Subtype 1) — TC received counter
-**TC:** `GET_PARAM(0x0311)` (Service 20, Subtype 1) — TC rejected counter
-**TC:** `GET_PARAM(0x0312)` (Service 20, Subtype 1) — TM generated counter
+**TC:** `GET_PARAM(0x0310)` (Service 20, Subtype 3) — TC received counter
+**TC:** `GET_PARAM(0x0311)` (Service 20, Subtype 3) — TC rejected counter
+**TC:** `GET_PARAM(0x0312)` (Service 20, Subtype 3) — TM generated counter
 **Verify:** TC received counter > 0 (should match ground log) within 10s
 **Verify:** TC rejected counter = 0 (no invalid commands sent) within 10s
 **Verify:** TM generated counter > 0 and incrementing within 10s
@@ -57,15 +57,15 @@ housekeeping generation.
 
 ### Step 6 — Verify Autonomous HK Generation
 **Action:** In NOMINAL mode, OBC should generate periodic HK packets autonomously. Wait 60 seconds and verify TM counter increment without ground request.
-**TC:** `GET_PARAM(0x0312)` (Service 20, Subtype 1) — TM counter before
+**TC:** `GET_PARAM(0x0312)` (Service 20, Subtype 3) — TM counter before
 **Action:** Wait 60 seconds. Do not send any TCs.
-**TC:** `GET_PARAM(0x0312)` (Service 20, Subtype 1) — TM counter after
+**TC:** `GET_PARAM(0x0312)` (Service 20, Subtype 3) — TM counter after
 **Verify:** TM counter has incremented (autonomous HK active) within 10s
 **GO/NO-GO:** Autonomous housekeeping generation confirmed
 
 ### Step 7 — Verify Watchdog Timer
-**TC:** `GET_PARAM(0x0305)` (Service 20, Subtype 1) — watchdog status
-**TC:** `GET_PARAM(0x0306)` (Service 20, Subtype 1) — last reset cause
+**TC:** `GET_PARAM(0x0305)` (Service 20, Subtype 3) — watchdog status
+**TC:** `GET_PARAM(0x0306)` (Service 20, Subtype 3) — last reset cause
 **Verify:** Watchdog status = ENABLED (value 1) within 10s
 **Verify:** Last reset cause = POWER_ON (value 0) — no unexpected resets within 10s
 **GO/NO-GO:** Watchdog active, no anomalous resets recorded

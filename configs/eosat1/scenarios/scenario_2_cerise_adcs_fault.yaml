@@ -1,0 +1,173 @@
+# Scenario 2 — CERISE-Based ADCS Gain Fault
+# Source: scenario_2_Simulator_Logic_Specification.docx (v1.0, June 2026)
+# Reworked 2026-07 to drive the fault through the real PUS S6 torque-gain
+# feature and the model's actual attitude dynamics (see notes below).
+#
+# CERISE (SSTL, 24 Jul 1996) was the first verified debris collision in orbit:
+# an Ariane fragment severed part of its stabilisation boom and it was recovered
+# by reprogramming the on-board control. This scenario is CERISE-INSPIRED: the
+# trained fault is a corrupted per-axis control-torque GAIN register (the block
+# PUS S6 MEM_DUMP/MEM_LOAD manages), diagnosed and patched from the ground.
+#
+# HOW THE FAULT MANIFESTS IN THIS SIMULATOR (Phase C — REAL dynamics):
+#   Since the Phase C AOCS rebuild the control law commands a real TORQUE that
+#   the reaction wheels realise (pyramid allocation, 2 mN·m/wheel, momentum
+#   integration). A 10x Y gain over-drives the Y axis of the quaternion-
+#   feedback PD: the closed loop is under-damped about Y, over-rotates and
+#   oscillates, the wheels absorb the excess control effort and their speeds
+#   visibly churn (rw*_speed / h_body telemetry), and with a large enough
+#   factor the loop drives the wheels toward momentum saturation — what the
+#   real CERISE recovery fought. FDIR safe_mode_aocs (att_error > 5 deg
+#   SUSTAINED 420 s, fdir.yaml) trips on a sustained loss of pointing and
+#   commands COARSE_SUN. The always-present signature remains the anomalous
+#   over-aggressive Y-axis response, diagnosed via the S6 gain dump.
+#
+# Fault vector / recovery (all verified against tc_catalog.yaml):
+#   Fault      : aocs gain_corruption, axis=y, factor=10 (writes torque_gain_y=10)
+#   Diagnosis  : AOCS_DUMP_TORQUE_GAINS / S6 MEM_DUMP at base 0x20100000
+#                (X/Y/Z at +0/+4/+8, IEEE-754 BE float32) -> Y reads ~10x nominal
+#   Recovery   : AOCS_SET_TORQUE_GAIN_Y (S6 MEM_LOAD) back to 1.0, then re-dump
+#
+# Parametric config (from spec §5):
+#   T_IMPACT   = 120 s   T_RECOVERY = 480 s   T_TOTAL = 900 s
+#   CORRUPTED_AXIS = Y   CORRUPTION_FACTOR = 10
+
+name: "Scenario 2 — CERISE ADCS Gain Fault"
+difficulty: ADVANCED
+duration_s: 900
+briefing: |
+  CERISE-inspired ADCS fault. At T+02:00 a debris impact perturbs EOSAT-1 and,
+  in the same event, a latent corruption is written to the Y-axis control-torque
+  gain register (torque_gain_y = 10x nominal) — the block that PUS S6 memory
+  dump/load manages. While the spacecraft is in SAFE the gain is not applied, so
+  the fault is invisible. Once a control mode is active, the corrupted gain makes
+  Y-axis pointing control over-aggressive: the axis over-rotates and oscillates
+  about the target (pointing jitter/overshoot in att_error and body-rate
+  telemetry). If the oscillation and the impact disturbance push att_error past
+  5 deg, FDIR trips safe_mode_aocs.
+
+  Operators must: identify the disturbance at impact, then recognise on recovery
+  that Y-axis pointing is anomalously over-aggressive/oscillatory rather than a
+  sensor or wheel-hardware fault. Diagnose by dumping the torque-gain registers
+  (AOCS_DUMP_TORQUE_GAINS / S6 MEM_DUMP at 0x20100000) — the Y-axis reads ~10x
+  nominal while X and Z read unity. Patch it with AOCS_SET_TORQUE_GAIN_Y
+  (S6 MEM_LOAD) back to 1.0, confirm via a re-dump, then return to NOMINAL.
+
+events:
+
+  # ── PHASE 2 — DEBRIS IMPACT (T+02:00) ─────────────────────────────
+  - time_offset_s: 120
+    action: message
+    params:
+      text: "T+02:00 Debris impact — attitude disturbance; latent Y-axis gain corruption written."
+
+  # Estimator degradation / body-rate perturbation signature of the impact.
+  # gyro_bias is model-honoured and persistent (unlike a set_parameter puppet,
+  # which the physics model overwrites on the next tick).
+  - time_offset_s: 120
+    action: inject
+    params:
+      subsystem: aocs
+      failure: gyro_bias
+      magnitude: 1.0
+      axis: 1                # body Y
+      bias: 0.06             # deg/s, above the 0.05 event threshold
+
+  # Latent corruption of the Y-axis control-torque gain register (10x nominal).
+  # Applied to the real torque_gain_y state that S6 MEM_DUMP reads / MEM_LOAD
+  # patches. Invisible while control is inhibited (SAFE); drives attitude
+  # divergence as soon as a control mode is active.
+  - time_offset_s: 120
+    action: inject
+    params:
+      subsystem: aocs
+      failure: gain_corruption
+      axis: y
+      factor: 10
+
+  # ── PHASE 3 — TUMBLE / OFF-POINTING DWELL (T+02:00 → T+08:00) ──────
+  # Attitude error grows under the corrupted gain until FDIR trips safe_mode_aocs.
+  # Power generation degrades emergently as the platform drifts off sun-pointing
+  # (no puppet override needed — the model handles sun geometry).
+
+  # ── PHASE 4 — RECOVERY ATTEMPT (T+08:00) ──────────────────────────
+  - time_offset_s: 480
+    action: message
+    params:
+      text: "T+08:00 Ground recovery re-enables control — corrupted Y gain now active; expect renewed attitude divergence."
+
+  # ── PHASE 5 — SECONDARY EFFECTS (~T+09:00) ────────────────────────
+  # OBC watchdog fires as FDIR responds to sustained instability (real inject).
+  - time_offset_s: 540
+    action: inject
+    params:
+      subsystem: obdh
+      failure: watchdog_reset
+      magnitude: 1.0
+      onset: step
+
+  # Uplink degrades as the spacecraft drifts off the ground-station boresight.
+  - time_offset_s: 545
+    action: inject
+    params:
+      subsystem: ttc
+      failure: uplink_loss
+      magnitude: 1.0
+      onset: step
+
+  # Safety net: if the battery is drawn down below 55% during the safe dwell,
+  # an EPS undervoltage condition follows (param 257 = 0x0101 eps.bat_soc).
+  - condition: "257 < 55"
+    action: inject
+    params:
+      subsystem: eps
+      failure: undervoltage
+      magnitude: 1.0
+      onset: step
+
+expected_responses:
+
+  - category: detect
+    description: >
+      At T+02:00 — identify the attitude disturbance at impact (body-rate/gyro
+      signature). Note whether att_error crosses the 5 deg FDIR limit (safe_mode_aocs)
+      given the disturbance. Log the impact event and timestamp.
+
+  - category: detect
+    description: >
+      During the dwell — monitor aocs.att_error and note the reaction wheels show
+      no mechanical anomaly (the torque-gain corruption is latent while control is
+      inhibited in SAFE).
+
+  - category: detect
+    description: >
+      On recovery (control re-enabled) — recognise that Y-axis pointing control is
+      anomalously over-aggressive: the axis overshoots and oscillates about the
+      target (pointing jitter in att_error and body-rate telemetry) instead of
+      settling cleanly. This points to a control-law (gain) fault, not a sensor or
+      wheel hardware failure.
+
+  - category: isolate
+    description: >
+      Dump the control-torque gain registers with AOCS_DUMP_TORQUE_GAINS (or S6
+      MEM_DUMP at base 0x20100000; X/Y/Z at +0/+4/+8). The Y-axis gain reads
+      ~10x nominal while X and Z read unity — isolating the fault to the Y-axis
+      gain register (corrupted driver electronics), not a mechanical wheel fault.
+
+  - category: recover
+    description: >
+      Patch the corrupted gain: command AOCS_SET_TORQUE_GAIN_Y (PUS S6 MEM_LOAD)
+      to restore Y to 1.0, then re-dump (AOCS_DUMP_TORQUE_GAINS) to confirm all
+      three axes read unity before re-commanding control.
+
+  - category: recover
+    description: >
+      Re-establish uplink if degraded — wait for the next AOS pass with adequate
+      link margin (or switch to the redundant RF chain) before uplinking the gain
+      patch.
+
+  - category: recover
+    description: >
+      Full recovery: with the Y-axis gain verified nominal and attitude error
+      converging, command the return to NOMINAL and confirm stable pointing on the
+      first control step.

@@ -1,0 +1,35 @@
+name: "Attitude Loss During Burn"
+difficulty: ADVANCED
+duration_s: 3600
+briefing: |
+  The headline propulsion-AOCS coupling demonstration. Ten seconds into a
+  planned drag make-up burn the primary star tracker goes blind and reaction
+  wheel 2 seizes. The attitude error grows through 1.0 degree — S19 rule
+  8001 auto-aborts the burn (PROP_BURN_ABORTED, reason 1) — and the
+  partially-delivered delta-V has both a shortfall (cos-theta loss) and a
+  lateral component that shows up in the post-burn orbit fit. The crew must
+  recover the attitude per CTG-002, complete post-burn orbit determination
+  on the partial burn, clear the propulsion state, and re-plan the remainder
+  under NOM-004. A second careless abort latches the propulsion inhibit.
+events:
+  - time_offset_s: 240
+    action: message
+    params:
+      text: "Plan of day: 0.85 m/s prograde drag make-up burn this pass (NOM-004 approved). Execute per NOM-013; instructor injects the fault after burn start."
+  - time_offset_s: 900
+    action: inject
+    params:
+      subsystem: aocs
+      failure: st_blind
+      magnitude: 1.0
+  - time_offset_s: 910
+    action: inject
+    params:
+      subsystem: aocs
+      failure: rw_seizure
+      magnitude: 1.0
+      wheel: 1
+expected_responses:
+  - { category: detect, description: "Detect attitude error growth during the burn and the rule-8001 auto-abort (PROP_BURN_ABORTED reason 1)" }
+  - { category: isolate, description: "AOCS anomaly first: CTG-002 (star tracker blind + wheel seizure); confirm partial dV via 0x0B0F and the orbit fit" }
+  - { category: recover, description: "Recover attitude, post-burn OD on the partial burn, PROP state cleanup, re-plan remainder under NOM-004 without latching the double-abort inhibit" }

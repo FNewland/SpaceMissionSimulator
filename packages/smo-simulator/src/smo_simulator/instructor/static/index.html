@@ -1085,6 +1085,13 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
       <button class="speed-btn" data-speed="5">5x</button>
       <button class="speed-btn" data-speed="10">10x</button>
       <button class="override-btn" id="btn-override-hdr" title="Force ground contact (TM/TC available regardless of pass)">OVERRIDE PASSES</button>
+      <!-- Phase F: safe config editor. A separate page served by this same
+           instructor server (relative href, works from a client machine).
+           The write surface exists ONLY here on 8080 — the MCS/planner
+           serve a read-only browser at their own /config. -->
+      <a class="override-btn" id="config-tab-link" href="/config" target="_blank" rel="noopener"
+         style="text-decoration:none; display:inline-flex; align-items:center;"
+         title="Mission configuration editor — classification, validation, diff, history, baselines">CONFIG</a>
       <button class="freeze-btn" id="freeze-btn">FREEZE</button>
     </div>
   </header>
@@ -1375,7 +1382,14 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
     ttc:     ['primary_failure', 'redundant_failure',
               'high_ber', 'pa_overheat',
               'uplink_loss', 'receiver_degrade',
-              'antenna_deploy_failed'],
+              'antenna_deploy_failed',
+              // Ground-segment RF failures — implemented and tested in
+              // ttc_basic.py but previously injectable only from a
+              // scenario file or the raw API (RF audit Q6/N1).
+              'gs_lna_degradation', 'gs_antenna_mispoint',
+              'gs_feed_loss', 'gs_rfi_interference',
+              'gs_hpa_degradation', 'gs_ref_osc_drift',
+              'gs_tracking_loss'],
     payload: ['cooler_failure', 'fpa_degraded',
               'image_corrupt', 'memory_segment_fail',
               'ccd_line_dropout']
@@ -2263,7 +2277,8 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
 
     const contactEl = $('orb-contact');
     if (state.in_contact) {
-      contactEl.textContent = 'CONTACT';
+      contactEl.textContent = state.ground_station_name
+        ? ('CONTACT: ' + state.ground_station_name.toUpperCase()) : 'CONTACT';
       contactEl.className = 'orbit-indicator contact';
     } else {
       contactEl.textContent = 'NO CONTACT';

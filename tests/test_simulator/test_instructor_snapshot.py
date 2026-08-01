@@ -309,3 +309,109 @@ class TestInstructorDisplayGaps:
         print(f"\n  Total available parameters: {available_count}")
         print(f"  Currently displayed: {currently_shown_count}")
         print(f"  Gap: {gap} parameters")
+
+
+class TestInstructorSnapshotThreadSafety:
+    """WP-6 / brief 08 A-1 — the snapshot must be built on the TICK thread.
+
+    `get_instructor_snapshot()` used to read `self.orbit.state` live and walk
+    every subsystem's `_state.__dict__` on the aiohttp thread while the tick
+    thread mutated it, storing dict/list values BY REFERENCE. `json.dumps` on
+    the response thread could therefore raise
+    ``RuntimeError: dictionary changed size during iteration`` against a
+    growing `image_catalog`, and any caller that mutated the response
+    corrupted the simulation.
+    """
+
+    def _grow_catalogue(self, engine, n: int) -> None:
+        """Make the payload image catalogue the moving target it is in flight."""
+        cat = getattr(engine.subsystems["payload"]._state, "image_catalog", None)
+        if isinstance(cat, list):
+            for i in range(n):
+                cat.append({"scene_id": i, "size_mb": 1.0})
+
+    def test_snapshot_containers_are_not_live_model_objects(self, engine):
+        engine._tick_once(1.0)
+        snap = engine.get_instructor_snapshot()
+        for name, model in engine.subsystems.items():
+            live = vars(model._state)
+            for field, value in snap["subsystems"].get(name, {}).items():
+                if isinstance(value, (dict, list)):
+                    assert value is not live.get(field), (
+                        f"instructor snapshot aliases live "
+                        f"{name}._state.{field}")
+
+    def test_mutating_the_response_cannot_corrupt_the_simulation(self, engine):
+        engine._tick_once(1.0)
+        snap = engine.get_instructor_snapshot()
+        eps_lines = snap["subsystems"]["eps"].get("power_lines")
+        assert isinstance(eps_lines, dict) and eps_lines
+        victim = sorted(eps_lines)[0]
+        before = engine.subsystems["eps"]._state.power_lines[victim]
+        eps_lines[victim] = not before          # a careless caller
+        snap["parameters"][0x0101] = -999.0
+        engine._tick_once(1.0)
+        assert engine.subsystems["eps"]._state.power_lines[victim] == before
+        assert engine.params[0x0101] != -999.0
+
+    def test_soak_concurrent_polling_is_fault_free(self, engine):
+        """Poll + serialise the snapshot while the tick thread runs.
+
+        Defaults to a short soak so the routine suite stays fast; set
+        ``SMO_SOAK_SECONDS=60`` for the full WP-6 acceptance run.
+        """
+        import json
+        import os
+        import threading
+        import time
+
+        duration = float(os.environ.get("SMO_SOAK_SECONDS", "8"))
+        engine.subsystems["obdh"]._state.sw_image = 1
+        engine._tick_once(1.0)
+
+        stop = threading.Event()
+        errors: list[BaseException] = []
+        polls = [0]
+
+        def writer():
+            i = 0
+            try:
+                while not stop.is_set():
+                    # A moving target of exactly the shape that used to break
+                    # json.dumps on the reader thread.
+                    self._grow_catalogue(engine, 3)
+                    engine.params[0x7000 + (i % 400)] = float(i)
+                    engine._tick_once(1.0)
+                    i += 1
+            except BaseException as e:      # noqa: BLE001
+                errors.append(e)
+
+        def reader():
+            try:
+                while not stop.is_set():
+                    snap = engine.get_instructor_snapshot()
+                    json.dumps(snap, default=str)
+                    polls[0] += 1
+            except BaseException as e:      # noqa: BLE001
+                errors.append(e)
+
+        threads = [threading.Thread(target=writer, name="soak-tick")] + \
+                  [threading.Thread(target=reader, name=f"soak-poll-{i}")
+                   for i in range(3)]
+        for t in threads:
+            t.start()
+        time.sleep(duration)
+        stop.set()
+        for t in threads:
+            t.join(timeout=10)
+
+        assert not errors, f"soak raised: {errors[:3]}"
+        assert polls[0] > 0, "the soak never polled"
+        assert engine.engine_fault_count == 0, (
+            f"engine faults during soak: {engine.engine_fault}")
+
+        # ...and the snapshot is still un-aliased at the end of the soak.
+        snap = engine.get_instructor_snapshot()
+        cat = snap["subsystems"]["payload"].get("image_catalog")
+        if isinstance(cat, list):
+            assert cat is not engine.subsystems["payload"]._state.image_catalog

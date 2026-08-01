@@ -41,9 +41,9 @@ the affected power line, and verifies nominal operation of the downstream subsys
 | Command | Service | Subtype | Func ID | Description |
 |---|---|---|---|---|
 | HK_REQUEST | 3 | 27 | — | Request one-shot HK report |
-| EPS_RESET_OC_FLAG | 8 | 1 | 15 | Reset overcurrent trip flag and re-enable line |
-| EPS_POWER_ON | 8 | 1 | 13 | Switch power line ON |
-| EPS_POWER_OFF | 8 | 1 | 14 | Switch power line OFF |
+| EPS_RESET_OC_FLAG | 8 | 1 | 21 | Reset overcurrent trip flag and re-enable line |
+| EPS_POWER_ON | 8 | 1 | 19 | Switch power line ON |
+| EPS_POWER_OFF | 8 | 1 | 20 | Switch power line OFF |
 
 ## Procedure Steps
 
@@ -91,13 +91,13 @@ damage suspected, HOLD and escalate.
 
 ### Step 4: Reset Overcurrent Flag
 **Action:** Reset the overcurrent trip flag for the affected line:
-`EPS_RESET_OC_FLAG(line_index=N)` (func_id 15) where N is the tripped line index (0-7).
+`EPS_RESET_OC_FLAG(line_index=N)` (func_id 21) where N is the tripped line index (0-7).
 **Verify:** `eps.oc_trip_flags` (0x010D) — confirm the bit for the affected line has cleared.
 **Verify:** Wait 5 s and re-check `eps.oc_trip_flags` to confirm flag remains cleared.
 **GO/NO-GO:** OC flag cleared — proceed to re-enable.
 
 ### Step 5: Re-Enable Power Line
-**Action:** Re-enable the power line: `EPS_POWER_ON(line_index=N)` (func_id 13)
+**Action:** Re-enable the power line: `EPS_POWER_ON(line_index=N)` (func_id 19)
 **Verify:** Power line status register (0x0110 + N) = 1 (ON) within 5 s
 **Verify:** Per-line current (0x0118 + N) returns to expected nominal value
 **Verify:** `eps.oc_trip_flags` (0x010D) remains clear (no re-trip)

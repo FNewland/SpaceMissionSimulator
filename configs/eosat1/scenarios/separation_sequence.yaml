@@ -11,21 +11,27 @@ briefing: |
   bootloader beacon, boot application software, perform initial
   health check, and begin sequential power-on of subsystems.
 
+# Honoured by the scenario engine at start() — phase/speed/SoC/override/
+# power_lines/params/failures (defect #52; previously ignored entirely).
 initial_conditions:
-  spacecraft_phase: 0  # PRE_SEPARATION
-  speed: 10  # 10x to speed through timer
+  spacecraft_phase: 0   # PRE_SEPARATION
+  speed: 10             # 10x to run through the 30-min separation timer
+  soc_pct: 95.0         # freshly charged pre-launch (matches the briefing)
 
 events:
-  - time_s: 5
-    type: instructor
-    action: start_separation
-    description: "Launch vehicle separation — 30 min timer starts"
+  # `start_separation` was never an implemented action; entering phase 1
+  # (SEPARATION_TIMER) is what actually arms the separation timer.
+  - time_offset_s: 5
+    action: set_phase
+    params:
+      phase: 1
+    note: "Launch vehicle separation — 30 min timer starts"
 
-  - time_s: 1805
-    type: instructor
+  - time_offset_s: 1805
     action: set_speed
-    value: 1
-    description: "Timer expired — slow to real-time for first contact"
+    params:
+      value: 1
+    note: "Timer expired — slow to real-time for first contact"
 
 expected_responses:
   - { category: detect, description: "Observe separation timer expiry and OBC bootloader power-on" }

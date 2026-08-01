@@ -40,14 +40,17 @@ parameters:
   - { id: 0x0121, name: eps.bat_cycles, subsystem: eps, description: Battery charge/discharge cycle count }
   - { id: 0x0122, name: eps.mppt_efficiency, subsystem: eps, description: MPPT tracker efficiency }
   - { id: 0x0123, name: eps.sa_age_factor, subsystem: eps, description: Solar array aging degradation factor }
-  - { id: 0x0124, name: eps.sa_a_degradation, subsystem: eps, description: Solar array A degradation factor }
-  - { id: 0x0125, name: eps.sa_b_degradation, subsystem: eps, description: Solar array B degradation factor }
-  - { id: 0x0126, name: eps.sa_lifetime_hours, subsystem: eps, units: h, description: Solar array cumulative sunlit hours }
+  - { id: 0x0124, name: eps.sa_a_degradation, subsystem: eps, description: Solar array A degradation factor, on_demand: true }
+  - { id: 0x0125, name: eps.sa_b_degradation, subsystem: eps, description: Solar array B degradation factor, on_demand: true }
+  - { id: 0x0126, name: eps.sa_lifetime_hours, subsystem: eps, units: h, description: Solar array cumulative sunlit hours, on_demand: true }
   # EPS PDM and separation
-  - { id: 0x0127, name: eps.sep_timer_active, subsystem: eps, description: "Separation timer active (0=no, 1=yes)" }
-  - { id: 0x0128, name: eps.sep_timer_remaining, subsystem: eps, units: s, description: "Separation timer remaining seconds" }
-  - { id: 0x0129, name: eps.pdm_unsw_status, subsystem: eps, description: "PDM unswitchable lines status bitmask (RX|OBC)" }
-  - { id: 0x012A, name: eps.spacecraft_phase, subsystem: eps, description: "Spacecraft phase (0=pre-sep,1=sep-timer,2=init-pwr,3=bootloader,4=leop,5=commission,6=nominal)" }
+  - { id: 0x0127, name: eps.sep_timer_active, subsystem: eps, description: "Separation timer active (0=no, 1=yes)", on_demand: true }
+  - { id: 0x0128, name: eps.sep_timer_remaining, subsystem: eps, units: s, description: "Separation timer remaining seconds", on_demand: true }
+  # Phase B ID-collision resolution (brief 01 F16 / WP-11): 0x0129 is the
+  # canonical spacecraft_phase (written by engine._tick_spacecraft_phase and
+  # carried in HK SID 4); PDM unswitchable-line status moved to 0x012A.
+  - { id: 0x0129, name: eps.spacecraft_phase, subsystem: eps, description: "Spacecraft phase (0=pre-sep,1=sep-timer,2=init-pwr,3=bootloader,4=leop,5=commission,6=nominal)" }
+  - { id: 0x012A, name: eps.pdm_unsw_status, subsystem: eps, description: "PDM unswitchable lines status bitmask (RX|OBC)", on_demand: true }
   # Per-panel solar array currents (6 body-mounted panels)
   - { id: 0x012B, name: eps.sa_px_current, subsystem: eps, units: A, description: "Solar panel +X current" , on_demand: true }
   - { id: 0x012C, name: eps.sa_mx_current, subsystem: eps, units: A, description: "Solar panel -X current" , on_demand: true }
@@ -69,7 +72,16 @@ parameters:
 
   # EPS Solar wing deployment telemetry
   - { id: 0x0144, name: eps.wing_status, subsystem: eps, description: "Solar wing deployment status bitmask (bit0=+Y deployed, bit1=-Y deployed)" }
-  - { id: 0x0145, name: eps.wing_deploy_timer, subsystem: eps, units: s, description: "Solar wing deployment timer (countdown, 0=complete)" }
+  - { id: 0x0145, name: eps.wing_deploy_timer, subsystem: eps, units: s, description: "Solar wing deployment timer (countdown, 0=complete)", on_demand: true }
+  # Phase B power-management telemetry (brief 01 WP-11)
+  - { id: 0x0146, name: eps.sa_wing_py_current, subsystem: eps, units: A, description: "+Y deployable wing current (wing only, excl. body face)" }
+  - { id: 0x0147, name: eps.sa_wing_my_current, subsystem: eps, units: A, description: "-Y deployable wing current (wing only, excl. body face)" }
+  - { id: 0x0148, name: eps.bus_load_current, subsystem: eps, units: A, description: "Total load bus current (sum of all line currents)" }
+  - { id: 0x0149, name: eps.fpa_cooler_cmd, subsystem: eps, description: "EPS-side FPA cooler command flag (S8 func 17)", on_demand: true }
+  # Phase D: propulsion power line (line index 8). Status/current ids are
+  # explicit — 0x0110+8/0x0118+8 would collide with line_current_0/0x0120.
+  - { id: 0x014A, name: eps.pl_prop, subsystem: eps, description: "Power line Propulsion (catbed heater + valve drivers; LAST in the shed order)", on_demand: true }
+  - { id: 0x014B, name: eps.line_current_8, subsystem: eps, units: A, description: "Power line 8 (Propulsion) current", on_demand: true }
 
   # ===== AOCS =====
   - { id: 0x0200, name: aocs.att_q1, subsystem: aocs, description: Attitude quaternion q1 }
@@ -90,7 +102,7 @@ parameters:
   - { id: 0x0210, name: aocs.gps_lat, subsystem: aocs, units: deg , on_demand: true }
   - { id: 0x0211, name: aocs.gps_lon, subsystem: aocs, units: deg , on_demand: true }
   - { id: 0x0212, name: aocs.gps_alt, subsystem: aocs, units: km , on_demand: true }
-  - { id: 0x0216, name: aocs.solar_beta, subsystem: aocs, units: deg, description: Solar beta angle }
+  - { id: 0x0216, name: aocs.solar_beta, subsystem: aocs, units: deg, description: Solar beta angle, on_demand: true }
   - { id: 0x0217, name: aocs.att_error, subsystem: aocs, units: deg }
   - { id: 0x0218, name: aocs.rw1_temp, subsystem: aocs, units: C , on_demand: true }
   - { id: 0x0219, name: aocs.rw2_temp, subsystem: aocs, units: C , on_demand: true }
@@ -176,6 +188,53 @@ parameters:
   - { id: 0x028B, name: aocs.css_head_health_my, subsystem: aocs, units: "%", description: CSS -Y head health }
   - { id: 0x028C, name: aocs.css_head_health_pz, subsystem: aocs, units: "%", description: CSS +Z head health }
   - { id: 0x028D, name: aocs.css_head_health_mz, subsystem: aocs, units: "%", description: CSS -Z head health }
+  # slew_state moved off 0x0285 (which is aocs.rw2_bearing_health, downlinked
+  # in HK SID 2 — the collision made the ground read the slew state as RW2
+  # bearing health; brief 02 root cause 10).
+  - { id: 0x0292, name: aocs.slew_state, subsystem: aocs, description: "Slew state (0=IDLE, 1=SLEWING, 2=SETTLING, 3=COMPLETE)", on_demand: true }
+
+  # ═════ Phase C: AOCS determination & control block 0x02A0-0x02C8 ═════
+  - { id: 0x02A0, name: aocs.q_est_1, subsystem: aocs, description: "Estimated quaternion X (MEKF — what the FSW believes)" }
+  - { id: 0x02A1, name: aocs.q_est_2, subsystem: aocs, description: "Estimated quaternion Y" }
+  - { id: 0x02A2, name: aocs.q_est_3, subsystem: aocs, description: "Estimated quaternion Z" }
+  - { id: 0x02A3, name: aocs.q_est_4, subsystem: aocs, description: "Estimated quaternion W (scalar)" }
+  - { id: 0x02A4, name: aocs.rate_est_x, subsystem: aocs, units: deg/s, description: "Bias-corrected rate estimate X" }
+  - { id: 0x02A5, name: aocs.rate_est_y, subsystem: aocs, units: deg/s, description: "Bias-corrected rate estimate Y" }
+  - { id: 0x02A6, name: aocs.rate_est_z, subsystem: aocs, units: deg/s, description: "Bias-corrected rate estimate Z" }
+  - { id: 0x02A7, name: aocs.knowledge_err_3sig, subsystem: aocs, units: arcsec, description: "Attitude knowledge error 3σ from √(trace P_att) — MEKF covariance" }
+  - { id: 0x02A8, name: aocs.control_err, subsystem: aocs, units: deg, description: "Control/pointing error angle(q_est, q_ref)" }
+  - { id: 0x02A9, name: aocs.control_err_arcsec, subsystem: aocs, units: arcsec, description: "Control error, fine-resolution channel" }
+  - { id: 0x02AA, name: aocs.total_pointing_err_3sig, subsystem: aocs, units: deg, description: "RSS of knowledge + control error" }
+  - { id: 0x02AB, name: aocs.q_ref_x, subsystem: aocs, description: "Commanded reference quaternion X" }
+  - { id: 0x02AC, name: aocs.q_ref_y, subsystem: aocs, description: "Commanded reference quaternion Y" }
+  - { id: 0x02AD, name: aocs.q_ref_z, subsystem: aocs, description: "Commanded reference quaternion Z" }
+  - { id: 0x02AE, name: aocs.q_ref_w, subsystem: aocs, description: "Commanded reference quaternion W" }
+  - { id: 0x02AF, name: aocs.pointing_frame, subsystem: aocs, description: "0=INERTIAL, 1=LVLH_NADIR, 2=TARGET_TRACK, 3=SUN" }
+  - { id: 0x02B0, name: aocs.nadir_body_x, subsystem: aocs, description: "Nadir unit vector in body frame X" }
+  - { id: 0x02B1, name: aocs.nadir_body_y, subsystem: aocs, description: "Nadir unit vector in body frame Y" }
+  - { id: 0x02B2, name: aocs.nadir_body_z, subsystem: aocs, description: "Nadir unit vector in body frame Z" }
+  - { id: 0x02B3, name: aocs.sun_body_true_x, subsystem: aocs, description: "TRUE sun vector in body X (distinct from the CSS estimate 0x0245)" }
+  - { id: 0x02B4, name: aocs.sun_body_true_y, subsystem: aocs, description: "TRUE sun vector in body Y" }
+  - { id: 0x02B5, name: aocs.sun_body_true_z, subsystem: aocs, description: "TRUE sun vector in body Z" }
+  - { id: 0x02B6, name: aocs.h_body_x, subsystem: aocs, units: Nms, description: "VECTOR wheel momentum in body frame X" }
+  - { id: 0x02B7, name: aocs.h_body_y, subsystem: aocs, units: Nms, description: "Vector wheel momentum Y" }
+  - { id: 0x02B8, name: aocs.h_body_z, subsystem: aocs, units: Nms, description: "Vector wheel momentum Z" }
+  - { id: 0x02B9, name: aocs.h_body_mag, subsystem: aocs, units: Nms, description: "|h_body|" }
+  - { id: 0x02BA, name: aocs.h_env_frac, subsystem: aocs, units: "%", description: "Momentum envelope usage (most-loaded wheel), monitored by S12 for auto-desat" }
+  - { id: 0x02BB, name: aocs.mtq_dipole_x, subsystem: aocs, units: Am2, description: "Commanded MTQ dipole X (0x0258-5A stay as duty)" }
+  - { id: 0x02BC, name: aocs.mtq_dipole_y, subsystem: aocs, units: Am2, description: "Commanded MTQ dipole Y" }
+  - { id: 0x02BD, name: aocs.mtq_dipole_z, subsystem: aocs, units: Am2, description: "Commanded MTQ dipole Z" }
+  - { id: 0x02BE, name: aocs.tau_dist_x, subsystem: aocs, units: uNm, description: "Total disturbance torque X (instructor insight)" }
+  - { id: 0x02BF, name: aocs.tau_dist_y, subsystem: aocs, units: uNm, description: "Total disturbance torque Y" }
+  - { id: 0x02C0, name: aocs.tau_dist_z, subsystem: aocs, units: uNm, description: "Total disturbance torque Z" }
+  - { id: 0x02C1, name: aocs.est_source, subsystem: aocs, description: "Estimator source bitmask: bit0 ST, bit1 CSS, bit2 MAG, bit3 gyro" }
+  - { id: 0x02C2, name: aocs.est_innov_rej_count, subsystem: aocs, description: "Rejected ST fixes since boot (innovation gate)" }
+  - { id: 0x02C3, name: aocs.rate_stability_3sig, subsystem: aocs, units: deg/s, description: "Rate-error jitter metric over the last 60 s" }
+  - { id: 0x02C4, name: aocs.settle_time_s, subsystem: aocs, units: s, description: "Time since last mode/target change until inside the gate" }
+  - { id: 0x02C5, name: aocs.fine_ready, subsystem: aocs, description: "FINE-entry precondition bitmask (0 = ready): bit0 ST<5 stars, bit1 <4 wheels, bit2 MEKF unconverged, bit3 rates high, bit4 momentum >70%, bit5 propagate-only, bit6 slew not idle 60s" }
+  - { id: 0x02C6, name: aocs.fidelity_mode, subsystem: aocs, description: "0=full physics, 1=secular (accel bypass >60x)" }
+  - { id: 0x02C7, name: aocs.geoloc_err_m, subsystem: aocs, units: m, description: "Altitude x total pointing error — ground geolocation error" }
+  - { id: 0x02C8, name: aocs.power_w, subsystem: aocs, units: W, description: "AOCS suite power draw by mode (COARSE 4 / NOMINAL 9 / FINE 15 W); EPS bills the aocs_wheels line from this" }
 
   # ===== OBDH =====
   - { id: 0x0300, name: obdh.mode, subsystem: obdh }
@@ -185,6 +244,11 @@ parameters:
   - { id: 0x0304, name: obdh.tc_rx_count, subsystem: obdh }
   - { id: 0x0305, name: obdh.tc_acc_count, subsystem: obdh }
   - { id: 0x0306, name: obdh.tc_rej_count, subsystem: obdh }
+  # Defect #88 — the rejection COUNTER was downlinked but the CODE was not, so
+  # a parameter display could say "3 commands were refused" and never say why.
+  # Vocabulary: smo_common.protocol.pus_services.FAILURE_CODES, served to the
+  # ground segment by GET /api/failure-codes so there is only one copy.
+  - { id: 0x0315, name: obdh.last_tc_error_code, subsystem: obdh, description: "S1 failure code of the most recently refused telecommand (0=none since boot; see FAILURE_CODES)" }
   - { id: 0x0307, name: obdh.tm_pkt_count, subsystem: obdh }
   - { id: 0x0308, name: obdh.uptime, subsystem: obdh, units: s }
   - { id: 0x0309, name: obdh.obc_time, subsystem: obdh, units: s, description: "Onboard CUC time (seconds since epoch)" }
@@ -221,32 +285,75 @@ parameters:
   - { id: 0x0406, name: tcs.temp_obc, subsystem: tcs, units: C }
   - { id: 0x0407, name: tcs.temp_battery, subsystem: tcs, units: C }
   - { id: 0x0408, name: tcs.temp_fpa, subsystem: tcs, units: C }
+  # Phase D: catalyst-bed temperature — the propulsion arm interlock
+  # (>= 180 C) and the 0x0B05 mirror read this.
+  - { id: 0x0409, name: tcs.temp_thruster, subsystem: tcs, units: C, description: "Thruster catalyst-bed temperature (propulsion arm interlock >= 180 C)", on_demand: true }
   - { id: 0x040A, name: tcs.htr_battery, subsystem: tcs }
   - { id: 0x040B, name: tcs.htr_obc, subsystem: tcs }
   - { id: 0x040C, name: tcs.cooler_fpa, subsystem: tcs }
+  # Phase D: thruster (catbed) heater state. NOT 0x040D — that id belongs to
+  # ttc.pa_backup_temp (the Phase B collision is not reintroduced).
+  - { id: 0x041B, name: tcs.htr_thruster, subsystem: tcs, description: "Thruster catalyst-bed heater state (12 W, EPS prop line, S8 func 42)", on_demand: true }
 
   # TCS Phase 4: Flight hardware realism
   - { id: 0x040E, name: tcs.htr_duty_battery, subsystem: tcs, units: "%", description: Battery heater duty cycle }
   - { id: 0x040F, name: tcs.htr_duty_obc, subsystem: tcs, units: "%", description: OBC heater duty cycle }
+  - { id: 0x0410, name: tcs.htr_duty_thruster, subsystem: tcs, units: "%", description: "Thruster catalyst-bed heater duty cycle (Phase D: real 12 W catbed heater)", on_demand: true }
   - { id: 0x0411, name: tcs.htr_total_power, subsystem: tcs, units: W, description: Total heater power consumption }
   # Panel temperatures (illumination-coupled)
   - { id: 0x0412, name: tcs.temp_panel_px_ilm, subsystem: tcs, units: C, description: "+X panel temperature (illumination-coupled)" , on_demand: true }
-  - { id: 0x0413, name: tcs.temp_panel_mx_ilm, subsystem: tcs, units: C, description: "-X panel temperature (illumination-coupled)" }
-  - { id: 0x0414, name: tcs.temp_panel_py_ilm, subsystem: tcs, units: C, description: "+Y panel temperature (illumination-coupled)" }
-  - { id: 0x0415, name: tcs.temp_panel_my_ilm, subsystem: tcs, units: C, description: "-Y panel temperature (illumination-coupled)" }
-  - { id: 0x0416, name: tcs.temp_panel_pz_ilm, subsystem: tcs, units: C, description: "+Z panel temperature (illumination-coupled)" }
-  - { id: 0x0417, name: tcs.temp_panel_mz_ilm, subsystem: tcs, units: C, description: "-Z panel temperature (illumination-coupled)" }
+  - { id: 0x0413, name: tcs.temp_panel_mx_ilm, subsystem: tcs, units: C, description: "-X panel temperature (illumination-coupled)", on_demand: true }
+  - { id: 0x0414, name: tcs.temp_panel_py_ilm, subsystem: tcs, units: C, description: "+Y panel temperature (illumination-coupled)", on_demand: true }
+  - { id: 0x0415, name: tcs.temp_panel_my_ilm, subsystem: tcs, units: C, description: "-Y panel temperature (illumination-coupled)", on_demand: true }
+  - { id: 0x0416, name: tcs.temp_panel_pz_ilm, subsystem: tcs, units: C, description: "+Z panel temperature (illumination-coupled)", on_demand: true }
+  - { id: 0x0417, name: tcs.temp_panel_mz_ilm, subsystem: tcs, units: C, description: "-Z panel temperature (illumination-coupled)", on_demand: true }
 
   # TCS Phase 5: Event generation and advanced thermal control
   - { id: 0x0418, name: tcs.decontamination_active, subsystem: tcs, description: "Decontamination heating active (0=no, 1=yes)" }
   - { id: 0x0419, name: tcs.thermal_gradient, subsystem: tcs, units: C, description: "Thermal gradient (max-min temperature between all zones)" }
+  - { id: 0x041A, name: tcs.temp_regulation_margin, subsystem: tcs, units: C, description: "Minimum margin of any regulated zone (battery/OBC/FPA) to its alarm band; negative = out of band", on_demand: true }
+
+  # ===== PROP (Phase D — block 0x0B00; 0x01=EPS … 0x0A=OBDH, 0x0B free) =====
+  # 1U green-monoprop blowdown module: debris avoidance + drag make-up only
+  # (no deorbit capability — disposal is passive decay, FCC 5-yr compliant).
+  - { id: 0x0B00, name: prop.state, subsystem: prop, description: "Propulsion state: 0=SAFED, 1=ARMED, 2=FIRING, 3=INHIBIT" }
+  - { id: 0x0B01, name: prop.tank_pressure, subsystem: prop, units: bar, description: "Tank/feed pressure (blowdown 22.00 -> 9.33 bar)" }
+  - { id: 0x0B02, name: prop.propellant_mass, subsystem: prop, units: g, description: "Propellant remaining (400 -> 0 g)" }
+  - { id: 0x0B03, name: prop.propellant_pct, subsystem: prop, units: "%", description: "Propellant remaining, percent of load" }
+  - { id: 0x0B04, name: prop.tank_temp, subsystem: prop, units: C, description: "Tank temperature" }
+  - { id: 0x0B05, name: prop.catbed_temp, subsystem: prop, units: C, description: "Catalyst-bed temperature (mirror of tcs.temp_thruster 0x0409)" }
+  - { id: 0x0B06, name: prop.latch_a_state, subsystem: prop, description: "Latch valve branch A: 0=closed, 1=open, 2=fault" }
+  - { id: 0x0B07, name: prop.latch_b_state, subsystem: prop, description: "Latch valve branch B: 0=closed, 1=open, 2=fault" }
+  - { id: 0x0B08, name: prop.fcv_state, subsystem: prop, description: "Flow-control (firing) valve: 0=closed, 1=open" }
+  - { id: 0x0B09, name: prop.thrust_est, subsystem: prop, units: mN, description: "Thrust estimate at current feed pressure incl. degradation (330 BOL -> 140 EOL); physical thrust only while FIRING" }
+  - { id: 0x0B0A, name: prop.isp_est, subsystem: prop, units: s, description: "Live specific impulse Isp(P) (220 BOL -> 196 EOL)" }
+  - { id: 0x0B0B, name: prop.dv_accum, subsystem: prop, units: m/s, description: "Accumulated delta-V, lifetime (NOM-013 'dv vs plan')" }
+  - { id: 0x0B0C, name: prop.dv_remaining, subsystem: prop, units: m/s, description: "Tsiolkovsky remaining delta-V on live propellant (CTG-028 usable envelope)" }
+  - { id: 0x0B0D, name: prop.burn_status, subsystem: prop, description: "Burn status: 0=idle, 1=armed, 2=firing, 3=complete, 4=aborted" }
+  - { id: 0x0B0E, name: prop.burn_dv_cmd, subsystem: prop, units: m/s, description: "Commanded burn delta-V" }
+  - { id: 0x0B0F, name: prop.burn_dv_achieved, subsystem: prop, units: m/s, description: "Achieved delta-V, last burn (post-burn OD cross-check)" }
+  - { id: 0x0B10, name: prop.burn_time_cmd, subsystem: prop, units: s, description: "Predicted burn duration at current tank state" }
+  - { id: 0x0B11, name: prop.burn_time_elapsed, subsystem: prop, units: s, description: "Elapsed burn time" }
+  - { id: 0x0B12, name: prop.burn_count, subsystem: prop, description: "Completed/aborted burn count" }
+  - { id: 0x0B13, name: prop.total_on_time, subsystem: prop, units: s, description: "Cumulative thruster on-time" }
+  - { id: 0x0B14, name: prop.abort_reason, subsystem: prop, description: "Last abort: 0=none, 1=att_err, 2=low_P, 3=overtemp, 4=low_SoC/shed, 5=eclipse, 6=ground, 7=timeout, 8=valve" }
+  - { id: 0x0B15, name: prop.arm_inhibit_mask, subsystem: prop, description: "Bitmask of interlocks blocking arm: b0 catbed, b1 tank P, b2 propellant, b3 AOCS mode, b4 att err, b5 SoC, b6 phase, b7 eclipse, b8 valves, b9 inhibit latched, b10 no burn loaded" }
+  - { id: 0x0B16, name: prop.leak_rate, subsystem: prop, units: mg/s, description: "Propellant leak rate (0 nominal; the 0x0B01 delta monitor sees a leak first)" }
+  - { id: 0x0B17, name: prop.thrust_offset_torque, subsystem: prop, units: uNm, description: "Thrust-misalignment disturbance torque fed to AOCS (1650 uNm at BOL thrust)", on_demand: true }
+  - { id: 0x0B18, name: prop.sc_mass, subsystem: prop, units: kg, description: "Spacecraft mass m_dry + m_prop (12.40 BOL -> 12.00 dry)" }
+  - { id: 0x0B19, name: prop.orbit_epoch_version, subsystem: prop, description: "Orbit element-set version — increments per applied burn (planner/MCS cache key)" }
+  - { id: 0x0B1A, name: prop.sma_km, subsystem: prop, units: km, description: "Semi-major axis from the active (post-burn) element set" }
+  - { id: 0x0B1B, name: prop.power_draw, subsystem: prop, units: W, description: "Live propulsion power draw (valves while armed/firing + catbed heater) — the EPS prop line bills this", on_demand: true }
 
   # ===== TTC =====
   - { id: 0x0500, name: ttc.mode, subsystem: ttc }
   - { id: 0x0501, name: ttc.link_status, subsystem: ttc }
   - { id: 0x0502, name: ttc.rssi, subsystem: ttc, units: dBm }
   - { id: 0x0503, name: ttc.link_margin, subsystem: ttc, units: dB }
-  - { id: 0x0506, name: ttc.tm_data_rate, subsystem: ttc, units: bps }
+  # ACTIVE information bit rate of the tier now on air. Under the three-rung
+  # ladder (subsystems/ttc.yaml tm_rate_tiers) this is 1000 / 16000 / 128000
+  # and nothing else; anything in between means a corrupt decode.
+  - { id: 0x0506, name: ttc.tm_data_rate, subsystem: ttc, units: bps, description: "Active TM information rate (BEACON 1000 / LOW 16000 / HIGH 128000)" }
   - { id: 0x0507, name: ttc.xpdr_temp, subsystem: ttc, units: C }
   - { id: 0x0508, name: ttc.ranging_status, subsystem: ttc, description: "Ranging active (0=no, 1=yes)" }
   - { id: 0x0509, name: ttc.range_km, subsystem: ttc, units: km }
@@ -273,11 +380,24 @@ parameters:
   - { id: 0x0521, name: ttc.beacon_mode, subsystem: ttc, description: "Beacon mode active (0=no, 1=yes)" }
   - { id: 0x0522, name: ttc.cmd_decode_timer, subsystem: ttc, units: s, description: "Dedicated command channel timer (15 min countdown)" }
   # DEFECT FIX #4 (ttc.md): Antenna deployment sensor telemetry
-  - { id: 0x0535, name: ttc.antenna_deployment_ready, subsystem: ttc, description: "Antenna deployment ready (pyro continuity OK; 0=fault, 1=ready)" }
-  - { id: 0x0536, name: ttc.antenna_deployment_sensor, subsystem: ttc, description: "Antenna deployment sensor status (0=unknown, 1=stowed, 2=deployed, 3=partial/jammed)" }
-  - { id: 0x0537, name: ttc.modulation_mode, subsystem: ttc, description: "Modulation scheme (0=BPSK, 1=QPSK, 2=8PSK, 3=OQPSK)" }
-  - { id: 0x0523, name: ttc.active_gs, subsystem: ttc, description: "Active ground station index" , on_demand: true }
-  - { id: 0x0524, name: ttc.gs_equipment_status, subsystem: ttc, description: "GS equipment status bitmask (antenna/LNA/TX/upconverter)" , on_demand: true }
+  - { id: 0x0535, name: ttc.antenna_deployment_ready, subsystem: ttc, description: "Antenna deployment ready (pyro continuity OK; 0=fault, 1=ready)", on_demand: true }
+  - { id: 0x0536, name: ttc.antenna_deployment_sensor, subsystem: ttc, description: "Antenna deployment sensor status (0=unknown, 1=stowed, 2=deployed, 3=partial/jammed)", on_demand: true }
+  - { id: 0x0537, name: ttc.modulation_mode, subsystem: ttc, description: "Modulation scheme (0=BPSK, 1=QPSK, 2=8PSK, 3=OQPSK)", on_demand: true }
+  # ── TM data-rate ladder (defect #85 spacecraft side, #86 ground side) ──
+  # The bare bit rate (0x0506) no longer says everything: the ladder has
+  # permission gates, so the tier the ground COMMANDED and the tier the
+  # spacecraft is ACTUALLY flying can differ, and that difference is the
+  # operationally interesting signal. 0x0539 != 0x053A means a gate demoted the
+  # link — antenna stowed, DOWNLINK mode not entered, or elevation below the
+  # HIGH tier's 10 deg. The console must show both, never just one.
+  # Tier indices are positions in subsystems/ttc.yaml tm_rate_tiers:
+  #   0 = BEACON (1 kbps)   1 = LOW (16 kbps)   2 = HIGH (128 kbps)
+  - { id: 0x0539, name: ttc.tm_tier, subsystem: ttc, description: "ACTIVE TM rate tier index (0=BEACON 1 kbps, 1=LOW 16 kbps, 2=HIGH 128 kbps) — what is on air now, after the permission gates", on_demand: true }
+  - { id: 0x053A, name: ttc.tm_tier_cmd, subsystem: ttc, description: "COMMANDED TM rate tier index (TTC_SET_DATA_RATE, S8 func 65). Differs from 0x0539 whenever a gate demotes the active tier", on_demand: true }
+  - { id: 0x053B, name: ttc.tm_symbol_rate, subsystem: ttc, units: Bd, description: "Symbol rate now on air = active bit rate / bits-per-symbol. 16 kBd at LOW (BPSK), 64 kBd at HIGH (QPSK) — the tier step is visible on the radio", on_demand: true }
+  - { id: 0x053C, name: ttc.downlink_mode, subsystem: ttc, description: "DOWNLINK / payload-dump mode (TTC_SET_DOWNLINK_MODE, S8 func 79). 0=off, 1=on. This is the mode gate on the HIGH tier", on_demand: true }
+  - { id: 0x0523, name: ttc.active_gs, subsystem: ttc, description: "Active ground station: 1-based index into orbit.yaml ground_stations, 0 = out of contact", on_demand: true }
+  - { id: 0x0524, name: ttc.gs_equipment_status, subsystem: ttc, description: "GS equipment health bitmask, SET bit = healthy: bit0 antenna+tracking, bit1 LNA, bit2 uplink HPA, bit3 reference oscillator+feed. 15 = all healthy", on_demand: true }
 
   # ===== Payload =====
   - { id: 0x0600, name: payload.mode, subsystem: payload }
@@ -286,6 +406,7 @@ parameters:
   - { id: 0x0603, name: payload.imager_temp, subsystem: payload, units: C, description: Imager electronics temperature }
   - { id: 0x0604, name: payload.store_used, subsystem: payload, units: "%" }
   - { id: 0x0605, name: payload.image_count, subsystem: payload }
+  - { id: 0x0606, name: payload.scene_id, subsystem: payload, description: "Current scene ID (PAYLOAD_SET_SCENE readback; PAYLOAD_CAPTURE overwrites)", on_demand: true }
   - { id: 0x0609, name: payload.checksum_errors, subsystem: payload }
   - { id: 0x060A, name: payload.mem_total_mb, subsystem: payload, units: MB, description: Total payload memory }
   - { id: 0x060B, name: payload.mem_used_mb, subsystem: payload, units: MB, description: Used payload memory }
@@ -293,25 +414,25 @@ parameters:
   - { id: 0x060D, name: payload.last_scene_quality, subsystem: payload, units: "%", description: Quality metric of last image }
   - { id: 0x0610, name: payload.fpa_ready, subsystem: payload, description: "FPA temperature in range (0=no, 1=yes)" }
   - { id: 0x0612, name: payload.mem_segments_bad, subsystem: payload, description: Number of bad memory segments }
-  - { id: 0x0613, name: payload.duty_cycle_pct, subsystem: payload, units: "%", description: Imaging duty cycle }
+  - { id: 0x0613, name: payload.duty_cycle_pct, subsystem: payload, units: "%", description: Imaging duty cycle, on_demand: true }
   # Payload Phase 4: Flight hardware realism
   - { id: 0x0614, name: payload.compression_ratio, subsystem: payload, description: Image compression ratio }
   - { id: 0x0615, name: payload.cal_lamp_on, subsystem: payload, description: "Calibration lamp status (0=off, 1=on)" }
   - { id: 0x0616, name: payload.snr, subsystem: payload, units: dB, description: Signal-to-noise ratio }
   - { id: 0x0617, name: payload.detector_temp, subsystem: payload, units: C, description: CCD/CMOS detector temperature }
-  - { id: 0x0618, name: payload.integration_time, subsystem: payload, units: ms, description: Detector integration time }
-  - { id: 0x0619, name: payload.swath_width_km, subsystem: payload, units: km, description: Ground swath width }
+  - { id: 0x0618, name: payload.integration_time, subsystem: payload, units: ms, description: Detector integration time, on_demand: true }
+  - { id: 0x0619, name: payload.swath_width_km, subsystem: payload, units: km, description: Ground swath width, on_demand: true }
   # Payload Multispectral band SNR
   - { id: 0x0620, name: payload.band_blue_snr, subsystem: payload, units: dB, description: "Blue band (443 nm) SNR" , on_demand: true }
   - { id: 0x0621, name: payload.band_green_snr, subsystem: payload, units: dB, description: "Green band (560 nm) SNR" , on_demand: true }
-  - { id: 0x0622, name: payload.band_red_snr, subsystem: payload, units: dB, description: "Red band (665 nm) SNR" }
-  - { id: 0x0623, name: payload.band_nir_snr, subsystem: payload, units: dB, description: "NIR band (865 nm) SNR" }
-  - { id: 0x0624, name: payload.active_bands, subsystem: payload, description: Number of active spectral bands }
-  - { id: 0x0625, name: payload.band_enable_mask, subsystem: payload, description: "Spectral band enable bitmask (bits 0-3: blue/green/red/nir)" }
-  - { id: 0x0626, name: payload.att_quality_factor, subsystem: payload, description: Attitude-dependent image quality factor }
-  - { id: 0x0627, name: payload.att_error_deg, subsystem: payload, units: deg, description: Attitude error used for quality calculation }
-  - { id: 0x0628, name: payload.gsd_m, subsystem: payload, units: m, description: Ground sample distance }
-  - { id: 0x0629, name: payload.scene_entropy, subsystem: payload, description: Scene entropy estimate for compression }
+  - { id: 0x0622, name: payload.band_red_snr, subsystem: payload, units: dB, description: "Red band (665 nm) SNR", on_demand: true }
+  - { id: 0x0623, name: payload.band_nir_snr, subsystem: payload, units: dB, description: "NIR band (865 nm) SNR", on_demand: true }
+  - { id: 0x0624, name: payload.active_bands, subsystem: payload, description: Number of active spectral bands, on_demand: true }
+  - { id: 0x0625, name: payload.band_enable_mask, subsystem: payload, description: "Spectral band enable bitmask (bits 0-3: blue/green/red/nir)", on_demand: true }
+  - { id: 0x0626, name: payload.att_quality_factor, subsystem: payload, description: Attitude-dependent image quality factor, on_demand: true }
+  - { id: 0x0627, name: payload.att_error_deg, subsystem: payload, units: deg, description: Attitude error used for quality calculation, on_demand: true }
+  - { id: 0x0628, name: payload.gsd_m, subsystem: payload, units: m, description: Ground sample distance, on_demand: true }
+  - { id: 0x0629, name: payload.scene_entropy, subsystem: payload, description: Scene entropy estimate for compression, on_demand: true }
     # Payload Calibration and Transfer
   - { id: 0x062A, name: payload.calibration_active, subsystem: payload, description: "Calibration active (0=no, 1=yes)" }
   - { id: 0x062B, name: payload.calibration_progress, subsystem: payload, units: "%", description: Calibration progress percentage }
@@ -320,11 +441,20 @@ parameters:
   - { id: 0x062E, name: payload.transfer_progress, subsystem: payload, units: "%", description: "S13 transfer progress percentage" }
   - { id: 0x062F, name: payload.integration_time_ms, subsystem: payload, units: ms, description: Detector integration time (average of all bands) }
 
+  # Phase E WP-7 — detector-setting readbacks (previously unreachable/inert)
+  - { id: 0x0638, name: payload.int_time_blue, subsystem: payload, units: ms, description: "Blue band integration time", on_demand: true }
+  - { id: 0x0639, name: payload.int_time_green, subsystem: payload, units: ms, description: "Green band integration time", on_demand: true }
+  - { id: 0x063A, name: payload.int_time_red, subsystem: payload, units: ms, description: "Red band integration time", on_demand: true }
+  - { id: 0x063B, name: payload.int_time_nir, subsystem: payload, units: ms, description: "NIR band integration time", on_demand: true }
+  - { id: 0x063C, name: payload.shutter_pos, subsystem: payload, description: "Shutter position (0=closed, 1=open)", on_demand: true }
+  - { id: 0x063D, name: payload.filter_pos, subsystem: payload, description: "Filter wheel position (0=CLEAR, 1=ND2, 2=DIFFUSER, 3=DARK)", on_demand: true }
+  - { id: 0x063E, name: payload.compression_algo, subsystem: payload, description: "Compression algorithm (0=none, 1=CCSDS-121, 2=CCSDS-122, 3=CCSDS-123)", on_demand: true }
+
   # ===== Satellite Level (new parameters for displays) =====
   - { id: 0x0001, name: sat.mode, subsystem: spacecraft, description: "Spacecraft mode (0=safe, 1=nominal, 2=emergency)" , on_demand: true }
 
   # ===== OBDH Additional Parameters =====
-  - { id: 0x0A10, name: obdh.storage_fill, subsystem: obdh, units: "%", description: "Onboard storage fill percentage" }
+  - { id: 0x0A10, name: obdh.storage_fill, subsystem: obdh, units: "%", description: "Onboard storage fill percentage", on_demand: true }
 
   # ===== EPS Additional Parameters for Display =====
   - { id: 0x013A, name: eps.eclipse_active, subsystem: eps, description: "Eclipse active flag (0=sun, 1=eclipse)" }
@@ -338,33 +468,28 @@ parameters:
   - { id: 0x0143, name: eps.actual_charge_current_a, subsystem: eps, units: A, type: float, description: "Actual battery charge current" }
 
   # ===== FDIR Parameters =====
-  - { id: 0x0700, name: fdir.level, subsystem: fdir, description: "FDIR alert level (0=nominal, 1=caution, 2=warning, 3=critical)" }
-  - { id: 0x0701, name: fdir.active_alarms, subsystem: fdir, description: "Number of active alarms" }
-  - { id: 0x0702, name: fdir.critical_alarms, subsystem: fdir, description: "Number of critical alarms" }
-  - { id: 0x0703, name: fdir.high_alarms, subsystem: fdir, description: "Number of high-severity alarms" }
-
-  # ===== Contact & Contact Scheduling =====
-  - { id: 0x0800, name: contact.current_gs, subsystem: spacecraft, description: "Current ground station index" }
-  - { id: 0x0801, name: contact.time_to_aos, subsystem: spacecraft, units: s, description: "Time to acquisition of signal (seconds)" }
-  - { id: 0x0802, name: contact.in_contact, subsystem: spacecraft, description: "Currently in contact (0=no, 1=yes)" }
+  - { id: 0x0700, name: fdir.level, subsystem: fdir, description: "FDIR alert level (0=nominal, 1=caution, 2=warning, 3=critical)", on_demand: true }
+  - { id: 0x0701, name: fdir.active_alarms, subsystem: fdir, description: "Number of active alarms", on_demand: true }
+  - { id: 0x0702, name: fdir.critical_alarms, subsystem: fdir, description: "Number of critical alarms", on_demand: true }
+  - { id: 0x0703, name: fdir.high_alarms, subsystem: fdir, description: "Number of high-severity alarms", on_demand: true }
 
   # ===== Procedure Parameters =====
-  - { id: 0x0900, name: proc.progress, subsystem: spacecraft, units: "%", description: "Procedure execution progress" }
-  - { id: 0x0901, name: proc.current_step, subsystem: spacecraft, description: "Current procedure step number" }
-  - { id: 0x0902, name: proc.total_steps, subsystem: spacecraft, description: "Total number of procedure steps" }
-  - { id: 0x0903, name: proc.state, subsystem: spacecraft, description: "Procedure state (0=idle, 1=running, 2=paused, 3=complete, 4=aborted)" }
+  - { id: 0x0900, name: proc.progress, subsystem: spacecraft, units: "%", description: "Procedure execution progress", on_demand: true }
+  - { id: 0x0901, name: proc.current_step, subsystem: spacecraft, description: "Current procedure step number", on_demand: true }
+  - { id: 0x0902, name: proc.total_steps, subsystem: spacecraft, description: "Total number of procedure steps", on_demand: true }
+  - { id: 0x0903, name: proc.state, subsystem: spacecraft, description: "Procedure state (0=idle, 1=running, 2=paused, 3=complete, 4=aborted)", on_demand: true }
 
   # ===== AOCS Additional Parameters =====
-  - { id: 0x0260, name: aocs.wheels_enabled, subsystem: aocs, description: "Number of enabled reaction wheels" }
+  - { id: 0x0260, name: aocs.wheels_enabled, subsystem: aocs, description: "Number of enabled reaction wheels", on_demand: true }
 
   # ===== OBDH Additional Parameters =====
-  - { id: 0x0A11, name: obdh.can_bus_status, subsystem: obdh, description: "CAN bus status (0=offline, 1=nominal, 2=degraded)" }
+  - { id: 0x0A11, name: obdh.can_bus_status, subsystem: obdh, description: "CAN bus status (0=offline, 1=nominal, 2=degraded)", on_demand: true }
 
   # ===== Reserved diagnostic / on-demand stubs =====
   # Auto-added by procedure audit — marked on_demand + stub so they're
   # served via S20.3 (returns 0.0 until subsystem populates them).
   - { id: 0x0002, name: sys.mission_flag, subsystem: sys, description: "Reserved mission status bit", on_demand: true, stub: true }
-  - { id: 0x0215, name: aocs.css_sun_confidence, subsystem: aocs, description: "CSS sun-pointing confidence (0..1)", on_demand: true, stub: true }
+  - { id: 0x0215, name: aocs.css_sun_confidence, subsystem: aocs, description: "CSS sun-pointing confidence (0..1)", on_demand: true }
   - { id: 0x0230, name: aocs.wheel_torque_cmd, subsystem: aocs, units: 'Nm', description: "Commanded total RW torque", on_demand: true, stub: true }
   - { id: 0x0231, name: aocs.gps_ecef_x, subsystem: aocs, units: 'm', description: "GPS ECEF position X", on_demand: true, stub: true }
   - { id: 0x0232, name: aocs.gps_ecef_y, subsystem: aocs, units: 'm', description: "GPS ECEF position Y", on_demand: true, stub: true }
@@ -373,7 +498,7 @@ parameters:
   - { id: 0x0235, name: aocs.gps_vel_y, subsystem: aocs, units: 'm/s', description: "GPS ECEF velocity Y", on_demand: true, stub: true }
   - { id: 0x0236, name: aocs.gps_vel_z, subsystem: aocs, units: 'm/s', description: "GPS ECEF velocity Z", on_demand: true, stub: true }
   - { id: 0x0261, name: aocs.mtq_dipole_total, subsystem: aocs, units: 'Am^2', description: "Commanded total MTQ dipole", on_demand: true, stub: true }
-  - { id: 0x028E, name: aocs.rw_cmd_sum, subsystem: aocs, units: 'Nm', description: "RW command sum diagnostic", on_demand: true, stub: true }
+  - { id: 0x028E, name: aocs.rw_cmd_sum, subsystem: aocs, units: 'Nm', description: "RW command sum diagnostic", on_demand: true }
   - { id: 0x0320, name: tcs.htr_duty_z1, subsystem: tcs, units: '%', description: "Heater zone 1 duty cycle", on_demand: true, stub: true }
   - { id: 0x0321, name: tcs.htr_duty_z2, subsystem: tcs, units: '%', description: "Heater zone 2 duty cycle", on_demand: true, stub: true }
   - { id: 0x0322, name: tcs.htr_duty_z3, subsystem: tcs, units: '%', description: "Heater zone 3 duty cycle", on_demand: true, stub: true }
@@ -381,17 +506,17 @@ parameters:
   - { id: 0x0324, name: tcs.htr_duty_z5, subsystem: tcs, units: '%', description: "Heater zone 5 duty cycle", on_demand: true, stub: true }
   - { id: 0x0325, name: tcs.htr_duty_z6, subsystem: tcs, units: '%', description: "Heater zone 6 duty cycle", on_demand: true, stub: true }
   - { id: 0x0326, name: tcs.htr_duty_total, subsystem: tcs, units: '%', description: "Total heater duty cycle", on_demand: true, stub: true }
-  - { id: 0x0330, name: tcs.setpoint_bat, subsystem: tcs, units: 'C', description: "Battery heater setpoint", on_demand: true, stub: true }
-  - { id: 0x0331, name: tcs.setpoint_obc, subsystem: tcs, units: 'C', description: "OBC heater setpoint", on_demand: true, stub: true }
+  - { id: 0x0330, name: tcs.setpoint_bat, subsystem: tcs, units: 'C', description: "Battery heater setpoint", on_demand: true }
+  - { id: 0x0331, name: tcs.setpoint_obc, subsystem: tcs, units: 'C', description: "OBC heater setpoint", on_demand: true }
   - { id: 0x040D, name: ttc.pa_backup_temp, subsystem: ttc, units: 'C', description: "Backup power amplifier temperature", on_demand: true, stub: true }
-  - { id: 0x0420, name: tcs.temp_radiator_n, subsystem: tcs, units: 'C', description: "Radiator North temp", on_demand: true, stub: true }
-  - { id: 0x0421, name: tcs.temp_radiator_s, subsystem: tcs, units: 'C', description: "Radiator South temp", on_demand: true, stub: true }
+  - { id: 0x0420, name: tcs.temp_radiator_n, subsystem: tcs, units: 'C', description: "Radiator North temp (first-order proxy off the -Z panel)", on_demand: true }
+  - { id: 0x0421, name: tcs.temp_radiator_s, subsystem: tcs, units: 'C', description: "Radiator South temp (first-order proxy off the -Z panel)", on_demand: true }
   - { id: 0x0611, name: payload.imager_status, subsystem: payload, description: "Imager status word", on_demand: true, stub: true }
-  - { id: 0x0631, name: payload.fpa_setpoint, subsystem: payload, units: 'C', description: "FPA temperature setpoint", on_demand: true, stub: true }
+  - { id: 0x0631, name: payload.fpa_setpoint, subsystem: payload, units: 'C', description: "FPA cooler regulation setpoint (PAYLOAD_COOLER_SETPOINT readback)", on_demand: true }
   - { id: 0x0632, name: payload.fpa_stability, subsystem: payload, units: 'C', description: "FPA temperature stability (stddev)", on_demand: true, stub: true }
   - { id: 0x0633, name: payload.cooler_duty, subsystem: payload, units: '%', description: "FPA cooler duty cycle", on_demand: true, stub: true }
-  - { id: 0x0635, name: payload.integration_ms, subsystem: payload, units: 'ms', description: "Integration time setting", on_demand: true, stub: true }
-  - { id: 0x0636, name: payload.gain_code, subsystem: payload, description: "Gain configuration code", on_demand: true, stub: true }
-  - { id: 0x0640, name: payload.cal_flag, subsystem: payload, description: "Calibration active flag", on_demand: true, stub: true }
-  - { id: 0x0642, name: payload.dark_frame_cnt, subsystem: payload, description: "Dark frame count", on_demand: true, stub: true }
-  - { id: 0x0643, name: payload.bias_frame_cnt, subsystem: payload, description: "Bias frame count", on_demand: true, stub: true }
+  - { id: 0x0635, name: payload.integration_ms, subsystem: payload, units: 'ms', description: "Integration time setting (average of 4 bands; PAYLOAD_SET_INTEGRATION_TIME readback)", on_demand: true }
+  - { id: 0x0636, name: payload.gain_code, subsystem: payload, units: 'x', description: "Detector gain (PAYLOAD_SET_GAIN readback)", on_demand: true }
+  - { id: 0x0640, name: payload.cal_flag, subsystem: payload, description: "Calibration active flag (mirror of 0x062A)", on_demand: true }
+  - { id: 0x0642, name: payload.dark_frame_cnt, subsystem: payload, description: "Dark frames acquired in the current/last calibration", on_demand: true }
+  - { id: 0x0643, name: payload.bias_frame_cnt, subsystem: payload, description: "Flat/bias frames acquired in the current/last calibration", on_demand: true }

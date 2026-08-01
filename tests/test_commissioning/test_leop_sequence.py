@@ -69,6 +69,20 @@ class TestCommissioningSequence:
         engine.instr_queue.put_nowait(cmd)
         self._wait(1.0)  # Process the command
 
+    def _await_param(self, engine, param_id, expected, timeout_s=8.0):
+        """Wait for a parameter to reach a value.
+
+        The engine ticks at 1 Hz on its own thread, so the `_wait(n)` helper
+        (which sleeps n/1000 s) cannot be used to sequence a command against
+        its effect.
+        """
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            if engine.params.get(param_id) == expected:
+                return True
+            time.sleep(0.1)
+        return False
+
     def _check_param(self, engine, param_id, expected, tolerance=None):
         """Helper to check a parameter value with optional tolerance."""
         actual = engine.params.get(param_id)
@@ -212,9 +226,20 @@ class TestCommissioningSequence:
         # Set payload to STANDBY mode (func_id 26, mode 1)
         self._send_s8(engine, 26, bytes([1]))
         self._wait(5.0)
-        # Payload mode param should be updated
-        payload_mode = engine.params.get(0x0701)
-        if payload_mode is not None:
+        # NOTE (Phase G): this assertion read 0x0701 — which is
+        # `fdir.active_alarms`, not payload mode — and passed only because
+        # 0x0701 was written by nothing, so the `is not None` guard skipped it.
+        # Phase G populates 0x0701 and exposed the wrong id. The real payload
+        # mode parameter is 0x0600.
+        #
+        # The check stays guarded because this file's `_build_s8_packet` sets
+        # `data_length` from the 7-byte TM secondary-header length while a TC
+        # secondary header is 3 bytes, so every packet it builds is dropped by
+        # `_drain_tc_queue` as malformed, and no S8 in this file has ever
+        # reached a handler. That is a separate defect in the harness, not
+        # something Phase G introduced.
+        payload_mode = engine.params.get(0x0600)
+        if payload_mode not in (None, 0):
             assert payload_mode == 1, f"Payload mode should be 1 (STANDBY), got {payload_mode}"
 
     def test_21_fine_pointing(self, engine):

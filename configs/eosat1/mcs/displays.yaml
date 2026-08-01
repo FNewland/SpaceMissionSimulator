@@ -273,6 +273,36 @@ positions:
           - type: value_table
             parameters: [aocs.mtq_x_duty, aocs.mtq_y_duty, aocs.mtq_z_duty, aocs.total_momentum]
             label: "Actuators"
+      # Phase C (WP-8): determination & control — knowledge and control error
+      # as SEPARATE gauges with arcsec-capable ranges, the FINE readiness
+      # bitmask, momentum envelope and fidelity flag.
+      - name: "Determination & Control"
+        widgets:
+          - type: gauge
+            parameter: aocs.knowledge_err_3sig
+            label: "Knowledge Error (3σ)"
+            range: [0, 300]
+            units: "arcsec"
+          - type: gauge
+            parameter: aocs.control_err
+            label: "Control Error"
+            range: [0, 0.5]
+            units: "deg"
+          - type: gauge
+            parameter: aocs.h_env_frac
+            label: "Momentum Envelope"
+            range: [0, 100]
+            units: "%"
+          - type: value_table
+            parameters: [aocs.total_pointing_err_3sig, aocs.geoloc_err_m, aocs.pointing_frame, aocs.fine_ready, aocs.fidelity_mode, aocs.est_source, aocs.est_innov_rej_count, aocs.settle_time_s]
+            label: "Pointing Status"
+          - type: value_table
+            parameters: [aocs.h_body_x, aocs.h_body_y, aocs.h_body_z, aocs.tau_dist_x, aocs.tau_dist_y, aocs.tau_dist_z, aocs.power_w]
+            label: "Momentum & Disturbances"
+          - type: line_chart
+            parameters: [aocs.control_err, aocs.total_pointing_err_3sig]
+            label: "Pointing Error Trend"
+            duration_s: 1800
       - name: "Reaction Wheels"
         widgets:
           - type: line_chart
@@ -575,3 +605,74 @@ positions:
           - type: event_log
             label: "Execution Log"
 
+
+  # Phase D: propulsion display (tank/valves, burn, dV budget)
+  propulsion:
+    label: "Propulsion"
+    pages:
+      - name: "Tank & Valves"
+        widgets:
+          - type: gauge
+            parameter: prop.tank_pressure
+            label: "Tank Pressure"
+            range: [0, 26]
+            units: "bar"
+          - type: gauge
+            parameter: prop.propellant_pct
+            label: "Propellant"
+            range: [0, 100]
+            units: "%"
+          - type: gauge
+            parameter: prop.catbed_temp
+            label: "Catbed Temp"
+            range: [-30, 350]
+            units: "C"
+          - type: status_indicator
+            parameter: prop.latch_a_state
+            label: "Latch A"
+          - type: status_indicator
+            parameter: prop.latch_b_state
+            label: "Latch B"
+          - type: status_indicator
+            parameter: prop.fcv_state
+            label: "FCV"
+      - name: "Burn"
+        widgets:
+          - type: status_indicator
+            parameter: prop.state
+            label: "Prop State"
+          - type: status_indicator
+            parameter: prop.burn_status
+            label: "Burn Status"
+          - type: gauge
+            parameter: prop.burn_dv_cmd
+            label: "dV Commanded"
+            units: "m/s"
+          - type: gauge
+            parameter: prop.burn_dv_achieved
+            label: "dV Achieved"
+            units: "m/s"
+          - type: gauge
+            parameter: prop.arm_inhibit_mask
+            label: "Arm Inhibit Mask"
+          - type: line_chart
+            parameters: [prop.thrust_est, aocs.att_error]
+            label: "Thrust vs Attitude Error"
+            window_s: 300
+      - name: "dV Budget"
+        widgets:
+          - type: gauge
+            parameter: prop.dv_accum
+            label: "dV Used"
+            units: "m/s"
+          - type: gauge
+            parameter: prop.dv_remaining
+            label: "dV Remaining (CAM reserve)"
+            units: "m/s"
+          - type: gauge
+            parameter: prop.burn_count
+            label: "Burn Count"
+          - type: gauge
+            parameter: prop.sma_km
+            label: "Semi-Major Axis"
+            units: "km"

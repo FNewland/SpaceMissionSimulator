@@ -1,0 +1,98 @@
+# EOSAT-1 on-board memory map (PUS Service 6).
+#
+# This file is the SINGLE declaration of the spacecraft address space. Before
+# it existed the map was hard-coded in three disagreeing places — the
+# dispatcher's content generator, the dispatcher's read-only test, and the MCS
+# "Memory Browser" JavaScript — with the result that writes to unmapped
+# addresses (0xDEADBEEF) were accepted and a region the UI called read-only was
+# freely writable (defect #71).
+#
+# Consumed by smo_simulator.memory_map.MemoryMap.load(); it backs MEM_LOAD
+# (S6.2), MEM_DUMP (S6.5 -> TM 6,6) and MEM_CHECK (S6.9 -> TM 6,10). Serve it
+# to the ground as GET /api/memory-map rather than duplicating it in the UI.
+#
+# Per region:
+#   start / size   address range, [start, start+size)
+#   access         ro = MEM_LOAD is rejected with S1.8 code 0x0002
+#                  rw = patchable; the patch is stored and read back
+#   fill_kind      what an *unpatched* byte reads as:
+#                    constant      -> `fill`
+#                    address_high  -> (addr >> 8) & 0xFF
+#                    address_xor   -> (addr & 0xFF) ^ ((addr >> 8) & 0xFF)
+#                    zero          -> 0x00
+#   binding        optional: the region is a window onto live model state, so
+#                  a patch changes spacecraft behaviour, not just bytes.
+#
+# Anything NOT declared here is unmapped: MEM_LOAD/DUMP/CHECK are rejected with
+# S1.8 code 0x0001 (illegal address).
+
+regions:
+  - name: boot_rom
+    start: 0x00000000
+    size: 0x10000
+    access: ro
+    fill_kind: constant
+    fill: 0x55
+    patchable: false
+    description: "Boot ROM (primary) — mask-programmed, never writable in flight"
+
+  - name: boot_backup
+    start: 0x00010000
+    size: 0x10000
+    access: ro
+    fill_kind: constant
+    fill: 0x55
+    patchable: false
+    description: "Boot ROM (backup copy) — write-protected"
+
+  - name: app_a
+    start: 0x00100000
+    size: 0x80000
+    access: rw
+    fill_kind: address_high
+    description: "Application software image A (active)"
+
+  - name: app_b
+    start: 0x00180000
+    size: 0x80000
+    access: rw
+    fill_kind: address_high
+    description: "Application software image B (redundant / upload target)"
+
+  - name: config
+    start: 0x00200000
+    size: 0x20000
+    access: rw
+    fill_kind: constant
+    fill: 0xAA
+    description: "On-board configuration / parameter store"
+
+  - name: scratch_ram
+    start: 0x20000000
+    size: 0x40000
+    access: rw
+    fill_kind: address_xor
+    description: "Scratchpad RAM"
+
+  - name: aocs_gains
+    start: 0x20100000
+    size: 12
+    access: rw
+    fill_kind: zero
+    description: "AOCS per-axis control torque gains — live model binding"
+    binding:
+      model: aocs
+      setter: set_torque_gain     # model method: setter(axis, value)
+      fields:
+        - { offset: 0, type: float32, attr: torque_gain_x, key: x }
+        - { offset: 4, type: float32, attr: torque_gain_y, key: y }
+        - { offset: 8, type: float32, attr: torque_gain_z, key: z }
+
+# Request limits. dump and check share max_dump_bytes/max_check_bytes so a CRC
+# can always be reconstructed from a bounded number of dumps; previously dump
+# was silently capped at 256 B while check was uncapped, which made the two
+# mutually unverifiable.
+limits:
+  max_load_bytes: 512
+  max_dump_bytes: 1024
+  max_check_bytes: 0x100000

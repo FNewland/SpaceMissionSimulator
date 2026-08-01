@@ -1,0 +1,127 @@
+# EOSAT-1 Standard Activity Templates
+# ---------------------------------------------------------------------------
+# Named plan templates that the operator loads explicitly from the planner
+# ("Load standard activities" -> POST /api/schedule/load-template). The planner
+# itself always starts EMPTY (planner.yaml default_plan.start_empty).
+#
+# Schema: smo_planner.plan_templates.StandardPlansConfig (pydantic v2).
+#
+# `type:` MUST name an activity type defined in activity_types.yaml — the
+# instance is created through ActivityScheduler.add_activity, so duration,
+# power, data volume and the S8/S15 command sequence (with the func_ids
+# verified against the simulator's dispatch table, defect #45) all come from
+# that catalogue. A template can never invent a type or a command routing;
+# load-time validation rejects one that tries.
+#
+# Anchors (resolved against the planner's CURRENT SIM TIME and the REAL
+# contact windows / ground track at load time):
+#   absolute          start_time: <ISO 8601>
+#   offset_from_now   offset_min: <minutes after now>
+#   pass_relative     pass_index (0 = next upcoming pass), at: aos|los|midpoint,
+#                     offset_min, optional station:
+#   daylight_relative min_offset_min, offset_min — next sunlit track sample
+# Repetition: repeat: N with repeat_every_min (time anchors) or
+# repeat_pass_stride (pass_relative).
+
+templates:
+  - id: nominal_ops_day
+    name: "Nominal ops day (24 h)"
+    description: >-
+      Routine payload day: the spacecraft sits at the LOW tier (16 kbps) for
+      routine housekeeping, and earns the HIGH tier (128 kbps) for a
+      stored-data dump on every third pass that clears the 10 deg elevation
+      gate. Two daylight imaging acquisitions and a payload calibration. Every
+      element is anchored to a real pass or a real sunlit arc at load time.
+    horizon_hours: 24.0
+    activities:
+      # Shift start: pull an extended HK set before touching anything.
+      - type: housekeeping_collection
+        anchor: offset_from_now
+        offset_min: 2
+        note: "Start-of-shift HK snapshot"
+
+      # A dump every third GATE-CLEARING pass, centred on closest approach.
+      #
+      # Two things changed with the rate ladder (defect #86).
+      #
+      # (1) `min_pass_elevation_deg: 10.0` — the HIGH tier is REFUSED below
+      #     10 deg (subsystems/ttc.yaml tm_rate_tiers[HIGH].min_elevation_deg),
+      #     so a dump booked on a 7 deg pass would run at LOW and move an
+      #     eighth of the data the plan assumed. The template now books only
+      #     passes the spacecraft will let run at HIGH — 43 of the 52 windows
+      #     in a typical day.
+      # (2) `at: midpoint, offset_min: -2.75` — the 330 s dump is centred on
+      #     closest approach, where the elevation is highest and the whole
+      #     activity sits above the gate. The old AOS+1 min anchor put a
+      #     600 s dump across the low-elevation front half of the window.
+      #
+      # Eight dumps at stride 3 still spread across ~9 h of the shift, which is
+      # what lets the plan close: the day's last data-generating activity is
+      # followed by real downlink opportunities (defect #82).
+      - type: data_dump
+        anchor: pass_relative
+        pass_index: 0
+        at: midpoint
+        offset_min: -2.75
+        min_pass_elevation_deg: 10.0
+        repeat: 8
+        repeat_pass_stride: 3
+        note: "Stored-data downlink at HIGH tier (128 kbps, elevation >= 10 deg)"
+
+      # Daylight imaging: first sunlit arc at least 20 min ahead, then another
+      # roughly one orbit later.
+      - type: imaging_pass
+        anchor: daylight_relative
+        min_offset_min: 20
+        note: "Imaging acquisition (daylight)"
+      - type: imaging_pass
+        anchor: daylight_relative
+        min_offset_min: 115
+        note: "Imaging acquisition (next daylight arc)"
+
+      # Payload/AOCS calibration in daylight, away from the imaging slots.
+      - type: calibration
+        anchor: daylight_relative
+        min_offset_min: 240
+        note: "Routine gyro calibration"
+
+  - id: downlink_catchup
+    name: "Downlink catch-up"
+    description: >-
+      Storage-recovery plan: a dump on each of the next eight passes that can
+      hold the HIGH tier, and no new acquisitions. Use when the data budget
+      shows a growing backlog.
+    horizon_hours: 24.0
+    activities:
+      - type: data_dump
+        anchor: pass_relative
+        pass_index: 0
+        at: midpoint
+        offset_min: -2.75
+        min_pass_elevation_deg: 10.0
+        repeat: 8
+        repeat_pass_stride: 1
+        note: "Backlog downlink at HIGH tier (128 kbps)"
+
+  - id: payload_checkout
+    name: "Payload checkout"
+    description: >-
+      Commissioning-style checkout: HK collection, calibration, one imaging
+      acquisition, then a dump on the next pass to retrieve the product.
+    horizon_hours: 6.0
+    activities:
+      - type: housekeeping_collection
+        anchor: offset_from_now
+        offset_min: 1
+      - type: calibration
+        anchor: daylight_relative
+        min_offset_min: 10
+      - type: imaging_pass
+        anchor: daylight_relative
+        min_offset_min: 30
+      - type: data_dump
+        anchor: pass_relative
+        pass_index: 0
+        at: midpoint
+        offset_min: -2.75
+        min_pass_elevation_deg: 10.0

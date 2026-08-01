@@ -42,6 +42,13 @@ class RadioStatus:
     doppler_hz: float = 0.0
     range_km: float = 0.0
     data_rate_kbps: float = 32.0
+    # TM data-rate ladder (defect #85). The tier drives the bit rate, the
+    # modulation and the FEC, so the constellation, the occupied bandwidth and
+    # the eye diagram all move when the tier moves.
+    tm_tier: int = 0
+    tm_tier_name: str = ""
+    tm_coding: str = "RS"
+    occupied_bw_hz: float = 0.0
     # Frame counters
     good_frames: int = 0
     bad_frames: int = 0
@@ -74,9 +81,20 @@ class RadioStatus:
     # Spectrum data (FFT magnitudes for display)
     spectrum_db: list[float] = field(default_factory=list)
     spectrum_freq_range_hz: float = 0.0
-    # Eye diagram samples (symbol-aligned for display)
+    # Eye diagram samples (oversampled, symbol-aligned for display)
     eye_i: list[float] = field(default_factory=list)
     eye_q: list[float] = field(default_factory=list)
+    eye_sps: int = 8
+    # Measured receiver quality (decision-directed SNR estimate)
+    evm_snr_db: float = 0.0
+    # Pipeline
+    symbol_rate_bd: float = 32000.0
+    # Effective configuration + pipeline diagnostics (control plane)
+    config: dict = field(default_factory=dict)
+    diagnostics: dict = field(default_factory=dict)
+    control_enabled: bool = False
+    # Achieved downlink throughput measured at the receiver
+    throughput_bps: float = 0.0
     # Timestamp
     timestamp: float = 0.0
 
@@ -174,6 +192,22 @@ class RadioFrontend:
         self.status.modulation = mod_mode
         self.status.modulation_name = self._MOD_NAMES.get(mod_mode, "BPSK")
 
+    def update_tm_tier(self, tier: int = None, tier_name: str = None,
+                       coding: str = None, occupied_bw_hz: float = None):
+        """Publish the spacecraft's active TM rate tier (defect #85).
+
+        Lets the radio UI label the rate `HIGH (128.0 kbps, QPSK, RS)`
+        rather than showing a bare number whose provenance is invisible.
+        """
+        if tier is not None:
+            self.status.tm_tier = int(tier)
+        if tier_name is not None:
+            self.status.tm_tier_name = str(tier_name)
+        if coding is not None:
+            self.status.tm_coding = str(coding)
+        if occupied_bw_hz is not None:
+            self.status.occupied_bw_hz = float(occupied_bw_hz)
+
     def update_gs_penalty(self, penalty_db: float):
         self.status.gs_penalty_db = penalty_db
 
@@ -186,6 +220,27 @@ class RadioFrontend:
         self.status.n_interferers = channel_status.get("n_interferers", 0)
         self.status.bandwidth_hz = channel_status.get("sample_rate", 0) / 2.0
 
+    def update_pipeline_status(self, symbol_rate_bd: float = None,
+                               evm_snr_db: float = None,
+                               throughput_bps: float = None):
+        """Live pipeline figures: occupied symbol rate, measured receiver
+        SNR, and achieved downlink throughput."""
+        if symbol_rate_bd is not None:
+            self.status.symbol_rate_bd = float(symbol_rate_bd)
+        if evm_snr_db is not None:
+            self.status.evm_snr_db = float(evm_snr_db)
+        if throughput_bps is not None:
+            self.status.throughput_bps = float(throughput_bps)
+
+    def update_config(self, config: dict, control_enabled: bool = False):
+        """Publish the effective configuration to the UI control panel."""
+        self.status.config = config or {}
+        self.status.control_enabled = bool(control_enabled)
+
+    def update_diagnostics(self, diagnostics: dict):
+        """Publish pipeline counters (previously log-only)."""
+        self.status.diagnostics = diagnostics or {}
+
     def update_link_budget(self, budget: dict):
         """Update link budget breakdown from LinkBudget.compute()."""
         self.status.eirp_dbw = budget.get("eirp_dbw", 0.0)
@@ -193,36 +248,93 @@ class RadioFrontend:
         self.status.cn0_dbhz = budget.get("cn0_dbhz", 0.0)
         self.status.coding_gain_db = budget.get("coding_gain_db", 6.0)
 
-    def update_spectrum(self, samples, max_points: int = 128):
-        """Compute and store spectrum (FFT magnitude) from baseband samples."""
-        import numpy as np
-        if samples is None or len(samples) < 64:
-            return
-        # Use last N samples for FFT
-        n = min(len(samples), 512)
-        s = np.array(samples[-n:])
-        fft = np.fft.fftshift(np.fft.fft(s * np.hanning(n)))
-        mag_db = 20.0 * np.log10(np.abs(fft) + 1e-10)
-        # Downsample to max_points
-        step = max(1, len(mag_db) // max_points)
-        self.status.spectrum_db = [round(float(x), 1)
-                                    for x in mag_db[::step][:max_points]]
-        self.status.spectrum_freq_range_hz = self.status.bandwidth_hz * 2
+    def update_spectrum(self, samples, max_points: int = 128,
+                        nfft: int = 512, segments: int = 8,
+                        sample_rate: float = None):
+        """Compute and store a Welch-averaged baseband power spectrum.
 
-    def update_eye_diagram(self, symbols, sps: int = 8, traces: int = 20):
-        """Store symbol-aligned samples for eye diagram display."""
+        Fed from the post-impairment sample stream (``ChannelStage``) — i.e.
+        exactly what a ground-station SDR sees: the RRC main lobe, the
+        roll-off shoulders, the noise floor rising as Eb/N0 drops, CW
+        interferers as spikes, and the whole spectrum sliding under Doppler.
+
+        Averaging ``segments`` periodograms (Welch, Hann window, 50 %
+        overlap) instead of a single FFT keeps the trace readable — one
+        512-point FFT of a noisy stream is visually very jumpy.
+
+        Returns True if a spectrum was produced.
+        """
         import numpy as np
-        if symbols is None or len(symbols) < sps * 3:
-            return
-        # Take last N symbol periods, fold at 2× symbol period
+        if samples is None:
+            return False
+        s = np.asarray(samples)
+        if s.size < 64:
+            return False
+        nfft = min(int(nfft), int(s.size))
+        if nfft < 64:
+            return False
+        window = np.hanning(nfft)
+        win_power = float(np.sum(window ** 2)) or 1.0
+        hop = max(1, nfft // 2)
+        # Take the most recent segments (newest data last)
+        max_segs = 1 + (s.size - nfft) // hop
+        n_segs = max(1, min(int(segments), int(max_segs)))
+        start0 = s.size - nfft - (n_segs - 1) * hop
+        psd = np.zeros(nfft)
+        for i in range(n_segs):
+            start = start0 + i * hop
+            seg = s[start:start + nfft] * window
+            psd += np.abs(np.fft.fftshift(np.fft.fft(seg))) ** 2
+        psd /= (n_segs * win_power)
+        mag_db = 10.0 * np.log10(psd + 1e-12)
+        # Decimate to max_points, keeping the peak of each bin group so a
+        # narrow CW interferer is never averaged away
+        step = max(1, len(mag_db) // max_points)
+        usable = (len(mag_db) // step) * step
+        binned = mag_db[:usable].reshape(-1, step).max(axis=1)[:max_points]
+        self.status.spectrum_db = [round(float(x), 1) for x in binned]
+        if sample_rate:
+            self.status.spectrum_freq_range_hz = float(sample_rate)
+            self.status.bandwidth_hz = float(sample_rate) / 2.0
+        else:
+            self.status.spectrum_freq_range_hz = self.status.bandwidth_hz * 2
+        return True
+
+    def update_eye_diagram(self, samples, sps: int = 8, traces: int = 20,
+                           timing_offset: int = 0):
+        """Store oversampled, symbol-aligned traces for the eye diagram.
+
+        ``samples`` must be the **oversampled** post-matched-filter waveform
+        (sps samples per symbol), not the symbol-rate decimated
+        constellation tap — folding one-sample-per-symbol data at a
+        2·sps period produces noise, not an eye (defect #53).
+
+        ``timing_offset`` is the index of the first decision instant within
+        ``samples``; traces are aligned so the decision instant lands at the
+        centre of each 2-symbol trace.
+
+        Returns True if an eye was produced.
+        """
+        import numpy as np
+        if samples is None or sps < 2:
+            return False
+        s = np.asarray(samples)
         period = sps * 2
-        n_periods = min(traces, len(symbols) // period)
-        if n_periods < 2:
-            return
-        start = len(symbols) - n_periods * period
-        eye_data = np.array(symbols[start:start + n_periods * period])
-        self.status.eye_i = [round(float(x), 3) for x in eye_data.real[:period * traces]]
-        self.status.eye_q = [round(float(x), 3) for x in eye_data.imag[:period * traces]]
+        if s.size < period * 2:
+            return False
+        # Align so each trace starts half a symbol before a decision instant
+        # → the eye opening sits in the middle of the drawn trace.
+        first = (int(timing_offset) - sps // 2) % sps
+        avail = (s.size - first) // period
+        if avail < 2:
+            return False
+        n_traces = int(min(traces, avail))
+        start = first + (avail - n_traces) * period
+        eye = s[start:start + n_traces * period]
+        self.status.eye_i = [round(float(x), 3) for x in np.real(eye)]
+        self.status.eye_q = [round(float(x), 3) for x in np.imag(eye)]
+        self.status.eye_sps = int(sps)
+        return True
 
     def snapshot(self) -> RadioStatus:
         """Return current status. I/Q samples are set by the bridge from

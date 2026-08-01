@@ -40,7 +40,7 @@ is active at any time; the other is in cold standby:
 | Range           | +/- 60 uT            | +/- 60 uT            |
 | Resolution      | 10 nT                 | 10 nT                 |
 | Noise           | < 50 nT (1-sigma)    | < 50 nT (1-sigma)    |
-| Status Param    | mag_a_valid (0x0214)  | mag_b_valid (0x0215)  |
+| Status Param    | aocs.mag_a_x..z (0x0223-25) | aocs.mag_b_x..z (0x0226-28) |
 
 **Magnetometer Switchover Procedure:**
 
@@ -60,12 +60,12 @@ Sun vector and the face normal:
 
 | CSS Head | Face | Normal Direction | Param ID |
 |----------|------|------------------|----------|
-| CSS-1    | +X   | Along-track      | 0x0220   |
-| CSS-2    | -X   | Anti-track       | 0x0221   |
-| CSS-3    | +Y   | Cross-track      | 0x0222   |
-| CSS-4    | -Y   | Anti-cross       | 0x0223   |
-| CSS-5    | +Z   | Nadir            | 0x0224   |
-| CSS-6    | -Z   | Zenith           | 0x0225   |
+| CSS-1    | +X   | Along-track      | 0x027A   |
+| CSS-2    | -X   | Anti-track       | 0x027B   |
+| CSS-3    | +Y   | Cross-track      | 0x027C   |
+| CSS-4    | -Y   | Anti-cross       | 0x027D   |
+| CSS-5    | +Z   | Nadir            | 0x027E   |
+| CSS-6    | -Z   | Zenith           | 0x027F   |
 
 The AOCS software computes the Sun vector by combining the responses from all illuminated
 CSS heads using geometric projection. A minimum of two illuminated heads is required for
@@ -107,30 +107,45 @@ limit is set at +/-5000 RPM to allow margin before desaturation is required.
 
 ## 3. AOCS Modes
 
-| Mode ID | Mode Name      | Description                                         |
-|---------|----------------|-----------------------------------------------------|
-| 0       | NOMINAL        | Alias for NADIR_POINT — standard operations         |
-| 1       | DETUMBLE       | Rate damping using magnetorquers after separation    |
-| 2       | SAFE_POINT     | Sun-pointing using CSS + magnetorquers               |
-| 3       | DESAT          | Reaction wheel desaturation via magnetorquers        |
-| 4       | SLEW           | Commanded attitude manoeuvre to target quaternion     |
+Mode codes follow the canonical table in `configs/eosat1/aocs/aocs_mode_codes.yaml`
+(this section previously carried a contradictory five-mode numbering and has been
+corrected):
+
+| Mode ID | Mode Name   | Description                                             |
+|---------|-------------|---------------------------------------------------------|
+| 0       | OFF         | No attitude control; sensors and actuators unpowered    |
+| 1       | SAFE_BOOT   | Post-boot stabilisation, no actuation                   |
+| 2       | DETUMBLE    | B-dot rate damping using magnetorquers after separation |
+| 3       | COARSE_SUN  | Sun-pointing using CSS + magnetometer + magnetorquers   |
+| 4       | NOMINAL     | LVLH nadir tracking: star tracker + MEKF + wheels       |
+| 5       | FINE_POINT  | High-precision pointing: ST @4 Hz, all 4 wheels, gated  |
+| 6       | SLEW        | Rate-limited manoeuvre to a target quaternion           |
+| 7       | DESAT       | Wheel momentum dump via magnetorquers, attitude held    |
+| 8       | ECLIPSE     | Nadir hold on gyro-only knowledge (no ST updates)       |
+| 9       | INERTIAL    | Hold a commanded ECI quaternion (calibration, stereo)   |
 
 ### 3.1 Mode Transitions
 
 ```
-DETUMBLE --> SAFE_POINT --> NADIR_POINT (NOMINAL)
+DETUMBLE --> COARSE_SUN --> NOMINAL <--> ECLIPSE
                                |
-                               +--> SLEW --> NADIR_POINT
-                               |
-                               +--> DESAT --> NADIR_POINT
+                               +--> SLEW --> NOMINAL
+                               +--> DESAT --> NOMINAL
+                               +--> FINE_POINT (gated) / INERTIAL
 ```
 
-- **DETUMBLE to SAFE_POINT**: Autonomous when body rates < 0.5 deg/s for 30 seconds.
-- **SAFE_POINT to NADIR_POINT**: Ground commanded via `AOCS_SET_MODE` (mode=0).
-- **NADIR_POINT to SLEW**: Ground commanded via `AOCS_SET_MODE` (mode=4).
-- **NADIR_POINT to DESAT**: Ground commanded via `AOCS_DESATURATE` or autonomous
-  when any wheel exceeds 5000 RPM.
-- Any mode reverts to **SAFE_POINT** on FDIR-triggered safe mode entry.
+- **DETUMBLE to COARSE_SUN**: Autonomous when body rates < 0.5 deg/s for 30 seconds.
+- **COARSE_SUN to NOMINAL**: Autonomous once CSS is valid, attitude error < 10 deg
+  for 60 s and a star tracker is TRACKING (or ground commanded, mode=4).
+- **NOMINAL to FINE_POINT**: Ground commanded (`AOCS_SET_MODE` mode=5). The command
+  is REFUSED with TM(1,8) unless the `aocs.fine_ready` precondition bitmask
+  (0x02C5) reads 0 — use `AOCS_FINE_READY_CHECK` (func 89) first.
+- **NOMINAL to SLEW**: Ground commanded via `AOCS_SLEW_TO` (func 10, mode=6).
+- **NOMINAL to DESAT**: Ground commanded via `AOCS_DESATURATE` or autonomous when
+  the momentum envelope (0x02BA) exceeds 70 %.
+- **NOMINAL/FINE to ECLIPSE**: Autonomous on eclipse entry (5 s debounce); returns
+  to NOMINAL at eclipse exit.
+- Any mode reverts to **COARSE_SUN** on FDIR-triggered safe mode entry.
 
 ## 4. Telemetry Parameters
 
@@ -171,14 +186,14 @@ DETUMBLE --> SAFE_POINT --> NADIR_POINT (NOMINAL)
 | rw_speed (RPM)     | -5000      | 5000        | -5500   | 5500     |
 | rw_temp (deg C)    | 0          | 60          | -5      | 70       |
 
-A sustained attitude error above 1 deg triggers a yellow alarm. Errors above 2 deg in
-NADIR_POINT mode will cause the FDIR to command a transition to SAFE_POINT.
+A sustained attitude error above 1 deg triggers a yellow alarm. Errors above 5 deg in
+NOMINAL mode will cause the FDIR to command a transition to COARSE_SUN.
 
 ## 6. Commands
 
 | Command           | Service  | Parameters             | Description                          |
 |-------------------|----------|------------------------|--------------------------------------|
-| AOCS_SET_MODE     | S8,S1    | mode (0–4)             | Set AOCS operating mode              |
+| AOCS_SET_MODE     | S8,S1    | mode (0–9)             | Set AOCS operating mode              |
 | AOCS_DESATURATE   | S8,S1    | —                      | Initiate RW desaturation manoeuvre   |
 | HK_REQUEST        | S3,S27   | sid=2                  | Request AOCS housekeeping packet     |
 | GET_PARAM         | S20,S3   | param_id (0x0200–021B) | Read individual AOCS parameter       |
@@ -188,19 +203,21 @@ NADIR_POINT mode will cause the FDIR to command a transition to SAFE_POINT.
 
 1. Verify current wheel speeds via HK or `GET_PARAM` for 0x0207–0x020A.
 2. If any wheel exceeds +/-4500 RPM, schedule desaturation.
-3. Send `AOCS_DESATURATE` — the AOCS transitions to DESAT mode (mode=3).
-4. Monitor wheel speeds converging towards 0 RPM bias (typical duration: 5–15 min).
-5. AOCS autonomously returns to NADIR_POINT upon completion.
+3. Send `AOCS_DESATURATE` — the AOCS transitions to DESAT mode (mode=7).
+4. Monitor wheel speeds converging towards the ±200 RPM desat bias (typical
+   duration: 5–15 min at the 1.6 A·m² rod dipole).
+5. AOCS autonomously returns to NOMINAL upon completion.
 
 ## 7. Operational Notes
 
 1. Each star camera requires a minimum of 3 identified stars for a valid attitude solution.
    During eclipse exit (Sun blinding), attitude is propagated using gyros only for up to 60 s.
 2. Gyro bias calibration is performed autonomously every 12 hours using star tracker data.
-3. In DETUMBLE mode, only magnetorquers are active. Reaction wheels are not spun up until
-   SAFE_POINT mode is entered.
-4. Attitude knowledge accuracy is approximately 0.05 deg (3-sigma) in NADIR_POINT with
-   zenith star camera available.
+3. In DETUMBLE mode, only magnetorquers are active. Reaction wheels are not used for
+   control until NOMINAL mode is entered.
+4. Attitude knowledge accuracy budget is 0.05 deg (3-sigma) in NOMINAL with the zenith
+   star camera available; the flight system typically achieves ~0.015 deg 3-sigma
+   (downlinked at `aocs.knowledge_err_3sig`, 0x02A7).
 5. Only one magnetometer (A or B) is active at a time. Switchover is a ground-commanded
    operation (see Section 2.1.1).
 6. The GPS receiver provides position and velocity for orbit determination. The ADCS

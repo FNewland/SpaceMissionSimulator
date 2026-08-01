@@ -90,7 +90,13 @@ power-positive conditions resume (sunlit orbit phase with favourable beta angle)
 ## Off-Nominal Handling
 - If ground station hardware fault confirmed: reroute to backup antenna feed; contact station provider for emergency maintenance.
 - If spacecraft detected by radar but no RF signal: assume total transponder failure; plan uplink on S-band backup if available.
-- If telemetry received but corrupt/fragmented: reduce data rate, increase FEC coding, attempt narrow-bandwidth beacon mode.
+- If telemetry received but corrupt/fragmented: step the TM rate ladder down to LOW
+  (`TTC_SET_DATA_RATE(rate=0)`, func_id 65 — 16 kbps BPSK conv(7,1/2)+RS, which is both
+  9.03 dB of rate margin and 1.5 dB of extra coding gain relative to HIGH). If that
+  still does not lock, command beacon mode (`TTC_SET_BEACON_MODE(on=1)`, func_id 70):
+  it forces the BEACON rung — 1 000 bps, 1 kBd, ~3.1 kHz occupied bandwidth — which is
+  the narrowest, most robust waveform the spacecraft has. Re-configure the ground
+  demodulator to 1 kBd before expecting lock.
 - If spacecraft orbit decayed significantly from predicted: re-acquire TLE from space surveillance network before next pass attempt.
 
 ## Post-Conditions

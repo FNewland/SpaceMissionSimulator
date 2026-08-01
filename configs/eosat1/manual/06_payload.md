@@ -111,9 +111,14 @@ OFF --> STANDBY --> IMAGING --> STANDBY --> OFF
 ```
 
 - **OFF to STANDBY**: Ground commanded via `PAYLOAD_SET_MODE` (mode=1). FPA cooler begins
-  cooldown (~30 min to reach operating temperature).
-- **STANDBY to IMAGING**: Ground commanded via `PAYLOAD_SET_MODE` (mode=2). FPA must be
-  at operating temperature (temp_fpa <= -12 deg C).
+  cooldown. The loop reaches the setpoint band in about 10 minutes from the uncooled
+  equilibrium and `fpa_ready` (0x0610) sets after a further 60 s of hysteresis.
+- **STANDBY to IMAGING**: Ground commanded via `PAYLOAD_SET_MODE` (mode=2). The FPA must
+  be thermally ready — `fpa_ready` (0x0610) = 1. That flag is the gate; it means the loop
+  has settled about the **active** cooler setpoint (-1 K / +5 K) *and* `fpa_temp` is at or
+  below **-3.0 deg C**. At the default -15 deg C setpoint that works out to
+  **-16.0 … -10.0 deg C**. Do not key on a remembered number: the setpoint is commandable
+  over -20…0 deg C, so any fixed threshold is wrong for most of the envelope.
 - **IMAGING to STANDBY**: Ground commanded or autonomous at end of imaging window.
 - **STANDBY to OFF**: Ground commanded via `PAYLOAD_SET_MODE` (mode=0).
 
@@ -121,7 +126,7 @@ OFF --> STANDBY --> IMAGING --> STANDBY --> OFF
 
 | Constraint                   | Value / Condition                    |
 |------------------------------|--------------------------------------|
-| Min. FPA Temperature         | -12 deg C (for IMAGING entry)        |
+| FPA thermal gate             | `fpa_ready` (0x0610) = 1 — settled about the active setpoint (-1 K/+5 K) **and** at or below -3.0 deg C |
 | Max. Continuous Imaging      | 10 min (thermal/power limited)       |
 | Min. Battery SoC             | 40% (for imaging activation)         |
 | Required AOCS Mode           | NADIR_POINT or TARGET_TRACK (SLEW)   |
@@ -158,15 +163,34 @@ The `checksum_errors` parameter (0x0609) counts data integrity failures.
 
 | Parameter       | Yellow Low | Yellow High | Red Low | Red High |
 |-----------------|------------|-------------|---------|----------|
-| fpa_temp (C)    | -18        | 8           | -20     | 12       |
+| fpa_temp (C)      | -22.5      | 13.5        | -26.0   | 17.0     |
+| detector_temp (C) | -22.0      | 14.0        | -25.5   | 17.5     |
+
+Derived from `subsystems/tcs.yaml: fpa_envelope` (DECISIONS §3) — the TCS FPA
+node bands (03_tcs.md §6) shifted down the payload thermal chain:
+
+| Reading | Param | Where it sits |
+|---|---|---|
+| FPA bracket (TCS control node) | 0x0408 | the regulated setpoint |
+| Cold finger | 0x0601 `fpa_temp` | bracket **-0.5 K** |
+| Detector die | 0x0617 `detector_temp` | cold finger **+0.5 K** (self-heating) |
 
 ### 6.1 FPA Temperature Interpretation
 
-- **Below -18 deg C**: Cooler over-performance. Cooler power may be reduced.
-- **-18 to -12 deg C**: Optimal imaging range.
-- **-12 to 8 deg C**: Degraded imaging quality; STANDBY operations acceptable.
-- **Above 8 deg C**: Yellow alarm. Imaging should not be initiated.
-- **Above 12 deg C**: Red alarm. Cooler malfunction suspected; FDIR may power off payload.
+Limits answer "is the hardware healthy". Readiness answers "can I image".
+They are different questions and they used to be the same table, which is why
+five files disagreed.
+
+- **Below -22.5 deg C**: colder than the cooler can command. The loop has lost
+  control — this is a fault, not an over-performing cooler.
+- **Inside the commanded band** (active setpoint -1 K / +5 K) **and at or below
+  -3.0 deg C**: imaging range. `fpa_ready` = 1.
+- **Warmer than -3.0 deg C**: `FPA_OVERTEMP` (0x0604). Dark current makes the
+  product unusable. Legitimate in STANDBY; imaging must not be initiated.
+- **Around +11.5 deg C**: the normal uncooled resting state with the cooler
+  off. Not an alarm.
+- **Above +13.5 deg C**: yellow. Above **+17.0 deg C**: red — the radiator path
+  has been lost, or a decontamination bake-out is running (0x0418).
 
 ## 7. Commands
 
@@ -182,7 +206,9 @@ The `checksum_errors` parameter (0x0609) counts data integrity failures.
 1. Verify spacecraft is in NADIR_POINT mode with `att_error` < 0.5 deg.
 2. Verify battery SoC > 40% and sufficient mass memory available.
 3. Send `PAYLOAD_SET_MODE` (mode=1) to enter STANDBY. Monitor `fpa_temp` (0x0601).
-4. Wait for FPA cooldown: `fpa_temp` <= -12 deg C (approximately 30 minutes from OFF).
+4. Wait for FPA cooldown: `fpa_ready` (0x0610) = 1 — about 10 minutes from the uncooled
+   equilibrium, plus 60 s of readiness hysteresis.
+   At the default -15 deg C setpoint that corresponds to `fpa_temp` in -16.0 … -10.0 deg C.
 5. At imaging window start, send `PAYLOAD_SET_MODE` (mode=2).
 6. Monitor `image_count` (0x0605) incrementing during acquisition.
 7. At imaging window end, send `PAYLOAD_SET_MODE` (mode=1) to return to STANDBY.
@@ -195,9 +221,14 @@ The `checksum_errors` parameter (0x0609) counts data integrity failures.
 2. Imaging during eclipse is possible but produces dark frames (useful for calibration).
 3. If `checksum_errors` (0x0609) increments, the most recent image may be corrupted.
    Re-imaging of the target should be considered.
-4. Payload data downlink at 64 kbps (high-rate mode) requires approximately 25 minutes per
-   100 MB of compressed data. Downlink scheduling should account for available contact time
-   across Iqaluit and Troll passes.
+4. Payload data downlink runs on the HIGH tier of the TM rate ladder (128 kbps QPSK
+   RS(255,223), see `manual/05_ttc.md` §2.4). One 4 MiB raw frame is 262 s of channel,
+   or 328 s once the mission planner's 20 % protocol allowance is applied — about
+   three-quarters of the 445 s average pass in this mission's five-station contact
+   statistics. 100 MB of compressed product is therefore roughly 2.3 hours of contact
+   time, which is most of a day's usable network. Downlink scheduling must account for
+   available contact time across all five stations, and the HIGH tier is only available
+   on passes reaching 10 deg elevation with DOWNLINK mode commanded.
 5. The payload should not be left in STANDBY for more than 4 hours continuously to
    manage cooler lifetime.
 6. For ocean current monitoring, prioritise imaging over regions with known current
@@ -214,3 +245,35 @@ The `checksum_errors` parameter (0x0609) counts data integrity failures.
 ---
 
 *End of Document — EOSAT1-UM-PLD-007*
+
+---
+
+## Commandable settings
+
+Every payload setting reachable over the wire, with its encoding.
+
+<!-- BEGIN GENERATED: payload commandable settings -->
+<!-- Generated by tools/gen_command_reference.py — do not edit by hand. -->
+
+| Setting | Command | func_id | Wire form | Engineering range | Default | Readback |
+|---|---|---|---|---|---|---|
+| Set payload mode | `PAYLOAD_SET_MODE` | 26 (0x1A) | mode:uint8 | — | 0 | payload.mode (0x0600) |
+| DEPRECATED — pre-set the next scene id. Superseded by PAYLOA | `PAYLOAD_SET_SCENE` | 27 (0x1B) | scene_id:uint16 | 0 … 65535 | 0 | payload.scene_id (0x0606) |
+| Trigger one image acquisition. The WHERE is set by the WHEN: | `PAYLOAD_CAPTURE` | 28 (0x1C) | scene_id:uint16, lines:uint16 | 0 … 65535; 256 … 20000 | 0; 2048 | payload.last_scene_id (0x060C) |
+| Queue image for downlink | `PAYLOAD_DOWNLOAD_IMAGE` | 29 (0x1D) | scene_id:uint16 | 0 … 65535 | 0 | — |
+| Delete specific image from payload memory | `PAYLOAD_DELETE_IMAGE` | 30 (0x1E) | scene_id:uint16 | 0 … 65535 | 0 | — |
+| Mark memory segment as unusable | `PAYLOAD_MARK_BAD_SEGMENT` | 31 (0x1F) | segment_id:uint8 | 0 … 7 | 0 | payload.mem_segments_bad (0x0612) |
+| Request stored image catalog | `PAYLOAD_GET_IMAGE_CATALOG` | 32 (0x20) | no arguments | — | — | — |
+| Set spectral band enable mask | `PAYLOAD_SET_BAND_CONFIG` | 33 (0x21) | mask:uint8 | 1 … 15 | 15 | payload.band_enable_mask (0x0625) |
+| Set per-band detector integration times. Fixed point, 0.01 m | `PAYLOAD_SET_INTEGRATION_TIME` | 34 (0x22) | blue_ms:uint16 x0.01, green_ms:uint16 x0.01, red_ms:uint16 x0.01, nir_ms:uint16 x0.01 | 0.1 … 655.35; 0.1 … 655.35; 0.1 … 655.35; 0.1 … 655.35 | 2.0; 2.0; 2.0; 2.0 | payload.integration_ms (average) (0x0635) |
+| Set detector gain. Fixed point, 0.001x/LSB (was float32). Ga | `PAYLOAD_SET_GAIN` | 35 (0x23) | gain:uint16 x0.001 | 0.1 … 10.0 | 1.0 | payload.gain_code (0x0636) |
+| Set the FPA thermo-electric cooler regulation setpoint (driv | `PAYLOAD_COOLER_SETPOINT` | 36 (0x24) | setpoint:uint16 x0.01 | -20.0 … 0.0 | -15.0 | payload.fpa_setpoint (0x0631) |
+| Begin calibration sequence (dark frame / flat field / both) | `PAYLOAD_START_CALIBRATION` | 37 (0x25) | mode:uint8 | — | 2 | payload.cal_active (0x062A) |
+| Abort calibration sequence | `PAYLOAD_STOP_CALIBRATION` | 38 (0x26) | no arguments | — | — | — |
+| Select compression algorithm and ratio override (was a singl | `PAYLOAD_SET_COMPRESSION` | 39 (0x27) | algorithm:uint8, ratio:uint8 x0.1 | —; 0.0 … 4.0 | 3; 0.0 | payload.compression_ratio (0x0614) |
+| Rotate the filter wheel to a position (2 s per 90 deg step) | `PAYLOAD_SELECT_FILTER` | 92 (0x5C) | position:uint8 | — | 0 | payload.filter_pos (0x063D) |
+| Run a shutter mechanism cycle test (COM-011 dark-frame prep) | `PAYLOAD_CYCLE_SHUTTER` | 93 (0x5D) | cycles:uint8 | 1 … 100 | 1 | payload.shutter_pos (0x063C) |
+| Start the on-board image transfer engine for a stored scene | `PAYLOAD_INITIATE_TRANSFER` | 94 (0x5E) | scene_id:uint16 | 1 … 65535 | 1 | payload.transfer_active (0x062D) |
+| Calibration lamp on/off (also reachable as S2 device 0x0602) | `PAYLOAD_CAL_LAMP` | 95 (0x5F) | on:uint8 | — | 0 | payload.cal_lamp_on (0x0615) |
+
+<!-- END GENERATED: payload commandable settings -->

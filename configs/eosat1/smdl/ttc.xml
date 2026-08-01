@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="TTC" Creator="EOSAT-1 SMDL Generator" Date="2026-04-19" Version="1.0">
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="TTC" Creator="EOSAT-1 SMDL Generator" Date="2026-08-01" Version="1.0">
   <Description>SMP2 model catalogue for TTC subsystem</Description>
   <Type Name="UInt8" Uuid="ab46787a-5742-5d41-9471-82b8d26b3826" xsi:type="Integer" Size="1" Signed="false"/>
   <Type Name="UInt16" Uuid="00ba295b-550c-5551-b87d-d604e30c7592" xsi:type="Integer" Size="2" Signed="false"/>
@@ -19,7 +19,7 @@
       <Description>[dB]</Description>
     </Field>
     <Field Name="ttc_tm_data_rate" Uuid="9daa0594-4459-5a14-a4a7-5e968a032f21" Type="UInt32" Kind="Output" View="true">
-      <Description>[bps]</Description>
+      <Description>Active TM information rate (BEACON 1000 / LOW 16000 / HIGH 128000) [bps]</Description>
     </Field>
     <Field Name="ttc_xpdr_temp" Uuid="54465546-b34f-5c54-bda6-0e28850f3493" Type="Int16" Kind="Output" View="true">
       <Description>[C]</Description>
@@ -96,38 +96,53 @@
     <Field Name="ttc_modulation_mode" Uuid="19826d69-92f0-5463-ba31-d68611ada04a" Type="Float32" Kind="Output" View="true">
       <Description>Modulation scheme (0=BPSK, 1=QPSK, 2=8PSK, 3=OQPSK)</Description>
     </Field>
+    <Field Name="ttc_tm_tier" Uuid="cbe3fcb8-91bd-5532-82e3-1cfbea673c1c" Type="UInt8" Kind="Output" View="true">
+      <Description>ACTIVE TM rate tier index (0=BEACON 1 kbps, 1=LOW 16 kbps, 2=HIGH 128 kbps) — what is on air now, after the permission gates</Description>
+    </Field>
+    <Field Name="ttc_tm_tier_cmd" Uuid="c66ee5c4-6cbb-525e-846f-cf1c0d12dd01" Type="UInt8" Kind="Output" View="true">
+      <Description>COMMANDED TM rate tier index (TTC_SET_DATA_RATE, S8 func 65). Differs from 0x0539 whenever a gate demotes the active tier</Description>
+    </Field>
+    <Field Name="ttc_tm_symbol_rate" Uuid="659aec9e-c8e5-532a-bc05-f43fa35f4fc7" Type="UInt32" Kind="Output" View="true">
+      <Description>Symbol rate now on air = active bit rate / bits-per-symbol. 16 kBd at LOW (BPSK), 64 kBd at HIGH (QPSK) — the tier step is visible on the radio [Bd]</Description>
+    </Field>
+    <Field Name="ttc_downlink_mode" Uuid="3524d496-d7bc-54c3-bd86-8d3e3e23a853" Type="UInt8" Kind="Output" View="true">
+      <Description>DOWNLINK / payload-dump mode (TTC_SET_DOWNLINK_MODE, S8 func 79). 0=off, 1=on. This is the mode gate on the HIGH tier</Description>
+    </Field>
     <Field Name="ttc_active_gs" Uuid="948b7ba0-81b4-577d-afb4-8b32929f3f1b" Type="Float32" Kind="Output" View="true">
-      <Description>Active ground station index</Description>
+      <Description>Active ground station: 1-based index into orbit.yaml ground_stations, 0 = out of contact</Description>
     </Field>
     <Field Name="ttc_gs_equipment_status" Uuid="48c9892d-6b71-555f-8e34-1f843988676f" Type="Float32" Kind="Output" View="true">
-      <Description>GS equipment status bitmask (antenna/LNA/TX/upconverter)</Description>
+      <Description>GS equipment health bitmask, SET bit = healthy: bit0 antenna+tracking, bit1 LNA, bit2 uplink HPA, bit3 reference oscillator+feed. 15 = all healthy</Description>
     </Field>
     <Field Name="ttc_pa_backup_temp" Uuid="c6bf5077-9e60-5a6b-acea-a6a708a79e77" Type="Float32" Kind="Output" View="true">
       <Description>Backup power amplifier temperature [C]</Description>
     </Field>
     <Field Name="tc_TTC_SET_DATA_RATE_rate" Uuid="f1bdaa6a-aedb-5041-829a-5cbddae03e57" Type="UInt8" Kind="Input">
-      <Description>0=low(1kbps), 1=high(64kbps)</Description>
+      <Description>Tier code: 0=LOW(16 kbps, routine operations), 1=HIGH(128 kbps, dumps only), 255=BEACON(1 kbps, bootloader only). Codes come from tm_rate_tiers[].command_code in subsystems/ttc.yaml. | default 0 | 0=LOW | 1=HIGH | 255=BEACON</Description>
     </Field>
     <Field Name="tc_TTC_SET_TX_POWER_level" Uuid="8e5330e9-c10e-5025-8d51-585390d510b5" Type="UInt8" Kind="Input">
-      <Description>0=low(1W), 1=nominal(5W), 2=high(8W)</Description>
+      <Description>0=LOW (1.0 W), 1=NOMINAL (2.0 W), 2=HIGH (5.0 W) | default 1 | 0=LOW | 1=NOMINAL | 2=HIGH</Description>
     </Field>
-    <Field Name="tc_TTC_SET_BEACON_MODE_True" Uuid="b5de1f0e-50a8-5606-91f8-0a64c0fcf033" Type="UInt8" Kind="Input">
+    <Field Name="tc_TTC_SET_BEACON_MODE_on" Uuid="02361d24-d309-5b91-a4f3-76934c276839" Type="UInt8" Kind="Input">
       <Description>0=off, 1=on</Description>
     </Field>
     <Field Name="tc_TTC_SET_UL_FREQ_freq_mhz" Uuid="d7430918-6160-599a-a577-fdfc77c36a16" Type="Float32" Kind="Input">
-      <Description>Uplink frequency in MHz (2000-2100)</Description>
+      <Description>Uplink frequency in MHz (S-band 2025-2110, CCSDS 401.0-B)</Description>
     </Field>
     <Field Name="tc_TTC_SET_DL_FREQ_freq_mhz" Uuid="b2d15c9b-2892-5d3a-bb4e-e1614fcedeec" Type="Float32" Kind="Input">
-      <Description>Downlink frequency in MHz (8400-8500)</Description>
+      <Description>Downlink frequency in MHz (S-band 2200-2290, CCSDS 401.0-B)</Description>
     </Field>
     <Field Name="tc_TTC_SET_MODULATION_mode" Uuid="ccdfbd38-0f40-5992-9336-471079ed0666" Type="UInt8" Kind="Input">
-      <Description>0=BPSK (1 bit/sym, most robust), 1=QPSK (2 bit/sym), 2=8PSK (3 bit/sym, needs +3.6 dB), 3=OQPSK (2 bit/sym, offset timing)</Description>
+      <Description>0=BPSK (1 bit/sym, most robust), 1=QPSK (2 bit/sym), 2=8PSK (3 bit/sym, needs +3.6 dB), 3=OQPSK (2 bit/sym, offset timing) | default 0 | 0=BPSK | 1=QPSK | 2=8PSK | 3=OQPSK</Description>
     </Field>
     <Field Name="tc_TTC_SET_RX_GAIN_agc_db" Uuid="af521aa2-d030-5e08-87d1-fbb63626d3a3" Type="Float32" Kind="Input">
       <Description>AGC target in dB (-100 to 0)</Description>
     </Field>
-    <Field Name="tc_TTC_SET_COHERENT_MODE_True" Uuid="17b9b89e-b4c1-5d32-aa88-31fef1ba3ad4" Type="UInt8" Kind="Input">
+    <Field Name="tc_TTC_SET_COHERENT_MODE_on" Uuid="8789d632-f728-51d9-a626-ad66f3e65c2a" Type="UInt8" Kind="Input">
       <Description>0=off (non-coherent), 1=on (coherent)</Description>
+    </Field>
+    <Field Name="tc_TTC_SET_DOWNLINK_MODE_on" Uuid="d9ee5bc2-374c-5ab0-9566-7efd6b11a394" Type="UInt8" Kind="Input">
+      <Description>0=leave DOWNLINK mode, 1=enter DOWNLINK/dump mode</Description>
     </Field>
     <EntryPoint Name="Step" Uuid="4c5b072b-fe42-5d27-9c99-c7d4e9e85f73">
       <Description>Main simulation step</Description>

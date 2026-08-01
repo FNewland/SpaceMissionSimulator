@@ -31,7 +31,7 @@ transitioning to fine-pointing mode.
 **GO/NO-GO:** AOCS stable for calibration
 
 ### Step 2 — Initiate Gyroscope Bias Calibration
-**TC:** `SET_PARAM(0x0250, 1)` (Service 20, Subtype 3) — start gyro bias estimation
+**TC:** `SET_PARAM(0x0250, 1)` (Service 20, Subtype 1) — start gyro bias estimation
 **Action:** On-board algorithm averages gyro output over a quiescent period (body rates near zero) to estimate bias offsets for all three axes. Duration: 5 minutes.
 **Verify:** `GET_PARAM(0x0251)` — gyro cal status = IN_PROGRESS (value 1) within 10s
 **Action:** Wait 300 seconds for calibration to complete.
@@ -39,9 +39,9 @@ transitioning to fine-pointing mode.
 **GO/NO-GO:** Gyro bias estimation completed
 
 ### Step 3 — Verify Gyro Bias Values
-**TC:** `GET_PARAM(0x0252)` (Service 20, Subtype 1) — gyro X bias (deg/s)
-**TC:** `GET_PARAM(0x0253)` (Service 20, Subtype 1) — gyro Y bias (deg/s)
-**TC:** `GET_PARAM(0x0254)` (Service 20, Subtype 1) — gyro Z bias (deg/s)
+**TC:** `GET_PARAM(0x0252)` (Service 20, Subtype 3) — gyro X bias (deg/s)
+**TC:** `GET_PARAM(0x0253)` (Service 20, Subtype 3) — gyro Y bias (deg/s)
+**TC:** `GET_PARAM(0x0254)` (Service 20, Subtype 3) — gyro Z bias (deg/s)
 **Verify:** |gyro X bias| < 0.5 deg/s within 10s
 **Verify:** |gyro Y bias| < 0.5 deg/s within 10s
 **Verify:** |gyro Z bias| < 0.5 deg/s within 10s
@@ -49,7 +49,7 @@ transitioning to fine-pointing mode.
 **GO/NO-GO:** Gyro bias values within expected range
 
 ### Step 4 — Initiate Magnetometer Calibration
-**TC:** `SET_PARAM(0x0260, 1)` (Service 20, Subtype 3) — start magnetometer calibration
+**TC:** `SET_PARAM(0x0260, 1)` (Service 20, Subtype 1) — start magnetometer calibration
 **Action:** On-board algorithm compares measured magnetic field vector with IGRF model prediction for current orbit position. Estimates hard-iron and soft-iron correction parameters. Requires ~10 minutes (partial orbit) for adequate geometric diversity.
 **Verify:** `GET_PARAM(0x0261)` — mag cal status = IN_PROGRESS (value 1) within 10s
 **Action:** Wait 600 seconds. Spacecraft will continue in SAFE_POINT mode during calibration.
@@ -57,29 +57,29 @@ transitioning to fine-pointing mode.
 **GO/NO-GO:** Magnetometer calibration completed
 
 ### Step 5 — Verify Magnetometer Calibration Quality
-**TC:** `GET_PARAM(0x0262)` (Service 20, Subtype 1) — mag calibration residual (nT)
+**TC:** `GET_PARAM(0x0262)` (Service 20, Subtype 3) — mag calibration residual (nT)
 **Verify:** Mag calibration residual < 500 nT within 10s
 **Action:** Record residual. A residual < 200 nT indicates excellent calibration. Values 200-500 nT are acceptable. Above 500 nT requires recalibration with more orbit arc.
 **GO/NO-GO:** Magnetometer calibration residual within acceptable limits
 
 ### Step 6 — Power On Star Tracker
-**TC:** `SET_PARAM(0x0270, 1)` (Service 20, Subtype 3) — star tracker power ON
+**TC:** `SET_PARAM(0x0270, 1)` (Service 20, Subtype 1) — star tracker power ON
 **Action:** Star tracker requires 60 seconds for boot and initial star acquisition.
 **Verify:** `GET_PARAM(0x0271)` — star tracker status = TRACKING (value 2) within 90s
-**TC:** `GET_PARAM(0x0272)` (Service 20, Subtype 1) — number of tracked stars
+**TC:** `GET_PARAM(0x0272)` (Service 20, Subtype 3) — number of tracked stars
 **Verify:** Tracked stars >= 5 within 90s
 **GO/NO-GO:** Star tracker operational and tracking stars
 
 ### Step 7 — Verify Star Tracker Attitude Solution
-**TC:** `GET_PARAM(0x0273)` (Service 20, Subtype 1) — star tracker quaternion quality
+**TC:** `GET_PARAM(0x0273)` (Service 20, Subtype 3) — star tracker quaternion quality
 **Verify:** Quaternion quality flag = VALID (value 1) within 10s
 **Action:** Compare star tracker attitude solution with magnetometer/sun sensor coarse solution. Cross-check angular difference.
-**TC:** `GET_PARAM(0x0274)` (Service 20, Subtype 1) — attitude cross-check error (deg)
+**TC:** `GET_PARAM(0x0274)` (Service 20, Subtype 3) — attitude cross-check error (deg)
 **Verify:** Cross-check error < 5.0 deg within 10s (coarse sensors vs star tracker)
 **GO/NO-GO:** Star tracker solution consistent with coarse attitude estimate
 
 ### Step 8 — Enable Star Tracker in AOCS Loop
-**TC:** `SET_PARAM(0x0275, 1)` (Service 20, Subtype 3) — enable star tracker in AOCS
+**TC:** `SET_PARAM(0x0275, 1)` (Service 20, Subtype 1) — enable star tracker in AOCS
 **Verify:** `aocs.att_error` (0x0217) improves (decreases) within 60s
 **Action:** With star tracker enabled, attitude determination accuracy improves from ~2 degrees (coarse) to < 0.01 degrees. Monitor for improved pointing accuracy.
 **GO/NO-GO:** Star tracker integrated into AOCS attitude determination

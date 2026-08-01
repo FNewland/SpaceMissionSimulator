@@ -112,7 +112,9 @@ def test_tcs_setpoint_readback_defect3():
 
     # Initial tick — should have default setpoints
     model.tick(1.0, orbit, params)
-    assert params[0x0330] == 1.0  # Default battery ON setpoint
+    # Phase B (brief 05 WP-3): default battery thermostat ON setpoint is
+    # +5 C (was +1 C, which the battery node could never reach).
+    assert params[0x0330] == 5.0  # Default battery ON setpoint
     assert params[0x0331] == 5.0  # Default OBC ON setpoint
 
     # Command new setpoints via set_setpoint

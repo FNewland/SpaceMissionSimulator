@@ -1,0 +1,29 @@
+name: "Propulsion Thruster Underperformance"
+difficulty: INTERMEDIATE
+duration_s: 3600
+briefing: |
+  Catalyst-bed poisoning has degraded thrust to 55% of prediction. The
+  degradation is injected before the planned drag make-up burn, so the burn
+  ARMS and COMPLETES normally — in closed-loop dv mode the burn simply runs
+  ~1.8x longer than predicted (0x0B11 vs 0x0B10), and in timed mode the
+  achieved delta-V (0x0B0F) comes up at 55% of commanded. The tell is the
+  live thrust estimate (0x0B09) sitting far below the blowdown prediction
+  for the current tank pressure. Post-burn orbit determination confirms the
+  shortfall; the correct response is the NOM-013 deviation: complete the OD,
+  re-plan a trim burn under NOM-004 with the measured performance factor,
+  and raise a ticket (CTG-028 underperformance path).
+events:
+  - time_offset_s: 120
+    action: inject
+    params:
+      subsystem: prop
+      failure: thrust_degraded
+      magnitude: 0.55
+  - time_offset_s: 180
+    action: message
+    params:
+      text: "Plan of day: 0.85 m/s prograde drag make-up burn this pass (NOM-004 approved). Execute per NOM-013."
+expected_responses:
+  - { category: detect, description: "Detect thrust estimate (0x0B09) / burn duration (0x0B11 vs 0x0B10) inconsistent with tank pressure; PROP_UNDERPERFORMANCE event" }
+  - { category: isolate, description: "Post-burn OD: achieved vs commanded dV and observed AOS shift confirm real underperformance, not sensor error" }
+  - { category: recover, description: "Re-plan a trim burn under NOM-004 with the measured performance factor; ticket catbed degradation" }

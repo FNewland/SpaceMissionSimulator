@@ -33,16 +33,57 @@ class ActiveFailure:
     _flicker_next: float = 0.0
 
 
+# Onset-timing fallbacks. The engine overrides these from simulation.yaml
+# `failures:` (defect #51); they remain the defaults for direct construction.
+DEFAULT_ONSET_DURATION_S = 90.0
+DEFAULT_FIRST_FLICKER_S = (2.0, 6.0)
+DEFAULT_FLICKER_ON_S = (2.0, 8.0)
+DEFAULT_FLICKER_OFF_S = (5.0, 20.0)
+
+
 class FailureManager:
-    def __init__(self, inject_fn: Callable, clear_fn: Callable):
+    def __init__(self, inject_fn: Callable, clear_fn: Callable, config: Any = None,
+                 rng: random.Random | None = None):
         self._inject = inject_fn
         self._clear = clear_fn
+        # Flicker-timing RNG (plan A-2). The engine passes a Random derived
+        # from simulation.yaml `seed`; standalone construction stays random.
+        self.rng = rng if rng is not None else random.Random(20260731)  # deterministic standalone fallback
         self._failures: dict[str, ActiveFailure] = {}
         self._sim_elapsed: float = 0.0
+        # Onset timing (simulation.yaml `failures:` block, else defaults)
+        self._default_onset_s = DEFAULT_ONSET_DURATION_S
+        self._first_flicker_s = tuple(DEFAULT_FIRST_FLICKER_S)
+        self._flicker_on_s = tuple(DEFAULT_FLICKER_ON_S)
+        self._flicker_off_s = tuple(DEFAULT_FLICKER_OFF_S)
+        if config is not None:
+            self.configure(config)
+
+    def configure(self, cfg: Any) -> None:
+        """Apply a simulation.yaml ``failures:`` config block (pydantic or dict)."""
+        def _get(obj, key, default):
+            if isinstance(obj, dict):
+                return obj.get(key, default)
+            return getattr(obj, key, default)
+
+        self._default_onset_s = float(
+            _get(cfg, "default_onset_duration_s", self._default_onset_s))
+        inter = _get(cfg, "intermittent", None)
+        if inter is not None:
+            for attr, key, cur in (
+                ("_first_flicker_s", "first_flicker_s", self._first_flicker_s),
+                ("_flicker_on_s", "on_s", self._flicker_on_s),
+                ("_flicker_off_s", "off_s", self._flicker_off_s),
+            ):
+                rng = _get(inter, key, None)
+                if rng and len(rng) == 2:
+                    setattr(self, attr, (float(rng[0]), float(rng[1])))
 
     def inject(self, subsystem: str, failure: str, magnitude: float = 1.0,
                onset: str = ONSET_STEP, duration_s: float = 0.0,
-               onset_duration_s: float = 90.0, **extra) -> str:
+               onset_duration_s: float | None = None, **extra) -> str:
+        if onset_duration_s is None:
+            onset_duration_s = self._default_onset_s
         fid = f"{subsystem}.{failure}.{extra.get('array', extra.get('wheel', extra.get('circuit', '0')))}"
         if onset == ONSET_STEP:
             onset_duration_s = 0.0
@@ -60,7 +101,7 @@ class FailureManager:
         if onset == ONSET_STEP:
             self._apply(af, magnitude)
         elif onset == ONSET_INTERMITTENT:
-            af._flicker_next = self._sim_elapsed + random.uniform(2, 6)
+            af._flicker_next = self._sim_elapsed + self.rng.uniform(*self._first_flicker_s)
         self._failures[fid] = af
         return fid
 
@@ -117,11 +158,64 @@ class FailureManager:
         if sim_elapsed >= af._flicker_next:
             af._flicker_on = not af._flicker_on
             if af._flicker_on:
-                af._flicker_next = sim_elapsed + random.uniform(2.0, 8.0)
+                af._flicker_next = sim_elapsed + self.rng.uniform(*self._flicker_on_s)
                 self._apply(af, af.target_magnitude)
             else:
-                af._flicker_next = sim_elapsed + random.uniform(5.0, 20.0)
+                af._flicker_next = sim_elapsed + self.rng.uniform(*self._flicker_off_s)
                 self._clear_failure(af, remove=False)
+
+    # ─── State save/restore (plan A-4) ───────────────────────────────
+
+    def get_state(self) -> dict[str, Any]:
+        """Serialise active failures + flicker RNG for breakpoint save."""
+        from smo_common.state import rng_state_to_json
+        return {
+            "sim_elapsed": self._sim_elapsed,
+            "rng_state": rng_state_to_json(self.rng.getstate()),
+            "failures": [
+                {
+                    "failure_id": af.failure_id, "subsystem": af.subsystem,
+                    "failure": af.failure,
+                    "target_magnitude": af.target_magnitude,
+                    "onset": af.onset,
+                    "onset_duration_s": af.onset_duration_s,
+                    "duration_s": af.duration_s,
+                    "extra_params": dict(af.extra_params),
+                    "current_magnitude": af.current_magnitude,
+                    "elapsed_s": af.elapsed_s, "active": af.active,
+                    "flicker_on": af._flicker_on,
+                    "flicker_next": af._flicker_next,
+                }
+                for af in self._failures.values()
+            ],
+        }
+
+    def set_state(self, state: dict[str, Any]) -> None:
+        """Restore active failures from a breakpoint.
+
+        Does NOT re-apply the failures through inject_fn — the subsystem
+        models' own restored state already reflects the injected effects.
+        """
+        from smo_common.state import restore_rng
+        restore_rng(self.rng, state.get("rng_state"))
+        self._sim_elapsed = float(state.get("sim_elapsed", 0.0))
+        self._failures = {}
+        for f in state.get("failures", []):
+            af = ActiveFailure(
+                failure_id=f["failure_id"], subsystem=f["subsystem"],
+                failure=f["failure"],
+                target_magnitude=float(f["target_magnitude"]),
+                onset=f["onset"],
+                onset_duration_s=float(f["onset_duration_s"]),
+                duration_s=float(f["duration_s"]),
+                extra_params=dict(f.get("extra_params", {})),
+                current_magnitude=float(f.get("current_magnitude", 0.0)),
+                elapsed_s=float(f.get("elapsed_s", 0.0)),
+                active=bool(f.get("active", True)),
+            )
+            af._flicker_on = bool(f.get("flicker_on", True))
+            af._flicker_next = float(f.get("flicker_next", 0.0))
+            self._failures[af.failure_id] = af
 
     def _apply(self, af, magnitude):
         cmd = {"type": "inject", "subsystem": af.subsystem,

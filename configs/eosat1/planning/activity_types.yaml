@@ -5,7 +5,10 @@ activity_types:
     min_duration_s: 60
     max_duration_s: 300
     power_w: 75
-    data_volume_mb: 800
+    # One raw frame. MUST track subsystems/payload.yaml image_size_mb
+    # (defect #82; 800 -> 4, textbook pp. 360/404). The planner budgets the
+    # UNCOMPRESSED size; the on-board CCSDS-123 compressor stores 1.0-2.7 MB.
+    data_volume_mb: 4
     requires_attitude: nominal
     requires_daylight: true
     requires_contact: false
@@ -13,21 +16,35 @@ activity_types:
       - payload
       - aocs
     priority: high
-    procedure_ref: NOM-001
+    # Was NOM-001 "Pass Startup"; the imaging activity's procedure is
+    # NOM-002 "Imaging Session", which is also the one whose `runnable:`
+    # link points back here (brief 08 O-5, off-by-one).
+    procedure_ref: NOM-002
+    # Func IDs verified against smo_simulator/service_dispatch.py S8 routing:
+    # 26 (0x1A) = payload set_mode (payload range 26-39), 28 (0x1C) = capture.
+    # The old 0x14/0x16 landed in the EPS range (16-25) and were no-ops.
     command_sequence:
       - service: 8
         subtype: 1
-        func_id: 0x14
-        description: "PAYLOAD_IMAGER_ON"
+        func_id: 0x1A
+        params: [2]            # mode 2 = IMAGING
+        description: "PAYLOAD_SET_MODE_IMAGING"
       - wait_s: 5
+      - wait_for:
+          parameter: payload.mode
+          value: 2
+          timeout_s: 30
+      # Phase E WP-1: the capture MUST carry its arguments — the old
+      # params-free step made every planner-scheduled image a zero-length
+      # (0,0)-stamped capture. scene_id 0 = on-board auto-assign; lines 2048
+      # is the reference 4-band 4.0 MB frame. Named `args` are encoded from
+      # ENGINEERING values by the shared catalogue encoder
+      # (smo_common.commanding, Phase E WP-0).
       - service: 8
         subtype: 1
-        func_id: 0x16
-        description: "PAYLOAD_START_IMAGING"
-      - wait_for:
-          parameter: payload.imaging_active
-          value: true
-          timeout_s: 30
+        func_id: 0x1C
+        args: { scene_id: 0, lines: 2048 }
+        description: "PAYLOAD_CAPTURE_IMAGE"
     conflicts_with:
       - software_upload
       - momentum_desaturation
@@ -39,14 +56,30 @@ activity_types:
       max_continuous_minutes: 30
       max_per_orbit_minutes: 30
       required_cooldown_s: 300
-      fpa_temp_min_c: -50.0
-      fpa_temp_max_c: -5.0
+      # DERIVED from subsystems/tcs.yaml `fpa_envelope` (G3-d): the imaging
+      # band is [setpoint_min_c, imaging_max_c]. -50 C was never reachable
+      # and -5 C disagreed with this file's own -3.0 C pre-condition, with
+      # the FPA_OVERTEMP event and with the textbook.
+      fpa_temp_min_c: -20.0
+      fpa_temp_max_c: -3.0
 
   - name: data_dump
-    description: "Stored data downlink"
-    duration_s: 600
-    min_duration_s: 300
-    max_duration_s: 1200
+    description: "Stored data downlink at the HIGH tier (128 kbps)"
+    # ONE IMAGE LONG. 4 MiB (payload.yaml image_size_mb) at the HIGH tier
+    # (subsystems/ttc.yaml tm_rate_tiers, 128 000 bps) with planner.yaml's 20 %
+    # protocol allowance is 4 x 1048576 x 8 / (128000 x 0.8) = 327.7 s. 330 s
+    # is that, rounded up: a dump activity is sized to move exactly one product
+    # and nothing more, so the plan's arithmetic is legible — n images need n
+    # dumps. It is also 74 % of the 445 s average pass in this mission's
+    # five-station contact statistics, which is the pass-planning lesson: an
+    # image dump costs most of a pass.
+    #
+    # The old 600 s was sized for the retired flat 64 kbps rate (600 s x 64000
+    # x 0.8 = 3.66 MiB, just under one image). At 128 kbps the same 600 s is
+    # 1.8 images — capacity the plan books but has nothing to put in.
+    duration_s: 330
+    min_duration_s: 180              # ~0.55 image; a short, late-in-pass top-up
+    max_duration_s: 900              # ~2.7 images; more than any single pass holds
     power_w: 50
     data_volume_mb: 0
     requires_attitude: nominal
@@ -56,23 +89,52 @@ activity_types:
       - ttc
       - obdh
     priority: high
-    procedure_ref: NOM-002
+    # Was NOM-002 "Imaging Session"; the downlink activity's procedure is
+    # NOM-003 "Data Downlink", whose `runnable:` link names data_dump.
+    procedure_ref: NOM-003
+    # The HIGH tier is EARNED, not assumed (defect #85/#86). It requires a
+    # deployed antenna, DOWNLINK/dump mode AND elevation >= 10 deg; the
+    # spacecraft REJECTS the tier (S1.8, error 0x0007) if any gate is open, so
+    # the sequence enters DOWNLINK mode first and only then raises the rate.
+    #   79 (0x4F) = TTC_SET_DOWNLINK_MODE, one uint8 (1 = enter).
+    #   65 (0x41) = TTC_SET_DATA_RATE, one uint8 tier code (1 = HIGH).
+    # Leaving DOWNLINK mode at the end lets the active tier fall back to LOW
+    # for the rest of the pass — the routine operations rate.
     command_sequence:
       - service: 8
         subtype: 1
-        func_id: 0x32
-        description: "TTC_HIGH_RATE"
+        func_id: 0x4F
+        params: [1]            # enter DOWNLINK / payload-dump mode
+        description: "TTC_SET_DOWNLINK_MODE_ON"
+      - wait_s: 2
+      - service: 8
+        subtype: 1
+        func_id: 0x41
+        params: [1]            # tier code 1 = HIGH (128 kbps QPSK RS)
+        description: "TTC_SET_TM_RATE_HIGH"
       - wait_s: 3
+      - wait_for:
+          parameter: ttc.tm_data_rate
+          value: 128000
+          timeout_s: 30
       - service: 15
         subtype: 9
         store_id: 3
         description: "S15_DUMP_SCIENCE_STORE"
+      - service: 8
+        subtype: 1
+        func_id: 0x4F
+        params: [0]            # leave DOWNLINK mode -> active tier back to LOW
+        description: "TTC_SET_DOWNLINK_MODE_OFF"
     conflicts_with:
       - imaging_pass
       - software_upload
     pre_conditions:
       - "ttc.in_contact == true"
       - "eps.bus_voltage > 24.0"
+      # The HIGH tier's own gates, expressed where the planner can check them.
+      - "ttc.antenna_deployed == true"
+      - "ttc.contact_elevation >= 10.0"
 
   - name: calibration
     description: "Sensor calibration sequence"
@@ -80,7 +142,11 @@ activity_types:
     min_duration_s: 120
     max_duration_s: 300
     power_w: 50
-    data_volume_mb: 50
+    # AOCS_GYRO_CALIBRATION produces calibration telemetry, not imagery: gyro
+    # and star-tracker samples over 180 s. The old 50 MB was scaled to the
+    # 800 MB-image world and was never defensible for this command sequence
+    # (it implied 2.2 Mbit/s of calibration TM). 0.5 MB (defect #82).
+    data_volume_mb: 0.5
     requires_attitude: nominal
     requires_daylight: true
     requires_contact: false
@@ -88,12 +154,16 @@ activity_types:
       - payload
       - aocs
     priority: medium
-    procedure_ref: COM-002
+    # Was COM-002 "TCS Verification"; this activity runs AOCS_GYRO_CALIBRATION,
+    # so the procedure is COM-003 "AOCS Sensor Calibration".
+    procedure_ref: COM-003
+    # 13 (0x0D) = AOCS gyro calibration. The old 0x08 was RW set-speed-bias,
+    # which needs a 5-byte argument and was a silent no-op without one.
     command_sequence:
       - service: 8
         subtype: 1
-        func_id: 0x08
-        description: "AOCS_CALIBRATE_ST"
+        func_id: 0x0D
+        description: "AOCS_GYRO_CALIBRATION"
     conflicts_with:
       - imaging_pass
     pre_conditions:
@@ -101,7 +171,8 @@ activity_types:
       - "payload.fpa_temp_c < -3.0"
     thermal_constraints:
       max_continuous_minutes: 5
-      fpa_temp_max_c: -5.0
+      # DERIVED: fpa_envelope.imaging_max_c (G3-d).
+      fpa_temp_max_c: -3.0
 
   - name: housekeeping_collection
     description: "Extended HK data collection"
@@ -109,7 +180,10 @@ activity_types:
     min_duration_s: 30
     max_duration_s: 120
     power_w: 5
-    data_volume_mb: 10
+    # S3_REQUEST_HK_ALL is a one-shot dump of the six HK structures - a few kB
+    # of packets, not 10 MB (that figure implied 1.3 Mbit/s of housekeeping).
+    # 0.05 MB = 50 kB, generous for an extended HK set (defect #82).
+    data_volume_mb: 0.05
     requires_attitude: null
     requires_daylight: false
     requires_contact: false
@@ -139,10 +213,17 @@ activity_types:
       - ttc
       - obdh
     priority: high
-    procedure_ref: NOM-005
+    # Was NOM-005 "HK Configuration"; software_upload's procedure is
+    # NOM-006 "Software Upload".
+    procedure_ref: NOM-006
+    # S6.2 MEM_LOAD needs address(4)+data; 0x40000000 is a writable region
+    # (Boot ROM 0x0-0x1FFFF is read-only). Previously sent with no data and
+    # silently did nothing.
     command_sequence:
       - service: 6
         subtype: 2
+        address: 0x40000000
+        data: "DEADBEEF"
         description: "S6_LOAD_MEMORY"
     conflicts_with:
       - imaging_pass
@@ -164,7 +245,9 @@ activity_types:
     requires_subsystems:
       - aocs
     priority: medium
-    procedure_ref: NOM-006
+    # Was NOM-006 "Software Upload"; desaturation's procedure is
+    # NOM-007 "Momentum Management".
+    procedure_ref: NOM-007
     command_sequence:
       - service: 8
         subtype: 1
@@ -193,19 +276,31 @@ activity_types:
     requires_subsystems:
       - tcs
     priority: medium
-    procedure_ref: NOM-007
+    # Was NOM-007 "Momentum Management", which is not thermal at all.
+    # There is no NOM-* thermal-rebalance procedure; COM-002 "TCS
+    # Verification" is the only procedure covering heater/thermal
+    # regulation, so it is the honest reference until one is written.
+    procedure_ref: COM-002
+    # 45 (0x2D) = TCS auto-mode (TCS range 40-49), circuit 0 = battery. The
+    # old 0x28 (=40) forced the battery heater ON instead of rebalancing.
     command_sequence:
       - service: 8
         subtype: 1
-        func_id: 0x28
-        description: "TCS_REBALANCE_HEATERS"
+        func_id: 0x2D
+        params: [0]            # circuit 0 = battery thermostat auto mode
+        description: "TCS_AUTO_MODE_BATTERY"
     conflicts_with:
       - imaging_pass
     pre_conditions:
       - "tcs.temp_regulation_margin < 2.0"
     thermal_constraints:
       max_continuous_minutes: 20
-      fpa_temp_max_c: 5.0
+      # A thermal rebalance is NOT an imaging activity, so the constraint is
+      # the FPA health band's upper edge, not the imaging bound: DERIVED as
+      # fpa_envelope node warning high (G3-d). The old +5.0 C was below the
+      # measured uncooled equilibrium (+11.4 C), so it blocked the activity
+      # in precisely the state you would run it in.
+      fpa_temp_max_c: 14.0
 
   - name: load_shedding
     description: "EPS contingency load shedding sequence"
@@ -221,11 +316,14 @@ activity_types:
       - eps
     priority: high
     procedure_ref: CTG-001
+    # 25 (0x19) = EPS emergency load shed (EPS range 16-25) with stage byte.
+    # The old 0x1A (=26) hit the payload set-mode handler.
     command_sequence:
       - service: 8
         subtype: 1
-        func_id: 0x1A
-        description: "EPS_LOAD_SHED_ENABLE"
+        func_id: 0x19
+        params: [1]            # load-shed stage 1
+        description: "EPS_EMERGENCY_LOAD_SHED"
     conflicts_with:
       - imaging_pass
       - data_dump
@@ -248,18 +346,96 @@ activity_types:
       - eps
     priority: high
     procedure_ref: CTG-002
+    # 0 = AOCS set_mode (mode byte 1 = SAFE_BOOT); 83 (0x53) = EPS set-mode
+    # (1 = safe). The old 0x1B (=27) hit the payload set-scene handler.
     command_sequence:
       - service: 8
         subtype: 1
         func_id: 0x00
+        params: [1]            # AOCS mode 1 = SAFE_BOOT
         description: "AOCS_SET_MODE_SAFE"
       - wait_s: 10
       - service: 8
         subtype: 1
-        func_id: 0x1B
-        description: "EPS_SAFE_MODE_INIT"
+        func_id: 0x53
+        params: [1]            # EPS mode 1 = safe
+        description: "EPS_SET_MODE_SAFE"
     conflicts_with:
       - imaging_pass
       - data_dump
     pre_conditions:
       - "fdir.level >= 2"
+
+  # Phase D: orbit-maintenance / debris-avoidance delta-V burn. Duration is
+  # dominated by the catbed preheat (12 W x ~20 min via HEATER_THRUSTER 42);
+  # the burn itself is 8-260 s depending on dv and tank pressure. Func ids
+  # from the Phase D block 108-118 (0x6C ARM, 0x6D DISARM, 0x6E SET_BURN,
+  # 0x6F EXECUTE) — verified against service_dispatch._route_prop_cmd.
+  - name: orbit_manoeuvre
+    description: "Orbit-maintenance / debris-avoidance delta-V burn (NOM-004 planning, NOM-013 execution)"
+    duration_s: 1500          # 1200 s catbed preheat + burn + margin
+    min_duration_s: 900
+    max_duration_s: 2400
+    power_w: 14               # 12 W catbed heater + 2 W valve drivers
+    data_volume_mb: 0
+    requires_attitude: nominal
+    requires_daylight: true   # power + eclipse arm-interlock
+    requires_contact: true    # NOM-013: "typically over a ground station"
+    requires_subsystems:
+      - prop
+      - aocs
+      - eps
+      - tcs
+    priority: high
+    procedure_ref: NOM-004
+    command_sequence:
+      - service: 8
+        subtype: 1
+        func_id: 0x13
+        params: [8]            # EPS_POWER_LINE_ON line 8 = prop
+        description: "EPS_POWER_LINE_ON prop"
+      - service: 8
+        subtype: 1
+        func_id: 0x2A
+        params: [1]            # HEATER_THRUSTER ON — catbed preheat
+        description: "HEATER_THRUSTER_ON"
+      - wait_s: 1200
+      - wait_for:
+          parameter: prop.catbed_temp
+          value: 180
+          timeout_s: 600
+      - service: 8
+        subtype: 1
+        func_id: 0x6E
+        params: [0x3F, 0x59, 0x99, 0x9A, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]
+        description: "PROP_SET_BURN 0.85 m/s prograde, dv cut-off"
+      - service: 8
+        subtype: 1
+        func_id: 0x6C
+        params: [0xA5, 0xC3]
+        description: "PROP_ARM"
+      - service: 8
+        subtype: 1
+        func_id: 0x6F
+        description: "PROP_EXECUTE"
+      - wait_s: 120
+      - service: 8
+        subtype: 1
+        func_id: 0x6D
+        description: "PROP_DISARM"
+      - service: 8
+        subtype: 1
+        func_id: 0x2A
+        params: [0]
+        description: "HEATER_THRUSTER_OFF"
+    conflicts_with:
+      - imaging_pass
+      - data_dump
+      - momentum_desaturation
+      - calibration
+    pre_conditions:
+      - "aocs.mode == 4"
+      - "aocs.att_error < 2.0"
+      - "eps.bat_soc > 45"
+      - "prop.tank_pressure > 6.0"
+      - "prop.dv_remaining > 1.0"

@@ -10,38 +10,51 @@ This document provides a complete reference for all PUS (Packet Utilization Stan
 
 1. [Service Overview](#service-overview)
 2. [Service 1: Request Verification](#service-1-request-verification)
-3. [Service 3: Housekeeping](#service-3-housekeeping)
-4. [Service 5: Event Reporting](#service-5-event-reporting)
-5. [Service 6: Memory Management](#service-6-memory-management)
-6. [Service 8: Function Management](#service-8-function-management)
-7. [Service 9: Time Management](#service-9-time-management)
-8. [Service 11: Activity Scheduling](#service-11-activity-scheduling)
-9. [Service 12: On-Board Monitoring](#service-12-on-board-monitoring)
-10. [Service 13: Large Data Transfer](#service-13-large-data-transfer)
-11. [Service 15: TM Storage](#service-15-tm-storage)
-12. [Service 17: Connection Test](#service-17-connection-test)
-13. [Service 19: Event-Action](#service-19-event-action)
-14. [Service 20: Parameter Management](#service-20-parameter-management)
+3. [Service 2: Device Access](#service-2-device-access)
+4. [Service 3: Housekeeping](#service-3-housekeeping)
+5. [Service 5: Event Reporting](#service-5-event-reporting)
+6. [Service 6: Memory Management](#service-6-memory-management)
+7. [Service 8: Function Management](#service-8-function-management)
+8. [Service 9: Time Management](#service-9-time-management)
+9. [Service 11: Activity Scheduling](#service-11-activity-scheduling)
+10. [Service 12: On-Board Monitoring](#service-12-on-board-monitoring)
+11. [Service 13: Large Data Transfer](#service-13-large-data-transfer)
+12. [Service 15: TM Storage](#service-15-tm-storage)
+13. [Service 17: Connection Test](#service-17-connection-test)
+14. [Service 18: On-Board Control Procedures](#service-18-on-board-control-procedures)
+15. [Service 19: Event-Action](#service-19-event-action)
+16. [Service 20: Parameter Management](#service-20-parameter-management)
 
 ---
 
 ## Service Overview
 
-| Service | Name | Type | Purpose | Subsystems |
-|---------|------|------|---------|-----------|
-| S1 | Request Verification | TC → TM | Command acceptance & execution reports | All |
-| S3 | Housekeeping | TC → TM | Periodic telemetry data collection | All |
-| S5 | Event Reporting | — → TM | Autonomous event generation | All |
-| S6 | Memory Management | TC → TM | Onboard memory dump/load/check | OBDH |
-| S8 | Function Management | TC → — | Direct function/command execution | All |
-| S9 | Time Management | TC → TM | Spacecraft time sync & correlation | OBDH, TTC |
-| S11 | Activity Scheduling | TC → — | Telecommand scheduling with timing | OBDH |
-| S12 | On-Board Monitoring | — → TM | Parameter threshold monitoring | All |
-| S13 | Large Data Transfer | TC → TM | Block-based data downlink (images) | Payload |
-| S15 | TM Storage | TC → TM | Telemetry storage management | OBDH |
-| S17 | Connection Test | TC → TM | NOOP echo, link validation | TTC |
-| S19 | Event-Action | — → TC | Autonomous event-triggered response | All |
-| S20 | Parameter Management | TC → — | Telecommand gain/offset updates | All subsystems |
+| Service | Subtypes implemented (TC → TM) | Purpose | Subsystems |
+|---------|-------------------------------|---------|-----------|
+| S1 | (TM only) 1, 2, 3, 4, 5, 6, 7, 8 | Command acceptance & execution reports | All |
+| S2 | 1, 5, 6 → 6 | Low-level device on/off + status report | EPS, AOCS, TCS, TTC, OBDH, Payload |
+| S3 | 1, 2, 3, 4, 5, 6, 27, 31 → 25 | Periodic telemetry data collection | All |
+| S5 | 5, 6, 7, 8 → 1, 2, 3, 4 | Autonomous event generation | All |
+| S6 | 2, 5, 9 → 6, 10 | Onboard memory dump/load/check | OBDH |
+| S8 | 1 (func_id 0–84, 100–107) → — | Direct function/command execution | All |
+| S9 | 1, 2 → 2 | Spacecraft time sync & correlation | OBDH, TTC |
+| S11 | 4, 7, 9, 11, 13, 17 → 5, 18 | Telecommand scheduling with timing | OBDH |
+| S12 | 1, 2, 3, 4, 6, 7, 12 → 9, 10, 13 | Parameter threshold monitoring | All |
+| S13 | 1, 3, 5, 9 → 2, 4, 10 | Block-based data downlink (images) | Payload |
+| S15 | 1, 2, 9, 11, 13 → 14 | Telemetry storage management | OBDH |
+| S17 | 1 → 2 | Connection test, link validation | TTC |
+| S18 | 1, 2, 3, 4, 6 → 7 | On-board control procedures (OBCP) | OBDH |
+| S19 | 1, 2, 4, 5, 8 → 128 | Autonomous event-triggered response | All |
+| S20 | 1 (set), 3 (get) → 2 (report) | Parameter set / on-demand read. **Subtype allocation deviates from ECSS — see Service 20** | All subsystems |
+
+S3 subtypes 3/4 are legacy aliases of the ECSS 5/6 (enable/disable periodic HK);
+S3.1/S3.2 create and delete a custom SID. S5 subtypes 7/8 are enable-all and
+disable-all shorthands.
+
+The authoritative list is `ServiceDispatcher.dispatch()` in
+`packages/smo-simulator/src/smo_simulator/service_dispatch.py`; any service or
+subtype not in the table above is silently ignored by the OBC (logged at DEBUG,
+no S1.2 rejection).
 
 ---
 
@@ -97,6 +110,97 @@ Spacecraft S1.3: Execution start (request_id=1234)
   ↓
 Spacecraft S1.4: Execution failure (request_id=1234, error_code=0x0005)
 ```
+
+### Failure reports and the failure notice (defect #87)
+
+ECSS-E-ST-70-41 allows an S1 failure report to carry a **failure notice** data
+field after the failure code. EOSAT-1 uses that slot for the human-readable
+reason the on-board software produced when it refused the command. Before this
+existed, `ttc_basic._tier_permission_error` wrote an excellent reason ("TM rate
+is forced to the beacon tier in beacon mode (LOW refused)"), the dispatcher
+stored it, and the S1.8 packed only the code — so the operator saw a bare
+`1,8` with a number and no way to tell which of the several gates sharing code
+`0x0007` had fired.
+
+**Wire format.** The notice is `reason_len(uint8) + reason(UTF-8)`, appended
+**strictly after** the historical fields. It is omitted entirely when there is
+no reason, and truncated to **160 octets** (never mid-character) when longer.
+
+| Report | Wire format |
+|--------|-------------|
+| TM 1,1 / 1,7 | `request_id(u32)` |
+| TM 1,2 acceptance failure | `request_id(u32) + error_code(u16) [+ reason_len(u8) + reason]` |
+| TM 1,4 execution-start failure | `request_id(u16) + error_code(u16) [+ reason_len(u8) + reason]` |
+| TM 1,8 execution failure | `request_id(u32) + error_code(u16) [+ reason_len(u8) + reason]` |
+| TM 1,3 | `request_id(u16)` |
+| TM 1,5 | `request_id(u16) + step(u8)` |
+
+1,4 keeps a **16-bit** request id because that is what
+`ServiceDispatcher.generate_s1_exec_fail` has always emitted; 1,2 and 1,8 keep
+the 32-bit `((apid & 0x7FF) << 14) | (seq & 0x3FFF)` form built by
+`TMBuilder`. Both layouts are decoded by
+`smo_common.protocol.pus_services.VerificationData.parse`.
+
+**Backward compatibility.** Because the notice is appended after the fixed
+fields, a parser that reads only `>IH` (1,2 / 1,8) or `>HH` (1,4) is
+unaffected and keeps working against a spacecraft that sends one. Equally, a
+ground segment that reads the notice handles a spacecraft that sends none —
+the field simply decodes as absent (empty string).
+
+**Failure codes.** The vocabulary is
+`smo_common.protocol.pus_services.FAILURE_CODES`, shared by the on-board
+dispatcher and the MCS so the two cannot drift:
+
+| Code | Meaning |
+|------|---------|
+| `0x0001` | Generic failure / unknown service |
+| `0x0002` | Unknown subtype |
+| `0x0003` | Invalid parameter or data length |
+| `0x0004` | Subsystem unpowered or unreachable |
+| `0x0005` | Invalid in the current mode |
+| `0x0006` | Not permitted in bootloader |
+| `0x0007` | Not permitted in the current state |
+
+Service 6 reuses the low codes with memory-specific meanings
+(`MEMORY_FAILURE_CODES`: illegal address, write protected, bad argument,
+length exceeded) — see [Service 6](#service-6-memory-management).
+
+The code alone is deliberately not sufficient: several distinct gates share
+`0x0007`, which is exactly why the notice exists. **Read the notice, not the
+number.**
+
+**Event.** Every refusal — at acceptance *or* at execution — also raises
+S5 event `0x030B COMMAND_REJECTED` (severity MEDIUM), whose auxiliary text
+carries the command identity (`S8.1 func 65`), the failure code and the same
+reason. It therefore appears in the event log, the on-board alarm store and
+the MCS FDIR journal, not only against the one verification row the operator
+may not be watching. `TC(5,6)` with event type 2 suppresses it if a training
+scenario needs the noise gone.
+
+---
+
+## Service 2: Device Access
+
+**Purpose:** Switch individual on-board devices on and off below the level of
+the subsystem function commands (Service 8), and read back their state. This is
+what an operator uses to unpower a specific unit — an S12 monitor whose source
+device is off is suppressed rather than raising a spurious limit alarm.
+
+**Subtypes:**
+
+| Subtype | Direction | Meaning | Wire format |
+|---------|-----------|---------|-------------|
+| 1 | TC | Distribute on/off | `device_id (uint16) + state (uint8)` |
+| 5 | TC | Distribute on/off with verification → TM(2,6) | `device_id (uint16) + state (uint8)` |
+| 6 | TC | Report on/off status → TM(2,6) | `device_id (uint16)` |
+| 6 | TM | Device status report | `device_id (uint16) + state (uint8)` |
+
+**Device ID ranges** (`ServiceDispatcher._set_device_state`): 0x0100–0x010F EPS,
+0x0200–0x021F AOCS, 0x0300–0x030F TCS, 0x0400–0x040F TT&C, 0x0500–0x050F OBDH,
+0x0600–0x060F Payload. The catalogue's `S2_*` entries name the shipped devices.
+
+Subtypes 2 and 3 (register load / register dump) are **declared in the source
+comment but not implemented** — they are accepted and ignored.
 
 ---
 
@@ -350,7 +454,7 @@ Data: function-specific parameters
 | 28 | PAYLOAD_CAPTURE | scene_id, lines | Trigger image capture |
 | 29 | PAYLOAD_DOWNLOAD_IMAGE | scene_id | Queue image for downlink |
 | 30 | PAYLOAD_DELETE_IMAGE | scene_id | Delete image from memory |
-| 31 | PAYLOAD_MARK_BAD_SEGMENT | segment_id (0-79) | Mark memory segment unusable |
+| 31 | PAYLOAD_MARK_BAD_SEGMENT | segment_id (0-7) | Mark memory segment unusable (num_memory_segments = 8) |
 | 32 | PAYLOAD_GET_IMAGE_CATALOG | — | Request stored image catalog |
 | 33 | PAYLOAD_SET_BAND_CONFIG | mask (bits 0-3: B/G/R/NIR) | Set spectral band enable mask |
 | 34 | PAYLOAD_SET_INTEGRATION_TIME | blue/green/red/nir_ms | Set per-band integration times |
@@ -393,16 +497,16 @@ Data: function-specific parameters
 | 61 | OBC_DIAGNOSTIC | — | Request OBC health diagnostic |
 | 62 | OBC_ERROR_LOG | — | Request recent error log |
 
-**TTC Functions (func_id 63-78):**
+**TTC Functions (func_id 63-79):**
 
 | Func ID | Name | Parameters | Effect |
 |---------|------|-----------|--------|
 | 63 | TTC_SWITCH_PRIMARY | — | Switch to primary transponder |
 | 64 | TTC_SWITCH_REDUNDANT | — | Switch to redundant transponder |
-| 65 | TTC_SET_DATA_RATE | rate (0=1kbps, 1=64kbps) | Set TM data rate |
+| 65 | TTC_SET_DATA_RATE | rate (uint8 tier code: 0=LOW, 1=HIGH, 255=BEACON) | Select a rung of the TM data-rate ladder — see below |
 | 66 | TTC_PA_ON | — | Enable power amplifier |
 | 67 | TTC_PA_OFF | — | Disable power amplifier |
-| 68 | TTC_SET_TX_POWER | level (0=1W, 1=5W, 2=8W) | Set transmit power level |
+| 68 | TTC_SET_TX_POWER | level uint8 (0=LOW 1.0 W, 1=NOMINAL 2.0 W, 2=HIGH 5.0 W) | Select an SSPA operating point. Discrete steps only; an unknown code is rejected with S1.8 error 0x0003, never clamped. The old '2 = 8 W' exceeded pa_max_power_w = 5.0 W and was never executable. |
 | 69 | TTC_DEPLOY_ANTENNA | — | Deploy antenna (burn-wire) |
 | 70 | TTC_SET_BEACON_MODE | on (0/1) | Enable/disable beacon mode |
 | 71 | TTC_CMD_CHANNEL_START | — | Start command channel (15-min) |
@@ -413,6 +517,49 @@ Data: function-specific parameters
 | 76 | TTC_RANGING_START | — | Begin ranging sequence |
 | 77 | TTC_RANGING_STOP | — | Stop ranging sequence |
 | 78 | TTC_SET_COHERENT_MODE | mode (0/1) | Select coherent/non-coherent |
+| 79 | TTC_SET_DOWNLINK_MODE | on (uint8, 0/1) | Enter/leave DOWNLINK (payload-dump) mode — the mode gate on the HIGH tier |
+
+#### Func 65 — TTC_SET_DATA_RATE and the TM rate ladder
+
+The downlink is a three-rung ladder defined in
+`configs/eosat1/subsystems/ttc.yaml tm_rate_tiers`, not a binary high/low switch.
+Func 65 takes **one uint8** carrying a tier `command_code`:
+
+| Code | Tier | Rate | Modulation / coding | Symbol rate | Selectable? |
+|------|------|------|---------------------|-------------|-------------|
+| `0x00` | LOW | 16 000 bps | BPSK, conv(7,1/2)+RS | 16 kBd | Always. **The routine operations rate** and the safe-mode / FDIR fallback |
+| `0x01` | HIGH | 128 000 bps | QPSK, RS(255,223) | 64 kBd | Only with the antenna deployed, DOWNLINK mode on (func 79) and elevation >= 10 deg |
+| `0xFF` | BEACON | 1 000 bps | BPSK, conv(7,1/2)+RS | 1 kBd | **Not** by this command — entered by func 70 (`TTC_SET_BEACON_MODE`) or by the bootloader |
+
+**The legacy encoding is preserved verbatim.** `rate=0` has always meant "the low rate"
+and `rate=1` "the high rate"; they now select LOW and HIGH. Existing procedures, OBCPs
+and the FDIR `ttc_reduce_power` action therefore keep their meaning and land on usable
+operational rates. A 4-byte big-endian raw-bps form is still accepted for older clients:
+a value equal to a configured tier's `bps` selects that tier.
+
+**Rejection, not clamping.** A tier whose gates are not satisfied is refused with an
+S1.8 execution failure, error `0x0007`, and the failure text names the open gate. An
+unrecognised tier code gives error `0x0003`. Nothing is silently substituted.
+
+**Commanded vs active.** Func 65 sets the COMMANDED tier (`ttc.tm_tier_cmd`, 0x053A).
+The TT&C tick resolves the ACTIVE tier (`ttc.tm_tier`, 0x0539) from it by walking down
+the ladder until every gate is satisfied, so HIGH auto-reverts as a pass drops below
+10 deg and resumes on the next pass without re-commanding.
+
+Related telemetry: `ttc.tm_data_rate` (0x0506, active bit rate), `ttc.tm_tier` (0x0539),
+`ttc.tm_tier_cmd` (0x053A), `ttc.tm_symbol_rate` (0x053B), `ttc.downlink_mode` (0x053C).
+
+#### Func 79 — TTC_SET_DOWNLINK_MODE
+
+```
+Parameter: on (uint8) — 0 = leave DOWNLINK mode, 1 = enter DOWNLINK/dump mode
+```
+
+DOWNLINK mode is the *mode* gate on the HIGH tier. Bulk downlink has to be entered
+deliberately, so an S13 image dump or an S15 delayed-telemetry playback is a planned pass
+activity rather than something the spacecraft drifts into. Entering DOWNLINK mode does
+not by itself change the rate; leaving it does not clear the commanded tier — the ACTIVE
+tier simply falls back to LOW until DOWNLINK mode is re-entered.
 
 **Example S8 Command Sequence — Imaging Pass:**
 
@@ -453,36 +600,99 @@ Data: function-specific parameters
 
 **Purpose:** Schedule telecommands for execution at specific times.
 
+**Subtypes:**
+
+| Subtype | Direction | Meaning | Wire format |
+|---------|-----------|---------|-------------|
+| 4 | TC | **Insert** a time-tagged command | `exec_time_cuc (uint32)` + the complete embedded TC packet |
+| 7 | TC | Delete ONE scheduled command | `cmd_id (uint16)` |
+| 9 | TC | Disable the schedule (queue retained, nothing fires) | — |
+| 11 | TC | Delete ALL scheduled commands | — |
+| 13 | TC | Enable the schedule | — |
+| 17 | TC | Request detailed schedule report | — |
+| 5 | TM | Insert acknowledgement | `cmd_id (uint16)` — the handle for subtype 7 |
+| 18 | TM | Detailed schedule report (response to 17) | see below |
+
+**Insert is subtype 4, not subtype 11.** Earlier revisions of this document
+described "S11 subtype 11 (insert scheduled activity)". Subtype 11 is
+*delete-all* — sending it in place of an insert silently wipes the whole
+on-board schedule. See `ServiceDispatcher._handle_s11`.
+
 **Example:** Command imaging to occur at AOS (acquisition of signal):
 
 ```
 TC (from MCS):
-  S11 subtype 11 (insert scheduled activity)
-  Execution time: TLE propagation + AOS prediction
-  Action: S8 func_id=28 (PAYLOAD_CAPTURE)
-  Parameters: scene_id=42, lines=4096
+  S11 subtype 4 (insert time-tagged command)
+  Data: exec_time_cuc (uint32, absolute CUC seconds — TLE propagation + AOS prediction)
+      + the whole TC packet to run, e.g. S8.1 func_id=28 (PAYLOAD_CAPTURE),
+        scene_id=42, lines=4096
 
 Response:
-  S1.1: Activity scheduled (request_id=5678)
-  [At predicted AOS time]
-  S1.3: Execution start
-  S5: IMAGING_START event
-  S1.7: Execution complete
+  TM(11,5): cmd_id (uint16) — the on-board handle for this activity
+  S1.1 / S1.7 for the S11 telecommand itself (it was accepted and executed)
+  [At the scheduled CUC time]
+  The embedded TC is dispatched exactly as if uplinked, so it produces
+  its own S1.1 / S1.7 and any S5 events (e.g. IMAGING_START).
 ```
 
+**TM(11,18) — detailed schedule report** (extended by defect #72 so the report
+carries command *identity*, not just a timestamp):
+
+```
+Header: count (uint16) + schedule_enabled (uint8) + next_id (uint16)
+Record: id (uint16) + exec_time_cuc (uint32) + apid (uint16)
+      + service (uint8) + subtype (uint8) + data_len (uint8)
+      + n_bytes (uint8) + data[n_bytes]
+```
+
+The embedded packet itself stays on board; only its identity and up to 255
+bytes of its data field are reported.
+
 **Constraints:**
-- TC scheduler queue: 1000 activities max
-- Absolute time scheduling (UTC)
-- Relative time scheduling (offset from current time)
-- Execution verification via S1 reports
+- The scheduler queue is **unbounded** (`TCScheduler._commands` is a plain
+  dict). Earlier revisions quoted a 1000-activity cap; there is no such limit.
+- **Absolute** CUC time scheduling only. There is no relative/offset subtype —
+  the ground computes the absolute execution time.
+- Command IDs are allocated monotonically from 1 and are not reused after
+  deletion.
+- Execution verification: the *scheduled* command emits its own S1 reports when
+  it fires. A scheduled dump that fires outside a contact window still consumes
+  the store, and its packets are lost (see Service 15).
+
+**Ground-side path.** You do not have to hand-assemble the TC(11,4) data field:
+the MCS exposes `POST /api/schedule/upload-s11`, which converts a planner
+activity's command steps into time-tagged S11 inserts at the planned execution
+time (defect #46). Telemetry-check and go/no-go steps cannot be time-tagged and
+are dropped with an explicit warning — the on-board scheduler executes
+commands, not decisions. Use an OBCP (Service 18) when the sequence needs to
+wait on or branch upon telemetry.
 
 ---
 
 ## Service 12: On-Board Monitoring
 
-**Purpose:** Autonomous parameter threshold monitoring. Violations generate S5 events and trigger S19 actions.
+**Purpose:** Autonomous parameter threshold monitoring. Violations generate a
+TM(12,9) check-transition report, an S5 event, and may trigger an S19 action.
 
-**Monitoring Rules: 25+ configured**
+**Subtypes:**
+
+| Subtype | Direction | Meaning | Wire format |
+|---------|-----------|---------|-------------|
+| 1 / 2 | TC | Enable / disable monitoring globally | — |
+| 3 / 4 | TC | Enable / disable ONE definition | `mon_id (uint16)` |
+| 6 | TC | Add a definition | 13 bytes: `mon_id(u16) + param_id(u16) + check_type(u8) + low(f32) + high(f32)`. An 11-byte legacy form omits `mon_id` and reuses `param_id`. |
+| 7 | TC | Delete a definition | `mon_id (uint16)` |
+| 12 | TC | Report all definitions → TM(12,13) | — |
+| 9 / 10 | TM | Check transition **entered** / **returned to nominal** | emitted per transition |
+| 13 | TM | Definition report (response to 12) | — |
+
+**check_type:** `0` = absolute (the value must stay inside `[low, high]`),
+`1` = delta (the *change* since the previous check must stay inside `[low, high]`;
+the first sample after a start or a power-off has no baseline and cannot violate).
+Both are implemented; **all 38 shipped definitions use check_type 0**.
+
+**Monitoring Rules: 38 configured** (`configs/eosat1/monitoring/s12_definitions.yaml`
+— 30 WARNING, 8 ALARM)
 
 | Parameter | Rule | Threshold | Event | S19 Action |
 |-----------|------|-----------|-------|-----------|
@@ -497,15 +707,28 @@ Response:
 | `ttc.link_margin` | Critical | < 3 dB | 0x0507 | Increase TX power |
 | `ttc.pa_temp` | Shutdown | > 65°C | 0x0509 | PA off |
 
-**Violation Reporting:**
+**Violation Reporting** — violations are **edge-triggered**: one report when the
+parameter *enters* violation and one when it *clears*. Nothing is emitted while
+it stays in violation.
+
 ```
-When parameter exceeds threshold:
-  1. S12 violation detected
-  2. S5 event generated (0x8000 + param_id)
-  3. S19 rule triggered (if configured)
-  4. S8 command executed autonomously
-  5. Event logged in S15 TM storage
+When a parameter crosses a threshold (OK → violated):
+  1. S12 violation detected by ServiceDispatcher.check_monitoring()
+     (skipped entirely if the parameter's source subsystem is unpowered)
+  2. TM(12,9) check-transition report "limit entered" — the real monitoring
+     telemetry the ground decodes (added by defect #69)
+  3. S5 event generated, event_id = 0x9000 | (param_id & 0x0FFF)
+  4. S19 rule triggered (if one matches the event id, or the parameter id in
+     the parameter namespace — trigger_kind disambiguates the two)
+  5. S8 command executed autonomously
+  6. Event logged in S15 TM storage
+
+When it recovers (violated → OK):
+  1. TM(12,10) check-transition report "returned to nominal"
+  2. S5 event, event_id = 0xA000 | (mon_id & 0x0FFF), severity INFO
 ```
+
+The event id is `0x9000 | param_id`, **not** `0x8000 + param_id`.
 
 **Example Flow — Battery SoC Warning:**
 
@@ -633,9 +856,11 @@ Effect: Stops recording into the store. Existing packets are retained.
 ```
 Parameter: store_id (uint8)
 Effect: Queues ALL packets currently in the store for paced downlink. Packets
-        are released over multiple simulation ticks at the current TTC TM data
-        rate (1 kbps low, 64 kbps high). The store is automatically cleared
-        once the dump completes.
+        are released over multiple simulation ticks at the ACTIVE rung of the
+        TM data-rate ladder — 16 kbps at LOW, 128 kbps at HIGH (and 1 kbps in
+        beacon mode, where a dump makes no sense). Raise the rate to HIGH
+        first: func 79 to enter DOWNLINK mode, then func 65 with rate=1. The
+        store is automatically cleared once the dump completes.
 Response: S1.5 progress report indicating the number of packets queued.
 Downlink behaviour:
   - If the downlink is active when a packet is released, it reaches the MCS.
@@ -682,14 +907,46 @@ TM response to S15.13. See format above.
 
 **Commands:**
 
-### S17 Subtype 1 — NOOP Echo
+### S17 Subtype 1 — Connection Test
 ```
-Parameters: optional data (0-256 bytes)
-Response: S1.1 (accepted), TM echo packet with same data
-Example: NOOP with 4 bytes of echo data
+Parameters: none used. Any data field is accepted and IGNORED.
+Response:  S1.1 (accepted) + TM(17,2) Connection Test Report with an EMPTY
+           data field (only the CUC timestamp in the secondary header).
 ```
 
-**Use Case:** Verify uplink connectivity before critical commanding.
+This is a connection test, **not** an echo: `build_connection_test_report()`
+(`packages/smo-common/src/smo_common/telemetry/tm_builder.py`) packs
+`data=b''`. Do not expect uplinked bytes to come back.
+
+**Use Case:** Verify uplink connectivity before critical commanding — the
+arrival of TM(17,2) proves the OBC accepted and executed a telecommand.
+
+---
+
+## Service 18: On-Board Control Procedures
+
+**Purpose:** Load, start, stop and monitor OBCPs — small step programs the OBC
+runs autonomously, without ground in the loop. The step interpreter lives in
+`ObcpManager` (`packages/smo-simulator/src/smo_simulator/obcp.py`) and is ticked
+by the engine main loop. Shipped procedures live in `configs/eosat1/obcp/`
+(pass preparation, safe-mode entry, payload checkout).
+
+**Subtypes:**
+
+| Subtype | Direction | Meaning | Wire format |
+|---------|-----------|---------|-------------|
+| 1 | TC | Direct-load a procedure | `proc_id` + name + serialised steps (see `ObcpManager.parse_load_blob`) |
+| 2 | TC | Delete a procedure | `proc_id (uint16)` |
+| 3 | TC | Activate (start) a procedure | `proc_id (uint16)` + optional `param (uint8)` |
+| 4 | TC | Stop / abort a procedure | `proc_id (uint16)`; `0` = stop all |
+| 6 | TC | Request procedure status → TM(18,7) | — |
+| 7 | TM | Procedure status report | `count(u8)` + per procedure `proc_id(u16) + status(u8) + current_step(u8) + n_steps(u8)` |
+
+**Failures are reported, not swallowed:** a load whose blob will not parse, a
+load into a full store, a delete/stop of a procedure that is not there, and a
+start of a procedure that is not loaded or is already running each produce an
+S1.8 execution-failure report (error codes 0x0003 bad argument / 0x0007 unknown
+object). See `docs/OBCP_GUIDE.md` for authoring procedures.
 
 ---
 
@@ -697,7 +954,35 @@ Example: NOOP with 4 bytes of echo data
 
 **Purpose:** Autonomous response to events without ground intervention.
 
-**Rules: 20+ configured**
+**Subtypes:**
+
+| Subtype | Direction | Meaning | Wire format |
+|---------|-----------|---------|-------------|
+| 1 | TC | Add an event-action definition | 6 bytes: `ea_id(u16) + trigger_kind(u8) + trigger_id(u16) + action_func_id(u8)`. A 4-byte legacy form (`ea_id(u16) + event_type(u8) + action_func_id(u8)`) is still accepted but cannot express any real EOSAT-1 event id — all are ≥ 0x0100. |
+| 2 | TC | Delete a definition | `ea_id (uint16)` |
+| 4 / 5 | TC | Enable / disable a definition | `ea_id (uint16)` |
+| 8 | TC | Report all definitions → TM(19,128) | — |
+| 128 | TM | Definition report | `count(u16)` + per rule `ea_id(u16) + trigger_kind(u8) + trigger_id(u16) + action_func_id(u8) + enabled(u8)` |
+
+**`trigger_kind` matters.** S5 event ids and S12-monitored parameter ids both
+live in 0x0000–0x0FFF, so an id alone is ambiguous; matching requires the id
+*and* the namespace to agree. Before defect #70 the id alone was matched and 17
+of the 26 shipped rules dual-triggered.
+
+**An action is exactly one parameter-less S8 function call** — no sequences, no
+arguments, no delays, no conditionals. Use an OBCP (Service 18) when you need a
+sequence.
+
+**Bootloader gate:** funcs 52, 53, 55 and 56 (reboot, OBC unit switch, boot app,
+boot inhibit) are refused on the autonomous S19 path while the OBC is in the
+bootloader, so no rule can boot or reboot the OBC behind the operator's back.
+
+**Rules: 26 configured** (`configs/eosat1/monitoring/s19_rules.yaml`)
+
+> **Known open item:** 13 of the 26 shipped rules dispatch an `action_func_id`
+> that does not match their `description` (e.g. ea 1001 "payload off" dispatches
+> func 10, which is `AOCS_SLEW_TO`). The mechanism is correct; the *content* is
+> under review. The table below shows intended behaviour, not current wiring.
 
 | Rule ID | Trigger | Action | Purpose |
 |---------|---------|--------|---------|
@@ -743,7 +1028,29 @@ s19_rules:
 
 ## Service 20: Parameter Management
 
-**Purpose:** Adjust telecommand parameters (gains, offsets, constants).
+**Purpose:** Adjust telecommand parameters (gains, offsets, constants), and
+read any catalogued parameter on demand.
+
+> **Subtype allocation — a deliberate deviation from ECSS-E-ST-70-41.**
+>
+> | Subtype | This suite | ECSS-E-ST-70-41 |
+> |---|---|---|
+> | **20,1** | **set** parameter (`param_id` + float32 value) | report parameter values *request* |
+> | **20,2** | parameter value report (downlink) | parameter values report |
+> | **20,3** | **get** parameter (`param_id` → 20,2 report) | set parameter values |
+>
+> The implementation is `service_dispatch._handle_s20`, and `tc_catalog.yaml`,
+> the MCS builder, the procedures and `tools/procedure_audit.py` all follow
+> **this table**, not the standard. Until Phase G the *procedures* followed
+> ECSS while the wire followed the implementation, so an operator working a
+> card sent the wrong subtype in 79 places across ten files — the card said
+> "GET_PARAM (Service 20, Subtype 1)" and the spacecraft set the parameter to
+> whatever happened to be in the buffer.
+>
+> The deviation is not defended as good design; it is recorded because
+> re-allocating a live wire protocol across six consumers is a larger change
+> than the confusion it removes, and `tests/test_content/test_procedure_audit_gate.py`
+> now pins every consumer to one answer.
 
 **Use Cases:**
 - Adjust AOCS control gains
@@ -921,10 +1228,15 @@ Troubleshooting:
 
 ### Load Shedding (power emergency)
 ```
-1. S8 func_id=23 (EPS_LOAD_SHED_STAGE_1)
-2. S8 func_id=24 (EPS_LOAD_SHED_STAGE_2)
-3. S8 func_id=25 (EPS_LOAD_SHED_STAGE_3)
+There is ONE load-shed function; the stage is its argument.
+1. S8 func_id=25 (EPS_EMERGENCY_LOAD_SHED), stage=1
+2. S8 func_id=25 (EPS_EMERGENCY_LOAD_SHED), stage=2
+3. S8 func_id=25 (EPS_EMERGENCY_LOAD_SHED), stage=3
 4. Verify S5: LOAD_SHED_STAGE_N events
+(func_id 23 is EPS_SET_CHARGE_RATE and 24 is EPS_SOLAR_ARRAY_DRIVE — earlier
+ revisions of this document mislabelled 23/24/25 as three shed stages.)
+Alternatively S8 func_id=83 (EPS_SET_MODE), mode=1 (safe) or 2 (emergency)
+sheds the two least-essential loads, or all of them, in one command.
 ```
 
 ### Momentum Desaturation
@@ -937,11 +1249,15 @@ Troubleshooting:
 
 ### Imaging Pass (automated)
 ```
-1. S11 subtype 11 (schedule)
-   Time: TLE propagation + AOS
-   Action: S8 func_id=28 (PAYLOAD_CAPTURE)
-2. Spacecraft executes automatically at AOS
-3. Ground downloads via S13 after LOS
+1. S11 subtype 4 (insert time-tagged command)   ← subtype 4, NOT 11
+   Data: exec_time_cuc (absolute CUC, from TLE propagation + AOS prediction)
+       + the embedded TC: S8.1 func_id=28 (PAYLOAD_CAPTURE)
+   Reply: TM(11,5) with the on-board cmd_id
+2. Optional: S11 subtype 17 → TM(11,18) to read the schedule back and confirm
+   the queued command's apid/service/subtype before the pass
+3. Spacecraft executes automatically at the scheduled time
+4. Ground downloads via S13 after LOS
+(Subtype 11 is DELETE-ALL; sending it here wipes the on-board schedule.)
 ```
 
 ---
@@ -951,8 +1267,14 @@ Troubleshooting:
 - All time stamps are UTC (coordinated universal time)
 - Spacecraft time is maintained by OBDH, synchronous with ground
 - Events are time-ordered and logged to S15 storage
-- S19 actions execute immediately (no ground approval required)
-- S12 violations repeat every check interval until parameter recovers
+- S19 actions execute immediately (no ground approval required), except the
+  OBC-critical funcs 52/53/55/56, which are blocked while the OBC is in the
+  bootloader
+- S12 violations are **edge-triggered**: one TM(12,9) + S5 event on entry and
+  one TM(12,10) + S5 event on recovery. They do NOT repeat every check interval
+  while the parameter stays out of limits
+- S12 checks are suppressed entirely for parameters whose source subsystem is
+  unpowered, so a cold sensor does not generate a limit alarm
 - Telemetry can be stored onboard (S15) if downlink unavailable
 
 ---
@@ -964,3 +1286,7 @@ Troubleshooting:
 - Event Definitions: `configs/eosat1/events/event_catalog.yaml`
 - Monitoring Rules: `configs/eosat1/monitoring/s12_definitions.yaml`
 - Event-Action Rules: `configs/eosat1/monitoring/s19_rules.yaml`
+- On-Board Control Procedures: `configs/eosat1/obcp/`, `docs/OBCP_GUIDE.md`
+- **Authoritative implementation:**
+  `packages/smo-simulator/src/smo_simulator/service_dispatch.py` — when this
+  document and the dispatcher disagree, the dispatcher is right.

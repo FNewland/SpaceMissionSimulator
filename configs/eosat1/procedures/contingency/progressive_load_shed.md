@@ -45,14 +45,14 @@ decisions about the pace and depth of load shedding.
 | Command | Service | Subtype | Func ID | Description |
 |---|---|---|---|---|
 | HK_REQUEST | 3 | 27 | — | Request one-shot HK report |
-| PAYLOAD_SET_MODE | 8 | 1 | 20 | Set payload mode to OFF |
-| FPA_COOLER | 8 | 1 | 33 | Disable FPA cooler |
-| TTC_PA_OFF | 8 | 1 | 54 | Disable power amplifier (TX) |
-| EPS_POWER_OFF | 8 | 1 | 14 | Switch power line OFF |
-| EPS_POWER_ON | 8 | 1 | 13 | Switch power line ON |
-| TTC_PA_ON | 8 | 1 | 53 | Enable power amplifier (TX) |
+| PAYLOAD_SET_MODE | 8 | 1 | 26 | Set payload mode to OFF |
+| FPA_COOLER | 8 | 1 | 43 | Disable FPA cooler |
+| TTC_PA_OFF | 8 | 1 | 67 | Disable power amplifier (TX) |
+| EPS_POWER_OFF | 8 | 1 | 20 | Switch power line OFF |
+| EPS_POWER_ON | 8 | 1 | 19 | Switch power line ON |
+| TTC_PA_ON | 8 | 1 | 66 | Enable power amplifier (TX) |
 | AOCS_SET_MODE | 8 | 1 | 0 | Set AOCS mode |
-| OBC_SET_MODE | 8 | 1 | 40 | Set OBC mode (safe/emergency) |
+| OBC_SET_MODE | 8 | 1 | 50 | Set OBC mode (safe/emergency) |
 
 ## Procedure Steps
 
@@ -76,7 +76,7 @@ to threshold monitoring.
 **Action:** Monitor `eps.bat_soc` (0x0101) at 60 s intervals via `HK_REQUEST(sid=1)`
 **Trigger:** When `eps.bat_soc` < 50%:
 **Action:** Announce "SoC below 50% — shedding payload" on the operations loop.
-**Action:** Command payload to OFF: `PAYLOAD_SET_MODE(mode=0)` (func_id 20)
+**Action:** Command payload to OFF: `PAYLOAD_SET_MODE(mode=0)` (func_id 26)
 **Verify:** `payload.mode` (0x0600) = 0 (OFF) within 10 s
 **Verify:** `eps.power_cons` (0x0106) decreases (expected -45 W if imaging, -8 W if standby)
 **Action:** Wait 30 s and re-check: `HK_REQUEST(sid=1)`
@@ -90,7 +90,7 @@ prepare for next shed level.
 ### Step 3: SoC < 35% — Shed Load Priority 2 (FPA Cooler OFF)
 **Trigger:** When `eps.bat_soc` (0x0101) < 35%:
 **Action:** Announce "SoC below 35% — shedding FPA cooler" on the operations loop.
-**Action:** Disable FPA cooler: `FPA_COOLER(on=0)` (func_id 33)
+**Action:** Disable FPA cooler: `FPA_COOLER(on=0)` (func_id 43)
 **Verify:** `tcs.cooler_fpa` (0x040C) = 0 (OFF) within 5 s
 **Verify:** `eps.power_cons` (0x0106) decreases by ~15 W
 **Note:** FPA detector temperature will begin to rise. Record current FPA temperature
@@ -106,7 +106,7 @@ HOLD and monitor. If SoC will reach 25% before eclipse exit, prepare for next le
 **Trigger:** When `eps.bat_soc` (0x0101) < 25%:
 **Action:** Announce "SoC below 25% — shedding TTC transmitter. DOWNLINK WILL BE
 LOST. Spacecraft will receive commands only." on the operations loop.
-**Action:** Disable power amplifier: `TTC_PA_OFF` (func_id 54)
+**Action:** Disable power amplifier: `TTC_PA_OFF` (func_id 67)
 **Verify:** `ttc.pa_on` (0x0516) = 0 within 5 s
 **Verify:** `eps.power_cons` (0x0106) decreases by ~20 W
 **Note:** WARNING — Telemetry downlink is now OFF. The spacecraft can still receive
@@ -121,7 +121,7 @@ below 15%, proceed to emergency level. Flight Director must authorise next step.
 **Trigger:** When `eps.bat_soc` (0x0101) < 15% (estimated from pre-TX-shed rate):
 **Action:** Announce "SoC below 15% — EMERGENCY — shedding AOCS reaction wheels.
 Spacecraft will LOSE active attitude control." on the operations loop.
-**Action:** Power off AOCS wheels: `EPS_POWER_OFF(line_index=7)` (func_id 14)
+**Action:** Power off AOCS wheels: `EPS_POWER_OFF(line_index=7)` (func_id 20)
 **Note:** WARNING — The spacecraft will lose active three-axis attitude control.
 Residual angular momentum will cause slow tumbling. Passive magnetic detumbling
 (if available) provides only coarse stabilisation. Solar arrays may not be optimally
@@ -136,7 +136,7 @@ If bus voltage drops below 25.0 V despite all loads shed, command
 **Action:** Monitor `eps.eclipse_flag` (0x0108) — wait for transition to 0 (sunlit).
 **Note:** If TX is off, operator cannot receive telemetry. Use predicted eclipse exit
 time from flight dynamics. After predicted exit + 60 s, attempt to re-enable TX:
-**Action:** (If TX was shed) Re-enable power amplifier: `TTC_PA_ON` (func_id 53)
+**Action:** (If TX was shed) Re-enable power amplifier: `TTC_PA_ON` (func_id 66)
 **Verify:** `ttc.pa_on` (0x0516) = 1 within 10 s (if telemetry resumes)
 **Action:** Request EPS housekeeping: `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
 **Verify:** `eps.eclipse_flag` (0x0108) = 0 — sunlit confirmed
@@ -152,7 +152,7 @@ to verify power budget stability. Only restore when SoC is above the shed
 threshold + 10% margin.
 
 **Step 7a — Restore AOCS Wheels (if shed) — when SoC > 25%:**
-**Action:** `EPS_POWER_ON(line_index=7)` (func_id 13)
+**Action:** `EPS_POWER_ON(line_index=7)` (func_id 19)
 **Action:** Command `AOCS_SET_MODE(mode=2)` (COARSE_SUN) to begin attitude recovery.
 **Verify:** `aocs.mode` (0x020F) responds within 15 s
 **Verify:** Body rates `aocs.rate_roll` (0x0204), `aocs.rate_pitch` (0x0205),
@@ -162,14 +162,14 @@ threshold + 10% margin.
 **GO/NO-GO:** AOCS wheels restored and attitude recovering — proceed.
 
 **Step 7b — Restore TTC TX (if shed) — when SoC > 35%:**
-**Action:** `TTC_PA_ON` (func_id 53)
+**Action:** `TTC_PA_ON` (func_id 66)
 **Verify:** `ttc.pa_on` (0x0516) = 1 within 5 s
 **Verify:** `eps.bus_voltage` (0x0105) remains > 26.5 V
 **Action:** Wait 5 minutes and confirm SoC still trending upward.
 **GO/NO-GO:** TX restored and telemetry flowing — proceed.
 
 **Step 7c — Restore FPA Cooler — when SoC > 45%:**
-**Action:** `FPA_COOLER(on=1)` (func_id 33)
+**Action:** `FPA_COOLER(on=1)` (func_id 43)
 **Verify:** `tcs.cooler_fpa` (0x040C) = 1 within 5 s
 **Note:** FPA cool-down from ambient to operating temperature takes approximately
 20 minutes. Payload imaging should not resume until FPA reaches operating temperature.
@@ -178,7 +178,7 @@ threshold + 10% margin.
 **GO/NO-GO:** FPA cooler restored — proceed.
 
 **Step 7d — Restore Payload to STANDBY — when SoC > 60%:**
-**Action:** `PAYLOAD_SET_MODE(mode=1)` (func_id 20)
+**Action:** `PAYLOAD_SET_MODE(mode=1)` (func_id 26)
 **Verify:** `payload.mode` (0x0600) = 1 (STANDBY) within 10 s
 **Verify:** `eps.bus_voltage` (0x0105) remains > 27.5 V
 **Verify:** `eps.bat_soc` (0x0101) remains > 55%

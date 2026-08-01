@@ -45,7 +45,7 @@ temperature is then monitored to confirm the runaway has been arrested.
 | HEATER_THRUSTER | 8 | 1 | 42 | Thruster heater on/off |
 | HEATER_SET_SETPOINT | 8 | 1 | 44 | Modify heater thermostat setpoints |
 | HEATER_AUTO_MODE | 8 | 1 | 45 | Return to autonomous thermostat |
-| EPS_POWER_OFF | 8 | 1 | 14 | Shed heater power line |
+| EPS_POWER_OFF | 8 | 1 | 20 | Shed heater power line |
 
 ## Procedure Steps
 
@@ -68,7 +68,7 @@ heater is still ON, the thermostat has failed.
 The battery heater thermostat requires this power line to operate. If the power line is OFF,
 the thermostat will not function and the heater cannot respond to commands.
 **Action:** If addressing battery heater: verify `eps.pl_htr_bat` (0x0115) = 1 (ON).
-If the power line is OFF, first send: `EPS_POWER_ON(line_index=5)` (func_id 13) — battery heater power line.
+If the power line is OFF, first send: `EPS_POWER_ON(line_index=5)` (func_id 19) — battery heater power line.
 **Action:** Command the affected heater OFF:
 - Battery heater: `HEATER_BATTERY(on=0)` (func_id 40)
 - OBC heater: `HEATER_OBC(on=0)` (func_id 41)
@@ -102,8 +102,8 @@ the new absurd setpoint of 100 C.
 
 ### Step 4: Shed Heater Power Line via EPS
 **Action:** As a last resort, cut power to the heater by disabling its EPS power line:
-- Battery heater (line 5): `EPS_POWER_OFF(line_index=5)` (func_id 14)
-- OBC heater (line 6): `EPS_POWER_OFF(line_index=6)` (func_id 14)
+- Battery heater (line 5): `EPS_POWER_OFF(line_index=5)` (func_id 20)
+- OBC heater (line 6): `EPS_POWER_OFF(line_index=6)` (func_id 20)
 - Thruster heater: Check which power line supplies the thruster heater and shed it.
 **Verify:** Check power line status:
 - `eps.pl_htr_bat` (0x0115) = 0 if battery heater line shed

@@ -26,9 +26,10 @@ class AWGNSource:
     """
 
     def __init__(self, eb_n0_db: float = 10.0, sps: int = 8,
-                 bits_per_symbol: int = 1):
+                 bits_per_symbol: int = 1, rng=None):
         self._sps = sps
         self._bps = bits_per_symbol
+        self._rng = rng if rng is not None else np.random
         self.set_eb_n0(eb_n0_db)
 
     def set_eb_n0(self, db: float):
@@ -44,8 +45,8 @@ class AWGNSource:
     def apply(self, samples: np.ndarray) -> np.ndarray:
         """Add AWGN to complex samples."""
         sigma = math.sqrt(self._noise_var)
-        noise = (np.random.normal(0, sigma, len(samples))
-                 + 1j * np.random.normal(0, sigma, len(samples)))
+        noise = (self._rng.normal(0, sigma, len(samples))
+                 + 1j * self._rng.normal(0, sigma, len(samples)))
         return samples + noise.astype(samples.dtype)
 
 
@@ -60,8 +61,9 @@ class PhaseNoiseSource:
     """
 
     def __init__(self, linewidth_hz: float = 10.0,
-                 sample_rate: float = 256000.0):
+                 sample_rate: float = 256000.0, rng=None):
         self._phase = 0.0
+        self._rng = rng if rng is not None else np.random
         self.set_params(linewidth_hz, sample_rate)
 
     def set_params(self, linewidth_hz: float, sample_rate: float):
@@ -76,7 +78,7 @@ class PhaseNoiseSource:
             return samples
         n = len(samples)
         # Cumulative random walk
-        phase_increments = np.random.normal(
+        phase_increments = self._rng.normal(
             0, math.sqrt(self._phase_var), n)
         phase_walk = np.cumsum(phase_increments) + self._phase
         self._phase = phase_walk[-1] if n > 0 else self._phase
@@ -121,7 +123,8 @@ class WidebandInterferer:
     def __init__(self, bandwidth_hz: float = 50000.0,
                  power_dbm: float = -80.0,
                  center_offset_hz: float = 0.0,
-                 sample_rate: float = 256000.0):
+                 sample_rate: float = 256000.0, rng=None):
+        self._rng = rng if rng is not None else np.random
         self.bandwidth_hz = bandwidth_hz
         self.power_dbm = power_dbm
         self.center_offset_hz = center_offset_hz
@@ -133,8 +136,8 @@ class WidebandInterferer:
         n = len(samples)
         amplitude = 10.0 ** ((self.power_dbm + 30.0) / 20.0)
         # Generate white noise, then bandpass filter
-        noise = amplitude * (np.random.normal(0, 1, n)
-                             + 1j * np.random.normal(0, 1, n))
+        noise = amplitude * (self._rng.normal(0, 1, n)
+                             + 1j * self._rng.normal(0, 1, n))
         # Apply frequency shift to center
         if self.center_offset_hz != 0:
             t = np.arange(n) / self._sample_rate

@@ -24,35 +24,50 @@ PANEL_NORMALS = {
 }
 
 # Power line definitions
-# (name, switchable, default_on, power_w, description)
+# (name, switchable, default_on, description)
 # Convention: only the non-switchable infrastructure lines (OBC, TTC RX) are
 # energised at power-on. Every switchable line defaults OFF — operators must
 # explicitly command equipment on after separation, matching real LEOP flow.
+# NOTE (Phase B, brief 01 F14 / WP-13): the per-line wattage column is GONE.
+# It advertised ratings (ttc_tx 20 W, aocs_wheels 12 W) that contradicted the
+# live values and was consumed by nothing — configuration (eps.yaml +
+# simulation.yaml eps.line_power_w) is the only source of wattages.
 POWER_LINE_DEFS = [
-    ("obc", False, True, 15.0, "OBC computer"),
-    ("ttc_rx", False, True, 5.0, "TTC receiver"),
-    ("ttc_tx", True, False, 20.0, "TTC transmitter"),
-    ("payload", True, False, 8.0, "Payload imager"),
-    ("fpa_cooler", True, False, 15.0, "FPA cooler"),
-    ("htr_bat", True, False, 6.0, "Battery heater"),
-    ("htr_obc", True, False, 4.0, "OBC heater"),
-    ("aocs_wheels", True, False, 12.0, "Reaction wheels"),
+    ("obc", False, True, "OBC computer"),
+    ("ttc_rx", False, True, "TTC receiver"),
+    ("ttc_tx", True, False, "TTC transmitter"),
+    ("payload", True, False, "Payload imager"),
+    ("fpa_cooler", True, False, "FPA cooler"),
+    ("htr_bat", True, False, "Battery heater"),
+    ("htr_obc", True, False, "OBC heater"),
+    ("aocs_wheels", True, False, "Reaction wheels"),
+    # Phase D: propulsion line (catbed heater 12 W via the TCS thruster
+    # circuit + 2 W valve drivers while armed/firing). Index 8: line status
+    # publishes at 0x014A and current at 0x014B — NOT 0x0110+8/0x0118+8,
+    # which would collide with line_current_0 / the 0x0120 block.
+    ("prop", True, False, "Propulsion (catbed htr + valves)"),
 ]
 
 POWER_LINE_NAMES = [d[0] for d in POWER_LINE_DEFS]
 POWER_LINE_SWITCHABLE = {d[0]: d[1] for d in POWER_LINE_DEFS}
 POWER_LINE_DEFAULTS = {d[0]: d[2] for d in POWER_LINE_DEFS}
-POWER_LINE_NOMINAL_W = {d[0]: d[3] for d in POWER_LINE_DEFS}
+
+# Legacy contiguous param blocks cover the first 8 lines only; later lines
+# carry explicit (status, current) param ids here.
+_EXTRA_LINE_PARAM_IDS = {"prop": (0x014A, 0x014B)}
 
 # Overcurrent thresholds (amps) per line — 150% of nominal at 28V
 OC_THRESHOLDS = {
     "obc": 2.0, "ttc_rx": 0.3, "ttc_tx": 1.0, "payload": 2.5,
     "fpa_cooler": 1.0, "htr_bat": 0.5, "htr_obc": 0.3, "aocs_wheels": 0.8,
+    "prop": 0.8,
 }
 OC_TRIP_TIME_S = 0.05  # 50ms trip time (simulated as immediate at 1Hz tick)
 
-# Load shedding priority (first shed = lowest priority, index 0 = first off)
-LOAD_SHED_ORDER = ["payload", "fpa_cooler", "ttc_tx", "aocs_wheels"]
+# Load shedding priority (first shed = lowest priority, index 0 = first off).
+# prop is LAST (Phase D): shedding propulsion is the last resort, and losing
+# the line mid-burn triggers the on-board burn abort (reason 4).
+LOAD_SHED_ORDER = ["payload", "fpa_cooler", "ttc_tx", "aocs_wheels", "prop"]
 LOAD_SHED_VOLTAGE = 26.5  # Bus voltage below which load shedding begins
 
 
@@ -93,10 +108,13 @@ class EPSState:
     sep_timer_active: bool = False
     sep_timer_remaining: float = 0.0
     pdm_unsw_status: int = 0x03  # bit 0 = RX, bit 1 = OBC (both on by default)
-    # ── Per-panel solar currents (6 body-mounted faces) ──
+    # ── Per-panel solar currents (6 body-mounted faces; ±Y include wings) ──
     sa_panel_currents: dict = field(default_factory=lambda: {
         'px': 0.0, 'mx': 0.0, 'py': 0.0, 'my': 0.0, 'pz': 0.0, 'mz': 0.0
     })
+    # Wing-only currents (brief 01 WP-11: per-wing telemetry, separate from
+    # the body faces). Also included in sa_panel_currents['py'/'my'].
+    sa_wing_currents: dict = field(default_factory=lambda: {'py': 0.0, 'my': 0.0})
     sa_panel_degradation: dict = field(default_factory=lambda: {
         'px': 1.0, 'mx': 1.0, 'py': 1.0, 'my': 1.0, 'pz': 1.0, 'mz': 1.0
     })
@@ -129,6 +147,10 @@ class EPSState:
     _prev_sa_degraded: bool = False  # Solar-array-degraded edge state
     # ── Load shedding and control ──
     load_shed_stage: int = 0         # 0=none, 1/2/3=progressive shed
+    # Lines shed by the bus-voltage shedder, in shed order — consumed by the
+    # hysteresis auto-restore (brief 01 WP-7). Operator/safe-mode switch-offs
+    # are NOT recorded here and are never auto-restored.
+    shed_lines: list = field(default_factory=list)
     charge_rate_override_a: float = 0.0  # 0.0 = auto, else manual A
     actual_charge_current_a: float = 0.0  # Actual charge current applied (Defect #4)
     solar_array_drive_angle: float = 0.0 # Solar array orientation angle
@@ -149,28 +171,66 @@ class EPSState:
 class EPSBasicModel(SubsystemModel):
     """Basic Electrical Power Subsystem simulation with power lines."""
 
+    # Mean projected-area fraction of a convex body over random attitudes
+    # (Cauchy's theorem: <A_proj> = A_total / 4). Used when the AOCS sun
+    # vector is unavailable — i.e. the spacecraft is uncontrolled/tumbling —
+    # instead of the old fallback that assumed a fully sun-facing array pair
+    # and over-generated by roughly 3x (roadmap N-9).
+    TUMBLING_PROJECTION_FACTOR = 0.25
+
     def __init__(self):
         self._state = EPSState()
+        # Per-model RNG (plan A-2). Standalone construction gets a fresh
+        # unseeded stream so existing unit tests keep working; the engine
+        # replaces this with a Random derived from simulation.yaml `seed`.
+        import random as _random
+        self.rng = _random.Random(20260731)  # deterministic standalone fallback; engine overrides via derive_rng
         self._cfg: dict[str, Any] = {}
         # Defaults from original config
         self._battery_capacity_wh = 120.0
-        self._platform_idle_w = 95.0
         self._payload_power_w = 45.0
         self._payload_standby_w = 8.0
         self._fpa_cooler_w = 15.0
         self._transponder_w = 20.0
+        self._transponder_hi_w = 20.0
         self._transponder_rx_w = 5.0
         self._soc_100_v = 29.2
         self._soc_0_v = 21.5
         self._internal_r = 0.05
-        self._panel_area = 0.628
+        self._charge_eff = 1.0
+        self._discharge_eff = 1.0
+        self._cv_taper_start_pct: float | None = None
         self._cell_eff = 0.295
         self._solar_irrad = 1361.0
+        # Array loss stack (brief 01 WP-1). None => legacy BOL model.
+        self._array_losses: dict[str, float] | None = None
+        # Solar array drive (brief 01 WP-2)
+        self._sada_present = False
+        self._sada_tracking = False
+        self._sada_axis = 'z'
+        # Bill heaters from the TCS thermostat state (brief 01 WP-5)
+        self._heater_duty_from_tcs = False
+        self._shed_auto_restore = False
         self._bat_temp_tau = 600.0
         self._bat_temp_env = 15.0
         # UV/OV thresholds
         self._uv_threshold = 26.5
         self._ov_threshold = 29.5
+        # Protection / event tuning — module-level defaults, overridden by the
+        # simulation.yaml `eps:` block in configure() (defect #51).
+        self._line_power_w = {"htr_bat": 6.0, "htr_obc": 4.0, "aocs_wheels": 6.0}
+        self._shed_order = list(LOAD_SHED_ORDER)
+        self._shed_voltage = LOAD_SHED_VOLTAGE
+        self._shed_hysteresis_v = 0.5
+        self._oc_thresholds = dict(OC_THRESHOLDS)
+        self._oc_trip_time_s = OC_TRIP_TIME_S
+        self._evt = {
+            "soc_low_pct": 20.0, "soc_critical_pct": 10.0,
+            "soc_charge_complete_pct": 99.0,
+            "bus_warning_v": 27.0, "bus_critical_v": 25.0,
+            "bat_overtemp_c": 45.0, "bat_undertemp_c": -5.0,
+            "sa_degraded_fraction": 0.7,
+        }
         # Parameter IDs
         self._param_ids: dict[str, int] = {}
 
@@ -185,17 +245,27 @@ class EPSBasicModel(SubsystemModel):
         self._soc_100_v = bat.get("soc_100_v", 29.2)
         self._soc_0_v = bat.get("soc_0_v", 21.5)
         self._internal_r = bat.get("internal_r_ohm", 0.05)
-        self._platform_idle_w = config.get("platform_idle_power_w", 95.0)
+        self._charge_eff = float(bat.get("charge_efficiency", 1.0))
+        self._discharge_eff = float(bat.get("discharge_efficiency", 1.0))
+        cv = bat.get("cv_taper_start_soc_pct")
+        self._cv_taper_start_pct = float(cv) if cv is not None else None
         self._payload_power_w = config.get("payload_power_w", 45.0)
         self._payload_standby_w = config.get("payload_standby_power_w", 8.0)
         self._fpa_cooler_w = config.get("fpa_cooler_power_w", 15.0)
         self._transponder_w = config.get("transponder_power_w", 20.0)
+        self._transponder_hi_w = config.get(
+            "transponder_hi_power_w", self._transponder_w)
         self._transponder_rx_w = config.get("transponder_rx_power_w", 5.0)
+        # Cell efficiency: cell_efficiency key, with the legacy arrays[0]
+        # efficiency as a back-compat fallback for older mission configs.
         arrays = config.get("arrays", [])
-        if arrays:
-            total_area = sum(a.get("area_m2", 0.314) for a in arrays)
-            self._panel_area = total_area
-            self._cell_eff = arrays[0].get("efficiency", 0.295)
+        self._cell_eff = config.get(
+            "cell_efficiency",
+            arrays[0].get("efficiency", 0.295) if arrays else 0.295)
+        # Array performance loss stack (brief 01 WP-1). Absent/empty => legacy
+        # BOL behaviour (loss factor exactly 1.0, K = 389.5 W/m2).
+        al = config.get("array_losses") or None
+        self._array_losses = dict(al) if al else None
         self._param_ids = config.get("param_ids", {
             "bat_voltage": 0x0100, "bat_soc": 0x0101, "bat_temp": 0x0102,
             "sa_a_current": 0x0103, "sa_b_current": 0x0104,
@@ -219,6 +289,13 @@ class EPSBasicModel(SubsystemModel):
         self._wing_py_area = panel_cfg.get('wing_py_area_m2', 0.24)
         self._wing_my_area = panel_cfg.get('wing_my_area_m2', 0.24)
         self._wing_deploy_time_s = panel_cfg.get('wing_deploy_time_s', 30.0)
+        # Single-axis solar array drive (brief 01 WP-2). When present and
+        # tracking, the wing pair follows the sun's projection perpendicular
+        # to the drive axis; when present but not tracking, the wings are
+        # frozen at solar_array_drive_angle about the drive axis.
+        self._sada_present = bool(panel_cfg.get('sada_present', False))
+        self._sada_tracking = bool(panel_cfg.get('sada_tracking', False))
+        self._sada_axis = str(panel_cfg.get('sada_axis', 'z')).lower()
         # Effective panel areas (updated when wings deploy)
         self._panel_areas = dict(self._panel_areas_body)
         # Load power line config overrides if present
@@ -226,6 +303,55 @@ class EPSBasicModel(SubsystemModel):
         for line_name in POWER_LINE_DEFAULTS:
             if line_name in pl_cfg:
                 self._state.power_lines[line_name] = pl_cfg[line_name]
+
+        # ── simulation.yaml `eps:` tuning block (defect #51) ──────────────
+        # Every value falls back to the module-level constant that used to be
+        # hard-coded here, so a config dir without simulation.yaml is unchanged.
+        sim = config.get("simulation", {}) or {}
+
+        initial = sim.get("initial", {}) or {}
+        soc0 = initial.get("soc_pct")
+        if soc0 is not None:
+            self._state.bat_soc_pct = float(soc0)
+            self._state._prev_soc = float(soc0)
+            self._state.bat_dod_pct = 100.0 - float(soc0)
+        temp0 = initial.get("bat_temp_c")
+        if temp0 is not None:
+            self._state.bat_temp = float(temp0)
+            self._bat_temp_env = float(temp0)
+
+        # Per-line wattages billed directly by tick() (lines whose rating has no
+        # home in eps.yaml). Others come from eps.yaml hardware ratings.
+        self._line_power_w = {"htr_bat": 6.0, "htr_obc": 4.0, "aocs_wheels": 6.0}
+        self._line_power_w.update(
+            {k: float(v) for k, v in (sim.get("line_power_w", {}) or {}).items()})
+
+        self._uv_threshold = float(sim.get("uv_threshold_v", self._uv_threshold))
+        self._ov_threshold = float(sim.get("ov_threshold_v", self._ov_threshold))
+
+        shed = sim.get("load_shed", {}) or {}
+        self._shed_order = list(shed.get("order") or LOAD_SHED_ORDER)
+        self._shed_voltage = float(shed.get("bus_voltage_v", LOAD_SHED_VOLTAGE))
+        self._shed_hysteresis_v = float(shed.get("restore_hysteresis_v", 0.5))
+        self._shed_auto_restore = bool(shed.get("auto_restore", False))
+
+        self._heater_duty_from_tcs = bool(sim.get("heater_duty_from_tcs", False))
+
+        oc = sim.get("overcurrent", {}) or {}
+        self._oc_thresholds = dict(OC_THRESHOLDS)
+        self._oc_thresholds.update(
+            {k: float(v) for k, v in (oc.get("thresholds_a", {}) or {}).items()})
+        self._oc_trip_time_s = float(oc.get("trip_time_s", OC_TRIP_TIME_S))
+
+        evt = sim.get("event_thresholds", {}) or {}
+        self._evt = {
+            "soc_low_pct": 20.0, "soc_critical_pct": 10.0,
+            "soc_charge_complete_pct": 99.0,
+            "bus_warning_v": 27.0, "bus_critical_v": 25.0,
+            "bat_overtemp_c": 45.0, "bat_undertemp_c": -5.0,
+            "sa_degraded_fraction": 0.7,
+        }
+        self._evt.update({k: float(v) for k, v in evt.items() if v is not None})
 
     def tick(self, dt: float, orbit_state: Any, shared_params: dict[int, float]) -> None:
         s = self._state
@@ -248,12 +374,16 @@ class EPSBasicModel(SubsystemModel):
                     s.wing_py_deployed = True
                     s.wing_py_deploying = False
                     self._panel_areas['py'] = self._panel_areas_body['py'] + self._wing_py_area
-                    events_to_generate.append((0x010E, f"+Y solar wing deployed: area now {self._panel_areas['py']:.3f} m2"))
+                    # 0x0112 WING_PY_DEPLOYED. This used to raise 0x010E, which
+                    # is CHARGE_COMPLETE — so a wing deployment logged "battery
+                    # reached 100% SoC" and 0x0112 appeared nowhere in the tree.
+                    events_to_generate.append((0x0112, f"+Y solar wing deployed: area now {self._panel_areas['py']:.3f} m2"))
                 if s.wing_my_deploying:
                     s.wing_my_deployed = True
                     s.wing_my_deploying = False
                     self._panel_areas['my'] = self._panel_areas_body['my'] + self._wing_my_area
-                    events_to_generate.append((0x010F, f"-Y solar wing deployed: area now {self._panel_areas['my']:.3f} m2"))
+                    # 0x0113 WING_MY_DEPLOYED (was 0x010F PDU_OVERCURRENT).
+                    events_to_generate.append((0x0113, f"-Y solar wing deployed: area now {self._panel_areas['my']:.3f} m2"))
         # Keep panel areas in sync with deployment state (e.g. after state restore)
         if s.wing_py_deployed and not s.wing_py_deploying:
             self._panel_areas['py'] = self._panel_areas_body['py'] + self._wing_py_area
@@ -267,11 +397,43 @@ class EPSBasicModel(SubsystemModel):
         # Degradation: 0.00031% per sunlit hour (~2.75%/year at 8760h/yr * 0.6 sunlit fraction)
         s.sa_age_factor = max(0.5, 1.0 - s.sa_lifetime_hours * 3.14e-6)
 
-        # Get sun vector from AOCS shared params (CSS sun vector in body frame)
-        sun_bx = shared_params.get(0x0245, 0.0)  # CSS sun vector X (body frame)
-        sun_by = shared_params.get(0x0246, 0.0)  # CSS sun vector Y
-        sun_bz = shared_params.get(0x0247, 0.0)  # CSS sun vector Z
+        # Sun vector in the body frame. Phase C: prefer the TRUE sun-body
+        # vector the AOCS publishes at 0x02B3-B5 (a function of the true
+        # attitude quaternion) — illumination is physics, not a sensor
+        # reading, so a failed CSS must not black out the arrays. Fall back
+        # to the CSS composite (0x0245-47) for reduced harnesses.
+        sun_bx = shared_params.get(0x02B3)
+        sun_by = shared_params.get(0x02B4)
+        sun_bz = shared_params.get(0x02B5)
+        if sun_bx is None or (sun_bx == 0.0 and sun_by == 0.0 and sun_bz == 0.0):
+            sun_bx = shared_params.get(0x0245, 0.0)  # CSS sun vector X (body)
+            sun_by = shared_params.get(0x0246, 0.0)  # CSS sun vector Y
+            sun_bz = shared_params.get(0x0247, 0.0)  # CSS sun vector Z
         sun_mag = (sun_bx**2 + sun_by**2 + sun_bz**2) ** 0.5
+
+        # ── Effective plane-of-array performance constant (brief 01 WP-1) ──
+        # W per m2 of projected area: irradiance x cell efficiency x the
+        # honest loss stack (inherent degradation/packing, array temperature,
+        # harness) x MPPT x live aging. With `array_losses` absent the loss
+        # factor is exactly 1.0 (legacy BOL behaviour, K = 389.5 W/m2); with
+        # the recommended stack K = 292 W/m2 BOL, 267.9 W/m2 at 3-year EOL.
+        loss_f = 1.0
+        if self._array_losses:
+            al = self._array_losses
+            temp_f = 1.0 + al.get("temp_coeff_per_c", -0.0020) * (
+                al.get("array_temp_sunlit_c", 65.0) - al.get("temp_ref_c", 28.0))
+            loss_f = (al.get("inherent_degradation", 0.85) * temp_f
+                      * al.get("harness_efficiency", 0.95))
+        k_eff = (self._cell_eff * self._solar_irrad * loss_f
+                 * s.mppt_efficiency * s.sa_age_factor)
+
+        # Expected (undegraded) generation, accumulated alongside the actual
+        # generation with the SAME model + geometry. Reference for the
+        # "solar array degraded" event (brief 01 F11 / WP-10) — previously it
+        # used the dead legacy `arrays:` area and fired on every run.
+        expected_w = 0.0
+        s.sa_wing_currents['py'] = 0.0
+        s.sa_wing_currents['my'] = 0.0
 
         if s.in_eclipse:
             # No solar generation in eclipse
@@ -281,29 +443,56 @@ class EPSBasicModel(SubsystemModel):
             s.sa_a_current = 0.0
             s.sa_b_current = 0.0
         elif sun_mag < 0.01:
-            # Fallback: AOCS sun vector not available — use beta angle (old behavior)
-            cos_beta = abs(math.cos(math.radians(beta_deg)))
-            sa_fraction = max(0.0, cos_beta)
+            # No valid AOCS sun vector — which is the case for the whole of
+            # phases 0-3, i.e. all of bootloader and early LEOP.
+            #
+            # Roadmap N-9: the legacy fallback here used `self._panel_area`
+            # (0.628 m2, the sum of a two-array model that no longer exists)
+            # and produced ~245 W sunlit, against ~82 W for the deployed
+            # 6-panel model and ~22 W for the real body-only configuration.
+            # LEOP was therefore survivable only because of a bug, and every
+            # LEOP power exercise was physically meaningless.
+            #
+            # Replacement: a cosine-of-beta model over the *actual* configured
+            # panel areas. An uncontrolled spacecraft is not sun-pointing, so
+            # only the projected area of a tumbling body is illuminated; the
+            # geometric mean over random attitudes of a convex body is 1/4 of
+            # its total area (Cauchy), which is the factor used here. Wing
+            # deployment therefore matters, and "deploy before you switch
+            # things on" becomes a real ordering constraint.
+            cos_beta = max(0.0, abs(math.cos(math.radians(beta_deg))))
+            total_area = sum(self._panel_areas.get(f, 0.0) for f in PANEL_NORMALS)
+            effective_area = total_area * self.TUMBLING_PROJECTION_FACTOR
+            noise = 1.0 + self.rng.gauss(0, 0.0025)
 
-            base_pwr = self._panel_area * self._cell_eff * self._solar_irrad
-            noise = 1.0 + random.gauss(0, 0.0025)
+            gen_w = effective_area * k_eff * cos_beta * noise
+            expected_w = effective_area * k_eff * cos_beta
 
-            sa_a_pwr = 0.5 * base_pwr * sa_fraction * s.sa_a_degradation * noise if s.sa_a_enabled else 0.0
-            sa_b_pwr = 0.5 * base_pwr * sa_fraction * s.sa_b_degradation * noise if s.sa_b_enabled else 0.0
+            # Split across the legacy A/B halves using their enable/degradation
+            # state, so array failures still bite in this regime.
+            a_share = 0.5 * s.sa_a_degradation if s.sa_a_enabled else 0.0
+            b_share = 0.5 * s.sa_b_degradation if s.sa_b_enabled else 0.0
+            share = a_share + b_share
+            gen_w *= share / 0.5 if share else 0.0
+            sa_a_pwr = gen_w * (a_share / share) if share else 0.0
+            sa_b_pwr = gen_w - sa_a_pwr
 
-            # Apply MPPT efficiency and aging
-            sa_a_pwr *= s.mppt_efficiency * s.sa_age_factor
-            sa_b_pwr *= s.mppt_efficiency * s.sa_age_factor
-
-            gen_w = sa_a_pwr + sa_b_pwr
-            # Distribute evenly to maintain backward compat for sa_a/sa_b
-            s.sa_a_current = sa_a_pwr / 28.0
-            s.sa_b_current = sa_b_pwr / 28.0
+            bus_v_gen = max(s.bus_voltage, 20.0)
+            for face in PANEL_NORMALS:
+                area = self._panel_areas.get(face, 0.0)
+                s.sa_panel_currents[face] = (
+                    (gen_w * area / total_area) / bus_v_gen if total_area > 0 else 0.0)
+            s.sa_a_current = sa_a_pwr / bus_v_gen
+            s.sa_b_current = sa_b_pwr / bus_v_gen
         else:
-            # 6 body-panel model: per-panel cosine projection against sun vector
+            # 6 body-panel model: per-panel cosine projection against sun
+            # vector, plus the ±Y deployable wings on the solar array drive.
             sun_nx = sun_bx / sun_mag
             sun_ny = sun_by / sun_mag
             sun_nz = sun_bz / sun_mag
+            # Currents referenced to the live bus voltage (brief 01 F18/C10) —
+            # previously a hard-coded 28.0 V made Σ(current)·V_bus ≠ power.
+            bus_v_gen = max(s.bus_voltage, 20.0)
 
             gen_w = 0.0
             for face, normal in PANEL_NORMALS.items():
@@ -311,16 +500,62 @@ class EPSBasicModel(SubsystemModel):
                 cos_angle = normal[0] * sun_nx + normal[1] * sun_ny + normal[2] * sun_nz
                 illumination = max(0.0, cos_angle)  # Only sunlit when facing sun
 
-                area = self._panel_areas.get(face, 0.06)
+                area = self._panel_areas_body.get(face, 0.0)
                 degradation = s.sa_panel_degradation.get(face, 1.0)
-                noise = 1.0 + random.gauss(0, 0.005)
+                noise = 1.0 + self.rng.gauss(0, 0.005)
 
-                panel_pwr = area * self._cell_eff * self._solar_irrad * illumination
-                panel_pwr *= degradation * s.mppt_efficiency * s.sa_age_factor * noise
+                panel_pwr = area * k_eff * illumination * degradation * noise
+                expected_w += area * k_eff * illumination
 
-                panel_current = panel_pwr / 28.0
-                s.sa_panel_currents[face] = panel_current
+                s.sa_panel_currents[face] = panel_pwr / bus_v_gen
                 gen_w += panel_pwr
+
+            # ── Deployable wings on the single-axis SADA (brief 01 WP-2) ──
+            # sada_tracking: the wing pair follows the sun's projection
+            #   perpendicular to the drive axis — illumination is the sun's
+            #   out-of-axis component (= cos beta for axis = orbit normal),
+            #   independent of orbit phase.
+            # not tracking (or no SADA): the wings are frozen at
+            #   solar_array_drive_angle about the drive axis; angle 0 = the
+            #   legacy fixed ±Y orientation. Back-to-back cells: one wing lit
+            #   at a time, |sin(phase)| duty — the "SADA stuck" failure case.
+            axis = {'x': (1.0, 0.0, 0.0), 'y': (0.0, 1.0, 0.0),
+                    'z': (0.0, 0.0, 1.0)}.get(self._sada_axis, (0.0, 0.0, 1.0))
+            if self._sada_present and self._sada_tracking:
+                s_dot_a = (sun_nx * axis[0] + sun_ny * axis[1]
+                           + sun_nz * axis[2])
+                illum_track = math.sqrt(max(0.0, 1.0 - s_dot_a * s_dot_a))
+                illum_py = illum_wing_my = illum_track
+                # Telemetry: the drive angle follows the tracked bearing.
+                if illum_track > 1e-6 and self._sada_axis == 'z':
+                    s.solar_array_drive_angle = math.degrees(
+                        math.atan2(-sun_nx, sun_ny))
+                elif illum_track > 1e-6 and self._sada_axis == 'y':
+                    # Bearing of the sun's projection in the body X-Z plane
+                    s.solar_array_drive_angle = math.degrees(
+                        math.atan2(sun_nz, sun_nx))
+            else:
+                theta = math.radians(s.solar_array_drive_angle
+                                     if self._sada_present else 0.0)
+                # Wing normal rotated about the drive axis; home (theta=0) is
+                # the +Y face normal. Implemented for the z drive axis.
+                n = (-math.sin(theta), math.cos(theta), 0.0)
+                s_dot_n = sun_nx * n[0] + sun_ny * n[1] + sun_nz * n[2]
+                illum_py = max(0.0, s_dot_n)
+                illum_wing_my = max(0.0, -s_dot_n)
+
+            for face, area, deployed, illum in (
+                    ('py', self._wing_py_area, s.wing_py_deployed, illum_py),
+                    ('my', self._wing_my_area, s.wing_my_deployed, illum_wing_my)):
+                if not deployed:
+                    continue
+                degradation = s.sa_panel_degradation.get(face, 1.0)
+                noise = 1.0 + self.rng.gauss(0, 0.005)
+                wing_pwr = area * k_eff * illum * degradation * noise
+                expected_w += area * k_eff * illum
+                s.sa_wing_currents[face] = wing_pwr / bus_v_gen
+                s.sa_panel_currents[face] += wing_pwr / bus_v_gen
+                gen_w += wing_pwr
 
             # Map panels to legacy SA A/B: A = +X,+Y,+Z; B = -X,-Y,-Z
             s.sa_a_current = sum(s.sa_panel_currents[f] for f in ['px', 'py', 'pz'])
@@ -334,15 +569,20 @@ class EPSBasicModel(SubsystemModel):
         # _device_gate_solar_array_drive for the dead-flag history.)
         if not s.device_states.get(0x0101, True):
             gen_w = 0.0
+            expected_w = 0.0   # commanded OFF is not a degraded array (WP-10)
             s.sa_a_current = 0.0
             s.sa_b_current = 0.0
             for face in PANEL_NORMALS:
                 s.sa_panel_currents[face] = 0.0
+            s.sa_wing_currents['py'] = 0.0
+            s.sa_wing_currents['my'] = 0.0
 
-        sa_a_pwr_v = s.sa_a_current * 28.0
-        sa_b_pwr_v = s.sa_b_current * 28.0
-        s.sa_a_voltage = sa_a_pwr_v / max(s.sa_a_current, 0.01) if s.sa_a_current > 0.01 else 0.0
-        s.sa_b_voltage = sa_b_pwr_v / max(s.sa_b_current, 0.01) if s.sa_b_current > 0.01 else 0.0
+        # Array-side MPPT input voltage (brief 01 F17/C10): the old code
+        # divided current*28 by current — exactly 28.0 V, a tautology. Publish
+        # the string MPP voltage when the array is generating, 0 when dark.
+        _SA_MPP_V = 32.4
+        s.sa_a_voltage = _SA_MPP_V if s.sa_a_current > 0.01 else 0.0
+        s.sa_b_voltage = _SA_MPP_V if s.sa_b_current > 0.01 else 0.0
         s.power_gen_w = gen_w
 
         # Power consumption — driven by power line states with per-line current
@@ -353,36 +593,89 @@ class EPSBasicModel(SubsystemModel):
         # Compute per-line power and current
         line_powers = {}
         line_powers["obc"] = self._obc_power_w  # non-switchable
-        line_powers["ttc_rx"] = 5.0  # non-switchable
+        # Non-switchable RX line: use the configured rating (eps.yaml
+        # transponder_rx_power_w) instead of the old hard-coded 5.0 W, which
+        # made that config key dead.
+        line_powers["ttc_rx"] = self._transponder_rx_w
 
         if lines.get("ttc_tx", True):
-            line_powers["ttc_tx"] = self._transponder_w
+            # Tier-dependent TX power (brief 01 F20 / WP-12): bill the
+            # HIGH-tier wattage when the active TM tier's information rate
+            # (ttc.tm_data_rate, 0x0506) exceeds the 16 kbps LOW tier. In
+            # standalone/test harnesses without a TTC model the parameter is
+            # absent and the LOW rating applies (legacy behaviour).
+            tm_bps = shared_params.get(0x0506, 0.0) or 0.0
+            line_powers["ttc_tx"] = (
+                self._transponder_hi_w if tm_bps > 32000.0 else self._transponder_w)
         else:
             line_powers["ttc_tx"] = 0.0
 
+        # Payload billed from the ACTUAL payload state (0x0600, published by
+        # the payload model) regardless of which command path set it — brief
+        # 05 "Heater power vs EPS" / WP-5. Previously up to 45 W ran off the
+        # books when the operator used PL_SET_MODE instead of the EPS command.
+        # Fallback to the EPS-internal mode for standalone harnesses.
+        pl_mode = (int(shared_params[0x0600])
+                   if 0x0600 in shared_params else s.payload_mode)
         if lines.get("payload", False):
-            if s.payload_mode == 1:
+            if pl_mode == 1:
                 line_powers["payload"] = self._payload_standby_w
-            elif s.payload_mode == 2:
+            elif pl_mode == 2:
                 line_powers["payload"] = self._payload_power_w
             else:
                 line_powers["payload"] = 0.0
         else:
             line_powers["payload"] = 0.0
 
-        if lines.get("fpa_cooler", False) and s.fpa_cooler_on:
+        # FPA cooler billed from the ACTUAL cooler state (0x040C, the unified
+        # TCS cooler flag driven by all four command paths — brief 05 WP-2).
+        # Fallback to the EPS-internal flag for standalone harnesses.
+        cooler_actual = (bool(shared_params[0x040C])
+                         if 0x040C in shared_params else s.fpa_cooler_on)
+        if lines.get("fpa_cooler", False) and cooler_actual:
             line_powers["fpa_cooler"] = self._fpa_cooler_w
         else:
             line_powers["fpa_cooler"] = 0.0
 
-        line_powers["htr_bat"] = 6.0 if lines.get("htr_bat", True) else 0.0
-        line_powers["htr_obc"] = 4.0 if lines.get("htr_obc", True) else 0.0
-        # AOCS reaction-wheel idle power: previously 12 W (~4 W/wheel) was
-        # unrealistically high for small-sat RW assemblies (real idle ~1.5–2 W
-        # per wheel) and produced a persistent orbit-average deficit against the
-        # ±Y deployable arrays. 6 W (3 wheels × 2 W idle) matches real hardware
-        # and closes the energy budget over a full orbit.
-        line_powers["aocs_wheels"] = 6.0 if lines.get("aocs_wheels", True) else 0.0
+        # Heater + reaction-wheel line loads come from simulation.yaml
+        # eps.line_power_w. With heater_duty_from_tcs the heater lines are
+        # billed from the ACTUAL thermostat/heater state TCS publishes
+        # (0x040A/0x040B) — the thermostat, not the line switch, is the load
+        # (brief 01 F10 / WP-5). Previously heaters billed 100 % duty, a
+        # ~8 W orbit-average over-bill.
+        htr_bat_on = htr_obc_on = True
+        if self._heater_duty_from_tcs:
+            if 0x040A in shared_params:
+                htr_bat_on = bool(shared_params[0x040A])
+            if 0x040B in shared_params:
+                htr_obc_on = bool(shared_params[0x040B])
+        line_powers["htr_bat"] = (
+            self._line_power_w.get("htr_bat", 6.0)
+            if (lines.get("htr_bat", True) and htr_bat_on) else 0.0)
+        line_powers["htr_obc"] = (
+            self._line_power_w.get("htr_obc", 4.0)
+            if (lines.get("htr_obc", True) and htr_obc_on) else 0.0)
+        # AOCS suite billed from the ACTUAL mode-dependent draw the AOCS
+        # model publishes at 0x02C8 (Phase C: COARSE 4 / NOMINAL 9 / FINE
+        # 15 W — brief 02 table), falling back to the 12 W line rating for
+        # standalone harnesses. Same Phase B convention as the heaters:
+        # bill actuator state, not line-switch position.
+        aocs_draw = shared_params.get(0x02C8)
+        if aocs_draw is None:
+            aocs_draw = self._line_power_w.get("aocs_wheels", 6.0)
+        line_powers["aocs_wheels"] = (
+            float(aocs_draw) if lines.get("aocs_wheels", True) else 0.0)
+
+        # Propulsion billed from the ACTUAL live draw the prop model publishes
+        # at 0x0B1B (valve drivers while ARMED/FIRING + the 12 W catbed heater
+        # when the TCS thruster circuit 0x041B is energised) — Phase B
+        # convention: the actuator state, not the line switch, is the load.
+        # Quiescent propulsion (line on, nothing commanded) draws 0 W.
+        prop_draw = shared_params.get(0x0B1B)
+        if prop_draw is None:
+            prop_draw = self._line_power_w.get("prop", 0.0)
+        line_powers["prop"] = (
+            float(prop_draw) if lines.get("prop", False) else 0.0)
 
         # Apply overcurrent injection multiplier
         for line_name, mult in s.oc_inject.items():
@@ -396,7 +689,7 @@ class EPSBasicModel(SubsystemModel):
             s.line_currents[line_name] = current
 
             # Overcurrent detection
-            threshold = OC_THRESHOLDS.get(line_name, 999.0)
+            threshold = self._oc_thresholds.get(line_name, 999.0)
             if current > threshold and POWER_LINE_SWITCHABLE.get(line_name, False):
                 # Trip the line
                 s.oc_trip_flags |= (1 << i)
@@ -415,7 +708,7 @@ class EPSBasicModel(SubsystemModel):
 
         if s.bus_short:
             cons_w += 80.0
-        s.power_cons_w = cons_w + random.gauss(0, 1.0)
+        s.power_cons_w = cons_w + self.rng.gauss(0, 1.0)
 
         # Battery SoC
         net_power_w = gen_w - s.power_cons_w
@@ -436,7 +729,20 @@ class EPSBasicModel(SubsystemModel):
             max_charge_power_w = s.charge_rate_override_a * 28.0  # 28V nominal bus
             net_power_w = min(net_power_w, max_charge_power_w)
 
-        d_soc = (net_power_w / (self._battery_capacity_wh * 3600.0)) * 100.0 * dt
+        # CV taper (brief 01 WP-4): above cv_taper_start_soc_pct the battery
+        # accepts progressively less charge power (constant-voltage phase);
+        # the un-accepted array surplus is shunted, not stored.
+        if (net_power_w > 0 and self._cv_taper_start_pct is not None
+                and s.bat_soc_pct > self._cv_taper_start_pct):
+            frac = max(0.0, (100.0 - s.bat_soc_pct)
+                       / max(1e-6, 100.0 - self._cv_taper_start_pct))
+            net_power_w *= frac
+
+        # Coulombic efficiency (brief 01 F19 / WP-4): only charge_efficiency
+        # of the charge energy is stored; discharge draws 1/discharge_eff.
+        stored_power_w = (net_power_w * self._charge_eff if net_power_w > 0
+                          else net_power_w / max(self._discharge_eff, 1e-6))
+        d_soc = (stored_power_w / (self._battery_capacity_wh * 3600.0)) * 100.0 * dt
 
         # DoD limiting: reduce charge acceptance above max DoD recovery
         old_soc = s.bat_soc_pct
@@ -452,22 +758,26 @@ class EPSBasicModel(SubsystemModel):
         # Voltage
         ocv = self._soc_0_v + (self._soc_100_v - self._soc_0_v) * (s.bat_soc_pct / 100.0)
         bat_i = net_power_w / (ocv + 1e-6)
-        s.bat_current = bat_i + random.gauss(0, 0.1)
+        s.bat_current = bat_i + self.rng.gauss(0, 0.1)
         # Track actual charge current (positive = charging)
         # (Defect #4: provide feedback of actual charge rate)
         if net_power_w > 0:
             s.actual_charge_current_a = max(0.0, bat_i)
         else:
             s.actual_charge_current_a = 0.0
-        v_loaded = ocv - bat_i * self._internal_r
+        # Terminal voltage: v = ocv + i*R with i > 0 on CHARGE (the bus rides
+        # above OCV while charging, sags below on discharge). The previous
+        # sign was inverted (brief 01 F8 / WP-4), so every voltage-based
+        # protection fired ~1.3 SoC points late on discharge.
+        v_loaded = ocv + bat_i * self._internal_r
         if s.bat_cell_failure:
             v_loaded -= 3.7
-        s.bat_voltage = max(0.0, v_loaded) + random.gauss(0, 0.02)
+        s.bat_voltage = max(0.0, v_loaded) + self.rng.gauss(0, 0.02)
         # Bus voltage tracks the loaded battery (single-bus, direct-energy
         # transfer architecture). Previously this was a SoC-only polynomial
         # which ignored load current and internal resistance, hiding bus
         # sag during high-power phases (payload imaging, slew, eclipse).
-        s.bus_voltage = min(29.0, max(0.0, s.bat_voltage)) + random.gauss(0, 0.01)
+        s.bus_voltage = min(29.0, max(0.0, s.bat_voltage)) + self.rng.gauss(0, 0.01)
 
         # Undervoltage / overvoltage detection
         s.uv_flag = s.bus_voltage < self._uv_threshold
@@ -477,10 +787,11 @@ class EPSBasicModel(SubsystemModel):
         # drops below the load-shedding threshold.  Loads are shed in priority
         # order (lowest priority first).  Lines are restored only when bus
         # voltage recovers above threshold + 0.5 V hysteresis.
-        if s.bus_voltage < LOAD_SHED_VOLTAGE:
-            for shed_line in LOAD_SHED_ORDER:
+        if s.bus_voltage < self._shed_voltage:
+            for shed_line in self._shed_order:
                 if s.power_lines.get(shed_line, False):
                     s.power_lines[shed_line] = False
+                    s.shed_lines.append(shed_line)  # for auto-restore (WP-7)
                     # Apply side effects (same as overcurrent trip)
                     if shed_line == "payload":
                         s.payload_mode = 0
@@ -489,36 +800,52 @@ class EPSBasicModel(SubsystemModel):
                     elif shed_line == "ttc_tx":
                         s.transponder_tx = False
                     break  # Shed one line per tick to allow recovery
+        elif (self._shed_auto_restore and s.shed_lines
+              and s.bus_voltage > self._shed_voltage + self._shed_hysteresis_v):
+            # Hysteresis restore (brief 01 F15 / WP-7): the code comment above
+            # promised this for a year while no restore code existed. One line
+            # per tick, REVERSE shed order, only lines this shedder shed.
+            restore_line = s.shed_lines.pop()
+            if not s.power_lines.get(restore_line, False):
+                s.power_lines[restore_line] = True
+                if restore_line == "ttc_tx":
+                    s.transponder_tx = True
 
         # Battery temperature
         bat_heat_w = abs(s.bat_current) ** 2 * self._internal_r
         delta_temp = ((self._bat_temp_env - s.bat_temp) / self._bat_temp_tau + bat_heat_w / 30.0) * dt
-        s.bat_temp += delta_temp + random.gauss(0, 0.05)
+        # Integrator process noise: sqrt(dt) scaling (plan A-3)
+        s.bat_temp += delta_temp + self.rng.gauss(0, 0.05) * math.sqrt(dt)
 
         # ── Event detection: Battery temperature extremes (rising-edge only) ──
-        bat_overtemp = s.bat_temp > 45.0
+        bat_overtemp = s.bat_temp > self._evt["bat_overtemp_c"]
         if bat_overtemp and not s._prev_bat_overtemp:
             events_to_generate.append((0x0109, f"Battery overtemp: {s.bat_temp:.1f}C"))
         s._prev_bat_overtemp = bat_overtemp
-        bat_undertemp = s.bat_temp < -5.0
+        bat_undertemp = s.bat_temp < self._evt["bat_undertemp_c"]
         if bat_undertemp and not s._prev_bat_undertemp:
             events_to_generate.append((0x010A, f"Battery undertemp: {s.bat_temp:.1f}C"))
         s._prev_bat_undertemp = bat_undertemp
 
         # ── Event detection: SoC thresholds ──
-        if s.bat_soc_pct < 10.0 and s._prev_soc >= 10.0:
+        soc_crit = self._evt["soc_critical_pct"]
+        soc_low = self._evt["soc_low_pct"]
+        if s.bat_soc_pct < soc_crit and s._prev_soc >= soc_crit:
             events_to_generate.append((0x0102, f"Battery critical SoC: {s.bat_soc_pct:.1f}%"))
-        elif s.bat_soc_pct < 20.0 and s._prev_soc >= 20.0:
+        elif s.bat_soc_pct < soc_low and s._prev_soc >= soc_low:
             events_to_generate.append((0x0101, f"Battery low SoC warning: {s.bat_soc_pct:.1f}%"))
 
         # ── Event detection: Charge complete ──
-        if s.bat_soc_pct >= 99.0 and s._prev_soc < 99.0 and s._was_charging:
+        soc_full = self._evt["soc_charge_complete_pct"]
+        if s.bat_soc_pct >= soc_full and s._prev_soc < soc_full and s._was_charging:
             events_to_generate.append((0x010E, f"Battery charge complete: {s.bat_soc_pct:.1f}%"))
 
         # ── Event detection: Bus voltage issues ──
-        if s.bus_voltage < 25.0 and s._prev_bus_voltage >= 25.0:
+        bus_crit = self._evt["bus_critical_v"]
+        bus_warn = self._evt["bus_warning_v"]
+        if s.bus_voltage < bus_crit and s._prev_bus_voltage >= bus_crit:
             events_to_generate.append((0x0104, f"Bus undervoltage critical: {s.bus_voltage:.2f}V"))
-        elif s.bus_voltage < 27.0 and s._prev_bus_voltage >= 27.0:
+        elif s.bus_voltage < bus_warn and s._prev_bus_voltage >= bus_warn:
             events_to_generate.append((0x0103, f"Bus undervoltage warning: {s.bus_voltage:.2f}V"))
 
         # ── Event detection: Overcurrent trips ──
@@ -531,8 +858,8 @@ class EPSBasicModel(SubsystemModel):
         # ── Event detection: Load shedding stages ──
         # Calculate current load shed stage
         cur_load_shed_stage = 0
-        if s.bus_voltage < LOAD_SHED_VOLTAGE:
-            shed_count = sum(1 for ln in LOAD_SHED_ORDER if not s.power_lines.get(ln, False))
+        if s.bus_voltage < self._shed_voltage:
+            shed_count = sum(1 for ln in self._shed_order if not s.power_lines.get(ln, False))
             cur_load_shed_stage = min(3, shed_count)
 
         if cur_load_shed_stage > s._prev_load_shed_stage:
@@ -541,20 +868,27 @@ class EPSBasicModel(SubsystemModel):
         s.load_shed_stage = cur_load_shed_stage
 
         # ── Event detection: Solar array degradation ──
-        # Track if solar array shows significant drop from expected output
-        expected_sa_power = (self._panel_area * self._cell_eff * self._solar_irrad *
-                           (1.0 if not s.in_eclipse else 0.0)) * s.mppt_efficiency * s.sa_age_factor
+        # Expected power comes from the LIVE 6-panel + wing model with the
+        # loss stack and the current sun geometry, degradation factors held at
+        # 1.0 (brief 01 F11 / WP-10). The old reference used the dead legacy
+        # `arrays:` area (0.628 m2 -> 244 W "expected"), which was above the
+        # real peak, so the alarm fired on the first sunlit tick of every run
+        # and a genuine failure afterwards produced no event.
+        expected_sa_power = expected_w
         actual_sa_power = s.power_gen_w
         sa_degraded = (
             expected_sa_power > 50.0
-            and actual_sa_power < expected_sa_power * 0.7
+            and actual_sa_power < expected_sa_power * self._evt["sa_degraded_fraction"]
             and not s.in_eclipse
         )
-        # Rising-edge: emit once when the array first drops below the degradation
-        # threshold, not every sunlit tick while degraded.
+        # Rising-edge: emit once when the array first drops below the
+        # degradation threshold. The edge state only updates while the check
+        # is MEANINGFUL (sunlit, expected power above the floor) so the latch
+        # holds through eclipse instead of re-firing every sunrise.
         if sa_degraded and not s._prev_sa_degraded:
             events_to_generate.append((0x010B, f"Solar array degraded: {actual_sa_power:.1f}W vs {expected_sa_power:.1f}W"))
-        s._prev_sa_degraded = sa_degraded
+        if not s.in_eclipse and expected_sa_power > 50.0:
+            s._prev_sa_degraded = sa_degraded
 
         # ── Event detection: Power line state changes ──
         # Edge-detect against a DEDICATED previous power-line bitmask. Previously
@@ -584,8 +918,8 @@ class EPSBasicModel(SubsystemModel):
             # anything on): 2 loads on safe (mode 1), all on emergency (mode 2).
             # Loads are restored by the operator, not automatically.
             if s.eps_mode >= 1:
-                n_shed = len(LOAD_SHED_ORDER) if s.eps_mode >= 2 else 2
-                for load_name in LOAD_SHED_ORDER[:n_shed]:
+                n_shed = len(self._shed_order) if s.eps_mode >= 2 else 2
+                for load_name in self._shed_order[:n_shed]:
                     s.power_lines[load_name] = False
                 s.load_shed_stage = max(s.load_shed_stage, n_shed)
 
@@ -623,13 +957,18 @@ class EPSBasicModel(SubsystemModel):
         shared_params[0x010E] = 1 if s.uv_flag else 0
         shared_params[0x010F] = 1 if s.ov_flag else 0
 
-        # Power line status (0x0110-0x0117)
-        for i, line_name in enumerate(POWER_LINE_NAMES):
+        # Power line status (0x0110-0x0117 for lines 0-7; later lines have
+        # explicit ids — prop publishes at 0x014A, Phase D)
+        for i, line_name in enumerate(POWER_LINE_NAMES[:8]):
             shared_params[0x0110 + i] = 1 if s.power_lines.get(line_name, False) else 0
 
-        # Per-line currents (0x0118-0x011F)
-        for i, line_name in enumerate(POWER_LINE_NAMES):
+        # Per-line currents (0x0118-0x011F for lines 0-7; prop at 0x014B)
+        for i, line_name in enumerate(POWER_LINE_NAMES[:8]):
             shared_params[0x0118 + i] = s.line_currents.get(line_name, 0.0)
+
+        for line_name, (pid_state, pid_cur) in _EXTRA_LINE_PARAM_IDS.items():
+            shared_params[pid_state] = 1 if s.power_lines.get(line_name, False) else 0
+            shared_params[pid_cur] = s.line_currents.get(line_name, 0.0)
 
         # Phase 4: Flight hardware realism
         shared_params[0x0120] = s.bat_dod_pct
@@ -643,12 +982,13 @@ class EPSBasicModel(SubsystemModel):
         # PDM and separation
         shared_params[0x0127] = 1 if s.sep_timer_active else 0
         shared_params[0x0128] = s.sep_timer_remaining
-        # NOTE: 0x0129 is the canonical spacecraft_phase parameter (owned by
-        # the engine — see _tick_spacecraft_phase). EPS used to overwrite
-        # this with pdm_unsw_status every tick which corrupted the phase
-        # value mid-tick. PDM unswitched-line status now lives at 0x013A.
-        shared_params[0x013A] = float(s.pdm_unsw_status)
-        # 0x012A is reserved (was a duplicate phase mirror) — leave unset.
+        # ID collision resolution (brief 01 F16 / WP-11):
+        #   0x0129 = spacecraft_phase (engine-owned, _tick_spacecraft_phase)
+        #   0x012A = pdm_unsw_status  (was parked on 0x013A, which
+        #            parameters.yaml declares as eps.eclipse_active)
+        #   0x013A = eclipse_active   (now actually written)
+        shared_params[0x012A] = float(s.pdm_unsw_status)
+        shared_params[0x013A] = 1.0 if s.in_eclipse else 0.0
 
         # Per-panel solar array currents
         panel_names = ['px', 'mx', 'py', 'my', 'pz', 'mz']
@@ -676,6 +1016,31 @@ class EPSBasicModel(SubsystemModel):
         if s.wing_my_deploying: wing_status |= 0x20
         shared_params[0x0144] = float(wing_status)
         shared_params[0x0145] = s.wing_deploy_timer
+
+        # ── Power-management telemetry (brief 01 F16 / WP-11) ──
+        # power_margin + the six per-subsystem power draws were declared in
+        # parameters.yaml and displayed twice in the MCS, but written by
+        # nothing. Billed line powers are grouped by the subsystem that owns
+        # the equipment on the line.
+        shared_params[0x013B] = s.power_gen_w - s.power_cons_w
+        _lp = line_powers
+        shared_params[0x013C] = 0.0                                   # EPS itself
+        shared_params[0x013D] = _lp.get("aocs_wheels", 0.0)           # AOCS suite
+        shared_params[0x013E] = (_lp.get("htr_bat", 0.0)
+                                 + _lp.get("htr_obc", 0.0))           # TCS heaters
+        shared_params[0x013F] = (_lp.get("ttc_rx", 0.0)
+                                 + _lp.get("ttc_tx", 0.0))            # TTC
+        shared_params[0x0140] = (_lp.get("payload", 0.0)
+                                 + _lp.get("fpa_cooler", 0.0))        # Payload chain
+        shared_params[0x0141] = _lp.get("obc", 0.0)                   # OBDH
+        # Per-wing array currents (separate from the ±Y body faces) and the
+        # total load bus current.
+        shared_params[0x0146] = s.sa_wing_currents.get('py', 0.0)
+        shared_params[0x0147] = s.sa_wing_currents.get('my', 0.0)
+        shared_params[0x0148] = sum(s.line_currents.values())
+        # EPS-side cooler command flag (func 17) — one input to the unified
+        # cooler state assembled by TCS (brief 05 WP-2).
+        shared_params[0x0149] = 1.0 if s.fpa_cooler_on else 0.0
 
         # NOTE: An earlier duplicate telemetry-write block that referenced
         # undefined locals `lines`, `gen_w`, `cons_w` and re-wrote all of the
@@ -706,7 +1071,13 @@ class EPSBasicModel(SubsystemModel):
                 return {"success": True}
             return {"success": False, "message": "Invalid mode"}
         elif command == "set_fpa_cooler":
-            self._state.fpa_cooler_on = bool(cmd.get("on", False))
+            on = bool(cmd.get("on", False))
+            self._state.fpa_cooler_on = on
+            # EPS owns the PDU: the EPS cooler command implies its power line
+            # (brief 05 WP-2 — one cryocooler, one effective state). ON
+            # energises line 4; OFF de-energises it so the cooler stops even
+            # if the payload is still requesting cooling.
+            self._state.power_lines["fpa_cooler"] = on
             return {"success": True}
         elif command == "set_transponder_tx":
             self._state.transponder_tx = bool(cmd.get("on", True))
@@ -931,18 +1302,32 @@ class EPSBasicModel(SubsystemModel):
 
     def get_state(self) -> dict[str, Any]:
         import dataclasses
-        return dataclasses.asdict(self._state)
+        from smo_common.state import rng_state_to_json
+        d = dataclasses.asdict(self._state)
+        d["_rng_state"] = rng_state_to_json(self.rng.getstate())
+        return d
 
     def set_state(self, state: dict[str, Any]) -> None:
-        for k, v in state.items():
-            if hasattr(self._state, k):
-                setattr(self._state, k, v)
+        # Container fields are deep-copied by restore_dataclass_state: the
+        # plain setattr this used to do aliased the snapshot's own dicts and
+        # lists into live model state (G2-f).
+        from smo_common.state import restore_dataclass_state, restore_rng
+        restore_rng(self.rng, state.get("_rng_state"))
+        restore_dataclass_state(self._state, state, skip=("_rng_state",))
 
     def set_bat_ambient_temp(self, temp_c: float) -> None:
         self._bat_temp_env = temp_c
 
     def _get_time(self) -> float:
-        """Return current mission time (placeholder for engine time)."""
+        """Return current mission time.
+
+        Engine-hosted: the engine's sim time (deterministic under a pinned
+        t0_epoch, plan A-2). Standalone fallback: wall clock.
+        """
+        eng = getattr(self, "_engine", None)
+        sim_time = getattr(eng, "_sim_time", None)
+        if sim_time is not None:
+            return sim_time.timestamp()
         import time
         return time.time()
 

@@ -21,14 +21,19 @@ for the receiver, burn wire deployable antennas, and low-rate/high-rate data mod
 
 | Parameter           | Primary          | Redundant        |
 |---------------------|------------------|------------------|
-| Uplink Frequency    | 449.0 MHz (UHF)  | 449.0 MHz (UHF)  |
-| Downlink Frequency  | 401.5 MHz (UHF)  | 401.5 MHz (UHF)  |
-| Uplink Data Rate    | 4 kbps           | 4 kbps           |
-| Downlink (Low-Rate) | 1 kbps           | 1 kbps           |
-| Downlink (High-Rate)| 64 kbps          | 64 kbps          |
-| Modulation          | BPSK (TC) / QPSK (TM) | BPSK / QPSK |
+| Uplink Frequency    | 2025.0 MHz (S-band) | 2025.0 MHz (S-band) |
+| Downlink Frequency  | 2200.0 MHz (S-band) | 2200.0 MHz (S-band) |
+| Uplink Data Rate    | 4 kbps (fixed)   | 4 kbps (fixed)   |
+| Downlink (BEACON)   | 1 kbps           | 1 kbps           |
+| Downlink (LOW)      | 16 kbps          | 16 kbps          |
+| Downlink (HIGH)     | 128 kbps         | 128 kbps         |
+| Modulation          | BPSK (TC) / BPSK or QPSK (TM, per tier) | same |
 | RF Output Power     | 2 W              | 2 W              |
 | Redundancy          | Cold standby     | —                |
+
+The three downlink rates are the rungs of the **TM data-rate ladder**
+(§2.4). The telecommand uplink is a fixed 4 kbps and is *not* on the ladder:
+raising the downlink rate never raises the uplink rate.
 
 Only one transponder is active at any time. The redundant unit is powered off (cold standby)
 and can be activated by ground command via `TTC_SWITCH_REDUNDANT`.
@@ -75,34 +80,73 @@ expires using a burn wire mechanism:
 The burn wire deployment is a one-time, irreversible operation. If the primary burn wire
 fails, a redundant burn wire circuit is available.
 
-### 2.4 Data Rate Modes
+### 2.4 The TM Data-Rate Ladder
 
-EOSAT-1 supports two downlink data rate modes:
+EOSAT-1 does not have "a downlink rate". It has a three-rung **ladder**, defined once in
+`configs/eosat1/subsystems/ttc.yaml` under `tm_rate_tiers` and read from there by the
+spacecraft, the RF chain, the mission planner and the console. Each rung carries its own
+modulation, its own coding and its own permission gates.
 
-| Mode      | Data Rate | Use Case                                      |
-|-----------|-----------|-----------------------------------------------|
-| Low-Rate  | 1 kbps    | Beacon mode, bootloader, low-margin contacts  |
-| High-Rate | 64 kbps   | Nominal operations, stored TM/data downlink   |
+| Tier | Rate | Modulation / coding | Symbol rate | Occupied BW | Purpose |
+|------|------|---------------------|-------------|-------------|---------|
+| BEACON | 1 kbps | BPSK, conv(7,1/2)+RS | 1 kBd | 3.1 kHz | Bootloader and beacon mode only |
+| LOW | 16 kbps | BPSK, conv(7,1/2)+RS | 16 kBd | 49.8 kHz | **Routine operations** and the safe-mode / FDIR fallback |
+| HIGH | 128 kbps | QPSK, RS(255,223) | 64 kBd | 99.5 kHz | Delayed-telemetry playback and image dumps only |
 
-**Low-Rate Mode (1 kbps):** Used during LEOP beacon transmissions and for contacts with
-marginal link margin (low elevation passes). The reduced data rate provides additional
-link margin of approximately 18 dB compared to high-rate mode.
+**LOW (16 kbps) is where the spacecraft normally sits.** This is the single most
+important thing to understand about the ladder. The periodic housekeeping set (SIDs 1-6)
+generates 1351.5 bps of PUS packets, which is 1557 bps of channel after RS(255,223) and
+TM transfer framing. LOW carries that at under 10 % duty *and* plays back roughly
+0.85 orbits of stored housekeeping in a single good pass, so a spacecraft at LOW never
+falls behind. Nothing is degraded about routine operations at LOW; the antenna may even
+be stowed.
 
-**High-Rate Mode (64 kbps):** Used during nominal operations for housekeeping telemetry
-downlink and stored payload/science data dump. Requires adequate link margin (typically
-passes with maximum elevation above 10 deg).
+**BEACON (1 kbps) is a lifeline, not an operations rate.** 1000 bps is *below* the
+1557 bps housekeeping generation rate, so a spacecraft held at BEACON accumulates a
+real-time backlog that can never drain. It exists to carry SID 11 (28 bytes every 30 s =
+7.5 bps) out of the bootloader with over 100x headroom and the narrowest possible
+occupied bandwidth. It is entered by `TTC_SET_BEACON_MODE` (func 70) or by the
+bootloader — never by `TTC_SET_DATA_RATE`.
 
-Mode switching is commanded via `TTC_SET_RATE` or occurs automatically based on link
-margin thresholds.
+**HIGH (128 kbps) is earned, not selected.** It is refused unless all three gates are
+satisfied:
+
+1. the antenna is deployed (`ttc.antenna_deployed`, 0x0520 = 1);
+2. DOWNLINK / payload-dump mode is on (`TTC_SET_DOWNLINK_MODE`, func 79;
+   `ttc.downlink_mode`, 0x053C = 1);
+3. the elevation is at least 10 deg (`ttc.contact_elevation`, 0x050A).
+
+A tier whose gates are open is **rejected** with an S1.8 execution failure
+(error 0x0007), never silently clamped — the failure text names the open gate.
+
+**Commanding.** `TTC_SET_DATA_RATE` (Service 8, Subtype 1, **func 65**) takes one uint8
+tier code. The legacy binary encoding is preserved verbatim: `rate=0` is "the low rate"
+and selects LOW, `rate=1` is "the high rate" and selects HIGH. Existing procedures and
+the FDIR `ttc_reduce_power` action therefore keep their meaning and simply land on usable
+rates.
+
+**Active vs commanded.** The gates act on the ACTIVE tier, never on the COMMANDED one.
+`ttc.tm_tier_cmd` (0x053A) is what the ground asked for; `ttc.tm_tier` (0x0539) is what
+is on air. They diverge when a gate closes — most commonly as a pass descends below
+10 deg — and converge again when it reopens, without re-commanding. A console that shows
+only one of the two turns a diagnosable condition into a mystery.
+
+**Rate and margin.** Each rung costs `10*log10(R2/R1)` of Eb/N0: BEACON to LOW is
+12.04 dB, LOW to HIGH is 9.03 dB. Coding adds to that — conv(7,1/2)+RS is worth 7.5 dB
+against RS(255,223)'s 6.0 dB — so stepping down from HIGH to LOW recovers 9.03 + 1.5 =
+10.5 dB in total. See `docs/LINK_BUDGET_AND_RATES.md` for the derivation and the
+per-station table, or run `python tools/link_budget_ladder.py`.
 
 ### 2.5 Beacon Packet Mode
 
-During LEOP and BOOTLOADER operations, the TTC transmits beacon packets at low rate:
+During LEOP and BOOTLOADER operations, the TTC transmits beacon packets on the BEACON
+rung of the ladder:
 
 | Parameter          | Value                                      |
 |--------------------|--------------------------------------------|
-| Beacon Rate        | 1 packet every 100 seconds (0.01 Hz)       |
-| Data Rate          | 1 kbps (low-rate mode)                     |
+| Beacon Rate        | 1 packet every 30 seconds                  |
+| Data Rate          | 1 kbps (BEACON tier)                       |
+| Symbol Rate        | 1 kBd, BPSK, conv(7,1/2)+RS, ~3.1 kHz occupied |
 | Content            | SID 11 — minimal OBC health telemetry      |
 | Modulation         | BPSK                                       |
 
@@ -125,19 +169,34 @@ health and initiate recovery commanding.
 
 ### 3.2 Downlink (Spacecraft to Ground)
 
-| Parameter            | High-Rate (64 kbps) | Low-Rate (1 kbps)  |
-|----------------------|---------------------|---------------------|
-| S/C EIRP             | 33 dBW              | 33 dBW              |
-| Free Space Loss      | -162.5 dB (450 km)  | -162.5 dB (450 km)  |
-| Ground Station G/T   | 20 dB/K             | 20 dB/K             |
-| Required Eb/N0       | 9.6 dB              | 9.6 dB              |
-| Data Rate Margin     | —                   | +18 dB (vs high)    |
-| Link Margin (min)    | > 3 dB at 5 deg     | > 21 dB at 5 deg    |
+Computed by `python tools/link_budget_ladder.py`, which drives the same model object the
+simulator flies, so these numbers cannot drift from the spacecraft.
 
-Link margin decreases with lower elevation angles. At the minimum elevation of 5 deg,
-the path loss increases and atmospheric effects become more significant. The low-rate
-mode provides substantial additional margin for beacon operations and low-elevation
-contacts.
+| Parameter            | BEACON (1 kbps) | LOW (16 kbps) | HIGH (128 kbps) |
+|----------------------|-----------------|---------------|-----------------|
+| EIRP (10 dBW + 3 dBi)| 13 dBW          | 13 dBW        | 13 dBW          |
+| Free Space Loss @5 deg | -165.1 dB (1944.5 km) | -165.1 dB | -165.1 dB |
+| Ground Station G/T (Iqaluit) | 20 dB/K | 20 dB/K      | 20 dB/K         |
+| Coding               | conv(7,1/2)+RS, 7.5 dB | conv(7,1/2)+RS, 7.5 dB | RS(255,223), 6.0 dB |
+| Required Eb/N0 (9.6 dB uncoded, less coding gain) | 2.1 dB | 2.1 dB | 3.6 dB |
+| **Link margin @ 5 deg, Iqaluit** | **57.8 dB** | **45.7 dB** | **35.2 dB** |
+| **Link margin @ 5 deg, Troll (worst station)** | **56.3 dB** | **44.2 dB** | **33.7 dB** |
+| **Link margin @ zenith, Iqaluit** | 74.3 dB | 62.3 dB | 51.8 dB |
+
+Two things follow, and both are on the syllabus:
+
+* **Every rung closes with tens of dB to spare.** At 450 km to a professional polar dish
+  this link is not power-limited. What differentiates the tiers is occupied bandwidth,
+  PA power and thermal cost, ground-modem configuration and mode policy — not a power
+  cliff. The 10 deg gate on HIGH is an operational rule, not the point at which the link
+  fails.
+* **Margin still responds to rate exactly as the budget says it should.** LOW is 12.04 dB
+  below BEACON and HIGH is 10.5 dB below LOW (9.03 dB of rate plus 1.5 dB of coding).
+  Read the ladder off the `-10*log10(R)` term and it comes out right.
+
+Link margin decreases with lower elevation angles: path loss rises, atmospheric loss is
+scaled by cosec(elevation) below 30 deg, and the ground station's G/T is de-rated for
+ground and sky noise pickup (-1.5 dB below 10 deg, -0.5 dB below 30 deg).
 
 ## 4. Telemetry Parameters
 
@@ -228,23 +287,31 @@ Schedule switchover commands with sufficient contact time remaining.
 ## 7. Operational Notes
 
 1. The TTC subsystem enters receive-only mode during spacecraft safe mode to conserve
-   power. Telemetry transmission continues but at low rate (1 kbps).
+   power. Telemetry transmission continues on the LOW tier (16 kbps) — the configured
+   `safe_tier`. Safe mode does not cost you housekeeping; it costs you the ability to
+   dump.
 2. The onboard GPS receiver provides position and velocity data for orbit determination,
    supplemented by ranging measurements (0x0509) during ground contacts.
 3. RSSI values below -100 dBm indicate marginal link conditions. Operations should be
-   restricted to high-priority commands at low RSSI. Consider switching to low-rate mode.
+   restricted to high-priority commands at low RSSI. Step the ladder down to LOW
+   (`TTC_SET_DATA_RATE(rate=0)`), which recovers 10.5 dB.
 4. The transponder temperature (0x0507) should remain within 0–50 deg C during operation.
    Thermal protection is provided by passive means (TCS radiator and MLI).
-5. Stored telemetry and payload data are downlinked during contacts using high-rate mode
-   (64 kbps). Real-time HK telemetry is interleaved with stored data.
+5. Stored telemetry and payload data are downlinked during contacts on the HIGH tier
+   (128 kbps), which must be entered deliberately: DOWNLINK mode first, then the rate.
+   Real-time HK telemetry is interleaved with stored data. One 4 MiB image is 262 s of
+   channel at HIGH — 328 s with the mission planner's 20 % protocol allowance, or about
+   three-quarters of an average pass — so a dump is a scheduled activity, not an
+   afterthought.
 6. The dedicated PDM command channel ensures the receiver remains powered even when the
    transmitter auto-off timer expires. This is by design — the spacecraft is always
    commandable.
 7. After antenna deployment (burn wire), verify RSSI improvement from pre-deployment
    levels. A marginal improvement may indicate incomplete deployment.
-8. During LEOP first contact, expect beacon packets at 1 kbps low-rate. The ground station
-   should be configured for low-rate acquisition before switching to high-rate after
-   application boot.
+8. During LEOP first contact, expect beacon packets on the BEACON tier (1 kbps, 1 kBd,
+   BPSK conv(7,1/2)+RS). Configure the ground demodulator for 1 kBd before AOS and
+   re-configure it for 16 kBd immediately after application boot, when the ladder's
+   `default_tier` (LOW) becomes active — the beacon demodulator will not lock 16 kbps.
 
 ## 8. Failure Modes
 

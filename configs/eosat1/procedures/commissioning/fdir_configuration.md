@@ -22,33 +22,33 @@ spacecraft correctly enters safe mode and recovers to nominal operations.
 ## Procedure Steps
 
 ### Step 1 — Verify FDIR Rules Are Active
-**TC:** `GET_PARAM(0x0320)` (Service 20, Subtype 1) — FDIR master enable
+**TC:** `GET_PARAM(0x0320)` (Service 20, Subtype 3) — FDIR master enable
 **Verify:** FDIR master enable = ENABLED (value 1) within 10s
-**TC:** `GET_PARAM(0x0321)` (Service 20, Subtype 1) — number of active FDIR rules
+**TC:** `GET_PARAM(0x0321)` (Service 20, Subtype 3) — number of active FDIR rules
 **Verify:** Active FDIR rules > 10 within 10s
 **GO/NO-GO:** FDIR system enabled with rules loaded
 
 ### Step 2 — Review Critical FDIR Thresholds
-**TC:** `GET_PARAM(0x0322)` (Service 20, Subtype 1) — EPS undervoltage threshold
+**TC:** `GET_PARAM(0x0322)` (Service 20, Subtype 3) — EPS undervoltage threshold
 **Verify:** EPS undervoltage threshold = 26.5V within 10s
-**TC:** `GET_PARAM(0x0323)` (Service 20, Subtype 1) — battery SOC low threshold
+**TC:** `GET_PARAM(0x0323)` (Service 20, Subtype 3) — battery SOC low threshold
 **Verify:** Battery SOC low threshold = 20% within 10s
-**TC:** `GET_PARAM(0x0324)` (Service 20, Subtype 1) — AOCS rate limit threshold
+**TC:** `GET_PARAM(0x0324)` (Service 20, Subtype 3) — AOCS rate limit threshold
 **Verify:** AOCS rate limit = 10.0 deg/s within 10s
-**TC:** `GET_PARAM(0x0325)` (Service 20, Subtype 1) — OBC temperature high threshold
+**TC:** `GET_PARAM(0x0325)` (Service 20, Subtype 3) — OBC temperature high threshold
 **Verify:** OBC temperature high threshold = +55C within 10s
 **Action:** Record all FDIR thresholds. Confirm they match the operations database.
 **GO/NO-GO:** FDIR thresholds correctly configured
 
 ### Step 3 — Verify FDIR Event Log
-**TC:** `GET_PARAM(0x0330)` (Service 20, Subtype 1) — FDIR event count since boot
+**TC:** `GET_PARAM(0x0330)` (Service 20, Subtype 3) — FDIR event count since boot
 **Verify:** FDIR event count reported within 10s
 **Action:** Record current count. Any events since launch should correspond to known LEOP activities (e.g., initial detumble triggering rate limit monitoring).
 **GO/NO-GO:** FDIR event log reviewed — no unexplained events
 
 ### Step 4 — Test Safe Mode Trigger (Controlled Fault Injection)
 **Action:** Temporarily lower the AOCS rate limit FDIR threshold to trigger a safe mode transition. This tests the full FDIR chain without stressing the spacecraft.
-**TC:** `SET_PARAM(0x0324, 0.01)` (Service 20, Subtype 3) — lower rate limit to 0.01 deg/s
+**TC:** `SET_PARAM(0x0324, 0.01)` (Service 20, Subtype 1) — lower rate limit to 0.01 deg/s
 **Action:** Current body rates (~0.02-0.05 deg/s in SAFE_POINT) should exceed this threshold, triggering FDIR.
 **Verify:** FDIR triggers within 30s — event logged
 **Verify:** `aocs.mode` (0x020F) transitions to 1 (DETUMBLE) or 2 (SAFE_POINT) within 30s
@@ -65,7 +65,7 @@ spacecraft correctly enters safe mode and recovers to nominal operations.
 **GO/NO-GO:** Safe mode state nominal
 
 ### Step 6 — Restore FDIR Threshold
-**TC:** `SET_PARAM(0x0324, 10.0)` (Service 20, Subtype 3) — restore rate limit to 10.0 deg/s
+**TC:** `SET_PARAM(0x0324, 10.0)` (Service 20, Subtype 1) — restore rate limit to 10.0 deg/s
 **Verify:** FDIR rate limit threshold = 10.0 deg/s within 10s
 **GO/NO-GO:** FDIR threshold restored to operational value
 
@@ -78,9 +78,9 @@ spacecraft correctly enters safe mode and recovers to nominal operations.
 **GO/NO-GO:** Recovery from safe mode successful
 
 ### Step 8 — Verify FDIR Event Was Logged
-**TC:** `GET_PARAM(0x0330)` (Service 20, Subtype 1) — FDIR event count
+**TC:** `GET_PARAM(0x0330)` (Service 20, Subtype 3) — FDIR event count
 **Verify:** FDIR event count incremented by 1 from Step 3 value within 10s
-**TC:** `GET_PARAM(0x0331)` (Service 20, Subtype 1) — last FDIR event code
+**TC:** `GET_PARAM(0x0331)` (Service 20, Subtype 3) — last FDIR event code
 **Action:** Record event code. Should correspond to AOCS rate limit violation.
 **GO/NO-GO:** FDIR event properly logged and traceable
 
@@ -110,4 +110,4 @@ spacecraft correctly enters safe mode and recovers to nominal operations.
 - [ ] FDIR threshold restored to operational value
 - [ ] No residual effects from FDIR test
 - [ ] FDIR Configuration Report generated
-- [ ] Platform commissioning complete — GO for payload commissioning (COM-101)
+- [ ] Platform commissioning complete — GO for payload commissioning (COM-009)

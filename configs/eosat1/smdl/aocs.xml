@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="AOCS" Creator="EOSAT-1 SMDL Generator" Date="2026-04-19" Version="1.0">
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="AOCS" Creator="EOSAT-1 SMDL Generator" Date="2026-08-01" Version="1.0">
   <Description>SMP2 model catalogue for AOCS subsystem</Description>
   <Type Name="UInt8" Uuid="5f89f604-a171-5501-aa33-4d555fe61f64" xsi:type="Integer" Size="1" Signed="false"/>
   <Type Name="UInt16" Uuid="6ba6c296-ed3b-5fbe-8a66-31fe90cbfb0d" xsi:type="Integer" Size="2" Signed="false"/>
@@ -67,16 +67,16 @@
     <Field Name="aocs_att_error" Uuid="93f0d582-a3e9-5ed9-bdd1-347cb8e9a84e" Type="UInt16" Kind="Output" View="true">
       <Description>[deg]</Description>
     </Field>
-    <Field Name="aocs_rw1_temp" Uuid="f8dc8f00-0daf-5a32-bc9c-8a4a34257f1c" Type="Float32" Kind="Output" View="true">
+    <Field Name="aocs_rw1_temp" Uuid="f8dc8f00-0daf-5a32-bc9c-8a4a34257f1c" Type="Int16" Kind="Output" View="true">
       <Description>[C]</Description>
     </Field>
-    <Field Name="aocs_rw2_temp" Uuid="fa43f1e2-258c-587e-abc5-71102c019ca0" Type="Float32" Kind="Output" View="true">
+    <Field Name="aocs_rw2_temp" Uuid="fa43f1e2-258c-587e-abc5-71102c019ca0" Type="Int16" Kind="Output" View="true">
       <Description>[C]</Description>
     </Field>
-    <Field Name="aocs_rw3_temp" Uuid="d33af519-eb22-5b2b-8ad2-d3086423b57b" Type="Float32" Kind="Output" View="true">
+    <Field Name="aocs_rw3_temp" Uuid="d33af519-eb22-5b2b-8ad2-d3086423b57b" Type="Int16" Kind="Output" View="true">
       <Description>[C]</Description>
     </Field>
-    <Field Name="aocs_rw4_temp" Uuid="b485e171-58b2-5122-bff2-9c088b8ecdb5" Type="Float32" Kind="Output" View="true">
+    <Field Name="aocs_rw4_temp" Uuid="b485e171-58b2-5122-bff2-9c088b8ecdb5" Type="Int16" Kind="Output" View="true">
       <Description>[C]</Description>
     </Field>
     <Field Name="aocs_st1_status" Uuid="0a437680-233d-57f9-a9e9-3fe8ed125739" Type="UInt8" Kind="Output" View="true">
@@ -271,6 +271,132 @@
     <Field Name="aocs_css_head_health_mz" Uuid="0c0ba38b-a659-5479-bfe0-d7169f63bfa3" Type="UInt16" Kind="Output" View="true">
       <Description>CSS -Z head health [%]</Description>
     </Field>
+    <Field Name="aocs_slew_state" Uuid="b18e65a8-cc6c-5bdb-93c6-41ebfdfc5c75" Type="Float32" Kind="Output" View="true">
+      <Description>Slew state (0=IDLE, 1=SLEWING, 2=SETTLING, 3=COMPLETE)</Description>
+    </Field>
+    <Field Name="aocs_q_est_1" Uuid="b730a360-92a3-5c42-bd4a-c5f87b8cca63" Type="Int16" Kind="Output" View="true">
+      <Description>Estimated quaternion X (MEKF — what the FSW believes)</Description>
+    </Field>
+    <Field Name="aocs_q_est_2" Uuid="72fa2da4-3b39-53ad-b3cf-429358c17d64" Type="Int16" Kind="Output" View="true">
+      <Description>Estimated quaternion Y</Description>
+    </Field>
+    <Field Name="aocs_q_est_3" Uuid="bd052920-4b50-5242-b724-081a01112e44" Type="Int16" Kind="Output" View="true">
+      <Description>Estimated quaternion Z</Description>
+    </Field>
+    <Field Name="aocs_q_est_4" Uuid="145dc467-6c90-5e90-9c37-a6e3372a1dfb" Type="Int16" Kind="Output" View="true">
+      <Description>Estimated quaternion W (scalar)</Description>
+    </Field>
+    <Field Name="aocs_rate_est_x" Uuid="c8a87203-0b7e-56ce-8e85-f43371e37213" Type="Int16" Kind="Output" View="true">
+      <Description>Bias-corrected rate estimate X [deg/s]</Description>
+    </Field>
+    <Field Name="aocs_rate_est_y" Uuid="7e1df77d-518b-502a-87d7-c67e3124a800" Type="Int16" Kind="Output" View="true">
+      <Description>Bias-corrected rate estimate Y [deg/s]</Description>
+    </Field>
+    <Field Name="aocs_rate_est_z" Uuid="ee864cdd-eb82-5744-9d57-e3949265ae65" Type="Int16" Kind="Output" View="true">
+      <Description>Bias-corrected rate estimate Z [deg/s]</Description>
+    </Field>
+    <Field Name="aocs_knowledge_err_3sig" Uuid="5e3f71dd-7535-544e-a2ef-5d3a7a1f1ca3" Type="UInt16" Kind="Output" View="true">
+      <Description>Attitude knowledge error 3σ from √(trace P_att) — MEKF covariance [arcsec]</Description>
+    </Field>
+    <Field Name="aocs_control_err" Uuid="dbd6f038-478c-5f25-add6-102e0b0a9b14" Type="UInt16" Kind="Output" View="true">
+      <Description>Control/pointing error angle(q_est, q_ref) [deg]</Description>
+    </Field>
+    <Field Name="aocs_control_err_arcsec" Uuid="926c63dc-e9e7-5822-8ee2-5b7b50a05860" Type="UInt32" Kind="Output" View="true">
+      <Description>Control error, fine-resolution channel [arcsec]</Description>
+    </Field>
+    <Field Name="aocs_total_pointing_err_3sig" Uuid="34e9d28e-1963-53d4-8eaf-69c0ba7174f3" Type="UInt16" Kind="Output" View="true">
+      <Description>RSS of knowledge + control error [deg]</Description>
+    </Field>
+    <Field Name="aocs_q_ref_x" Uuid="38f1e347-e9ae-5e1d-8a56-3a2c1bc53243" Type="Int16" Kind="Output" View="true">
+      <Description>Commanded reference quaternion X</Description>
+    </Field>
+    <Field Name="aocs_q_ref_y" Uuid="79e07c4a-f789-5a44-807c-38119fb6f22e" Type="Int16" Kind="Output" View="true">
+      <Description>Commanded reference quaternion Y</Description>
+    </Field>
+    <Field Name="aocs_q_ref_z" Uuid="019db75c-2d7a-5b9e-b206-9b377345bf0b" Type="Int16" Kind="Output" View="true">
+      <Description>Commanded reference quaternion Z</Description>
+    </Field>
+    <Field Name="aocs_q_ref_w" Uuid="6146d042-7245-579f-b319-e7ec8975feca" Type="Int16" Kind="Output" View="true">
+      <Description>Commanded reference quaternion W</Description>
+    </Field>
+    <Field Name="aocs_pointing_frame" Uuid="226f6328-7ee8-521f-8f3d-1888e2e714ed" Type="UInt8" Kind="Output" View="true">
+      <Description>0=INERTIAL, 1=LVLH_NADIR, 2=TARGET_TRACK, 3=SUN</Description>
+    </Field>
+    <Field Name="aocs_nadir_body_x" Uuid="9175bbb1-662f-50e3-9fd1-e10dac6fbd7f" Type="Int16" Kind="Output" View="true">
+      <Description>Nadir unit vector in body frame X</Description>
+    </Field>
+    <Field Name="aocs_nadir_body_y" Uuid="808a0a94-b378-517a-aee4-bbc4ff6fc493" Type="Int16" Kind="Output" View="true">
+      <Description>Nadir unit vector in body frame Y</Description>
+    </Field>
+    <Field Name="aocs_nadir_body_z" Uuid="72be4b09-676a-579e-ab34-8e118d432fd0" Type="Int16" Kind="Output" View="true">
+      <Description>Nadir unit vector in body frame Z</Description>
+    </Field>
+    <Field Name="aocs_sun_body_true_x" Uuid="3950078a-d358-5a94-8712-f898b41523a7" Type="Int16" Kind="Output" View="true">
+      <Description>TRUE sun vector in body X (distinct from the CSS estimate 0x0245)</Description>
+    </Field>
+    <Field Name="aocs_sun_body_true_y" Uuid="16eb6384-4968-527f-abe9-4078e22f262b" Type="Int16" Kind="Output" View="true">
+      <Description>TRUE sun vector in body Y</Description>
+    </Field>
+    <Field Name="aocs_sun_body_true_z" Uuid="bdf4a7a5-98e3-5305-b60e-77e4e092b433" Type="Int16" Kind="Output" View="true">
+      <Description>TRUE sun vector in body Z</Description>
+    </Field>
+    <Field Name="aocs_h_body_x" Uuid="c3a61cec-d836-50b4-9cb7-6ee25824332b" Type="Int16" Kind="Output" View="true">
+      <Description>VECTOR wheel momentum in body frame X [Nms]</Description>
+    </Field>
+    <Field Name="aocs_h_body_y" Uuid="ed373dac-dd13-50f5-a27d-ed9b8eea493f" Type="Int16" Kind="Output" View="true">
+      <Description>Vector wheel momentum Y [Nms]</Description>
+    </Field>
+    <Field Name="aocs_h_body_z" Uuid="333082a2-24c2-58b2-a6c7-26aa0ebbc350" Type="Int16" Kind="Output" View="true">
+      <Description>Vector wheel momentum Z [Nms]</Description>
+    </Field>
+    <Field Name="aocs_h_body_mag" Uuid="dcbafc5c-6b82-574f-93a1-40f4d85d6d1d" Type="UInt16" Kind="Output" View="true">
+      <Description>|h_body| [Nms]</Description>
+    </Field>
+    <Field Name="aocs_h_env_frac" Uuid="2f648e8a-f973-53e4-b83b-427b3126a320" Type="UInt16" Kind="Output" View="true">
+      <Description>Momentum envelope usage (most-loaded wheel), monitored by S12 for auto-desat [%]</Description>
+    </Field>
+    <Field Name="aocs_mtq_dipole_x" Uuid="887944a0-95ff-55f2-adb8-598edcc3821b" Type="Int16" Kind="Output" View="true">
+      <Description>Commanded MTQ dipole X (0x0258-5A stay as duty) [Am2]</Description>
+    </Field>
+    <Field Name="aocs_mtq_dipole_y" Uuid="b0d80c22-64a6-55b6-9a16-a0c7281b8fa5" Type="Int16" Kind="Output" View="true">
+      <Description>Commanded MTQ dipole Y [Am2]</Description>
+    </Field>
+    <Field Name="aocs_mtq_dipole_z" Uuid="ccc4271e-bae1-5fc0-8aec-26dd6951126d" Type="Int16" Kind="Output" View="true">
+      <Description>Commanded MTQ dipole Z [Am2]</Description>
+    </Field>
+    <Field Name="aocs_tau_dist_x" Uuid="db1f6c8e-7377-59ad-80fe-6f7e825c1b49" Type="Int16" Kind="Output" View="true">
+      <Description>Total disturbance torque X (instructor insight) [uNm]</Description>
+    </Field>
+    <Field Name="aocs_tau_dist_y" Uuid="9652e1dc-351f-517d-8586-5116b1be65b4" Type="Int16" Kind="Output" View="true">
+      <Description>Total disturbance torque Y [uNm]</Description>
+    </Field>
+    <Field Name="aocs_tau_dist_z" Uuid="4d944106-d71b-5762-8271-8589c3e51a39" Type="Int16" Kind="Output" View="true">
+      <Description>Total disturbance torque Z [uNm]</Description>
+    </Field>
+    <Field Name="aocs_est_source" Uuid="09c10a8e-f3fe-5632-8202-310aaaf4d9fe" Type="UInt8" Kind="Output" View="true">
+      <Description>Estimator source bitmask: bit0 ST, bit1 CSS, bit2 MAG, bit3 gyro</Description>
+    </Field>
+    <Field Name="aocs_est_innov_rej_count" Uuid="fecd74ed-d92f-5b3b-8a25-2e15a4bb9e0e" Type="UInt16" Kind="Output" View="true">
+      <Description>Rejected ST fixes since boot (innovation gate)</Description>
+    </Field>
+    <Field Name="aocs_rate_stability_3sig" Uuid="ed8462f5-3893-5969-a864-0a6f05a56a07" Type="UInt16" Kind="Output" View="true">
+      <Description>Rate-error jitter metric over the last 60 s [deg/s]</Description>
+    </Field>
+    <Field Name="aocs_settle_time_s" Uuid="ec20ecb9-d9b2-561c-9142-fb45e3e72e1e" Type="UInt16" Kind="Output" View="true">
+      <Description>Time since last mode/target change until inside the gate [s]</Description>
+    </Field>
+    <Field Name="aocs_fine_ready" Uuid="7bc10e18-9d3f-57cf-afb9-77e1e8ce078a" Type="UInt8" Kind="Output" View="true">
+      <Description>FINE-entry precondition bitmask (0 = ready): bit0 ST&lt;5 stars, bit1 &lt;4 wheels, bit2 MEKF unconverged, bit3 rates high, bit4 momentum &gt;70%, bit5 propagate-only, bit6 slew not idle 60s</Description>
+    </Field>
+    <Field Name="aocs_fidelity_mode" Uuid="bf0973ec-ea4e-54f2-8c9d-5c19c8435aa7" Type="UInt8" Kind="Output" View="true">
+      <Description>0=full physics, 1=secular (accel bypass &gt;60x)</Description>
+    </Field>
+    <Field Name="aocs_geoloc_err_m" Uuid="64ec6d3c-0a35-564d-95c5-a6380d01191e" Type="UInt32" Kind="Output" View="true">
+      <Description>Altitude x total pointing error — ground geolocation error [m]</Description>
+    </Field>
+    <Field Name="aocs_power_w" Uuid="8e705470-cda0-5d97-9868-a99adb0a9f33" Type="UInt16" Kind="Output" View="true">
+      <Description>AOCS suite power draw by mode (COARSE 4 / NOMINAL 9 / FINE 15 W); EPS bills the aocs_wheels line from this [W]</Description>
+    </Field>
     <Field Name="aocs_wheels_enabled" Uuid="63b4d534-375b-5ebd-a05e-384938daa7cc" Type="Float32" Kind="Output" View="true">
       <Description>Number of enabled reaction wheels</Description>
     </Field>
@@ -305,7 +431,7 @@
       <Description>RW command sum diagnostic [Nm]</Description>
     </Field>
     <Field Name="tc_AOCS_SET_MODE_mode" Uuid="b778717a-6b09-5ffb-b871-73f4d9e870a1" Type="UInt8" Kind="Input">
-      <Description>0=off,1=safe_boot,2=detumble,3=coarse_sun,4=nominal_nadir,5=fine_point,6=slew,7=desaturation,8=eclipse_propagate</Description>
+      <Description>0=off,1=safe_boot,2=detumble,3=coarse_sun,4=nominal_nadir,5=fine_point,6=slew,7=desaturation,8=eclipse_propagate,9=inertial. Mode 5 is refused with TM(1,8) unless the aocs.fine_ready (0x02C5) precondition bitmask is 0. | default 4 | 0=OFF | 1=SAFE_BOOT | 2=DETUMBLE | 3=COARSE_SUN | 4=NOMINAL_NADIR | 5=FINE_POINT | 6=SLEW | 7=DESATURATION | 8=ECLIPSE_PROPAGATE | 9=INERTIAL</Description>
     </Field>
     <Field Name="tc_AOCS_DISABLE_WHEEL_wheel_idx" Uuid="449e00c2-eafd-59de-8916-e7861aacf48d" Type="UInt8" Kind="Input">
       <Description>Wheel index (0-3)</Description>
@@ -313,10 +439,10 @@
     <Field Name="tc_AOCS_ENABLE_WHEEL_wheel_idx" Uuid="acf0c183-6b4a-5400-9fe7-3a81e99b29c2" Type="UInt8" Kind="Input">
       <Description>Wheel index (0-3)</Description>
     </Field>
-    <Field Name="tc_ST1_POWER_True" Uuid="daf47a5e-b23e-5fed-9eb0-87d6ef6a7377" Type="UInt8" Kind="Input">
+    <Field Name="tc_ST1_POWER_on" Uuid="0f318e6b-da86-5cec-96f8-64fc0528f0af" Type="UInt8" Kind="Input">
       <Description>0=off, 1=on</Description>
     </Field>
-    <Field Name="tc_ST2_POWER_True" Uuid="3c2499ab-0290-5d9e-81dc-cb05f7c2716f" Type="UInt8" Kind="Input">
+    <Field Name="tc_ST2_POWER_on" Uuid="f551ec85-ad57-54b1-8699-95b71ac82a2f" Type="UInt8" Kind="Input">
       <Description>0=off, 1=on</Description>
     </Field>
     <Field Name="tc_ST_SELECT_unit" Uuid="02feb4d6-dc45-5466-8eb4-bc475bda401f" Type="UInt8" Kind="Input">
@@ -325,9 +451,11 @@
     <Field Name="tc_MAG_SELECT_unit" Uuid="8ea53f32-9c62-5f72-8cb9-05902a37ab19" Type="UInt8" Kind="Input">
       <Description>0=primary, 1=redundant</Description>
     </Field>
-    <Field Name="tc_RW_SET_SPEED_BIAS_wheel_idx" Uuid="9b1fc67d-69d2-505a-a04d-ad29313291c4" Type="UInt8" Kind="Input"/>
-    <Field Name="tc_RW_SET_SPEED_BIAS_bias_rpm" Uuid="48704b3a-472e-5be3-b43f-76d920d5302d" Type="Int16" Kind="Input">
-      <Description>Speed bias in RPM</Description>
+    <Field Name="tc_RW_SET_SPEED_BIAS_wheel_idx" Uuid="9b1fc67d-69d2-505a-a04d-ad29313291c4" Type="UInt8" Kind="Input">
+      <Description>Wheel index 0-3</Description>
+    </Field>
+    <Field Name="tc_RW_SET_SPEED_BIAS_bias_rpm" Uuid="48704b3a-472e-5be3-b43f-76d920d5302d" Type="Float32" Kind="Input">
+      <Description>Speed bias in RPM, IEEE-754 big-endian</Description>
     </Field>
     <Field Name="tc_MTQ_ENABLE_enable" Uuid="c688216f-cf99-5a0d-ae1c-bef863ac1201" Type="UInt8" Kind="Input">
       <Description>0=disable, 1=enable</Description>
@@ -354,7 +482,52 @@
       <Description>Target wheel speed (RPM)</Description>
     </Field>
     <Field Name="tc_AOCS_SET_DEADBAND_deadband_deg" Uuid="46805b4a-dd19-5a3a-8d0f-4fde4565d941" Type="Float32" Kind="Input">
-      <Description>Attitude error threshold (0-1 deg)</Description>
+      <Description>Control deadband / event threshold (0-1 deg)</Description>
+    </Field>
+    <Field Name="tc_AOCS_SET_POINTING_FRAME_frame" Uuid="f2cb7616-77bc-5637-ae1e-e355419d3b9b" Type="UInt8" Kind="Input">
+      <Description>0=INERTIAL, 1=LVLH_NADIR, 2=TARGET_TRACK, 3=SUN | default 1 | 0=INERTIAL | 1=LVLH_NADIR | 2=TARGET_TRACK | 3=SUN</Description>
+    </Field>
+    <Field Name="tc_AOCS_SET_TARGET_QUAT_q_x" Uuid="9ac5e0ef-a5f7-5dea-8467-1ea762167fa0" Type="Float32" Kind="Input">
+      <Description>Target quaternion X | range [-1.0, 1.0] | default 0.0</Description>
+    </Field>
+    <Field Name="tc_AOCS_SET_TARGET_QUAT_q_y" Uuid="760515fa-5f82-55b6-a57f-e749cd4ad388" Type="Float32" Kind="Input">
+      <Description>Target quaternion Y | range [-1.0, 1.0] | default 0.0</Description>
+    </Field>
+    <Field Name="tc_AOCS_SET_TARGET_QUAT_q_z" Uuid="eca47e43-eba8-50d8-81e9-59797db98b17" Type="Float32" Kind="Input">
+      <Description>Target quaternion Z | range [-1.0, 1.0] | default 0.0</Description>
+    </Field>
+    <Field Name="tc_AOCS_SET_TARGET_QUAT_q_w" Uuid="639a416b-b430-5ed6-8f43-6c354573d858" Type="Float32" Kind="Input">
+      <Description>Target quaternion W (scalar) | range [-1.0, 1.0] | default 1.0</Description>
+    </Field>
+    <Field Name="tc_AOCS_SET_TARGET_GEO_lat" Uuid="7bfcad36-f148-51bb-8e22-6666feaaff77" Type="Float32" Kind="Input">
+      <Description>Target latitude, deg | [deg] | range [-90.0, 90.0] | default 0.0</Description>
+    </Field>
+    <Field Name="tc_AOCS_SET_TARGET_GEO_lon" Uuid="cb15cf88-6f73-55c1-b270-66d6626a34cb" Type="Float32" Kind="Input">
+      <Description>Target longitude, deg east | [degE] | range [-180.0, 180.0] | default 0.0</Description>
+    </Field>
+    <Field Name="tc_AOCS_SET_TARGET_GEO_alt_m" Uuid="c76f72f2-5d5d-5b6f-80c0-3ae5510dc1cd" Type="Float32" Kind="Input">
+      <Description>Target altitude above the reference sphere, m | [m] | range [-500.0, 9000.0] | default 0.0</Description>
+    </Field>
+    <Field Name="tc_AOCS_SET_CONTROL_BW_omega_n" Uuid="7cfa8048-10f7-5dac-ad19-d1263790cd13" Type="Float32" Kind="Input">
+      <Description>Natural frequency, rad/s (0.001-0.2; 0 = per-mode default) | [rad/s] | range [0.0, 0.2] | default 0.0</Description>
+    </Field>
+    <Field Name="tc_AOCS_SET_CONTROL_BW_zeta" Uuid="8d64ee07-76a1-582d-98d7-e7d255ebea29" Type="Float32" Kind="Input">
+      <Description>Damping ratio (0.1-2.0; 0 = per-mode default) | range [0.0, 2.0] | default 0.0</Description>
+    </Field>
+    <Field Name="tc_AOCS_SET_MOM_MGMT_enable" Uuid="1b96baae-44bc-538e-8ea9-a6bd351c916f" Type="UInt8" Kind="Input">
+      <Description>0=disable, 1=enable | default 1 | 0=DISABLE | 1=ENABLE</Description>
+    </Field>
+    <Field Name="tc_AOCS_SET_MOM_MGMT_entry_pct" Uuid="fe5406ed-293a-516e-b957-ed695e897ed6" Type="UInt8" Kind="Input">
+      <Description>DESAT entry at this % of the momentum envelope (default 70) | [%] | range [10, 95] | default 70</Description>
+    </Field>
+    <Field Name="tc_AOCS_SET_MOM_MGMT_exit_pct" Uuid="8052d3ab-e2ed-5576-889d-b1e211345b71" Type="UInt8" Kind="Input">
+      <Description>DESAT exit below this % (default 20) | [%] | range [5, 90] | default 20</Description>
+    </Field>
+    <Field Name="tc_AOCS_EST_RESET_mode" Uuid="d490081c-6c66-5abf-9f1e-fc21a8665ef8" Type="UInt8" Kind="Input">
+      <Description>0=cold (TRIAD/ST bootstrap), 1=warm (keep attitude, re-inflate covariance) | default 1 | 0=COLD | 1=WARM</Description>
+    </Field>
+    <Field Name="tc_AOCS_GPS_SET_START_MODE_start_mode" Uuid="7993fc1d-0b92-5c66-8f96-5d45271a796b" Type="UInt8" Kind="Input">
+      <Description>0=COLD (60s TTFF), 1=WARM (30s), 2=HOT (5s) | default 0 | 0=COLD | 1=WARM | 2=HOT</Description>
     </Field>
     <EntryPoint Name="Step" Uuid="5d2dd113-70f1-5947-85db-10d65a694ec0">
       <Description>Main simulation step</Description>
@@ -380,8 +553,8 @@
     <EventSource Name="AOCS Reaction Wheel 4 Overspeed_WARNING" Uuid="0e8ed431-e01d-5d69-9fe0-1070165b76ca">
       <Description>WARNING alarm for AOCS Reaction Wheel 4 Overspeed</Description>
     </EventSource>
-    <EventSource Name="AOCS Total Momentum Saturated_WARNING" Uuid="c96ea238-120c-57ae-b22d-81e8ffa076e8">
-      <Description>WARNING alarm for AOCS Total Momentum Saturated</Description>
+    <EventSource Name="AOCS Momentum Envelope High_WARNING" Uuid="9f7e3ba1-0f5a-5aae-97a7-d89a33c194e7">
+      <Description>WARNING alarm for AOCS Momentum Envelope High</Description>
     </EventSource>
     <EventSource Name="AOCS Attitude Error High_WARNING" Uuid="ebc60f9b-70c9-55e4-ab61-d77d3570a605">
       <Description>WARNING alarm for AOCS Attitude Error High</Description>

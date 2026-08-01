@@ -147,7 +147,9 @@ class PassAnalysis:
         self.pkt_counts[(svc, sub)] += 1
 
         # time (CUC from secondary header if present)
-        cuc = int(getattr(pkt.secondary, "time", 0) or 0)
+        # The PUS secondary header field is `cuc_time` (ecss_packet.SecondaryHeader);
+        # the old `"time"` lookup silently defaulted to 0 for every packet.
+        cuc = int(getattr(pkt.secondary, "cuc_time", 0) or 0)
         if cuc:
             if self.first_time is None or cuc < self.first_time:
                 self.first_time = cuc

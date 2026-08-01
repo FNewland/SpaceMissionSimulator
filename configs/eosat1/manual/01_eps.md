@@ -21,55 +21,59 @@ associated harness.
 
 | Parameter            | Value                      |
 |----------------------|----------------------------|
-| Configuration        | 6 body-mounted panels + 2 deployable wings (+/-Y) |
-| Cell Technology      | Triple-junction GaAs       |
-| Body-mounted area    | 0.30 m2 total (stowed configuration) |
-| Deployed total area  | 0.78 m2 (body panels + both wings) |
-| Wing area            | 0.24 m2 per wing (+Y and -Y) |
-| Peak Power (BOL)     | ~64 W (combined, best sun angle, fully deployed) |
+| Configuration        | 5 body-mounted panels + 2 deployable wings (+/-Y) on a single-axis solar array drive |
+| Cell Technology      | Triple-junction GaAs (29.5 % cell efficiency) |
+| Body-mounted area    | 0.198 m2 total (stowed configuration) |
+| Deployed total area  | 0.558 m2 (body panels + both wings) |
+| Wing area            | 0.18 m2 per wing (+Y and -Y, 3 folding segments) |
+| Peak Power (BOL)     | ~110 W (wings sun-tracking at low beta, fully deployed) |
+| EOL performance      | K = 267.9 W/m2 of projected area (full loss stack, 3-year EOL) |
 | Operating Voltage    | 28 V (regulated bus)       |
 | Wing deploy time     | ~30 s per wing (burn wire release) |
 
-Each of the six spacecraft faces carries a body-mounted solar panel. In addition, deployable
-solar wings are mounted on the +Y and -Y faces. When stowed, the total solar collection
-area is 0.30 m2 (body panels only). After wing deployment, the total area increases to
-0.78 m2 (0.24 m2 per wing added). Power generation per panel depends on the cosine
-projection of the Sun vector onto the panel normal:
+Five spacecraft faces carry body-mounted solar panels (the -Z face carries the
+imager aperture and radiator and has no cells). Deployable solar wings are
+mounted on the +Y and -Y faces on a shared single-axis solar array drive
+(SADA) whose rotation axis is body Z — the orbit normal. When stowed, the
+total solar collection area is 0.198 m2 (body panels only). After wing
+deployment the total area is 0.558 m2 (0.18 m2 per wing added). Power
+generation per body panel depends on the cosine projection of the Sun vector
+onto the panel normal; the wing pair, when the SADA is tracking, follows the
+Sun's projection perpendicular to the drive axis continuously (a cos-beta
+law, independent of orbit phase):
 
-| Panel Face | Normal Vector | Notes                                           |
-|------------|---------------|--------------------------------------------------|
-| +X         | Along-track   | Illuminated during orbit-normal sun angles       |
-| -X         | Anti-track    | Illuminated during orbit-normal sun angles       |
-| +Y         | Cross-track   | Primary generation for dawn-dusk orbit           |
-| -Y         | Anti-cross    | Primary generation for dawn-dusk orbit           |
-| +Z         | Nadir         | Earth-facing; reduced direct solar illumination  |
-| -Z         | Zenith        | Space-facing; good solar exposure                |
+| Panel Face | Orientation (nadir-pointing frame) | Notes                              |
+|------------|------------------------------------|-------------------------------------|
+| +X         | Orbit plane                        | Swept through the sun line each orbit |
+| -X         | Orbit plane                        | Swept through the sun line each orbit |
+| +Y         | Orbit plane (wing on SADA)         | Wing tracks the sun when SADA enabled |
+| -Y         | Orbit plane (wing on SADA)         | Wing tracks the sun when SADA enabled |
+| +Z         | Orbit normal                       | Continuous sin-beta illumination     |
+| -Z         | Anti orbit-normal                  | Imager aperture + radiator, no cells |
 
 The per-panel power output is computed as:
 
 ```
-P_panel = P_max * max(0, cos(angle_to_sun)) * degradation_factor
+P_panel = A_panel * K * max(0, cos(angle_to_sun)) * degradation_factor
 ```
 
-where `angle_to_sun` is the angle between the Sun vector and the panel normal in the body
-frame, and `degradation_factor` accounts for panel aging and damage. The total spacecraft
-power generation is the sum of all six panel contributions.
-
-In the dawn-dusk SSO at 450 km, the +Y and -Y panels (including deployable wings) typically
-provide the majority of power generation. The -Z (zenith) panel also contributes
-significantly when oriented towards the Sun. The +Z (nadir) panel receives primarily albedo
-illumination.
+where `K` is the effective plane-of-array constant including the full loss
+stack (inherent degradation/packing 0.85, temperature at 65 C, MPPT 0.97,
+harness 0.95, and aging), and `degradation_factor` accounts for panel damage.
+If the SADA is stopped (device 0x0101 OFF, or `sada_tracking` disabled via a
+stuck drive), the wings fall back to the fixed-wing |sin(orbit phase)| duty —
+roughly a 36 % orbit-average generation loss, a first-class failure case.
 
 ### 2.1.1 Deployable Solar Wings
 
 The spacecraft carries two deployable solar wings, one on each of the +Y and -Y faces.
-Each wing adds 0.24 m2 of solar collection area and is held in the stowed position by a
+Each wing adds 0.18 m2 of solar collection area and is held in the stowed position by a
 burn wire restraint mechanism. Deployment is commanded via S8 function management:
 
 | Parameter            | Value                      |
 |----------------------|----------------------------|
-| Wing location        | +Y face and -Y face       |
-| Area per wing        | 0.24 m2                    |
+| Wing location        | +Y face and -Y face (shared SADA shaft) |
+| Area per wing        | 0.18 m2                    |
 | Deploy mechanism     | Burn wire (resistive heating) |
 | Deploy time          | ~30 seconds per wing       |
 | Deploy command       | EPS_DEPLOY_WING (func_id 81) |
@@ -98,9 +102,10 @@ burn wire restraint mechanism. Deployment is commanded via S8 function managemen
 |----------------------|----------------------------|
 | Chemistry            | Lithium-Ion (Li-Ion)       |
 | Nominal Voltage      | 28 V                       |
-| Capacity             | 40 Ah                      |
+| Capacity             | 100 Wh (3.6 Ah at 28 V)    |
+| Coulombic efficiency | 0.94 (charge acceptance)   |
 | Depth of Discharge   | Max 35% (nominal ops)      |
-| Charge Method        | CC/CV with thermal cutoff  |
+| Charge Method        | CC/CV taper above 90 % SoC, thermal cutoff |
 
 ### 2.3 Power Distribution Module (PDM)
 
@@ -175,16 +180,15 @@ period after launcher separation:
 
 | Subsystem          | Typical Power | Notes                             |
 |--------------------|---------------|-----------------------------------|
-| OBC (primary)      | 15 W          | Reduced from earlier 40 W design  |
-| TTC receiver (RX)  | 5 W           | Always on (unswitchable)          |
-| TTC transmitter+PA | 20 W          | On during contacts only           |
-| AOCS sensors       | 7 W           | MAG + CSS + ST + gyros + GPS      |
-| AOCS actuators     | 6 W           | 4 reaction wheels + magnetorquers |
+| OBC (primary)      | 6 W           | OBC 3 W + PDU/EPS housekeeping 3 W |
+| TTC receiver (RX)  | 1.5 W         | Always on (unswitchable)          |
+| TTC transmitter+PA | 12 W LOW / 20 W HIGH tier | On during contacts only |
+| AOCS suite         | 12 W          | 4 RW idle + ST + IMU + GPS + MTQ/electronics |
 | Payload (imaging)  | 45 W          | Active during imaging passes only |
-| Payload (standby)  | 8 W           | Electronics on, FPA cooler active |
-| FPA cooler         | 15 W          | Thermoelectric cooler             |
-| Battery heater     | 8 W           | Eclipse / cold phases             |
-| OBC heater         | 5 W           | Manual control                    |
+| Payload (standby)  | 6 W           | Electronics on                    |
+| FPA cooler         | 15 W          | Stirling cooler, own power line   |
+| Battery heater     | 8 W           | Thermostat ON +5 C / OFF +10 C    |
+| OBC heater         | 4 W           | Manual control                    |
 
 During eclipse transitions, the PCDU autonomously switches from solar array to battery
 supply. The `eclipse_flag` telemetry parameter (0x0108) indicates the current illumination

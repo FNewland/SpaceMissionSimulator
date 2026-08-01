@@ -53,12 +53,21 @@ class GroundStationRX(threading.Thread):
                  rs_enabled: bool = True, conv_enabled: bool = True,
                  input_buffer: SampleBuffer = None,
                  packet_callback: Callable[[bytes], None] = None,
-                 loop_bw: float = 0.01):
+                 loop_bw: float = 0.08,
+                 symbol_rate: float = 32000.0,
+                 gray_coding: bool = True,
+                 gmsk_bt: float = 0.5):
         super().__init__(daemon=True, name="GroundStationRX")
         self._running = False
 
         # Demodulator (matched-filter correlator receiver)
-        self._demod = CorrelatorRX(sps=sps, rolloff=rolloff, modulation=modulation)
+        self._demod = CorrelatorRX(sps=sps, rolloff=rolloff,
+                                   sample_rate=symbol_rate * sps,
+                                   modulation=modulation,
+                                   gray_coding=gray_coding,
+                                   gmsk_bt=gmsk_bt, loop_bw=loop_bw)
+        self._symbol_rate = symbol_rate
+        self._rolloff = rolloff
 
         # Coding config
         self._rs_enabled = rs_enabled
@@ -136,6 +145,26 @@ class GroundStationRX(threading.Thread):
         """Return recent demodulated I/Q points from the Costas loop output."""
         return self._demod.get_constellation_iq(max_points)
 
+    def get_eye_samples(self, max_samples: int = 1024):
+        """Oversampled post-matched-filter samples for the eye diagram.
+
+        This is the sps-rate waveform *between* decision instants — the
+        symbol-rate constellation tap cannot produce an eye (defect #53).
+        """
+        return self._demod.get_eye_samples(max_samples)
+
+    @property
+    def eye_timing_offset(self) -> int:
+        return self._demod.eye_timing_offset
+
+    @property
+    def sps(self) -> int:
+        return self._demod.sps
+
+    @property
+    def evm_db(self) -> float:
+        return self._demod.evm_db
+
     @property
     def measured_ber(self) -> float:
         """Frame error rate as a proxy for BER."""
@@ -145,19 +174,28 @@ class GroundStationRX(threading.Thread):
             return 0.0
         return self.bad_frames / total
 
-    def reconfigure(self, modulation: int):
-        """Change modulation scheme (resets PLL/clock and frame sync state).
+    def reconfigure(self, modulation: int = None, symbol_rate: float = None):
+        """Change modulation and/or symbol rate.
 
-        Only resets if the modulation actually changed — repeated calls
-        with the same value are no-ops so we don't destroy an active
-        frame sync lock.
+        A modulation change resets the PLL and frame sync state; a symbol
+        rate change retunes the demodulator's sample rate so its Doppler
+        pre-compensation stays correct. Repeated calls with unchanged
+        values are no-ops so an active frame-sync lock is not destroyed.
         """
-        if modulation == self._demod._modulation:
-            return
-        self._demod.set_modulation(modulation)
-        # Reset frame sync — its buffer contains bytes demodulated
-        # under the old modulation which would prevent lock.
-        self._frame_sync = FrameSynchronizer(frame_length=self._coded_frame_length)
+        changed = False
+        if symbol_rate is not None and symbol_rate != self._symbol_rate:
+            self._symbol_rate = float(symbol_rate)
+            self._demod.sample_rate = self._symbol_rate * self._demod.sps
+            logger.info("RX: symbol rate → %.0f Bd", self._symbol_rate)
+            changed = True
+        if modulation is not None and modulation != self._demod._modulation:
+            self._demod.set_modulation(modulation)
+            changed = True
+        if changed:
+            # Reset frame sync — its buffer contains bytes demodulated
+            # under the old configuration which would prevent lock.
+            self._frame_sync = FrameSynchronizer(
+                frame_length=self._coded_frame_length)
 
     def run(self):
         self._running = True

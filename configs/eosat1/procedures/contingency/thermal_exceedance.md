@@ -60,7 +60,9 @@ for hot cases), and monitors the temperature trend until the zone returns within
 **GO/NO-GO:** Temperature trending nominal — continue monitoring. If no improvement after 15 min, proceed to Step 4.
 
 ### Step 4 — Adjust Heater Setpoints or Escalate
-**TC (Cold case):** `SET_PARAM(param_id=tcs.htr_<zone>_setpoint, value=<+5 from current>)` (Service 20, Subtype 1)
+**TC (Cold case):** `HEATER_SET_SETPOINT(circuit=<0 battery | 1 obc | 2 thruster>, on_temp=<current +5 C>, off_temp=<current +5 C>)` (Service 8, Subtype 1, func_id 44)  
+**Wire:** `2C <circuit:uint8> <on_temp:float32> <off_temp:float32>` — e.g. circuit 0, on 5.0 / off 10.0 C = `2C 00 40 A0 00 00 41 20 00 00`
+**Note:** There is no `tcs.htr_<zone>_setpoint` parameter — heater thermostats are reconfigured by S8 func 44, not by S20 parameter write.
 **Verify:** Heater duty cycle increases (more frequent ON cycles observed in telemetry)
 **TC (Hot case):** If temperature still rising, command `AOCS_SET_MODE(mode=2)` for SAFE_POINT to optimise spacecraft attitude for thermal dissipation
 **Verify:** `aocs.mode` (0x020F) = 2 within 15s
@@ -69,7 +71,7 @@ for hot cases), and monitors the temperature trend until the zone returns within
 ### Step 5 — Confirm Recovery and Restore Operations
 **TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 25)
 **Verify:** All zone temperatures within nominal (green) range
-**Action:** If heaters were enabled for cold case, set to automatic thermostat mode via `SET_PARAM(param_id=tcs.htr_<zone>_auto, value=1)`
+**Action:** If heaters were enabled for the cold case, return them to autonomous thermostat control with `HEATER_AUTO_MODE(circuit=<0|1|2>)` (Service 8, Subtype 1, func_id 45) — wire `2D 00` for the battery circuit.
 **Action:** If loads were shed for hot case, re-enable per CTG-005 load restoration sequence
 **GO/NO-GO:** All temperatures nominal and operations restored — recovery complete
 

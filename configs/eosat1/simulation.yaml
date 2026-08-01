@@ -1,0 +1,226 @@
+# EOSAT-1 Simulation Tuning Configuration
+# =============================================================================
+# Single, editable home for the SIMULATION / SCENARIO parameters that used to
+# be Python literals in engine.py, eps_basic.py, tcs_basic.py, fdir.py and
+# failure_manager.py (defect #51). Edit values here — not in code.
+#
+# Ownership / precedence (defect #42 lesson: one source per number):
+#   * simulation.yaml  — this file: sim behaviour, protection ladders, initial
+#                        conditions, environment, failure-onset timing.
+#   * subsystems/*.yaml — SPACECRAFT HARDWARE definition (array areas, battery
+#                        capacity, equipment power draw, param ids, zones,
+#                        heaters). Not repeated here.
+#   * mission.yaml      — identity, APIDs, ports, network.sim_tick_hz.
+#   * orbit.yaml        — TLE, epoch, canonical ground stations.
+#   * fdir/…, monitoring/… — FDIR rules, limit checks, autonomy rules.
+# Every key below defaults (in code) to the value the simulator used before
+# this file existed, so deleting the file changes nothing except the item-9
+# power tuning captured here. Full table: docs/SIMULATION_CONFIG.md
+# =============================================================================
+
+# Main-loop tick rate. null = inherit mission.yaml network.sim_tick_hz (1.0).
+# Set a number here only to override the mission network setting.
+tick_hz: null
+
+# Master RNG seed. Every random draw in the simulator (sensor noise, star
+# counts, failure flicker timing, separation tumble, ...) comes from a
+# random.Random derived from this seed, so the same seed + the same t0_epoch
+# + the same command script reproduces the identical run. Change it to give a
+# cohort a different (but still reproducible) universe.
+seed: 20260731
+
+# Sub-stepped tick integration. When dt_sim = dt_real x speed exceeds
+# dt_max_s (i.e. under time acceleration), the physics chain is integrated in
+# N = ceil(dt_sim / dt_max_s) equal sub-steps so the model equations see the
+# same step size at x60 as at x1. N is capped at max_substeps; if the cap
+# binds (dt_sim > dt_max_s * max_substeps) the per-substep dt grows above
+# dt_max_s rather than losing simulated time. Per-tick outputs (HK sampling,
+# TM release, dump pacing) stay at the outer tick cadence.
+tick:
+  dt_max_s: 1.0
+  max_substeps: 600
+
+speed:
+  default: 1.0      # instructor time-acceleration at startup
+  max: 1000.0       # clamp applied to set_speed (instructor UI + scenarios)
+
+phases:
+  # Separation timer: PRE_SEPARATION -> INITIAL_POWER_ON countdown.
+  separation_timer_s: 1800.0
+
+ttc:
+  # Auto-TX hold-down: after any accepted TC the platform forces the TTC TX
+  # line ON for this long, re-armed per command. Item 9: 900 -> 300 s. The old
+  # 15-minute hold kept the TX line (12 W) energised for most of every pass and
+  # defeated the ttc_tx load-shed stage during contacts.
+  auto_tx_hold_s: 300.0
+
+  # Real-time TM downlink pacing (defect #74). tm_data_rate used to be read
+  # only by the S15 dump pacer, so commanding the low vs high rate changed
+  # nothing about the HK / event / verification telemetry the radio and the
+  # MCS see.
+  #   auto — pace while the engine's tick loop owns the clock (default)
+  #   on / off — force on / restore the old unpaced behaviour
+  #
+  # Both this pacer and the S15 dump pacer read the ACTIVE tier of the data-
+  # rate ladder in subsystems/ttc.yaml (defect #85), so a tier change moves
+  # both. The arithmetic that makes the ladder necessary: the shipped
+  # telemetry/hk_structures.yaml generates 1351.5 bps of PUS packets, which is
+  # 1557 bps of channel after RS(255,223) and TM-frame overhead. At the BEACON
+  # tier (1000 bps) that is 156 % of the link, so the backlog grows without
+  # bound and rt_tm_backlog_max starts dropping packets — correct behaviour
+  # for a bootloader beacon and the reason 1 kbps was never an operations
+  # rate. At LOW (16 kbps) it is 9.7 % duty and at NOMINAL (128 kbps) 1.2 %.
+  rt_tm_pacing: auto
+  rt_tm_backlog_max: 2000
+
+# Housekeeping default enable state (defect #75). The operations manual says HK
+# generation is enabled BY COMMAND (TC(3,5) HK_ENABLE); the engine used to
+# enable every SID at startup and again on application boot, which made
+# HK_ENABLE a no-op and skipped the commissioning step.
+#
+# Enabled at power-up:
+#   11  Beacon (APID 2) — the only telemetry the bootloader produces; without
+#       it the spacecraft is silent and cannot be commissioned at all. Its
+#       HK_DISABLE is refused while the OBC is in the bootloader.
+#    1  EPS platform vitals — the operator must be able to judge whether the
+#       spacecraft is power-safe before switching anything else on.
+# Everything else (2 AOCS, 3 TCS, 4 platform, 5 payload, 6 TTC) is commanded on
+# during commissioning.
+housekeeping:
+  default_enabled_sids: [1, 11]
+  enable_all_by_default: false
+
+# Start the orbit propagator at orbit.yaml t0_epoch so runs are reproducible
+# (roadmap N-5 / DI-16). `wall` restores the old wall-clock start.
+epoch: t0
+
+eps:
+  initial:
+    # Item 9: 75 -> 90 %. Post-separation the battery is freshly charged; 75 %
+    # started every session inside the load-shed band.
+    soc_pct: 90.0
+    bat_temp_c: 15.0
+
+  # Wattages the tick code bills directly for lines with no entry in eps.yaml.
+  # (obc/ttc_tx/payload/fpa_cooler come from eps.yaml — hardware ratings.)
+  line_power_w:
+    htr_bat: 8.0        # matches tcs.yaml heaters[battery].power_w (Phase B: 6->8, manual 03_tcs)
+    htr_obc: 4.0        # matches tcs.yaml heaters[obc].power_w
+    # Phase B (brief 01 F22 / WP-3): 6 -> 12 W. The old 6 W billed only three
+    # idle wheels; the AOCS *suite* (4 RW idle 6 W + star tracker 1.6 + IMU
+    # 0.8 + GPS 1.0 + MTQ/AOCS electronics 2.6) draws ~12 W. Phase C will
+    # make this mode-dependent (4/9/15 W) — the budget is sized for 12 W.
+    aocs_wheels: 12.0
+    # Phase D: fallback rating for the propulsion line (catbed 12 + valves 2).
+    # Normally UNUSED — EPS bills the live draw the prop model publishes at
+    # 0x0B1B (0 W quiescent, 2 W armed/firing, +12 W while the catbed heater
+    # runs); this constant only applies in reduced harnesses without a prop
+    # model.
+    prop: 14.0
+
+  # Bill heater lines from the ACTUAL heater state published by TCS
+  # (0x040A/0x040B) instead of 100 % duty whenever the line is ON — the
+  # thermostat, not the line switch, is the load (brief 01 F10 / WP-5).
+  heater_duty_from_tcs: true
+
+  uv_threshold_v: 26.5
+  ov_threshold_v: 29.5
+
+  load_shed:
+    # In-model bus-voltage shed (first entry sheds first). prop is LAST
+    # (Phase D): shedding propulsion is the last resort, and dropping the
+    # line mid-burn triggers the on-board burn abort (0x0B14 reason 4).
+    order: [payload, fpa_cooler, ttc_tx, aocs_wheels, prop]
+    # Item 9: 26.5 -> 25.0 V. 26.5 V is the battery OCV at ~65 % SoC, i.e. INSIDE
+    # the normal eclipse band — every session stripped payload/cooler/TX/wheels
+    # in the first eclipse with no auto-restore. 25.0 V ~ 45 % SoC leaves the
+    # ladder reachable under failures (bus_short, array loss) but not in nominal
+    # operations.
+    bus_voltage_v: 25.0
+    restore_hysteresis_v: 0.5
+    # Phase B (brief 01 F15 / WP-7): the documented hysteresis restore now
+    # exists — shed lines are restored one per tick, in reverse shed order,
+    # once the bus recovers above bus_voltage_v + restore_hysteresis_v.
+    auto_restore: true
+    # FDIR load-shed stage 1/2/3 entry thresholds (battery SoC %), highest
+    # first. CANONICAL source for LoadSheddingManager; fdir/fault_propagation.yaml
+    # stage `soc_threshold` values are cross-checked against these at load and a
+    # warning is logged if they diverge.
+    soc_stage_thresholds_pct: [30.0, 20.0, 10.0]
+
+  overcurrent:
+    trip_time_s: 0.05          # 50 ms (immediate at a 1 Hz tick)
+    thresholds_a:              # ~150 % of nominal at 28 V
+      obc: 2.0
+      ttc_rx: 0.3
+      ttc_tx: 1.0
+      payload: 2.5
+      fpa_cooler: 1.0
+      htr_bat: 0.5
+      htr_obc: 0.3
+      aocs_wheels: 0.8
+      prop: 0.8
+
+  event_thresholds:            # onboard S5 event trigger levels
+    soc_low_pct: 20.0
+    soc_critical_pct: 10.0
+    soc_charge_complete_pct: 99.0
+    bus_warning_v: 27.0
+    bus_critical_v: 25.0
+    bat_overtemp_c: 45.0
+    bat_undertemp_c: -5.0
+    sa_degraded_fraction: 0.7  # actual < fraction x expected => array degraded
+
+tcs:
+  environment:
+    eclipse_external_c: -30.0
+    eclipse_internal_c: 10.0
+    sunlit_external_base_c: -10.0
+    # Phase B (brief 05 finding 8 / WP-8): env = base + gain * |sin(beta)|.
+    # The old |cos(beta)| put the maximum external temperature at beta = 0 —
+    # the maximum-eclipse geometry — exactly inverted. Orbit-average external
+    # sink now rises with |beta| (less eclipse, more continuous sun).
+    sunlit_external_beta_gain_c: 50.0
+    sunlit_internal_c: 12.0
+    # Battery-zone internal sink (brief 05 defect 2 / WP-3). The pack sits
+    # against the radiator side of the bus, colder than the electronics stack.
+    # With the old shared 10/12 C sink the coldest achievable battery
+    # temperature was +9.2 C — 9 C above the thermostat trip, so the battery
+    # heater could NEVER energise and its 6 W bill was fiction. These values
+    # are tuned so the thermostat genuinely cycles every orbit.
+    eclipse_battery_c: -8.0
+    sunlit_battery_c: 0.0
+    panel_solar_heat_fraction: 0.3      # share of panel solar power as heat
+    # Phase B (brief 05 finding 1 / WP-8): the panel solar gain is now the
+    # physical 1/UA per node (tau/C); this key is only a trim multiplier.
+    # The old 10.0 was applied ON TOP of 1/UA-equivalent scaling and produced
+    # +362 C panels at full wing current.
+    panel_solar_heat_gain: 1.0
+
+# Phase D — propulsion sim behaviour (hardware sheet: subsystems/prop.yaml).
+prop:
+  # Time acceleration is clamped to this while a burn is FIRING (event
+  # 0x0811 PROP_SPEED_CLAMPED): at 1000x a whole burn fits inside one tick
+  # and the abort-on-attitude-error lesson would be unobservable. A 32 s
+  # burn at 10x is 3.2 s of wall time — fast enough to be usable, slow
+  # enough to be watched.
+  max_speed_during_burn: 10.0
+  # Teaching override: scenarios may permit arming/burning in eclipse.
+  allow_eclipse_burn: false
+  # Override the loaded propellant mass (kg); null = prop.yaml value.
+  initial_propellant_kg: null
+
+failures:
+  # Failure-injection onset timing (FailureManager).
+  default_onset_duration_s: 90.0        # 'gradual' onset ramp
+  intermittent:
+    first_flicker_s: [2.0, 6.0]         # uniform range to first flicker
+    on_s: [2.0, 8.0]                    # uniform ON burst length
+    off_s: [5.0, 20.0]                  # uniform OFF gap length
+
+scenario_defaults:
+  default_duration_s: 1800.0
+  default_difficulty: BASIC
+  eq_tolerance: 0.01                    # '==' comparison tolerance in conditions
+  valid_difficulties: [BASIC, BEGINNER, INTERMEDIATE, ADVANCED]

@@ -58,10 +58,11 @@ bleed momentum from the wheels while maintaining coarse attitude control.
 regardless and evaluate.
 
 ### Step 5 --- Command Return to Nominal Pointing
-**TC:** `AOCS_SET_MODE` mode=0 (Service 8, Subtype 1) --- command NOMINAL
-**Verify:** `aocs.mode` (0x020F) = 0 (NOMINAL / NADIR_POINT) within 15 s
+**TC:** `AOCS_SET_MODE` mode=4 (Service 8, Subtype 1) --- command NOMINAL
+**Verify:** `aocs.mode` (0x020F) = 4 (NOMINAL, nadir tracking) within 15 s
 **Verify:** `aocs.att_error` (0x0217) converging toward < 1.0 deg
-**Note:** Allow up to 120 s for attitude re-convergence to fine pointing.
+**Note:** Allow up to 300 s for attitude re-convergence (Phase C real
+settling; FINE re-entry additionally needs the 0x02C5 preconditions).
 
 ### Step 6 --- Post-Desaturation Verification
 **TC:** `HK_REQUEST` SID=2 (Service 3, Subtype 25) --- final AOCS HK

@@ -35,8 +35,14 @@ STANDBY after the downlink session completes or the LOS approaches.
 **Note:** Record `payload.image_count` (0x0605) as reference.
 
 ### Step 3 --- Command Playback Mode
-**TC:** `SET_PARAM` param_id=0x0610, value=1 (Service 8, Subtype 1) --- set
-downlink rate to nominal (S-band high rate)
+**TC:** `TTC_SET_DOWNLINK_MODE` on=1 (Service 8, Subtype 1, func_id 79) --- enter
+DOWNLINK/dump mode, the mode gate on the HIGH tier
+**TC:** `TTC_SET_DATA_RATE` rate=1 (Service 8, Subtype 1, func_id 65) --- raise the TM
+rate ladder to HIGH (128 kbps QPSK RS(255,223)). REJECTED with S1.8 error 0x0007 unless
+the antenna is deployed, DOWNLINK mode is on and `ttc.contact_elevation` (0x050A) is
+>= 10 deg
+**Verify:** `ttc.tm_data_rate` (0x0506) = 128000 bps and `ttc.tm_tier` (0x0539) =
+`ttc.tm_tier_cmd` (0x053A) = 2 within 10 s
 **TC:** `PAYLOAD_SET_MODE` mode=3 (Service 8, Subtype 1) --- command PLAYBACK
 **Verify:** `payload.mode` (0x0600) = 3 (PLAYBACK) within 15 s
 **Note:** Downlink timer starts. Monitor ground station frame sync indicator.
@@ -58,9 +64,16 @@ and archived without errors.
 **Note:** If ground station reports loss of frame sync, pause and re-evaluate
 link conditions before continuing.
 
-### Step 6 --- Terminate Downlink Session
+### Step 6 --- Terminate Downlink Session and Release the HIGH Tier
 **TC:** `PAYLOAD_SET_MODE` mode=1 (Service 8, Subtype 1) --- command STANDBY
 **Verify:** `payload.mode` (0x0600) = 1 (STANDBY) within 15 s
+**TC:** `TTC_SET_DATA_RATE` rate=0 (Service 8, Subtype 1, func_id 65) --- back to LOW
+**TC:** `TTC_SET_DOWNLINK_MODE` on=0 (Service 8, Subtype 1, func_id 79)
+**Verify:** `ttc.tm_data_rate` (0x0506) = 16000 bps within 10 s
+**Verify:** `ttc.downlink_mode` (0x053C) = 0
+**Note:** HIGH is released as deliberately as it was taken. Leaving the spacecraft
+commanded to HIGH with DOWNLINK mode latched is leaving a gate open — routine
+operations belong at LOW.
 **Note:** Record final `payload.store_used` (0x0604) as Sf.
 **Note:** Data volume downlinked = S0 - Sf (as percentage of total capacity).
 
@@ -80,8 +93,11 @@ and any frame-sync interruptions in the pass log.
 - If `ttc.link_status` drops to 0 (LINK_DOWN) during transfer: Attempt
   `TTC_SWITCH_REDUNDANT`. If link re-established, resume from current point.
   If not, wait and retry at next AOS.
-- If `ttc.link_margin` < 2.0 dB sustained: Reduce data rate via `SET_PARAM`
-  param_id=0x0610, value=0 (low rate). Continue at reduced rate.
+- If `ttc.link_margin` < 2.0 dB sustained: Step the ladder back down to LOW via
+  `TTC_SET_DATA_RATE(rate=0)` (func_id 65) and leave DOWNLINK mode with
+  `TTC_SET_DOWNLINK_MODE(on=0)` (func_id 79). At LOW the remaining product needs
+  eight times the contact time, so re-plan the dump onto a higher pass rather than
+  grinding it out at 16 kbps.
 - If LOS approaching (< 2 min remaining): Terminate downlink gracefully. Remaining
   data will be scheduled for next available pass.
 

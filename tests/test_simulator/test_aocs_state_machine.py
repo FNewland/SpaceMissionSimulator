@@ -61,22 +61,35 @@ class TestAOCSStateMachine:
     # 2. set_mode command for every valid mode
     # ------------------------------------------------------------------
 
-    @pytest.mark.parametrize("target_mode", range(9))
+    @pytest.mark.parametrize("target_mode", [0, 1, 2, 3, 4, 6, 7, 8, 9])
     def test_set_mode_command(self, target_mode):
-        """set_mode command to each valid mode (0-8) succeeds and changes mode."""
+        """set_mode to each ungated mode (0-4, 6-9; 9=INERTIAL is new in
+        Phase C) succeeds. Mode 5 (FINE_POINT) is precondition-gated and
+        covered by test_fine_point_refused_when_not_ready."""
         model = self._make_model()
         result = model.handle_command({"command": "set_mode", "mode": target_mode})
         assert result["success"] is True
         assert model._state.mode == target_mode
+
+    def test_fine_point_refused_when_not_ready(self):
+        """Phase C WP-6: AOCS_SET_MODE(5) is REFUSED (with the 0x02C5
+        bitmask in the reply) when FINE preconditions are unmet — the old
+        model silently accepted and dropped back."""
+        model = self._make_model()
+        result = model.handle_command({"command": "set_mode", "mode": 5})
+        assert result["success"] is False
+        assert result.get("code") == "FINE_NOT_READY"
+        assert result.get("fine_ready_mask", 0) != 0
+        assert model._state.mode == 0  # unchanged
 
     # ------------------------------------------------------------------
     # 3. set_mode rejects invalid mode
     # ------------------------------------------------------------------
 
     def test_set_mode_rejects_invalid(self):
-        """set_mode to 9 (or any out-of-range value) returns failure."""
+        """set_mode above 9 is invalid (9 = INERTIAL is valid since Phase C)."""
         model = self._make_model()
-        result = model.handle_command({"command": "set_mode", "mode": 9})
+        result = model.handle_command({"command": "set_mode", "mode": 10})
         assert result["success"] is False
         # Mode should remain unchanged (OFF)
         assert model._state.mode == MODE_OFF
@@ -467,17 +480,23 @@ class TestAOCSStateMachine:
         model.handle_command({"command": "set_mode", "mode": MODE_DESAT})
         assert model._state.mode == MODE_DESAT
 
-        # Tick many times to allow desaturation
-        for _ in range(200):
+        # Phase C: desaturation is now PHYSICAL — the 1.6 A·m² rods dump the
+        # 4x4000 rpm same-sign loading through m x B at ~5e-5 N·m, which
+        # takes tens of minutes (manual §6.1), not the old 200 s first-order
+        # relaxation. Track the momentum envelope over 900 s of sim time.
+        h0 = params.get(0x02BA)
+        for _ in range(900):
             model.tick(1.0, orbit, params)
-            # If mode auto-transitions to NOMINAL, force back to DESAT
-            # (guard might trigger once speeds are low enough)
             if model._state.mode != MODE_DESAT:
                 break
-
-        # All wheel speeds should have decreased significantly
+        if h0 is None:
+            h0 = 100.0 * initial_speed / model._rw_max_speed
+        h1 = params.get(0x02BA, h0)
+        # Momentum envelope usage must have decreased materially and no
+        # wheel may have been driven ABOVE the initial loading.
+        assert h1 < h0 * 0.75, f"Envelope {h0:.1f}% -> {h1:.1f}%: no dump"
         for i in range(4):
-            assert abs(model._state.rw_speed[i]) < initial_speed, (
-                f"Wheel {i} speed {model._state.rw_speed[i]} did not decrease "
-                f"from initial {initial_speed}"
+            assert abs(model._state.rw_speed[i]) < initial_speed * 1.05, (
+                f"Wheel {i} speed {model._state.rw_speed[i]} rose above "
+                f"initial {initial_speed}"
             )

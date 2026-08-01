@@ -1,11 +1,166 @@
+# EOSAT-1 TT&C — S-band RF plan (roadmap N-4 / DI-05).
+#
+# The mission flies S-band: 2025–2110 MHz uplink, 2200–2290 MHz downlink
+# (CCSDS 401.0-B near-Earth allocations). This matches
+# configs/eosat1/planning/ground_stations.yaml (tx_freq_mhz 2025.0 /
+# rx_freq_mhz 2200.0), configs/eosat1/rfsim.yaml (channel.frequency_hz
+# 2200.0e6) and the course textbook. The previous UHF values (449.0 /
+# 401.5 MHz) agreed with nothing else in the repo.
+#
+# The command-side validators now agree: ttc_basic.UL_BAND_MHZ /
+# DL_BAND_MHZ are 2025–2110 / 2200–2290 and tc_catalog.yaml's
+# TTC_SET_UL_FREQ / TTC_SET_DL_FREQ advertise the same bands. The old
+# UHF 440–460 / 400–410 validators and the 2000–2100 / 8400–8500
+# catalogue text are gone.
 model: ttc_basic
-ul_freq_mhz: 449.0
-dl_freq_mhz: 401.5
-tm_rate_hi_bps: 64000
-tm_rate_lo_bps: 1000
+ul_freq_mhz: 2025.0
+dl_freq_mhz: 2200.0
+
+# ── TM data-rate ladder (defect #85) ────────────────────────────────────
+#
+# Replaces the old binary tm_rate_hi_bps / tm_rate_lo_bps switch. Every
+# number below is CONFIG, not a code constant: change a `bps` here and the
+# simulator, the S8 func-65 handler, the rate pacers and the RF pipeline
+# all follow.
+#
+# THREE rungs, per Franz's ruling of 2026-07-29:
+#   BEACON  1 kbps   bootloader / beacon lifeline
+#   LOW    16 kbps   ROUTINE OPERATIONS — where the spacecraft normally sits
+#   HIGH  128 kbps   delayed telemetry and image dumps, gated and earned
+#
+# The ladder is modelled on Copernicus Sentinel-1's programmable S-band TM
+# rates (16 / 128 / 512 kbit/s over a fixed 4 kbit/s TC uplink): the two rungs
+# this mission flies are Sentinel-1's low and nominal rates exactly. 128 kbps
+# is also the top of the commodity CubeSat TT&C-radio class (GomSpace NanoCom
+# AX2150 96 kbps, EnduroSat 125 kbps), so the whole ladder is reachable with
+# a single TT&C radio — no separate high-rate transmitter is implied, which
+# is the right hardware story for a 6U.
+#
+# Why not the old 1 kbps "low" rate for routine ops: the shipped
+# telemetry/hk_structures.yaml generates 1351.5 bps of PUS packets, which is
+# 1557 bps of channel after RS(255,223) and TM-frame overhead. 1000 bps is
+# BELOW the generation rate, so the real-time backlog could never drain.
+# 1 kbps is a beacon rate, not an operations rate. 16 kbps clears real-time
+# HK at 9.7 % duty and still plays back 0.85 orbits of stored HK in a 514 s
+# pass, so routine operations never fall behind.
+#
+# Steps are 1 kbps x 2^0, 2^4, 2^7 = +12.04 dB then +9.03 dB, which is exactly
+# the -10*log10(R) term in the link budget: a tier step costs 9-12 dB of
+# margin. Occupied bandwidth (1.35 x symbol rate, SRRC alpha 0.35, after RS,
+# the 1115/1107 frame and the r=1/2 convolutional expansion) is
+# 3.1 kHz / 50 kHz / 100 kHz — 2.0 % of the 5.00 MHz per-mission allocation
+# in 2200-2290 MHz at the top rung.
+#
+# `command_code` is the uint8 value of TTC_SET_DATA_RATE (S8 func 65)'s `rate`
+# field that selects the tier. The legacy binary encoding is preserved
+# verbatim: **0 = "the low rate" = LOW, 1 = "the high rate" = HIGH**. FDIR's
+# ttc_reduce_power action sends 0x00 and still drops to the low operational
+# rate; anything that sent 0x01 for "high rate" still gets the high rate,
+# now 128 kbps instead of 64 kbps. BEACON has code 0xFF because it is not
+# selectable by telecommand in nominal software — it is entered by
+# TTC_SET_BEACON_MODE (func 70) or by the bootloader.
+tm_rate_tiers:
+  - name: BEACON
+    bps: 1000
+    command_code: 0xFF
+    modulation: BPSK          # 0=BPSK 1=QPSK 2=8PSK 3=OQPSK
+    coding: CONV_RS           # conv K=7 r=1/2 + RS(255,223)
+    coding_gain_db: 7.5
+    # SID 11 is 28 bytes every 30 s = 7.47 bps, so 1 kbps carries the beacon
+    # with 134x headroom. Reachable ONLY from the bootloader / beacon mode.
+    beacon_only: true
+    requires_antenna: false
+  - name: LOW
+    bps: 16000
+    command_code: 0x00        # legacy "low rate" code
+    modulation: BPSK
+    coding: CONV_RS
+    coding_gain_db: 7.5
+    # THE ROUTINE OPERATIONS RATE, and the safe-mode / FDIR fallback. Derived,
+    # not chosen: real-time HK needs 1557 bps of channel, and in a 514 s
+    # maximum pass 16 kbps clears that at 9.7 % duty PLUS 906 kB = 0.85 orbits
+    # of stored HK — the smallest round number at which the spacecraft neither
+    # loses data nor falls behind across an orbit. Sentinel-1's low S-band TM
+    # rate; sits between the AX2150's 9.6 and 19.2 kbps steps. BPSK keeps the
+    # PA in constant envelope, which is what a stowed/safe-mode link wants.
+    requires_antenna: false
+  - name: HIGH
+    bps: 128000
+    command_code: 0x01        # legacy "high rate" code -> now 128 kbps
+    modulation: QPSK
+    coding: RS                # RS(255,223) only
+    coding_gain_db: 6.0
+    # Delayed-telemetry playback and image dumps ONLY. Sentinel-1's nominal
+    # S-band TM rate and the top of the commodity CubeSat TT&C-radio class.
+    # 4 MiB image / 128 000 bps = 262.1 s, which is 58 % of the 448 s average
+    # pass in this mission's 5-station contact statistics — so an image dump
+    # costs a real, schedulable fraction of a pass and pass planning stays the
+    # binding lesson. Gated hard so the tier has to be earned: DOWNLINK/dump
+    # mode AND elevation >= 10 deg (and the PA power/thermal cost that comes
+    # with it).
+    #
+    # QPSK rather than BPSK at this rate is a deliberate call. The link is not
+    # power-limited (35 dB of margin at 5 deg) and 5 MHz of channel is not
+    # scarce (200 kHz at BPSK vs 100 kHz at QPSK), so neither lever is forced.
+    # QPSK is chosen because it halves the occupied bandwidth for the same
+    # information rate and makes the tier step visible on the radio — the
+    # constellation, the eye and the spectrum all change — which teaches that
+    # rate and modulation are independent levers. The counter-argument is
+    # real: flight TT&C radios at this rate (AX2150, EnduroSat) use
+    # constant-envelope GMSK/GFSK, not QPSK, and a saturated PA would prefer
+    # OQPSK; set `modulation: OQPSK` here if that fidelity matters more.
+    requires_antenna: true
+    requires_downlink_mode: true
+    min_elevation_deg: 10.0
+
+# Tier selected on entry to each regime. Names must exist in tm_rate_tiers.
+default_tier: LOW         # routine operations
+beacon_tier: BEACON       # bootloader / beacon mode
+safe_tier: LOW            # safe mode, FDIR fallback, antenna stowed
+
+# Deprecated aliases. Nothing in the simulator reads these any more; they are
+# retained so out-of-lane readers (smo-planner budget_tracker, MCS) keep
+# working until they migrate to tm_rate_tiers. If omitted, smo_common's
+# TTCConfig derives them from the ladder (lo = safe tier, hi = top tier).
+tm_rate_lo_bps: 16000
+tm_rate_hi_bps: 128000
+
 eirp_dbw: 10.0
-gs_g_t_db: 20.0
+gs_g_t_db: 20.0       # Iqaluit 9 m S-band dish (planning/ground_stations.yaml)
 sc_gain_dbi: 3.0
+
+# Telecommand uplink rate. Sentinel-1's TC rate, and the value already in
+# rfsim.yaml pipeline.tc_symbol_rate. This MUST be set explicitly: it used to
+# default to tm_rate_hi_bps, so raising the top TM tier would silently have
+# raised the *uplink* with it and changed the uplink lock timing.
+tc_uplink_rate_bps: 4000
+
+# Concatenated FEC coding gain. Moving the plan from UHF 401.5 MHz to
+# S-band 2200 MHz adds 20*log10(2200/401.5) = 14.8 dB of free-space path
+# loss, so the link only closes with the coding gain the mission actually
+# flies: RS(255,223) contributes ~5-6 dB at BER 1e-5. 6.0 dB matches
+# link_budget.coding_gain_db in configs/eosat1/rfsim.yaml. The previous
+# ttc_basic default of 3.0 dB understated RS alone. Per-tier
+# `coding_gain_db` above overrides this for the tier that is active.
+coding_gain_db: 6.0
+
+# ── Link-budget losses (mirror rfsim.yaml link_budget) ──────────────────
+# ttc_basic used to ignore all of these, which is one reason its margins
+# disagreed with rfsim's. atmospheric_loss_db is the clear-sky zenith figure;
+# below 30 deg elevation it is scaled by cosec(elevation) (0.5*sin30/sin eps),
+# giving 2.87 dB at 5 deg. G/T is de-rated for ground/sky noise pickup at low
+# elevation: -1.5 dB below 10 deg, -0.5 dB below 30 deg.
+atmospheric_loss_db: 0.5
+polarization_loss_db: 0.3
+implementation_loss_db: 2.0
+gt_derate_below_10deg_db: 1.5
+gt_derate_below_30deg_db: 0.5
+# Required Eb/N0 for UNCODED BPSK/QPSK at BER 1e-5 (CCSDS/textbook 9.6 dB).
+# The active tier's coding gain is credited against this, so the effective
+# requirement is 9.6 - 6.0 = 3.6 dB with RS(255,223) and 9.6 - 7.5 = 2.1 dB
+# with conv(7,1/2)+RS. Implementation loss is carried in the loss column
+# above and must NOT be added here as well.
+required_eb_n0_db: 9.6
 
 param_ids:
   ttc_mode: 0x0500

@@ -1,3 +1,23 @@
+# ---------------------------------------------------------------------------
+# `runnable:` — machine-readable link from an ops procedure to an EXECUTABLE
+# definition (roadmap X-12 / defect #83).
+#
+# The 64 markdown documents in this tree are the operations manual and stay
+# authoritative prose; they are NOT rewritten into step lists. An entry that
+# carries a `runnable:` link is additionally offered for execution from the
+# MCS Procedures tab, which loads the linked definition into the procedure
+# runner and shows the markdown alongside it.
+#
+#   runnable: {kind: activity_type, ref: <name in planning/activity_types.yaml>}
+#   runnable: {kind: steps_file,    ref: <path under procedures/, canonical YAML>}
+#   runnable: {kind: markdown}      # derive command steps from the **TC:**
+#                                   # annotations in this document
+#
+# Only a few exemplars are linked today (NOM-002, NOM-003, NOM-009, NOM-008).
+# Adding a link is a Flight-Ops decision per procedure: a document is only
+# automatable if its **TC:** annotations are the whole of its commanding, and
+# most contingency procedures deliberately are not.
+# ---------------------------------------------------------------------------
 procedures:
   # === LEOP Procedures ===
   # Cold-boot ordering note: under the new initial state where ttc_tx,
@@ -236,6 +256,9 @@ procedures:
       payload_ops: "Configure and execute imaging"
       aocs: "Ensure pointing for imaging windows"
     command_services: [8, 11]
+    # Exemplar 1: the commanding half of this procedure is exactly the
+    # imaging_pass activity's verified command sequence.
+    runnable: {kind: activity_type, ref: imaging_pass}
 
   - id: NOM-003
     name: "Data Downlink"
@@ -246,6 +269,24 @@ procedures:
       ttc: "Configure high-rate downlink"
       payload_ops: "Select and prioritize data for download"
     command_services: [8, 15]
+    # Exemplar 2: TTC high rate + S15 science-store dump = data_dump.
+    runnable: {kind: activity_type, ref: data_dump}
+
+  # Phase D: NOM-004 takes the deliberately reserved gap (the facilitator
+  # book's Orbit Maintenance Manoeuvre Planning card).
+  - id: NOM-004
+    name: "Orbit Maintenance Manoeuvre Planning"
+    file: "nominal/orbit_manoeuvre_planning.md"
+    category: nominal
+    required_positions: [flight_director, aocs, propulsion]
+    position_roles:
+      flight_director: "Authorize manoeuvre vector and execution pass"
+      aocs: "FDS: compute delta-V, burn epoch, predicted AOS shift"
+      propulsion: "Verify propulsion health, load S11 sequence"
+    command_services: [3, 8, 11]
+    # Runnable exemplar: the planner's orbit_manoeuvre activity is this
+    # procedure's command sequence (preheat -> set burn -> arm -> execute).
+    runnable: {kind: activity_type, ref: orbit_manoeuvre}
 
   - id: NOM-005
     name: "HK Configuration"
@@ -284,6 +325,12 @@ procedures:
       flight_director: "Verify time delta threshold"
       fdir_systems: "Execute time update command"
     command_services: [9]
+    # Exemplar 4 — the `markdown` adapter: the commanding skeleton is derived
+    # from this document's own **TC:** annotations, with no separate
+    # definition to keep in step. Prose, verification text and GO/NO-GO
+    # wording are NOT interpreted, so the operator must read the document
+    # alongside the run (the Procedures tab shows both).
+    runnable: {kind: markdown}
 
   - id: NOM-009
     name: "Routine Health Check"
@@ -293,6 +340,8 @@ procedures:
     position_roles:
       flight_director: "Review all subsystem parameters"
     command_services: [3, 5]
+    # Exemplar 3: a single S3.27 HK request.
+    runnable: {kind: activity_type, ref: housekeeping_collection}
 
   - id: NOM-010
     name: "Eclipse Transition"
@@ -321,6 +370,19 @@ procedures:
     position_roles:
       flight_director: "Conduct handover briefing and log"
     command_services: []
+
+  # Phase D: the book's execution card is NOM-005; sim NOM-005 was already
+  # HK Configuration, so execution is NOM-013 (book carries an editor's note).
+  - id: NOM-013
+    name: "Orbit Maintenance Manoeuvre Execution"
+    file: "nominal/orbit_manoeuvre_execution.md"
+    category: nominal
+    required_positions: [flight_director, aocs, propulsion]
+    position_roles:
+      flight_director: "GO/NO-GO at arm, standing abort authority delegated"
+      aocs: "Hold burn attitude, monitor att_error, post-burn momentum"
+      propulsion: "Preheat, arm, execute, monitor thrust, post-burn OD"
+    command_services: [3, 8, 11]
 
   # === Contingency Procedures ===
   - id: CTG-001
@@ -595,6 +657,19 @@ procedures:
       aocs: "Monitor AOCS mode, re-commission if SAFE_BOOT triggered"
       fdir_systems: "Verify OBC time updated, monitor events"
     command_services: [8, 9]
+
+  # Phase D: the book numbers this CTG-006; sim CTG-006 was already Payload
+  # Anomaly, so the propulsion card is CTG-028 (book carries an editor's note).
+  - id: CTG-028
+    name: "Propulsion Anomaly"
+    file: "contingency/propulsion_anomaly.md"
+    category: contingency
+    required_positions: [flight_director, propulsion, fdir_systems]
+    position_roles:
+      flight_director: "Accept the bounded CAM reserve, authorize inhibit"
+      propulsion: "Isolate, bound remaining delta-V, ticket"
+      fdir_systems: "Correlate S12/S19 triggers, verify autonomy actions"
+    command_services: [3, 8]
 
   # === Emergency Procedures ===
   - id: EMG-001

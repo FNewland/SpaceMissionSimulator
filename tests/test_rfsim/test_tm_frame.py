@@ -6,6 +6,7 @@ from smo_common.protocol.ecss_packet import build_tm_packet
 from smo_rfsim.ccsds.tm_frame import (
     TMFrameHeader, TMFrameBuilder, TMFrameParser,
     TF_HEADER_LENGTH, FIRST_HEADER_POINTER_NO_PACKET,
+    FIRST_HEADER_POINTER_IDLE,
 )
 
 
@@ -99,3 +100,74 @@ class TestTMFrameParser:
                 recovered.extend(parser.extract_packets(parsed))
         assert len(recovered) == 1
         assert recovered[0] == original
+
+
+class TestFlushDoesNotLeakPacketOffsets:
+    """Regression: TMFrameBuilder.flush() used to leave stale packet offsets.
+
+    ``add_packet`` records where each packet starts so ``_drain_frames`` can
+    compute the First Header Pointer. ``flush`` cleared the byte buffer but not
+    those offsets, so every later frame inherited a stale offset and advertised
+    a wrong FHP. The receiver then resynchronised at the wrong byte, emitting
+    garbage packets and — when the leftover was a mid-packet continuation —
+    dropping a whole frame's worth of telemetry.
+
+    Symptom: acceptance commands intermittently getting no S1.1 ACK at all
+    (test_commands.py::TestAOCSCommandsRF::test_st2_power_on).
+    """
+
+    @staticmethod
+    def _batch(builder, parser, sizes):
+        """Push one batch of packets through builder.flush() and recover them."""
+        sent, frames = [], []
+        for n in sizes:
+            pkt = build_tm_packet(1, 3, 25, b'\x5A' * (n - 13))
+            sent.append(pkt)
+            frames.extend(builder.add_packet(pkt, vcid=0))
+        frames.extend(builder.flush(vcid=0))
+
+        recovered = []
+        for f in frames:
+            raw = f.header.pack() + f.data + struct.pack('>H', f.fecf)
+            parsed = parser.parse_frame(raw)
+            if parsed:
+                recovered.extend(parser.extract_packets(parsed))
+        return sent, recovered
+
+    def test_flush_clears_recorded_offsets(self):
+        builder = TMFrameBuilder(scid=1, frame_length=1115, fecf_present=True)
+        builder.add_packet(build_tm_packet(1, 3, 25, b'\x00' * 40), vcid=0)
+        builder.flush(vcid=0)
+        assert builder._get_pkt_offsets(0) == [], (
+            "flush() left packet-start offsets behind; the next frame will "
+            "advertise a stale First Header Pointer")
+        assert builder._get_buffer(0) == bytearray()
+
+    def test_flushed_frame_fhp_points_at_a_real_packet_header(self):
+        """A flush whose leftover is a continuation must not advertise FHP=0."""
+        builder = TMFrameBuilder(scid=1, frame_length=1115, fecf_present=True)
+        data_zone = builder.data_zone_length
+        # One packet that overruns the data zone by a few bytes, so the flushed
+        # frame starts mid-packet and contains no packet header at all.
+        big = build_tm_packet(1, 3, 25, b'\x11' * (data_zone + 20 - 13))
+        frames = builder.add_packet(big, vcid=0)
+        frames += builder.flush(vcid=0)
+
+        assert len(frames) == 2
+        assert frames[0].header.first_header_pointer == 0
+        assert frames[1].header.first_header_pointer == FIRST_HEADER_POINTER_IDLE, (
+            "the continuation frame claimed a packet starts at byte 0")
+
+    def test_repeated_batches_recover_every_packet_exactly_once(self):
+        """Six add/flush cycles across a frame boundary lose and invent nothing."""
+        builder = TMFrameBuilder(scid=1, frame_length=1115, fecf_present=True)
+        parser = TMFrameParser(frame_length=1115, fecf_present=True)
+        # Sizes chosen to overrun the 1107-byte data zone by ~30 bytes, i.e. the
+        # telemetry burst an acceptance-test command produces.
+        sizes = [103, 145, 70, 62, 73, 19, 17, 19, 103, 103, 103, 103, 145, 47, 26]
+
+        for batch in range(6):
+            sent, recovered = self._batch(builder, parser, sizes)
+            assert recovered == sent, (
+                f"batch {batch}: recovered {len(recovered)} packets, "
+                f"sent {len(sent)} — FHP desynchronisation")

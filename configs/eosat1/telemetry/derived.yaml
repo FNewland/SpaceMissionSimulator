@@ -1,0 +1,18 @@
+# Ground-derived pseudo-parameters
+#
+# These are NOT spacecraft telemetry. The ground segment computes them from
+# the orbit propagator and the ground-station catalogue; the spacecraft never
+# downlinks them and no HK structure can contain them. They lived in
+# telemetry/parameters.yaml, where the parameter-chain contract test correctly
+# flagged them as unreachable — they are in no HK SID and no S20 read can
+# return them, because the spacecraft has no such parameter (brief 08
+# finding 12).
+#
+# Keeping them here preserves the ids for any display that still refers to
+# them while making the distinction explicit: a spacecraft parameter catalogue
+# should contain only things the spacecraft produces.
+
+derived_parameters:
+  - { id: 0x0800, name: contact.current_gs, source: ground, units: "", description: "Current ground station index (ground: orbit propagation vs ground_stations.yaml)" }
+  - { id: 0x0801, name: contact.time_to_aos, source: ground, units: s, description: "Time to acquisition of signal (ground: next contact window)" }
+  - { id: 0x0802, name: contact.in_contact, source: ground, units: "", description: "Currently in contact (ground: elevation above the station mask)" }

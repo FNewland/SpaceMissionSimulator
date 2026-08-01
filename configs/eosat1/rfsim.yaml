@@ -1,5 +1,16 @@
 # RF Simulation Bridge Configuration — EOSAT-1
 # Set SMO_RF_MODE=FRAME or SMO_RF_MODE=RF to activate, or override via CLI
+#
+# RF PLAN: S-band, per CCSDS 401.0-B near-Earth allocations and
+# configs/eosat1/planning/ground_stations.yaml:
+#   uplink   2025–2110 MHz  (2025.0 MHz used)
+#   downlink 2200–2290 MHz  (2200.0 MHz used)
+# This file, configs/eosat1/subsystems/ttc.yaml and ground_stations.yaml
+# now agree (roadmap N-4 / DI-05).
+#
+# Unknown keys are REJECTED at load (ConfigError) rather than silently
+# dropped — that silent drop is what made channel.frequency_hz dead
+# config for the life of the project (defect #55).
 
 mode: PACKET   # PACKET | FRAME | RF
 
@@ -12,15 +23,108 @@ ccsds:
   fecf_present: true       # Frame Error Control Field (CRC-16)
   rs_enabled: true         # Reed-Solomon RS(255,223)
   convolutional_enabled: false  # Disabled: pure-Python Viterbi too slow (~5s/frame). RS-only provides adequate FEC. Enable when using GNU Radio C++ Viterbi.
+  # Follow the spacecraft's active TM rate tier's FEC (subsystems/ttc.yaml
+  # tm_rate_tiers): BEACON/LOW code conv(7,1/2)+RS, HIGH codes RS only.
+  # Left OFF by default for the same Viterbi-speed reason; the reported coding
+  # still follows the tier in telemetry and in the radio UI. Turn this on
+  # together with a C++ Viterbi and the low tiers gain their extra ~1.5 dB.
+  convolutional_follow_tier: false
+
+pipeline:
+  # Modulation: 0=BPSK 1=QPSK 2=8PSK 3=OQPSK 4=16-APSK 5=pi/4-DQPSK
+  #             6=GMSK 7=GFSK   (all eight have TX *and* RX support)
+  modulation: 0
+  # baud; retuned live from the ACTIVE TM rate tier (subsystems/ttc.yaml
+  # tm_rate_tiers) as bit rate / bits-per-symbol. 16000 Bd is the LOW tier
+  # (16 kbps BPSK), which is the ROUTINE OPERATIONS rate — i.e. what the
+  # pipeline runs at before the first WS update arrives. The HIGH tier
+  # (128 kbps QPSK) retunes it to 64000 Bd.
+  symbol_rate: 16000.0
+  sps: 8                   # samples/symbol → 128 kHz baseband at LOW,
+                           # 512 kHz at HIGH
+  rrc_rolloff: 0.35        # CCSDS 401.0-B SRRC
+  gmsk_bt: 0.5             # Gaussian BT product (GMSK/GFSK)
+  gfsk_mod_index: 0.5      # GFSK modulation index h (GMSK is fixed at 0.5)
+  gray_coding: true        # Gray-code the PSK maps so BER matches theory
+  sample_buffer_depth: 128
+  tc_symbol_rate: 4000.0   # uplink (CLTU) symbol rate
+  tc_sps: 16
+  rx_loop_bw: 0.08         # residual carrier tracking loop bandwidth
+  tc_uplink_eb_n0_db: 25.0 # ground HPA gives a much stronger uplink
+  track_data_rate: true    # follow the commanded TM bit rate
+  min_symbol_rate: 250.0
+  # Derived from the regulation, not picked: NASA's S-band table caps a
+  # mission at 5.00 MHz occupied in 2200-2290 MHz and occupied BW is
+  # (1 + rrc_rolloff) x symbol rate, so at alpha 0.35 the legal ceiling is
+  # 5.00e6 / 1.35 = 3.70 MBd. The shipped HIGH tier is 128 kbps QPSK =
+  # 64 kBd (99.5 kHz occupied after RS and frame overhead), 2.0 % of the
+  # allocation. The old 200 kBd ceiling was an arbitrary constant.
+  max_symbol_rate: 3700000.0
 
 channel:
   eb_n0_db: 10.0           # Eb/N0 in dB (typ. 8-12 for S-band LEO)
-  ber_target: 1.0e-6       # Target BER for bit-flip injection
-  frequency_hz: 2200.0e6   # S-band downlink center frequency (Hz)
-  path_loss_db: 169.0      # Free-space path loss at 450 km, 2200 MHz
+  ber_target: 1.0e-6       # Target BER for bit-flip injection (FRAME mode)
+  frequency_hz: 2200.0e6   # S-band downlink centre frequency (Hz)
+  uplink_frequency_hz: 2025.0e6   # S-band uplink centre frequency (Hz)
+  path_loss_db: 152.4      # Free-space path loss at 450 km, 2200 MHz
   doppler_hz: 0.0          # Doppler shift (updated from orbit model)
   delay_ms: 1.5            # One-way propagation delay (450 km / c)
   awgn_enabled: true
+  seed: 42                 # deterministic impairments
+
+  # ── RF impairments (live, injectable at runtime via POST /api/channel) ──
+  phase_noise_enabled: false
+  phase_noise_linewidth_hz: 10.0   # cubesat TCXO ~10-100 Hz
+  fading_enabled: false
+  fading_k_factor_db: 10.0         # Rician K (high elevation LEO)
+  fading_max_doppler_hz: 50.0
+  multipath_enabled: false
+  multipath_taps: []
+  # Impairments are injected as entries in this list; each is any registered
+  # `apply(samples)` object selected by `type`. Empty = none (disabled by
+  # default). Built-in types: cw, wideband. SatHack-derived types (roadmap
+  # X-15, docs/SATHACK_IMPAIRMENTS.md): doppler_ramp, oscillator_drift,
+  # iq_imbalance, dc_offset. Deterministic via `channel.seed` above.
+  #
+  # [{type: cw, freq_offset_hz: 5000, power_dbm: -35},
+  #  {type: wideband, bandwidth_hz: 50000, center_offset_hz: 0, power_dbm: -40},
+  #
+  #  # Realistic LEO Doppler S-curve (TLE-free) — ported from SatHack
+  #  # rfchain/doppler.py + sim.py. Ramps through 0 Hz at closest approach.
+  #  {type: doppler_ramp, altitude_km: 550, elevation_max_deg: 90,
+  #   pass_duration_s: 600, t_ca_s: 300, max_doppler_hz: 48000},
+  #
+  #  # Slow oscillator frequency error: offset + linear drift + aging + walk —
+  #  # ported from SatHack rfchain/sim.py add_cfo + config.yaml ppm/offset notes.
+  #  {type: oscillator_drift, f0_hz: 100, drift_hz_s: 5, aging_hz_s2: 0, walk_hz: 0},
+  #
+  #  # Quadrature gain/phase imbalance -> conjugate image tone — the effect
+  #  # SatHack's recorder tunes around (config.yaml sdr.freq_offset_hz).
+  #  {type: iq_imbalance, gain_db: 0.5, phase_deg: 2.0},
+  #
+  #  # Constant I/Q bias (RTL "centre birdie") — forward model of SatHack
+  #  # cf32_source.remove_dc.
+  #  {type: dc_offset, offset_i: 0.05, offset_q: 0.0}]
+  interferers: []
+
+# These MUST agree with configs/eosat1/subsystems/ttc.yaml, which now carries
+# the same eirp_dbw / gs_g_t_db / atmospheric_loss_db / implementation_loss_db
+# / polarization_loss_db / coding_gain_db keys and computes the spacecraft-side
+# budget from them. coding_gain_db here is the RS(255,223)-only figure, i.e.
+# the HIGH tier; the BEACON and LOW tiers carry 7.5 dB per-tier in ttc.yaml
+# for conv(7,1/2)+RS.
+link_budget:
+  enabled: true
+  eirp_dbw: 10.0
+  gs_gt_dbk: 20.0                  # fallback when no station is in contact
+  atmospheric_loss_db: 0.5
+  implementation_loss_db: 2.0
+  polarization_loss_db: 0.3
+  coding_gain_db: 6.0
+  # Per-station G/T is read from the planner's station list; the station
+  # actually in contact is selected at runtime from the sim WS feed.
+  ground_stations_file: planning/ground_stations.yaml
+  default_ground_station: Iqaluit
 
 network:
   # Upstream (simulator)
@@ -37,3 +141,6 @@ network:
   radio_port: 8094
   # ZMQ PUB port for raw baseband sample stream (SatHack, gr-satellites, etc.)
   zmq_samples_port: 5555
+  # Runtime control plane (POST /api/channel|pipeline|link). Also settable
+  # with the bridge's --radio-control flag.
+  radio_control_enabled: false

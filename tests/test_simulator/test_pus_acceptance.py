@@ -223,7 +223,9 @@ class TestS1NotAccepted:
 class TestInvalidServiceRejected:
     """Unknown services must be rejected with error code 0x0001."""
 
-    @pytest.mark.parametrize("service", [0, 4, 7, 10, 13, 14, 16, 18, 99, 255])
+    # NOTE: service 18 (OBCP) was moved out of this list when on-board
+    # scripting was implemented (defect #48) — it is now a known service.
+    @pytest.mark.parametrize("service", [0, 4, 7, 10, 13, 14, 16, 99, 255])
     def test_invalid_service_rejected(self, service):
         """Services outside the known set should be rejected."""
         engine = _make_engine()

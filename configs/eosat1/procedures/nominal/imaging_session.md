@@ -50,7 +50,23 @@ temperature is not decreasing, check cooler status and abort if necessary.
 **Verify:** `eps.power_cons` (0x0106) increase observed (payload power draw)
 **Note:** Imaging session timer starts. Nominal session duration per pass plan.
 
-### Step 5 --- Monitor Image Acquisition
+### Step 5 --- Trigger the Acquisition(s)
+**TC:** `PAYLOAD_CAPTURE(scene_id=N, lines=2048)` (Service 8, Subtype 1, func_id 28)  \
+**Wire:** `1C <scene_id:uint16> 08 00` --- e.g. scene 1042 = `1C 04 12 08 00`
+**Note:** Images do NOT appear on their own. Each capture is one commanded
+acquisition: `scene_id` is the ground-assigned product id (0 = let the payload
+auto-assign) and `lines` is the along-track strip length, 256-20000. 2048 lines
+at the 500 Hz line rate is a 4.10 s acquisition and, at four enabled bands, the
+4.0 MB reference frame; halving `lines` halves the stored volume. Geolocation is
+stamped on board from the ephemeris at shutter open --- it is not an argument.
+**Note:** Repeat for each planned target in this session. A capture is REFUSED
+with TM(1,8) if AOCS is not holding FINE_POINT with total error < 0.05 deg, if
+the FPA is not ready, or if the store cannot hold the frame --- the failure
+notice names which gate refused it.
+**Verify:** `payload.last_scene_id` (0x060C) = the commanded `scene_id` within 10 s
+**Verify:** `payload.last_scene_quality` (0x060D) --- record for each product
+
+### Step 5a --- Monitor Image Acquisition
 **TC:** `HK_REQUEST` SID=6 (Service 3, Subtype 25) --- poll every 30 s
 **Verify:** `payload.image_count` (0x0605) incrementing (current > N0)
 **Verify:** `payload.store_used` (0x0604) < 95 % throughout session

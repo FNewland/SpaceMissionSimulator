@@ -32,3 +32,6 @@ modes:
   8:
     name: "ECLIPSE"
     description: "Eclipse hold. Gyro-only propagation, minimal power consumption."
+  9:
+    name: "INERTIAL"
+    description: "Inertial hold at a commanded ECI quaternion (calibration star fields, off-nadir stereo). Appended in Phase C — modes 0-8 are never renumbered."

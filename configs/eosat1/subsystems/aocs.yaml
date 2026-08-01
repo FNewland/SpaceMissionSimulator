@@ -1,13 +1,93 @@
 model: aocs_basic
 modes: [nominal, detumble, safe, wheel_desat, slew]
 
+# ═══════════════════════════════════════════════════════════════════════
+# Phase C spacecraft definition (brief 02 §Proposed model, re-derived for
+# the Phase B 6U-class EO-Sat-1: ~12 kg, deployed wings 2 x 0.15 m²).
+# DECISIONS.md §4 resolution: the reaction-wheel momentum budget is derived
+# from a real current-production 6U-class wheel datasheet, not from either
+# of the two prior contradictory numbers (book 1.5e-5 / sim 5e-3 kg·m²).
+# ═══════════════════════════════════════════════════════════════════════
+
+mass_properties:
+  mass_kg: 12.0
+  # 6U (0.1 x 0.2 x 0.3 m) at 12 kg with deployed wings on ±Y; +Z is the
+  # payload boresight (nadir in NOMINAL). Small products of inertia.
+  inertia_kgm2:
+    - [0.180,  0.002, -0.003]
+    - [0.002,  0.150,  0.001]
+    - [-0.003, 0.001,  0.060]
+
 reaction_wheels:
+  # Anchor: Rocket Lab (Sinclair Interplanetary) RW-0.03 class — a current-
+  # production 6U/12U reaction wheel: 30 mN·m·s momentum storage, 2 mN·m
+  # peak torque, ~185 g, steel flywheel. Rotor inertia derived from the
+  # datasheet momentum at the 5500 rpm speed limit:
+  #   I_w = 0.030 N·m·s / (5500 rpm · 2π/60) = 5.2e-5 kg·m²
+  # Axis authority (pyramid az 45/135/225/315°, el 30°):
+  #   X/Y ≈ 2·cos30·cos45·h = 0.037 N·m·s per axis, Z ≈ 2·h = 0.060 N·m·s
+  count: 4
+  geometry: pyramid            # az 45/135/225/315 deg, el 30 deg above XY
   max_speed_rpm: 5500
-  nominal_speed_rpm: 1200
+  nominal_speed_rpm: 1200      # bias speeds [+,-,+,-]: zero net momentum
   desaturation_speed_rpm: 200
+  rotor_inertia_kgm2: 5.2e-5
+  max_torque_nm: 0.002
+  motor_tau_s: 0.05
+  coulomb_friction_nm: 2.0e-6
+  viscous_friction_nm_per_rads: 1.0e-8
+
+magnetorquers:
+  # Anchor: NewSpace Systems NCTR-M016 class rod, 1.6 A·m² — a standard
+  # 6U-class magnetorquer. τ = m x B ≈ 4.8e-5 N·m at 30 µT: dumps a full
+  # 0.02 N·m·s wheel loading in ~5-8 min (consistent with manual §6.1).
+  count: 3
+  max_dipole_am2: 1.6
+
+disturbances:
+  # 450 km SSO, 6U with deployed wings. Magnitudes (each bounded in
+  # tests/test_simulator/test_aocs_dynamics.py):
+  #   gravity gradient ≤ 3µ/R³·ΔI ≈ 4.5e-7 N·m (45° off-nadir)
+  #   aero ≈ ½ρv²·Cd·A·d ≈ 2.3e-7 N·m   (secular in LVLH)
+  #   residual dipole ≈ |m|·B ≈ 5e-7 N·m (cyclic)
+  #   SRP ≈ P·Cr·A·d ≈ 1.1e-7 N·m, zero in eclipse
+  residual_dipole_am2: [0.008, -0.005, 0.006]   # |m| ≈ 0.011 A·m²
+  drag_area_m2: 0.06
+  cp_cg_offset_m: 0.03
+  srp_area_m2: 0.34
+  cd: 2.2
+  cr: 1.5
+  rho_kgm3: 2.0e-12
+
+integration:
+  # RK4 on (q, ω) at fixed h; sub-stepped N = ceil(dt/h) capped. Stability
+  # margin at h=0.5: fastest closed-loop mode ωn=0.08 → ωn·h = 0.04 vs the
+  # RK4 limit 2.83 (70x). Above `secular_above_speed` the fast loop is
+  # bypassed (SECULAR mode, event 0x020D, telemetry 0x02C6).
+  h_s: 0.5
+  max_substeps: 120
+  secular_above_speed: 60.0
+
+sensors:
+  star_tracker:
+    # Anchor: Blue Canyon NST (nano star tracker) class: NEA 6″ cross-
+    # boresight / 40″ about-boresight (1σ), thermoelastic LF bias ≈8″ 3σ
+    # (1/e ≈ 1 orbit), mounting misalignment 15″. 4 Hz in FINE, 1 Hz else.
+    nea_cross_arcsec: 6.0
+    nea_roll_arcsec: 40.0
+    lf_bias_arcsec: 3.0        # 1σ per axis (≈ 8″ 3σ)
+    misalign_arcsec: 15.0
+  gyro:
+    # Anchor: tactical-grade IMU flown on 6U missions (Epson M-G370 /
+    # Sensonor STIM class; manual §2.1 calls the unit fibre-optic):
+    # ARW 0.06°/√h = 0.001 °/√s, bias instability ~0.1°/h.
+    arw_dps_rtsec: 0.001
+    bias_tau_s: 1800.0
+    bias_ss_dps: 2.8e-5        # 0.1 deg/h steady-state bias sigma
+    noise_dps: 0.0005          # post-filter per-sample floor
 
 num_wheels: 4
-attitude_error_deadband_deg: 0.01
+attitude_error_deadband_deg: 0.005   # FINE control deadband (real, WP-6)
 
 param_ids:
   att_q1: 0x0200
@@ -37,3 +117,4 @@ param_ids:
   rw2_temp: 0x0219
   rw3_temp: 0x021A
   rw4_temp: 0x021B
+  slew_state: 0x0292

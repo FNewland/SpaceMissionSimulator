@@ -5,7 +5,18 @@
 **Model file:** `packages/smo-simulator/src/smo_simulator/models/ttc_basic.py`
 **Config file:** `configs/eosat1/subsystems/ttc.yaml`
 **Date:** 2026-03-12
+**Revised:** 2026-07-29 — §6 (data rates) rewritten for the shipped three-tier
+TM data-rate ladder (defects #85 spacecraft side, #86 ground segment).
 **Target:** Undetectably different from real spacecraft TTC behaviour
+
+> **Status note (2026-07-29).** Gap 4 below is **CLOSED**. This document
+> originally proposed a two-rate state machine — 100 bps beacon, 1 kbps low and
+> the then-current 64 kbps high rate, gated on antenna deployment. All three of
+> those figures are now retired. What shipped is a three-rung,
+> config-driven ladder in `subsystems/ttc.yaml tm_rate_tiers`:
+> **BEACON 1 kbps / LOW 16 kbps / HIGH 128 kbps**, with LOW as the *routine
+> operations* rate rather than a degraded one. §6 has been rewritten to
+> describe what was built. The other gaps are unchanged.
 
 ---
 
@@ -37,7 +48,7 @@ The existing TTC model (`TTCBasicModel`, 432 lines) in `packages/smo-simulator/s
 | `link_active` | bool | False | Current link state |
 | `rssi_dbm` | float | -120.0 | Received signal strength indicator |
 | `link_margin_db` | float | 0.0 | Link margin above threshold |
-| `tm_data_rate` | int | 64000 | Telemetry downlink rate (bps) |
+| `tm_data_rate` | int | 16000 | Active TM information rate (bps) — the LOW tier, which is where routine operations sit |
 | `xpdr_temp` | float | 28.0 | Transponder temperature (degC) |
 | `ranging_active` | bool | False | Ranging tone active flag |
 | `range_km` | float | 0.0 | Slant range to ground station |
@@ -147,7 +158,7 @@ The model currently assumes:
 | G1 | Dedicated PDM command channel (15-min timer) | LEOP operations, power bus reconfiguration training | **Critical** -- operators will not learn the 15-min window constraint |
 | G2 | Burn wire antenna deployment | LEOP antenna deployment procedure, failure scenarios | **Critical** -- operators skip a real mission-critical irreversible event |
 | G3 | Beacon packet mode (bootloader) | First acquisition, safe mode recovery, emergency comms | **High** -- beacon is the first signal operators see post-separation |
-| G4 | Low-rate pre-deployment / high-rate post-deployment | LEOP data rate management, link budget awareness | **High** -- operators must plan around 1 kbps limit before deployment |
+| G4 | TM data-rate ladder (**CLOSED 2026-07-29**, §6) | LEOP rate management, link-budget awareness, pass planning | **High** -- operators must plan dumps onto passes that clear the HIGH tier's 10 deg gate; routine operations run at LOW (16 kbps) with no gate at all |
 | G5 | Dual GS with per-station link budget | Pass planning, station selection, concurrent tracking | **Critical** -- real ops always involve station handover and selection |
 | G6 | GS equipment failure injection | Contingency training, station failover procedures | **Medium** -- extends existing failure injection framework |
 
@@ -302,8 +313,8 @@ Both commands should be rejected if `antenna_deployed == True` (irreversible) or
 
 The link budget calculation in the `tick` method (line 177-215) currently uses `self._sc_gain`. This must be replaced with a dynamic `effective_gain` that reflects the antenna deployment state:
 
-- **Pre-deployment**: RSSI drops by ~6 dB, link margin will be negative or marginal at most elevations, forcing 1 kbps data rate
-- **Post-deployment**: RSSI returns to nominal, link margin positive, enabling 64 kbps
+- **Pre-deployment**: RSSI drops by ~6 dB. The LOW tier (16 kbps) is deliberately *not* gated on antenna deployment — a stowed-antenna spacecraft must still be able to send housekeeping — so this shows up as reduced margin, not as a forced rate change
+- **Post-deployment**: RSSI returns to nominal, and the antenna gate on the HIGH tier (128 kbps) opens
 
 #### 4.3.5 Failure Injection
 
@@ -323,17 +334,17 @@ After separation from the launch vehicle, the spacecraft OBC boots into a bootlo
 
 1. **Beacon content**: Fixed-format packet containing spacecraft ID, battery voltage, OBC temperature, transponder status, and a mission-elapsed-time counter. Approximately 64 bytes.
 2. **Beacon interval**: Transmitted every 10 seconds on the downlink frequency.
-3. **Beacon data rate**: 100 bps (dedicated low-rate channel, distinct from the 1 kbps telemetry rate).
+3. **Beacon data rate**: real CubeSat beacons run at 1200-9600 bps (GASPACS 9600 bps 2GFSK, OPS-SAT 9.6 kbit/s GMSK). EOSAT-1 flies **1000 bps** as its BEACON rung — SID 11 is 28 bytes every 30 s = 7.5 bps, so 1 kbps carries it with 134x headroom in ~3.1 kHz of occupied bandwidth. The 100 bps figure this document originally proposed was below any flown beacon rate and was not adopted.
 4. **No uplink processing**: In pure beacon mode, the transponder transmits but does not process uplink commands until the bootloader hands off to the flight software.
 5. **Duration**: Beacon mode persists from separation until OBC boot completes (typically 90--180 seconds) or until ground command switches to normal TM mode.
 6. **Emergency fallback**: Beacon mode can be re-entered by the FDIR system if the OBC enters safe mode, providing a minimal lifeline for recovery.
 
 ### 5.2 Current Model Behaviour
 
-- No beacon mode concept. The model starts in a fully operational state.
-- `tm_data_rate` can only be 1000 or 64000 bps (set via `set_tm_rate` command).
-- No bootloader or startup sequence simulation.
-- No reduced-content telemetry frame.
+- ~~No beacon mode concept.~~ **CLOSED** — `beacon_mode` forces the BEACON rung.
+- ~~`tm_data_rate` can only be 1000 or 64000 bps.~~ **CLOSED** — `tm_data_rate` takes any rung of `tm_rate_tiers`: 1000 (BEACON), 16000 (LOW), 128000 (HIGH).
+- ~~No bootloader or startup sequence simulation.~~ **CLOSED** — see LEOP-001.
+- No reduced-content telemetry frame (SID 11 is the reduced set, so this is largely moot).
 
 ### 5.3 Implementation Requirements
 
@@ -372,7 +383,7 @@ IF bootloader_active:
         bootloader_active = False
         uplink_enabled = True
         beacon_mode = False
-        tm_data_rate = tm_rate_lo  # Switch to 1 kbps (pre-deployment)
+        tm_data_rate = tier(safe_tier).bps  # LOW, 16 kbps — the safe/FDIR rung
         EMIT event "Bootloader complete -- flight SW active"
 ELSE:
     # Normal telemetry mode
@@ -407,90 +418,160 @@ The FDIR system (configured in `configs/eosat1/fdir/fdir.yaml`) should be able t
 
 ---
 
-## 6. Gap 4 -- Low-Rate Pre-Deployment / High-Rate Post-Deployment Link
+## 6. Gap 4 -- The TM Data-Rate Ladder  **[CLOSED 2026-07-29]**
 
 ### 6.1 Real Spacecraft Behaviour
 
-The data rate lifecycle through LEOP is:
+Real LEO missions do not have "a low rate and a high rate". They have a small,
+fixed, programmable set of TM rates selected by telecommand as part of the pass
+plan. Copernicus Sentinel-1 is the closest precedent to this mission: an S-band
+housekeeping downlink with **16 / 128 / 512 kbit/s** programmable rates over a
+fixed 4 kbit/s telecommand uplink. Commodity CubeSat TT&C radios bracket the
+same range (GomSpace NanoCom AX2150 tops out at 96 kbps, EnduroSat S-band at
+125 kbps), so a 6U can fly the whole ladder on one radio.
 
-1. **Beacon mode** (100 bps): Separation to boot complete (~2 minutes)
-2. **Low-rate telemetry** (1 kbps): Boot complete to antenna deployment (could be minutes to hours, depending on pass schedule and deployment procedure timing)
-3. **High-rate telemetry** (64 kbps): After antenna deployment confirmation
+The rate lifecycle through LEOP is therefore:
 
-The rate transitions are not arbitrary -- they are driven by the physical link margin available:
+1. **BEACON (1 kbps)**: separation to boot complete. Bootloader only.
+2. **LOW (16 kbps)**: from application boot onwards. This is the **routine
+   operations** rate, not a degraded one — it carries the full periodic
+   housekeeping set and plays back stored HK.
+3. **HIGH (128 kbps)**: raised per dump, released afterwards.
 
-- At 1 kbps with the stowed antenna (-3 dBi), the link closes with ~3 dB margin at 30 deg elevation at 700 km slant range.
-- At 64 kbps with the stowed antenna, the link does NOT close (negative margin) -- the required Eb/N0 increases by 10*log10(64000/1000) = 18 dB.
-- At 64 kbps with the deployed antenna (+3 dBi), the link closes with ~9 dB margin.
+### 6.2 What Was Built
 
-### 6.2 Current Model Behaviour
-
-- `tm_data_rate` is set to `tm_rate_hi` (64000) at configure time.
-- Operator can switch between `tm_rate_hi` and `tm_rate_lo` via `set_tm_rate` command at any time.
-- No enforcement that high rate requires deployed antenna.
-- No automatic rate selection based on link margin.
-
-### 6.3 Implementation Requirements
-
-#### 6.3.1 Rate State Machine
-
-```
-         [SEPARATION]
-              |
-              v
-     +------------------+
-     |   BEACON (100)   |  bootloader_active=True
-     +------------------+
-              |  boot complete
-              v
-     +------------------+
-     |  LOW_RATE (1k)   |  antenna_deployed=False
-     +------------------+
-              |  antenna deployed
-              v
-     +------------------+
-     | HIGH_RATE (64k)  |  antenna_deployed=True
-     +------------------+
-              |
-        [operator can switch between 1k and 64k]
-```
-
-#### 6.3.2 Automatic Rate Limiting
-
-The model should enforce that `set_tm_rate` to 64 kbps is rejected if the antenna is not deployed (link would not close). This prevents operators from making unrealistic rate selections:
-
-```python
-elif command == "set_tm_rate":
-    rate = int(cmd.get("rate", self._tm_rate_hi))
-    if rate == self._tm_rate_hi and not self._state.antenna_deployed:
-        return {"success": False,
-                "message": "High rate requires deployed antenna"}
-    if rate in (self._tm_rate_hi, self._tm_rate_lo):
-        self._state.tm_data_rate = rate
-        return {"success": True}
-    return {"success": False, "message": "Invalid rate"}
-```
-
-#### 6.3.3 Link Budget Impact
-
-The link budget calculation already uses `s.tm_data_rate` in the noise bandwidth term (`10 * math.log10(s.tm_data_rate)`). With the rate lifecycle properly enforced:
-
-- At 100 bps beacon: noise BW = 20 dB, giving ~18 dB more margin than 64 kbps
-- At 1 kbps: noise BW = 30 dB, giving ~18 dB more margin than 64 kbps
-- At 64 kbps: noise BW = 48 dB, requiring deployed antenna gain
-
-This means the existing link budget math naturally handles the rate change -- the gap is purely in the state management and enforcement logic.
-
-#### 6.3.4 New Configuration in `ttc.yaml`
+`configs/eosat1/subsystems/ttc.yaml` defines the ladder as configuration; the
+model reads it and nothing hard-codes a rate:
 
 ```yaml
-# Data rate lifecycle
-beacon_rate_bps: 100
-tm_rate_lo_bps: 1000
-tm_rate_hi_bps: 64000
-enforce_rate_vs_antenna: true   # Reject high rate without deployed antenna
-auto_rate_on_deploy: true       # Auto-switch to high rate on deployment
+tm_rate_tiers:
+  - {name: BEACON, bps: 1000,   command_code: 0xFF, modulation: BPSK, coding: CONV_RS,
+     coding_gain_db: 7.5, beacon_only: true,  requires_antenna: false}
+  - {name: LOW,    bps: 16000,  command_code: 0x00, modulation: BPSK, coding: CONV_RS,
+     coding_gain_db: 7.5, requires_antenna: false}
+  - {name: HIGH,   bps: 128000, command_code: 0x01, modulation: QPSK, coding: RS,
+     coding_gain_db: 6.0, requires_antenna: true, requires_downlink_mode: true,
+     min_elevation_deg: 10.0}
+default_tier: LOW         # routine operations
+beacon_tier: BEACON       # bootloader / beacon mode
+safe_tier: LOW            # safe mode, FDIR fallback
+tc_uplink_rate_bps: 4000  # explicit: the uplink is NOT on the ladder
 ```
+
+**Why 16 kbps and not 1 kbps for routine operations.** The shipped
+`telemetry/hk_structures.yaml` generates 1351.5 bps of PUS packets across SIDs
+1-6, which is **1557 bps of channel** after RS(255,223) and the 1115/1107 TM
+transfer frame. 1000 bps is *below* the generation rate: the real-time backlog
+grows without bound and `tm_queue_drops` climbs forever. 1 kbps was never an
+operations rate; it is a beacon rate. 16 kbps clears real-time HK at 9.7 % duty
+and still plays back ~0.85 orbits of stored HK in a 514 s pass.
+
+**Why 128 kbps and not 64 kbps for the top rung.** 64 kbps was two-thirds of
+what a commodity CubeSat *TT&C* radio does and a small fraction of an S-band
+*payload* transmitter. 128 kbps is Sentinel-1's nominal S-band TM rate and the
+top of the TT&C-radio class, and it makes one 4 MiB image cost 262 s of channel
+— 58 % of an average pass — so pass planning stays the binding lesson.
+
+### 6.3 Rate State Machine (as implemented)
+
+```
+         [SEPARATION / bootloader]
+                    |
+          beacon_mode = True
+                    v
+          +----------------------+
+          |   BEACON  1 kbps     |   beacon_only, no antenna needed
+          +----------------------+
+                    |  application boot -> beacon_mode = False
+                    v
+          +----------------------+
+          |    LOW   16 kbps     |   default_tier AND safe_tier.
+          +----------------------+   No gates: works with the antenna stowed,
+                    ^                at any elevation, in SAFE, under FDIR.
+                    |
+   TTC_SET_DATA_RATE(1) with ALL of:
+     antenna_deployed  AND  downlink_mode  AND  elevation >= 10 deg
+                    |
+                    v
+          +----------------------+
+          |   HIGH  128 kbps     |   dumps only
+          +----------------------+
+                    |
+      any gate closes -> ACTIVE tier demotes to LOW,
+      COMMANDED tier is retained and resumes when it reopens
+```
+
+The commanded tier (`data_rate_mode`, telemetry 0x053A) and the active tier
+(`tm_tier`, telemetry 0x0539) are separate state. `_effective_tier()` walks
+down the ladder from the commanded tier until every gate is satisfied; it never
+overwrites the commanded tier. That is what makes HIGH auto-revert at LOS and
+come back on the next pass above 10 deg without re-commanding — and what makes
+"commanded HIGH, active LOW" a readable diagnosis on the console rather than an
+unexplained slow dump.
+
+### 6.4 Rejection, Not Clamping
+
+`set_tm_rate` refuses a gated tier with an S1.8 execution failure, error
+`0x0007`, whose message names the open gate:
+
+```
+"HIGH (128000 bps) requires DOWNLINK/dump mode (TTC_SET_DOWNLINK_MODE)"
+"HIGH (128000 bps) requires elevation >= 10 deg (now 6.4 deg)"
+"HIGH (128000 bps) requires a deployed antenna"
+```
+
+This is a deliberate fidelity choice over the silent clamp this document
+originally proposed. A clamp teaches an operator that the spacecraft ignores
+them; a rejection with a reason teaches them the rule.
+
+### 6.5 Link Budget Impact
+
+The link budget uses the active tier's bit rate in the noise-bandwidth term and
+the active tier's `coding_gain_db` against the 9.6 dB uncoded BPSK/QPSK
+requirement. A rung step is exactly the `-10*log10(R)` term:
+
+| Step | Rate ratio | Rate term | Coding change | Total margin change |
+|---|---|---|---|---|
+| BEACON -> LOW | 16x | -12.04 dB | none (both conv+RS) | **-12.04 dB** |
+| LOW -> HIGH | 8x | -9.03 dB | conv+RS 7.5 -> RS 6.0 dB | **-10.53 dB** |
+
+Measured margins, from `python tools/link_budget_ladder.py` (same model object
+the simulator flies):
+
+| Tier | Iqaluit @5 deg | Troll @5 deg (worst) | Iqaluit @90 deg |
+|---|---|---|---|
+| BEACON | 57.8 dB | 56.3 dB | 74.3 dB |
+| LOW | 45.7 dB | 44.2 dB | 62.3 dB |
+| HIGH | 35.2 dB | 33.7 dB | 51.8 dB |
+
+Every rung closes with tens of dB at every station and geometry. **This link is
+bandwidth- and policy-limited, not power-limited**, which is why the HIGH tier
+is gated on mode and elevation rather than left to a margin threshold. Modelling
+a fake power cliff would have been less honest than modelling the real reason a
+mission withholds its top rate.
+
+### 6.6 Occupied Bandwidth
+
+Symbol rate = information rate / bits-per-symbol; occupied BW ~ 1.35 x symbol
+rate (SRRC alpha 0.35), against the 5.00 MHz per-mission cap in 2200-2290 MHz:
+
+| Tier | Modulation | Symbol rate | Occupied BW | % of 5 MHz |
+|---|---|---|---|---|
+| BEACON | BPSK | 1 kBd | 3.1 kHz | 0.1 % |
+| LOW | BPSK | 16 kBd | 49.8 kHz | 1.0 % |
+| HIGH | QPSK | 64 kBd | 99.5 kHz | 2.0 % |
+
+QPSK at the top rung halves the occupied bandwidth for the same information
+rate, and makes the tier step visible on the radio — the constellation, the eye
+and the spectrum all change — which teaches that rate and modulation are
+independent levers.
+
+### 6.7 The Uplink Is Not On The Ladder
+
+`tc_uplink_rate_bps: 4000` is set explicitly. It used to default to
+`tm_rate_hi_bps`, so raising the top TM rung would silently have raised the
+*telecommand* rate with it and changed the uplink lock timing. 4 kbps is
+Sentinel-1's TC rate and matches `rfsim.yaml pipeline.tc_symbol_rate`.
 
 ---
 
@@ -733,9 +814,16 @@ The following new parameters need to be added to `configs/eosat1/telemetry/param
 model: ttc_basic
 ul_freq_mhz: 2025.5
 dl_freq_mhz: 2200.5
-tm_rate_hi_bps: 64000
-tm_rate_lo_bps: 1000
-beacon_rate_bps: 100
+# The three-rung TM data-rate ladder is the source of truth (see section 6.2).
+# The two flat keys below survive only as deprecated aliases for out-of-lane
+# readers and are derived from the ladder when omitted.
+tm_rate_tiers: [...]        # BEACON 1000 / LOW 16000 / HIGH 128000
+default_tier: LOW
+beacon_tier: BEACON
+safe_tier: LOW
+tm_rate_hi_bps: 128000      # deprecated alias -> top tier
+tm_rate_lo_bps: 16000       # deprecated alias -> safe tier
+tc_uplink_rate_bps: 4000    # explicit: the uplink is NOT on the ladder
 eirp_dbw: 10.0
 gs_g_t_db: 20.0            # Fallback G/T when per-station not available
 sc_gain_dbi: 3.0           # Deployed antenna gain
@@ -914,15 +1002,22 @@ ground_stations:
 
 ### 10.4 Rate Lifecycle Tests
 
+Implemented in `tests/test_simulator/test_tm_rate_ladder.py` (spacecraft),
+`tests/test_planner/test_rate_ladder_budget.py` (planning) and
+`tests/test_mcs/test_tm_rate_ladder_display.py` (console).
+
 | ID | Test | Assertion |
 |---|---|---|
-| T-RATE-01 | `set_tm_rate(64000)` rejected before antenna deploy | Command fails with "requires deployed antenna" |
-| T-RATE-02 | `set_tm_rate(64000)` accepted after antenna deploy | Command succeeds, `tm_data_rate == 64000` |
-| T-RATE-03 | Auto rate switch on deploy | `auto_rate_on_deploy=True` causes `tm_data_rate = 64000` |
-| T-RATE-04 | Rate state machine: beacon -> low -> high | `data_rate_state` transitions 0 -> 1 -> 2 |
-| T-RATE-05 | `set_tm_rate(1000)` always accepted (downshift) | Command accepted regardless of antenna state |
-| T-RATE-06 | BER at 1 kbps with stowed antenna is acceptable | `ber < -6` (BER < 1e-6) at 30 deg elevation, 1000 km |
-| T-RATE-07 | BER at 64 kbps with stowed antenna is unacceptable | `ber > -3` (BER > 1e-3) -- link does not close |
+| T-RATE-01 | `set_tm_rate(HIGH)` rejected before antenna deploy | S1.8 failure, error 0x0007, message names the antenna gate |
+| T-RATE-02 | `set_tm_rate(HIGH)` rejected without DOWNLINK mode | S1.8 failure, error 0x0007, message names func 79 |
+| T-RATE-03 | `set_tm_rate(HIGH)` rejected below 10 deg elevation | S1.8 failure, error 0x0007, message quotes the current elevation |
+| T-RATE-04 | `set_tm_rate(HIGH)` accepted with all gates satisfied | `tm_data_rate == 128000`, `tm_tier == tm_tier_cmd == 2`, symbol rate 64000 Bd (QPSK) |
+| T-RATE-05 | `set_tm_rate(LOW)` always accepted (downshift) | Accepted regardless of antenna, mode or elevation — LOW is the routine operations tier |
+| T-RATE-06 | BEACON not selectable by func 65 in nominal software | Rejected: "bootloader/beacon-only tier" |
+| T-RATE-07 | Gate closes mid-pass | ACTIVE tier demotes to LOW, COMMANDED tier retained, HIGH resumes when the gate reopens — no re-command |
+| T-RATE-08 | Rung step vs margin | LOW -> HIGH costs 10.53 dB (9.03 dB rate + 1.5 dB coding); reproduced by `tools/link_budget_ladder.py` |
+| T-RATE-09 | Modulation changes the SYMBOL rate, not the bit rate | BPSK 16 kbps -> 16 kBd; QPSK 128 kbps -> 64 kBd |
+| T-RATE-10 | One image fits one pass at HIGH | 4 MiB / (128000 x 0.8) = 328 s < the 445 s average pass |
 
 ### 10.5 Dual Ground Station Tests
 

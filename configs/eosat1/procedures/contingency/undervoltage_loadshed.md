@@ -38,11 +38,11 @@ is monitored until battery state-of-charge and bus voltage return to safe levels
 | Command | Service | Subtype | Func ID | Description |
 |---|---|---|---|---|
 | HK_REQUEST | 3 | 27 | — | Request one-shot HK report |
-| PAYLOAD_SET_MODE | 8 | 1 | 20 | Set payload mode to OFF |
-| FPA_COOLER | 8 | 1 | 33 | Disable FPA cooler |
-| TTC_PA_OFF | 8 | 1 | 54 | Disable power amplifier (TX) |
-| EPS_POWER_OFF | 8 | 1 | 14 | Switch power line OFF |
-| OBC_SET_MODE | 8 | 1 | 40 | Set OBC mode (safe/emergency) |
+| PAYLOAD_SET_MODE | 8 | 1 | 26 | Set payload mode to OFF |
+| FPA_COOLER | 8 | 1 | 43 | Disable FPA cooler |
+| TTC_PA_OFF | 8 | 1 | 67 | Disable power amplifier (TX) |
+| EPS_POWER_OFF | 8 | 1 | 20 | Switch power line OFF |
+| OBC_SET_MODE | 8 | 1 | 50 | Set OBC mode (safe/emergency) |
 
 ## Procedure Steps
 
@@ -59,7 +59,7 @@ is monitored until battery state-of-charge and bus voltage return to safe levels
 **GO/NO-GO:** Undervoltage confirmed. Flight Director authorizes load shedding — proceed.
 
 ### Step 2: Shed Load Priority 1 — Payload OFF
-**Action:** Command payload to OFF: `PAYLOAD_SET_MODE(mode=0)` (func_id 20)
+**Action:** Command payload to OFF: `PAYLOAD_SET_MODE(mode=0)` (func_id 26)
 **Verify:** `payload.mode` (0x0600) = 0 (OFF) within 10 s
 **Verify:** `eps.power_cons` (0x0106) decreases (expected -45 W if imaging, -8 W if standby)
 **Action:** Wait 30 s and re-check bus voltage: `HK_REQUEST(sid=1)`
@@ -68,7 +68,7 @@ is monitored until battery state-of-charge and bus voltage return to safe levels
 If still declining or < 26.5 V, proceed to next shed level.
 
 ### Step 3: Shed Load Priority 2 — FPA Cooler OFF
-**Action:** Disable FPA cooler: `FPA_COOLER(on=0)` (func_id 33)
+**Action:** Disable FPA cooler: `FPA_COOLER(on=0)` (func_id 43)
 **Verify:** `tcs.cooler_fpa` (0x040C) = 0 (OFF) within 5 s
 **Verify:** `eps.power_cons` (0x0106) decreases by ~15 W
 **Action:** Wait 30 s and re-check bus voltage: `HK_REQUEST(sid=1)`
@@ -77,7 +77,7 @@ If still declining or < 26.5 V, proceed to next shed level.
 declining or < 26.0 V, proceed to next shed level.
 
 ### Step 4: Shed Load Priority 3 — TX Transmitter OFF
-**Action:** Disable power amplifier: `TTC_PA_OFF` (func_id 54)
+**Action:** Disable power amplifier: `TTC_PA_OFF` (func_id 67)
 **Verify:** `ttc.pa_on` (0x0516) = 0 within 5 s
 **Verify:** `eps.power_cons` (0x0106) decreases by ~20 W
 **Note:** WARNING — This will terminate downlink capability. Uplink (RX) remains active.
@@ -88,7 +88,7 @@ The spacecraft can still receive commands but cannot send telemetry.
 declining, proceed to next shed level.
 
 ### Step 5: Shed Load Priority 4 — Reaction Wheels OFF
-**Action:** Power off AOCS wheels: `EPS_POWER_OFF(line_index=7)` (func_id 14)
+**Action:** Power off AOCS wheels: `EPS_POWER_OFF(line_index=7)` (func_id 20)
 **Verify:** `eps.pl_aocs_wheels` (0x0117) = 0 (OFF) within 5 s
 **Note:** WARNING — Spacecraft will lose active attitude control. Residual momentum
 will cause slow drift. Magnetic detumbling (if available) or gravity gradient will
@@ -113,11 +113,11 @@ available solar array power.
 
 ### Step 7: Restore Loads in Reverse Priority Order
 **Action:** Re-enable loads one at a time, waiting 5 min between each to verify stability:
-1. AOCS wheels: `EPS_POWER_ON(line_index=7)` (func_id 13) — verify `aocs.mode` (0x020F)
+1. AOCS wheels: `EPS_POWER_ON(line_index=7)` (func_id 19) — verify `aocs.mode` (0x020F)
    returns to controllable mode. May need `AOCS_SET_MODE(mode=3)` for COARSE_SUN first.
-2. TX transmitter: `TTC_PA_ON` (func_id 53) — verify `ttc.pa_on` (0x0516) = 1
-3. FPA cooler: `FPA_COOLER(on=1)` (func_id 33) — verify `tcs.cooler_fpa` (0x040C) = 1
-4. Payload to STANDBY: `PAYLOAD_SET_MODE(mode=1)` (func_id 20) — verify `payload.mode` = 1
+2. TX transmitter: `TTC_PA_ON` (func_id 66) — verify `ttc.pa_on` (0x0516) = 1
+3. FPA cooler: `FPA_COOLER(on=1)` (func_id 43) — verify `tcs.cooler_fpa` (0x040C) = 1
+4. Payload to STANDBY: `PAYLOAD_SET_MODE(mode=1)` (func_id 26) — verify `payload.mode` = 1
 **Verify:** After each load addition, confirm `eps.bus_voltage` (0x0105) remains > 27.5 V
 and `eps.bat_soc` (0x0101) remains > 35%.
 **GO/NO-GO:** All loads restored and power budget positive — procedure complete.

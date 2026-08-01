@@ -4,10 +4,32 @@ Loads orbit config, computes real contact windows using SGP4 propagation.
 Provides ground-track and spacecraft state APIs for 2D map visualization.
 Includes pass-based scheduling, power/data budget tracking, and imaging
 target planning (Wave 7).
+
+Planner → MCS commanding chain (defect #44)
+-------------------------------------------
+POST /api/schedule/upload {activity_id, mode?, step_by_step?} uploads a
+scheduled activity to the MCS in one of two modes:
+
+* mode="s11" (default) — time-correct path. The planner POSTs
+  {name, start_time, steps, procedure_ref} to MCS
+  ``/api/schedule/upload-s11``; the MCS converts each command step into a
+  TC(11,4) whose payload is ``exec_time_cuc(4) + <complete embedded TC
+  packet>`` and uplinks them immediately. The simulator's on-board S11
+  scheduler stores the embedded packets and fires them at the activity's
+  planned start time (plus per-step wait offsets), producing normal S1
+  acceptance/execution verification for each embedded command.
+* mode="immediate" — legacy path. The planner POSTs the command sequence
+  (now including ``start_time`` as metadata) to MCS ``/api/procedure/load``;
+  the operator starts the ProcedureRunner manually from the Procedures tab.
+
+Activity command sequences come from ``planning/activity_types.yaml`` /
+``ImagingPlanner``; their S8 func_ids are verified against the simulator's
+``service_dispatch`` routing table (defect #45).
 """
 import asyncio
 import json
 import logging
+import os
 import argparse
 import math
 from datetime import datetime, timezone, timedelta
@@ -20,8 +42,21 @@ from smo_common.config.loader import load_orbit_config
 from smo_common.orbit.propagator import OrbitPropagator, GroundStation
 from smo_planner.orbit_planner import OrbitPlanner
 from smo_planner.activity_scheduler import ActivityScheduler, ActivityState
-from smo_planner.budget_tracker import BudgetTracker
+from smo_planner.budget_tracker import (
+    DUMP_RATE_BPS,
+    ELEVATION_MASK_DEG,
+    MIN_DUMP_ELEVATION_DEG,
+    ORBIT_ALTITUDE_KM,
+    BudgetTracker,
+    budget_params_from_config,
+)
 from smo_planner.imaging_planner import ImagingPlanner
+from smo_planner.planner_config import (
+    load_planner_config, check_station_alignment, format_alignment_report,
+)
+from smo_planner.plan_templates import (
+    load_standard_plans, validate_templates, instantiate_template,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +64,12 @@ logger = logging.getLogger(__name__)
 class PlannerServer:
     def __init__(self, config_dir: str | Path, http_port: int = 9091,
                  time_source: str | None = None, sim_state_url: str | None = None,
-                 connect_host: str = "localhost"):
+                 connect_host: str = "localhost", bind_host: str | None = None):
         self.config_dir = Path(config_dir)
         self.http_port = http_port
+        # Bind address (D-2): was hard-coded 0.0.0.0 while start.sh claimed
+        # "LOCAL mode: services bound to loopback where supported".
+        self.bind_host = bind_host or os.environ.get("SMO_BIND") or "0.0.0.0"
 
         # ── Time source resolution ──────────────────────────────────
         # Precedence: explicit ctor arg (from CLI) > env SMO_TIME_SOURCE >
@@ -41,6 +79,18 @@ class PlannerServer:
         # REAL mode, _get_now() returns wall-clock UTC. The explicit
         # ?epoch= query override always takes precedence over _get_now().
         import os as _os
+
+        # ── Planner's own config (planning/planner.yaml) ────────────
+        # Horizons, refresh intervals, budget parameters, default-plan
+        # behaviour, per-station planning attributes and the station-alignment
+        # policy all live there (defect #57).
+        try:
+            self._planner_cfg = load_planner_config(self.config_dir)
+        except Exception as e:
+            logger.error("planner.yaml failed validation (%s) — using defaults", e)
+            from smo_planner.planner_config import PlannerConfig
+            self._planner_cfg = PlannerConfig()
+
         _cfg_time_source: str | None = None
         _cfg_sim_state_url: str | None = None
         try:
@@ -54,12 +104,14 @@ class PlannerServer:
             time_source
             or _os.environ.get("SMO_TIME_SOURCE")
             or _cfg_time_source
+            or self.planner_cfg.time.default_time_source
             or "sim"
         ).strip().lower()
         self._sim_state_url = (
             sim_state_url
             or _os.environ.get("SMO_SIM_STATE_URL")
             or _cfg_sim_state_url
+            or self.planner_cfg.time.sim_state_url
             or f"http://{connect_host}:8080/api/state"
         )
         logger.info("Planner time source: %s (sim_state_url=%s)",
@@ -71,9 +123,22 @@ class PlannerServer:
         self._sim_anchor_wall: float = 0.0
         self._sim_anchor_speed: float = 1.0
         self._sim_anchor_refreshed_wall: float = 0.0
+        # Sim-clock discontinuity state (defect #59). A breakpoint load, a
+        # scenario reset or an instructor jump moves sim_time away from what
+        # the previous anchor predicted; when that happens the cached contact
+        # windows / ground track describe the WRONG epoch and must be dropped
+        # immediately rather than up to `recompute_interval_s` later.
+        self._plan_dirty: bool = False
+        self._last_jump_utc: str | None = None
+        self._last_jump_delta_s: float = 0.0
+        self._jump_count: int = 0
+        self._sim_reachable: bool = False
+        self._wall_clock_fallback: bool = False
+        self._warned_wall_clock: bool = False
 
         # Load orbit config and build propagator + ground stations
         orbit_cfg = load_orbit_config(self.config_dir)
+        self._orbit_cfg = orbit_cfg
         self._gs_list = []
         for gs_cfg in orbit_cfg.ground_stations:
             self._gs_list.append(GroundStation(
@@ -84,6 +149,12 @@ class PlannerServer:
         self._tle1 = orbit_cfg.tle_line1
         self._tle2 = orbit_cfg.tle_line2
         self._earth_r = orbit_cfg.earth_radius_km
+
+        # ── Ground-station alignment check (load-time validation) ───
+        # orbit.yaml is canonical; planner.yaml adds planning attributes on
+        # top. Divergence is reported here and served at
+        # /api/config/alignment (see planner_config.check_station_alignment).
+        self._alignment_report = self._check_station_alignment()
 
         # Orbit planner for ground track prediction
         self._orbit_planner = OrbitPlanner(OrbitPropagator(
@@ -112,11 +183,28 @@ class PlannerServer:
         except Exception:
             pass
 
-        # Activity scheduler (seeded with loaded activity types)
-        self._scheduler = ActivityScheduler(self._activity_types)
+        # Budget parameters resolved from the mission config (payload.yaml
+        # storage/image size, ttc.yaml downlink rate, eps.yaml battery) with
+        # planner.yaml overrides — no module constants (defect #60).
+        try:
+            self._budget_params = budget_params_from_config(
+                self.config_dir, self._planner_cfg)
+        except Exception as e:
+            logger.warning("Budget params unresolved (%s) — defaults used", e)
+            self._budget_params = {}
 
-        # MCS URL for procedure upload
-        self._mcs_url = "http://localhost:9090"
+        # Activity scheduler. NOTE: the argument is the activity TYPE
+        # catalogue; the schedule itself starts EMPTY and stays empty until the
+        # operator adds an activity or loads a standard-plan template.
+        self._scheduler = ActivityScheduler(
+            self._activity_types, data_params=self._budget_params)
+
+        # Standard-activity templates ("Load standard activities").
+        self._plan_templates = self._load_plan_templates()
+
+        # MCS URL for procedure/S11 upload (SMO_MCS_URL for distributed
+        # deployments — mirrors the MCS side's SMO_PLANNER_URL).
+        self._mcs_url = _os.environ.get("SMO_MCS_URL", "http://localhost:9090")
 
         # Cache for contact windows (recomputed periodically)
         self._contacts_cache: list[dict] = []
@@ -126,14 +214,91 @@ class PlannerServer:
         self._ground_track_cache: list[dict] = []
         self._ground_track_computed_at: datetime | None = None
 
-        # Imaging planner
-        self._imaging_planner = ImagingPlanner()
+        # Imaging planner — camera/feasibility parameters from planner.yaml,
+        # altitude from orbit.yaml, image size from payload.yaml.
         try:
-            targets_path = self.config_dir / "planning" / "imaging_targets.yaml"
-            if targets_path.exists():
-                self._imaging_planner.load_targets_from_config(targets_path)
-        except Exception:
-            pass
+            self._imaging_planner = ImagingPlanner.from_config(
+                targets_path=self.config_dir / "planning" / "imaging_targets.yaml",
+                imaging_cfg=self.planner_cfg.imaging,
+                altitude_km=orbit_cfg.altitude_km,
+                image_size_mb=self._budget_params.get("image_size_mb"),
+            )
+        except Exception as e:
+            logger.error("Imaging planner config failed (%s) — defaults used", e)
+            self._imaging_planner = ImagingPlanner()
+            try:
+                targets_path = self.config_dir / "planning" / "imaging_targets.yaml"
+                if targets_path.exists():
+                    self._imaging_planner.load_targets_from_config(targets_path)
+            except Exception:
+                pass
+
+    # ── Config plumbing ─────────────────────────────────────────────
+
+    @property
+    def planner_cfg(self):
+        """Resolved planning/planner.yaml (all-defaults if not loaded).
+
+        Read through a property so handlers stay safe on a partially
+        constructed server (tests build one via ``__new__``).
+        """
+        cfg = self.__dict__.get("_planner_cfg")
+        if cfg is None:
+            from smo_planner.planner_config import PlannerConfig
+            cfg = PlannerConfig()
+            self._planner_cfg = cfg
+        return cfg
+
+    def _check_station_alignment(self) -> dict:
+        """Compare planner.yaml stations with orbit.yaml and report divergence.
+
+        Runs at construction. ``planner.yaml alignment.on_divergence`` decides
+        the severity: ``warn`` (default) logs each issue, ``error`` raises so a
+        misconfigured deployment fails fast, ``ignore`` stays quiet.
+        """
+        try:
+            report = check_station_alignment(
+                self._planner_cfg, self._orbit_cfg.ground_stations)
+        except Exception as e:                       # pragma: no cover
+            logger.error("Station alignment check failed: %s", e)
+            return {"aligned": True, "issues": [], "stations": [],
+                    "error": str(e)}
+
+        policy = (self.planner_cfg.alignment.on_divergence or "warn").lower()
+        if report["aligned"]:
+            logger.info(
+                "Ground-station alignment OK: %d station(s) shared between "
+                "orbit.yaml and planner.yaml",
+                report["orbit_station_count"])
+        elif policy == "ignore":
+            logger.debug("Station divergence ignored by config: %s", report["issues"])
+        else:
+            for issue in report["issues"]:
+                logger.warning("GROUND-STATION CONFIG DIVERGENCE: %s", issue)
+            logger.warning(
+                "Run `python -m smo_planner.planner_config --config %s` for a "
+                "side-by-side report (orbit.yaml is canonical).", self.config_dir)
+            if policy == "error":
+                raise ValueError(
+                    "planner.yaml ground stations diverge from orbit.yaml: "
+                    + "; ".join(report["issues"]))
+        return report
+
+    def _load_plan_templates(self):
+        """Load + validate planning/standard_plans.yaml."""
+        rel = self.planner_cfg.default_plan.templates_file
+        path = self.config_dir / rel if not Path(rel).is_absolute() else Path(rel)
+        try:
+            cfg = load_standard_plans(path)
+        except Exception as e:
+            logger.error("standard_plans.yaml failed validation (%s)", e)
+            from smo_planner.plan_templates import StandardPlansConfig
+            return StandardPlansConfig()
+        issues = validate_templates(
+            cfg, {a.get("name") for a in self._activity_types})
+        for issue in issues:
+            logger.warning("STANDARD PLAN TEMPLATE: %s", issue)
+        return cfg
 
     async def _sim_anchor_loop(self):
         """Background refresh of the sim-clock anchor (sim mode only).
@@ -144,12 +309,60 @@ class PlannerServer:
         """
         if self._time_source != "sim":
             return
+        period = max(0.2, float(self.planner_cfg.time.anchor_refresh_s))
         while True:
             try:
                 await asyncio.to_thread(self._refresh_sim_anchor, True)
             except Exception as e:
                 logger.debug("planner sim-anchor loop error: %s", e)
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(period)
+
+    async def _plan_refresh_loop(self):
+        """Recompute contacts + ground track on a jump or when they age out.
+
+        Wakes once a second so a sim-clock discontinuity (breakpoint load,
+        scenario reset, instructor jump) is picked up in ~1 s instead of
+        waiting out the fixed 600 s wall-clock timer that used to be the only
+        trigger (defect #59). Also recomputes when the cached products are
+        older than ``sim_recompute_interval_s`` of SIM time, which is what
+        matters in a time-accelerated run.
+        """
+        wall_period = max(1.0, float(self.planner_cfg.refresh.recompute_interval_s))
+        sim_period = max(60.0, float(self.planner_cfg.refresh.sim_recompute_interval_s))
+        import time as _time
+        last_wall = _time.time()
+        while True:
+            await asyncio.sleep(1.0)
+            try:
+                if self._plan_dirty:
+                    logger.info("Recomputing plan products after sim-time jump")
+                    self.recompute_plan_products()
+                    last_wall = _time.time()
+                    continue
+                now_wall = _time.time()
+                if (now_wall - last_wall) >= wall_period:
+                    self.recompute_plan_products()
+                    last_wall = now_wall
+                    continue
+                if self._contacts_computed_at is not None:
+                    aged = abs((self._get_now() - self._contacts_computed_at)
+                               .total_seconds())
+                    if aged >= sim_period:
+                        self.recompute_plan_products()
+                        last_wall = now_wall
+            except Exception as e:                   # pragma: no cover
+                logger.debug("plan refresh loop error: %s", e)
+
+    def recompute_plan_products(self) -> None:
+        """Drop and rebuild every cached product that depends on "now"."""
+        now = self._get_now()
+        try:
+            self._live_prop.reset(now)
+        except Exception:                            # pragma: no cover
+            pass
+        self._compute_contacts(now)
+        self._compute_ground_track(now)
+        self._plan_dirty = False
 
     async def start(self) -> None:
         # In sim mode, kick off the background clock-anchor refresher first
@@ -169,11 +382,18 @@ class PlannerServer:
         app.router.add_get("/api/ground-track", self._handle_ground_track)
         app.router.add_get("/api/spacecraft-state", self._handle_spacecraft_state)
         app.router.add_post("/api/schedule", self._handle_add_activity)
+        app.router.add_delete("/api/schedule", self._handle_clear_schedule)
+        app.router.add_get("/api/schedule/templates", self._handle_plan_templates)
+        app.router.add_post("/api/schedule/load-template",
+                            self._handle_load_template)
+        app.router.add_get("/api/config/alignment", self._handle_alignment)
+        app.router.add_get("/api/config/planner", self._handle_planner_config)
         app.router.add_put("/api/schedule/{id}", self._handle_update_activity)
         app.router.add_delete("/api/schedule/{id}", self._handle_delete_activity)
         app.router.add_post("/api/schedule/upload", self._handle_upload_schedule)
         app.router.add_get("/api/schedule/validate", self._handle_validate_schedule)
         app.router.add_get("/api/activity-types", self._handle_activity_types)
+        app.router.add_get("/api/time-source", self._handle_time_source)
         # Wave 7: Pass-based scheduling
         app.router.add_post("/api/schedule/pass-activity",
                             self._handle_pass_activity)
@@ -199,6 +419,18 @@ class PlannerServer:
                            self._handle_check_data_volume)
         app.router.add_get("/api/constraints/conflicts",
                            self._handle_check_conflicts)
+        # Read-only configuration browser (Phase F, brief 06 §B). Students
+        # can browse the mission config and its edit history from the
+        # planner; every mutating route is absent by construction
+        # (readonly=True). The write surface lives only on the simulator
+        # instructor server (8080). Coexists with the planner's own
+        # /api/config/alignment and /api/config/planner routes above.
+        try:
+            from smo_common.confedit import register_config_routes
+            register_config_routes(app, self.config_dir, readonly=True,
+                                   page_path="/config", owner="planner")
+        except Exception as e:  # noqa: BLE001 — never block the planner UI
+            logger.warning("Config browser not mounted: %s", e)
         static_dir = Path(__file__).parent / "static"
         # Serve the top-level vendor directory so that requests for
         # /static/vendor/js/svg-world-map.js resolve even when the
@@ -218,15 +450,14 @@ class PlannerServer:
             app.router.add_static("/static/", static_dir)
         runner = web.AppRunner(app)
         await runner.setup()
-        site = web.TCPSite(runner, "0.0.0.0", self.http_port)
+        site = web.TCPSite(runner, self.bind_host, self.http_port)
         await site.start()
-        logger.info("Planner server started on port %d", self.http_port)
+        logger.info("Planner server started on %s:%d", self.bind_host,
+                    self.http_port)
 
-        # Recompute contacts and ground track every 10 minutes
-        while True:
-            await asyncio.sleep(600)
-            self._compute_contacts()
-            self._compute_ground_track()
+        # Contacts/ground track are refreshed by _plan_refresh_loop: on the
+        # configured interval AND immediately on a sim-time discontinuity.
+        await self._plan_refresh_loop()
 
     def _fetch_sim_state(self) -> dict | None:
         """Synchronous, short, cached fetch of the simulator state endpoint.
@@ -249,11 +480,12 @@ class PlannerServer:
         if getattr(self, "_time_source", "real") != "sim":
             return
         wall = __import__("time").time()
-        if not force and (wall - self._sim_anchor_refreshed_wall) < 1.0:
+        if not force and (wall - getattr(self, "_sim_anchor_refreshed_wall", 0.0)) < 1.0:
             return
         self._sim_anchor_refreshed_wall = wall
         payload = self._fetch_sim_state()
         if not payload:
+            self._sim_reachable = False
             return
         sim_time_str = payload.get("sim_time")
         if not sim_time_str:
@@ -262,11 +494,85 @@ class PlannerServer:
             parsed = datetime.fromisoformat(str(sim_time_str).replace("Z", "+00:00"))
             if parsed.tzinfo is None:
                 parsed = parsed.replace(tzinfo=timezone.utc)
+
+            # ── Discontinuity detection (defect #59) ────────────────
+            # Compare the new sim_time against what the PREVIOUS anchor
+            # predicted for this wall instant. A breakpoint load can move sim
+            # time arbitrarily far backward or forward; the clock follows
+            # (the anchor is simply replaced) but _contacts_cache /
+            # _ground_track_cache do not, so passes, budgets and validation
+            # stay wrong until something invalidates them. That is what
+            # _plan_dirty does here.
+            if getattr(self, "_sim_anchor_time", None) is not None:
+                predicted = self._sim_anchor_time + timedelta(
+                    seconds=(wall - getattr(self, "_sim_anchor_wall", wall))
+                    * getattr(self, "_sim_anchor_speed", 1.0))
+                delta_s = (parsed - predicted).total_seconds()
+                tol = max(
+                    float(self.planner_cfg.time.jump_tolerance_s),
+                    3.0 * float(self.planner_cfg.time.anchor_refresh_s)
+                    * max(1.0, abs(self._sim_anchor_speed)),
+                )
+                if abs(delta_s) > tol:
+                    self._plan_dirty = True
+                    self._jump_count += 1
+                    self._last_jump_utc = parsed.isoformat()
+                    self._last_jump_delta_s = delta_s
+                    logger.info(
+                        "Sim clock discontinuity: %+.1f s (now %s) — "
+                        "invalidating contact/ground-track caches",
+                        delta_s, parsed.isoformat())
+                    # The live propagator is reset per request, but reset it
+                    # here too so the jump drives it rather than luck.
+                    try:
+                        self._live_prop.reset(parsed)
+                    except Exception:                # pragma: no cover
+                        pass
+
             self._sim_anchor_time = parsed
             self._sim_anchor_wall = wall
+            self._sim_reachable = True
+            self._wall_clock_fallback = False
             speed = payload.get("speed")
             if speed is not None:
                 self._sim_anchor_speed = float(speed)
+
+            # ── Phase D: adopt the simulator's post-burn element set ────
+            # A propulsive burn re-fits the TLE and bumps orbit_epoch_version
+            # in /api/state. That is EXACTLY the same class of event as a
+            # sim-time jump: the cached contacts/ground track describe an
+            # orbit that no longer exists. Swap in the new TLE, rebuild the
+            # propagators and mark the plan dirty (defect-#59 machinery).
+            ev = payload.get("orbit_epoch_version")
+            if ev is not None and int(ev) != getattr(
+                    self, "_orbit_epoch_version", 0):
+                elset = payload.get("orbit_elset") or {}
+                l1 = elset.get("tle_line1")
+                l2 = elset.get("tle_line2")
+                if l1 and l2:
+                    self._tle1, self._tle2 = str(l1), str(l2)
+                elif int(ev) == 0:
+                    # Reverted to the un-manoeuvred config orbit
+                    self._tle1 = self._orbit_cfg.tle_line1
+                    self._tle2 = self._orbit_cfg.tle_line2
+                self._orbit_epoch_version = int(ev)
+                try:
+                    self._live_prop = OrbitPropagator(
+                        self._tle1, self._tle2,
+                        ground_stations=self._gs_list,
+                        earth_radius_km=self._earth_r)
+                    self._live_prop.reset(parsed)
+                    self._orbit_planner = OrbitPlanner(OrbitPropagator(
+                        self._tle1, self._tle2,
+                        ground_stations=self._gs_list,
+                        earth_radius_km=self._earth_r))
+                except Exception as e:            # pragma: no cover
+                    logger.warning("post-burn propagator rebuild failed: %s",
+                                   e)
+                self._plan_dirty = True
+                logger.info(
+                    "Orbit element set updated (epoch_version %s) — "
+                    "invalidating contact/ground-track caches", ev)
         except Exception as e:
             logger.debug("planner sim-anchor parse failed: %s", e)
 
@@ -287,10 +593,23 @@ class PlannerServer:
         # Refresh the anchor (cheap; rate-limited internally).
         self._refresh_sim_anchor()
         if getattr(self, "_sim_anchor_time", None) is None:
-            # Never reached the sim — best-effort wall clock.
+            # Never reached the sim — best-effort wall clock. This used to be
+            # silent while /api/time-source still reported "sim", so the UI
+            # badge said SIM over wall-clock data. It is now flagged on
+            # /api/time-source (sim_reachable/wall_clock_fallback) and warned
+            # about once here.
+            self._wall_clock_fallback = True
+            if not getattr(self, "_warned_wall_clock", False):
+                self._warned_wall_clock = True
+                logger.warning(
+                    "Planner time_source=sim but the simulator at %s has never "
+                    "been reachable — falling back to WALL-CLOCK UTC. Plan "
+                    "times will not match sim time.",
+                    getattr(self, "_sim_state_url", "<unset>"))
             return datetime.now(timezone.utc)
         wall = __import__("time").time()
-        elapsed = (wall - self._sim_anchor_wall) * self._sim_anchor_speed
+        elapsed = (wall - getattr(self, "_sim_anchor_wall", wall)) * getattr(
+            self, "_sim_anchor_speed", 1.0)
         return self._sim_anchor_time + timedelta(seconds=elapsed)
 
     def _compute_contacts(self, epoch: datetime | None = None) -> None:
@@ -304,13 +623,15 @@ class PlannerServer:
             )
             prop.reset(now)
 
+            horizon_s = float(self.planner_cfg.horizons.contacts_hours) * 3600.0
+            step_s = float(self.planner_cfg.horizons.contacts_step_s)
             all_windows = []
             for gs in self._gs_list:
                 # Reset propagator for each GS to avoid cumulative drift
                 prop.reset(now)
                 windows = prop.contact_windows(
-                    duration_s=86400.0,  # 24 hours
-                    step_s=10.0,         # 10s step for accuracy
+                    duration_s=horizon_s,   # planner.yaml horizons.contacts_hours
+                    step_s=step_s,          # planner.yaml horizons.contacts_step_s
                     gs=gs,
                 )
                 all_windows.extend(windows)
@@ -333,7 +654,9 @@ class PlannerServer:
             )
             planner = OrbitPlanner(prop)
             self._ground_track_cache = planner.predict_ground_track(
-                now, duration_hours=3.0, step_s=30.0
+                now,
+                duration_hours=float(self.planner_cfg.horizons.ground_track_hours),
+                step_s=float(self.planner_cfg.horizons.ground_track_step_s),
             )
             self._ground_track_computed_at = now
             logger.info("Computed ground track: %d points for next 3h",
@@ -352,6 +675,11 @@ class PlannerServer:
         vy = state.vel_y if hasattr(state, 'vel_y') else 0.0
         heading_deg = math.degrees(math.atan2(vy, vx)) % 360
 
+        # Active ground station name (JSON-safe: only pass real strings through)
+        active_gs = getattr(state, "active_gs", None)
+        if not isinstance(active_gs, str):
+            active_gs = None
+
         return {
             "utc": state.utc.isoformat(),
             "lat": round(state.lat_deg, 4),
@@ -359,6 +687,7 @@ class PlannerServer:
             "alt_km": round(state.alt_km, 2),
             "in_eclipse": bool(state.in_eclipse),
             "in_contact": bool(state.in_contact),
+            "active_gs": active_gs,
             "heading_deg": round(heading_deg, 1),
             "solar_beta_deg": round(state.solar_beta_deg, 1),
             "gs_elevation_deg": round(state.gs_elevation_deg, 1)
@@ -375,14 +704,16 @@ class PlannerServer:
                             content_type="text/html")
 
     async def _handle_index_wide(self, request):
-        """Serve the wide-screen (5760x1080) planner UI."""
-        wide_file = Path(__file__).parent / "static" / "index-wide.html"
-        if wide_file.exists():
-            return web.FileResponse(wide_file)
-        return web.Response(
-            text="<h1>SMO Planner — Wide-screen UI not found</h1>"
-                 "<p>Expected: static/index-wide.html</p>",
-            content_type="text/html")
+        """Serve the wide-screen (5760x1080) planner UI.
+
+        Phase G: this used to serve `static/index-wide.html`, a second 1822-line
+        planner UI that drifted independently of `index.html` (planner_audit.md
+        records the two being fixed separately, with different ground-station
+        lists). `/wide` is a documented classroom URL — the installation manual
+        and DEPLOYMENT.md both cite it — so the route stays, but it is now a
+        LAYOUT MODE of the one page rather than a second implementation.
+        """
+        raise web.HTTPFound("/?layout=wide")
 
     async def _handle_contacts(self, request):
         epoch_str = request.query.get("epoch")
@@ -419,10 +750,13 @@ class PlannerServer:
           step_s (float): Step size in seconds (default 30.0)
           offset_minutes (float): Start offset from now in minutes (negative = past)
         """
-        duration = float(request.query.get("duration_hours", 3.0))
-        step = float(request.query.get("step_s", 30.0))
+        cache_hours = float(self.planner_cfg.horizons.ground_track_hours)
+        cache_step = float(self.planner_cfg.horizons.ground_track_step_s)
+        duration = float(request.query.get("duration_hours", cache_hours))
+        step = float(request.query.get("step_s", cache_step))
         offset_min = float(request.query.get("offset_minutes", 0))
-        use_cache = (duration == 3.0 and step == 30.0 and offset_min == 0)
+        use_cache = (duration == cache_hours and step == cache_step
+                     and offset_min == 0)
         if not use_cache:
             try:
                 now = self._get_now()
@@ -474,6 +808,138 @@ class PlannerServer:
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
 
+    async def _handle_clear_schedule(self, request):
+        """Clear the whole schedule (back to the empty default state).
+
+        DELETE /api/schedule
+        """
+        removed = self._scheduler.clear_schedule()
+        return web.json_response({"status": "cleared", "removed": removed})
+
+    async def _handle_plan_templates(self, request):
+        """List the configured standard-activity templates.
+
+        GET /api/schedule/templates
+        """
+        return web.json_response({
+            "templates": [
+                {
+                    "id": t.id,
+                    "name": t.name or t.id,
+                    "description": t.description,
+                    "horizon_hours": t.horizon_hours,
+                    "activity_count": sum(max(1, a.repeat) for a in t.activities),
+                    "activity_types": sorted({a.type for a in t.activities}),
+                }
+                for t in self._plan_templates.templates
+            ],
+            "default_template": self.planner_cfg.default_plan.default_template,
+            "start_empty": self.planner_cfg.default_plan.start_empty,
+        })
+
+    async def _handle_load_template(self, request):
+        """Instantiate a standard-activity template at the current sim time.
+
+        POST /api/schedule/load-template
+        Body: {template?: id, t0?: ISO 8601, clear?: bool}
+
+        Anchors are resolved against the planner's CURRENT time (sim time in
+        sim mode) and the REAL contact windows / ground track, so a loaded
+        template lands on real passes at the real epoch — which is exactly what
+        the deleted JS fixtures only pretended to do (defect #57).
+        """
+        try:
+            try:
+                data = await request.json()
+            except Exception:
+                data = {}
+            template_id = (data.get("template")
+                           or self.planner_cfg.default_plan.default_template)
+            template = self._plan_templates.get(template_id)
+            if template is None:
+                return web.json_response(
+                    {"error": f"Unknown template '{template_id}'",
+                     "available": [t.id for t in self._plan_templates.templates]},
+                    status=404)
+
+            t0 = self._get_now()
+            if data.get("t0"):
+                parsed = datetime.fromisoformat(
+                    str(data["t0"]).replace("Z", "+00:00"))
+                t0 = parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+            if data.get("clear"):
+                self._scheduler.clear_schedule()
+
+            # daylight_relative anchors need a track covering the template's
+            # horizon; the cached one is only horizons.ground_track_hours long.
+            track = self._ground_track_cache
+            if template.horizon_hours > float(
+                    self.planner_cfg.horizons.ground_track_hours):
+                try:
+                    prop = OrbitPropagator(
+                        self._tle1, self._tle2,
+                        ground_stations=self._gs_list,
+                        earth_radius_km=self._earth_r,
+                    )
+                    track = OrbitPlanner(prop).predict_ground_track(
+                        t0, duration_hours=template.horizon_hours,
+                        step_s=float(self.planner_cfg.horizons.imaging_step_s),
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Could not extend the ground track to %.1f h (%s) — "
+                        "using the cached %.1f h track",
+                        template.horizon_hours, e,
+                        self.planner_cfg.horizons.ground_track_hours)
+
+            specs, warnings = instantiate_template(
+                template, t0,
+                contacts=self._contacts_cache,
+                ground_track=track,
+            )
+            added = []
+            for spec in specs:
+                added.append(self._scheduler.add_activity(
+                    spec["name"], spec["start_time"], **spec["extras"]))
+
+            return web.json_response({
+                "template": template.id,
+                "t0": t0.isoformat(),
+                "added": len(added),
+                "activities": added,
+                "warnings": warnings,
+            }, status=201)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+    async def _handle_alignment(self, request):
+        """Planner<->orbit.yaml ground-station alignment report.
+
+        GET /api/config/alignment?recheck=1
+        """
+        if request.query.get("recheck"):
+            try:
+                self._orbit_cfg = load_orbit_config(self.config_dir)
+                self._planner_cfg = load_planner_config(self.config_dir)
+            except Exception as e:
+                return web.json_response({"error": str(e)}, status=500)
+            self._alignment_report = self._check_station_alignment()
+        report = dict(self._alignment_report)
+        report["text"] = format_alignment_report(self._alignment_report)
+        return web.json_response(report)
+
+    async def _handle_planner_config(self, request):
+        """Return the resolved planner configuration (planning/planner.yaml)."""
+        return web.json_response({
+            "planner_config": self.planner_cfg.model_dump(mode="json"),
+            "budget_params": {
+                k: v for k, v in self._budget_params.items()
+                if k != "sources"
+            },
+            "budget_sources": self._budget_params.get("sources", {}),
+        })
+
     async def _handle_delete_activity(self, request):
         """Remove an activity from the schedule by ID."""
         try:
@@ -517,16 +983,32 @@ class PlannerServer:
             return web.json_response({"error": str(e)}, status=400)
 
     async def _handle_upload_schedule(self, request):
-        """Upload an activity's command sequence to MCS for execution."""
+        """Upload an activity's command sequence to the MCS.
+
+        Body: {activity_id, mode?: "s11"|"immediate", step_by_step?}.
+
+        mode="s11" (default): the activity becomes on-board time-tagged
+        commands via MCS ``/api/schedule/upload-s11`` — each command fires
+        at the activity's planned ``start_time`` (defect #44: the scheduled
+        time was previously discarded and execution was immediate/manual).
+
+        mode="immediate": legacy ProcedureRunner load via
+        ``/api/procedure/load``; ``start_time`` is forwarded as metadata.
+        """
         try:
             import aiohttp as _aiohttp
             body = await request.json()
             activity_id = body.get("activity_id")
             step_by_step = body.get("step_by_step", False)
+            mode = str(body.get("mode", "s11")).strip().lower()
 
             if activity_id is None:
                 return web.json_response(
                     {"error": "activity_id is required"}, status=400)
+            if mode not in ("s11", "immediate"):
+                return web.json_response(
+                    {"error": f"Invalid mode '{mode}' (s11|immediate)"},
+                    status=400)
 
             activity = self._scheduler.get_activity(int(activity_id))
             if not activity:
@@ -538,15 +1020,20 @@ class PlannerServer:
                 return web.json_response(
                     {"error": "Activity has no command sequence"}, status=400)
 
-            # Send to MCS procedure/load endpoint
+            # Both paths carry the planned start time (defect #44).
             payload = {
                 "name": activity["name"],
                 "steps": steps,
                 "procedure_ref": activity.get("procedure_ref", ""),
-                "step_by_step": step_by_step,
+                "start_time": activity.get("start_time", ""),
             }
-            async with _aiohttp.ClientSession() as session:
+            if mode == "immediate":
+                payload["step_by_step"] = step_by_step
                 url = f"{self._mcs_url}/api/procedure/load"
+            else:
+                url = f"{self._mcs_url}/api/schedule/upload-s11"
+
+            async with _aiohttp.ClientSession() as session:
                 async with session.post(
                     url, json=payload,
                     timeout=_aiohttp.ClientTimeout(total=5),
@@ -556,6 +1043,8 @@ class PlannerServer:
                         self._scheduler.update_state(
                             int(activity_id), ActivityState.UPLOADED
                         )
+                    if isinstance(result, dict):
+                        result.setdefault("mode", mode)
                     return web.json_response(result, status=resp.status)
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
@@ -580,6 +1069,49 @@ class PlannerServer:
     async def _handle_activity_types(self, request):
         """Return available activity types from config."""
         return web.json_response({"activity_types": self._activity_types})
+
+    async def _handle_time_source(self, request):
+        """Return the resolved time-source mode and the planner's clock.
+
+        The frontend uses this both to label its data-source badges
+        (sim -> SIM/SIMULATED, real -> LIVE/LIVE DATA) AND to run its own
+        clock: ``sim_time`` + ``speed`` + the wall instant they were read at
+        let the page extrapolate sim time locally instead of using the
+        operator's wall clock for the NOW marker, the timeline origin, the
+        contact filter and the Add-Activity default (defect #58).
+
+        ``sim_reachable``/``wall_clock_fallback`` expose the previously silent
+        degradation where time_source=sim but the simulator was never
+        reachable, so the badge said SIM over wall-clock data.
+        """
+        import time as _time
+        now = self._get_now()
+        sim = getattr(self, "_time_source", "real") == "sim"
+        anchor_time = getattr(self, "_sim_anchor_time", None)
+        anchor_age = (
+            _time.time() - getattr(self, "_sim_anchor_wall", 0.0)
+            if sim and anchor_time is not None else None
+        )
+        stale_after = float(self.planner_cfg.time.stale_anchor_s)
+        return web.json_response({
+            "time_source": getattr(self, "_time_source", "real"),
+            "now": now.isoformat(),
+            "sim_time": now.isoformat() if sim else None,
+            "speed": getattr(self, "_sim_anchor_speed", 1.0) if sim else 1.0,
+            "sim_reachable": bool(getattr(self, "_sim_reachable", False)) if sim else None,
+            "wall_clock_fallback": bool(sim and anchor_time is None),
+            "anchor_age_s": round(anchor_age, 2) if anchor_age is not None else None,
+            "degraded": bool(sim and (anchor_time is None
+                                      or (anchor_age or 0.0) > stale_after)),
+            "sim_state_url": getattr(self, "_sim_state_url", None),
+            "last_jump_utc": getattr(self, "_last_jump_utc", None),
+            "last_jump_delta_s": round(getattr(self, "_last_jump_delta_s", 0.0), 2),
+            "jump_count": getattr(self, "_jump_count", 0),
+            "plan_dirty": bool(getattr(self, "_plan_dirty", False)),
+            "contacts_computed_at": (
+                self._contacts_computed_at.isoformat()
+                if getattr(self, "_contacts_computed_at", None) else None),
+        })
 
     # ── Wave 7: Pass-based scheduling ─────────────────────────────
 
@@ -627,17 +1159,52 @@ class PlannerServer:
 
     # ── Wave 7: Power/Data budget ─────────────────────────────────
 
+    def _make_budget_tracker(self, initial_onboard_mb: float = 0.0) -> BudgetTracker:
+        """Budget tracker built from the mission config (defect #60).
+
+        Storage capacity, image size, downlink rates and battery capacity come
+        from payload.yaml / ttc.yaml / eps.yaml (with planner.yaml overrides),
+        never from module constants. The downlink is a LADDER, not a rate
+        (defect #86): the DUMP rung (ttc.yaml's top tier) and the ROUTINE rung
+        (its ``default_tier``) are both carried, with the elevation gate
+        between them.
+        """
+        p = getattr(self, '_budget_params', None) or {}
+        return BudgetTracker(
+            contacts=self._contacts_cache,
+            schedule=self._scheduler.get_schedule(),
+            ground_track=self._ground_track_cache,
+            initial_soc=p.get("initial_soc", 80.0),
+            battery_capacity_wh=p.get("battery_capacity_wh", 120.0),
+            storage_capacity_mb=p.get("storage_capacity_mb", 20000.0),
+            downlink_rate_bps=p.get("downlink_rate_bps", DUMP_RATE_BPS),
+            protocol_overhead=p.get("protocol_overhead", 0.20),
+            image_size_mb=p.get("image_size_mb"),
+            hk_background_mb_per_hour=p.get("hk_background_mb_per_hour", 0.0),
+            storage_margin_percent=p.get("storage_margin_percent", 10.0),
+            station_downlink_rate_bps=p.get("station_downlink_rate_bps"),
+            min_dump_elevation_deg=p.get("min_dump_elevation_deg"),
+            initial_onboard_mb=initial_onboard_mb,
+            sources=p.get("sources"),
+            routine_rate_bps=p.get("routine_rate_bps"),
+            dump_rate_bps=p.get("dump_rate_bps"),
+            routine_tier_name=p.get("routine_tier_name", "LOW"),
+            dump_tier_name=p.get("dump_tier_name", "HIGH"),
+            default_min_dump_elevation_deg=p.get(
+                "default_min_dump_elevation_deg", MIN_DUMP_ELEVATION_DEG),
+            elevation_mask_deg=p.get("elevation_mask_deg", ELEVATION_MASK_DEG),
+            orbit_altitude_km=p.get("orbit_altitude_km", ORBIT_ALTITUDE_KM),
+            hk_stream_bps=p.get("hk_stream_bps", 0.0),
+            station_setup_s=p.get("station_setup_s"),
+        )
+
     async def _handle_power_budget(self, request):
         """Return 24-hour power budget with SoC predictions.
 
         GET /api/budget/power
         """
         try:
-            tracker = BudgetTracker(
-                contacts=self._contacts_cache,
-                schedule=self._scheduler.get_schedule(),
-                ground_track=self._ground_track_cache,
-            )
+            tracker = self._make_budget_tracker()
             budget = tracker.compute_power_budget()
             return web.json_response(budget)
         except Exception as e:
@@ -649,11 +1216,8 @@ class PlannerServer:
         GET /api/budget/data
         """
         try:
-            tracker = BudgetTracker(
-                contacts=self._contacts_cache,
-                schedule=self._scheduler.get_schedule(),
-                ground_track=self._ground_track_cache,
-            )
+            onboard = float(request.query.get("current_onboard_mb", 0.0))
+            tracker = self._make_budget_tracker(initial_onboard_mb=onboard)
             budget = tracker.compute_data_budget()
             return web.json_response(budget)
         except Exception as e:
@@ -685,14 +1249,25 @@ class PlannerServer:
             )
             planner = OrbitPlanner(prop)
             track = planner.predict_ground_track(
-                now, duration_hours=24.0, step_s=60.0
+                now,
+                duration_hours=float(self.planner_cfg.horizons.imaging_hours),
+                step_s=float(self.planner_cfg.horizons.imaging_step_s),
             )
 
-            opportunities = self._imaging_planner.compute_opportunities(track)
+            # include_infeasible=1 also returns the windows rejected by the
+            # off-nadir / solar-elevation / revisit constraints, with the
+            # reason — useful for teaching why an opportunity is not offered.
+            include_infeasible = bool(request.query.get("include_infeasible"))
+            opportunities = self._imaging_planner.compute_opportunities(
+                track, include_infeasible=include_infeasible)
             return web.json_response({
                 "opportunities": opportunities,
                 "computed_at": now.isoformat(),
                 "target_count": len(self._imaging_planner.get_targets()),
+                "feasible_count": sum(
+                    1 for o in opportunities if o.get("feasible", True)),
+                "swath_km": round(self._imaging_planner.swath_km, 1),
+                "max_off_nadir_deg": self._imaging_planner.max_off_nadir_deg,
             })
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
@@ -714,6 +1289,9 @@ class PlannerServer:
                     status=400,
                 )
 
+            # lat/lon are optional: when the caller does not supply them the
+            # planner uses the ACCESS POINT computed for that opportunity (the
+            # swath-crossing point), not the region centre (defect #61).
             capture = self._imaging_planner.generate_capture_sequence(
                 target_id=target_id,
                 start_time=start_time,
@@ -735,7 +1313,13 @@ class PlannerServer:
                 target_name=capture["target_name"],
                 capture_lat=capture["capture_lat"],
                 capture_lon=capture["capture_lon"],
+                aim_source=capture["aim_source"],
+                off_nadir_deg=capture.get("off_nadir_deg"),
+                solar_elevation_deg=capture.get("solar_elevation_deg"),
             )
+            # Record the capture so revisit_days is enforced against it when
+            # the next opportunity list is computed.
+            self._imaging_planner.note_scheduled(target_id, capture["start_time"])
             return web.json_response({"activity": activity}, status=201)
         except ValueError as e:
             return web.json_response({"error": str(e)}, status=400)
@@ -831,6 +1415,8 @@ def main():
     parser = argparse.ArgumentParser(description="SMO Mission Planner")
     parser.add_argument("--config", default="configs/eosat1/")
     parser.add_argument("--port", type=int, default=9091)
+    parser.add_argument("--host", default=None,
+                        help="HTTP bind address (default $SMO_BIND or 0.0.0.0)")
     parser.add_argument("--connect-host", default="localhost",
                         help="Host of the simulator (used to derive the default "
                              "sim_state_url http://<host>:8080/api/state).")
@@ -850,6 +1436,7 @@ def main():
         time_source=args.time_source,
         sim_state_url=args.sim_state_url,
         connect_host=args.connect_host,
+        bind_host=args.host,
     ).start())
 
 if __name__ == "__main__":

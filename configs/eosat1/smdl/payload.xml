@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="Payload" Creator="EOSAT-1 SMDL Generator" Date="2026-04-19" Version="1.0">
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="Payload" Creator="EOSAT-1 SMDL Generator" Date="2026-08-01" Version="1.0">
   <Description>SMP2 model catalogue for Payload subsystem</Description>
   <Type Name="UInt8" Uuid="7981e083-ea41-5360-ad7d-c285223a099c" xsi:type="Integer" Size="1" Signed="false"/>
   <Type Name="UInt16" Uuid="64b04f7d-63c1-5e74-90d1-38d9516374dc" xsi:type="Integer" Size="2" Signed="false"/>
@@ -23,6 +23,9 @@
       <Description>[%]</Description>
     </Field>
     <Field Name="payload_image_count" Uuid="ddafcf7d-f07a-52df-8e20-9af783f01ad9" Type="UInt16" Kind="Output" View="true"/>
+    <Field Name="payload_scene_id" Uuid="503eef45-3bb0-559b-a6ee-c4c4f2fad327" Type="Float32" Kind="Output" View="true">
+      <Description>Current scene ID (PAYLOAD_SET_SCENE readback; PAYLOAD_CAPTURE overwrites)</Description>
+    </Field>
     <Field Name="payload_checksum_errors" Uuid="e3f22773-5435-5c6c-a082-758a5c160b23" Type="UInt16" Kind="Output" View="true"/>
     <Field Name="payload_mem_total_mb" Uuid="c7872a83-0228-5b60-8f44-f0c132933730" Type="UInt32" Kind="Output" View="true">
       <Description>Total payload memory [MB]</Description>
@@ -111,11 +114,32 @@
     <Field Name="payload_integration_time_ms" Uuid="f3ef4eb6-03a4-5569-9e42-f20f81703c7d" Type="UInt16" Kind="Output" View="true">
       <Description>Detector integration time (average of all bands) [ms]</Description>
     </Field>
+    <Field Name="payload_int_time_blue" Uuid="a13afefd-9034-5e93-a55b-c45d24c1aec8" Type="Float32" Kind="Output" View="true">
+      <Description>Blue band integration time [ms]</Description>
+    </Field>
+    <Field Name="payload_int_time_green" Uuid="127f6e6d-8ef5-562b-a78f-9d3fbc7b38fa" Type="Float32" Kind="Output" View="true">
+      <Description>Green band integration time [ms]</Description>
+    </Field>
+    <Field Name="payload_int_time_red" Uuid="333cfc1b-0ac3-56f6-98fd-369bdd94a724" Type="Float32" Kind="Output" View="true">
+      <Description>Red band integration time [ms]</Description>
+    </Field>
+    <Field Name="payload_int_time_nir" Uuid="03f83024-8762-5d4f-8dd3-320e345bfc5f" Type="Float32" Kind="Output" View="true">
+      <Description>NIR band integration time [ms]</Description>
+    </Field>
+    <Field Name="payload_shutter_pos" Uuid="d5c2ee90-31e0-5a02-9ef1-60b204dd9809" Type="Float32" Kind="Output" View="true">
+      <Description>Shutter position (0=closed, 1=open)</Description>
+    </Field>
+    <Field Name="payload_filter_pos" Uuid="77a81f69-ef27-58ff-b2d8-79f1b26f00de" Type="Float32" Kind="Output" View="true">
+      <Description>Filter wheel position (0=CLEAR, 1=ND2, 2=DIFFUSER, 3=DARK)</Description>
+    </Field>
+    <Field Name="payload_compression_algo" Uuid="8bd4efaf-9af8-51e6-89b1-830aecf455df" Type="Float32" Kind="Output" View="true">
+      <Description>Compression algorithm (0=none, 1=CCSDS-121, 2=CCSDS-122, 3=CCSDS-123)</Description>
+    </Field>
     <Field Name="payload_imager_status" Uuid="80be1a35-51ac-5a1e-902a-1b9d3d1b66c5" Type="Float32" Kind="Output" View="true">
       <Description>Imager status word</Description>
     </Field>
     <Field Name="payload_fpa_setpoint" Uuid="8a3252ee-4700-59fd-9896-830610004c7c" Type="Float32" Kind="Output" View="true">
-      <Description>FPA temperature setpoint [C]</Description>
+      <Description>FPA cooler regulation setpoint (PAYLOAD_COOLER_SETPOINT readback) [C]</Description>
     </Field>
     <Field Name="payload_fpa_stability" Uuid="40d95eef-50a8-5003-b296-6254914bb1d5" Type="Float32" Kind="Output" View="true">
       <Description>FPA temperature stability (stddev) [C]</Description>
@@ -124,62 +148,82 @@
       <Description>FPA cooler duty cycle [%]</Description>
     </Field>
     <Field Name="payload_integration_ms" Uuid="d701c3c5-dc21-5c01-9a4e-3c2e492cc16f" Type="Float32" Kind="Output" View="true">
-      <Description>Integration time setting [ms]</Description>
+      <Description>Integration time setting (average of 4 bands; PAYLOAD_SET_INTEGRATION_TIME readback) [ms]</Description>
     </Field>
     <Field Name="payload_gain_code" Uuid="079e880f-73fb-5ac1-b5e4-182492cad2db" Type="Float32" Kind="Output" View="true">
-      <Description>Gain configuration code</Description>
+      <Description>Detector gain (PAYLOAD_SET_GAIN readback) [x]</Description>
     </Field>
     <Field Name="payload_cal_flag" Uuid="4722de78-8f13-5837-b58d-d740f58dc03a" Type="Float32" Kind="Output" View="true">
-      <Description>Calibration active flag</Description>
+      <Description>Calibration active flag (mirror of 0x062A)</Description>
     </Field>
     <Field Name="payload_dark_frame_cnt" Uuid="b3855217-b89f-5c82-9fc9-36a5b52836cd" Type="Float32" Kind="Output" View="true">
-      <Description>Dark frame count</Description>
+      <Description>Dark frames acquired in the current/last calibration</Description>
     </Field>
     <Field Name="payload_bias_frame_cnt" Uuid="14b47a59-bc7c-5aa0-a88a-57b846569cb7" Type="Float32" Kind="Output" View="true">
-      <Description>Bias frame count</Description>
+      <Description>Flat/bias frames acquired in the current/last calibration</Description>
     </Field>
     <Field Name="tc_PAYLOAD_SET_MODE_mode" Uuid="368ac496-dae5-5a4f-8339-a72d1173c7a3" Type="UInt8" Kind="Input">
-      <Description>0=off, 1=standby, 2=imaging</Description>
+      <Description>0=off, 1=standby, 2=imaging | default 0 | 0=OFF | 1=STANDBY | 2=IMAGING</Description>
     </Field>
-    <Field Name="tc_PAYLOAD_SET_SCENE_scene_id" Uuid="e98849b1-ce65-58a5-98a0-9b03f8ec58b5" Type="UInt16" Kind="Input"/>
+    <Field Name="tc_PAYLOAD_SET_SCENE_scene_id" Uuid="e98849b1-ce65-58a5-98a0-9b03f8ec58b5" Type="UInt16" Kind="Input">
+      <Description>range [0, 65535] | default 0</Description>
+    </Field>
     <Field Name="tc_PAYLOAD_CAPTURE_scene_id" Uuid="71c4eef6-58f5-5906-bd65-e743efd0aea8" Type="UInt16" Kind="Input">
-      <Description>Scene identifier</Description>
+      <Description>Ground-assigned product identifier, later used by PAYLOAD_DOWNLOAD_IMAGE (29) and PAYLOAD_DELETE_IMAGE (30). 0x0000 = let the payload auto-assign the next free id. | range [0, 65535] | default 0</Description>
     </Field>
     <Field Name="tc_PAYLOAD_CAPTURE_lines" Uuid="2eb559ed-4b19-5161-a3da-e2f28bc0c47d" Type="UInt16" Kind="Input">
-      <Description>Number of CCD lines to capture</Description>
+      <Description>Along-track detector lines. Acquisition time = lines / line_rate_hz (500 Hz, subsystems/payload.yaml). Raw frame volume scales as (lines/2048) x (active_bands/4) x image_size_mb; 2048 lines x 4 bands = 4.0 MB = subsystems/payload.yaml image_size_mb. | [lines] | range [256, 20000] | default 2048</Description>
     </Field>
     <Field Name="tc_PAYLOAD_DOWNLOAD_IMAGE_scene_id" Uuid="b60100d8-bc53-5b94-88b0-13edacf511a9" Type="UInt16" Kind="Input">
-      <Description>Scene ID to download</Description>
+      <Description>Scene ID to download | range [0, 65535] | default 0</Description>
     </Field>
     <Field Name="tc_PAYLOAD_DELETE_IMAGE_scene_id" Uuid="d9a75da0-93fe-5255-89f4-57ef6c4b8860" Type="UInt16" Kind="Input">
-      <Description>Scene ID to delete</Description>
+      <Description>Scene ID to delete | range [0, 65535] | default 0</Description>
     </Field>
     <Field Name="tc_PAYLOAD_MARK_BAD_SEGMENT_segment_id" Uuid="018a1e78-1f79-564a-88eb-7695c8e16762" Type="UInt8" Kind="Input">
-      <Description>Segment index (0-79)</Description>
+      <Description>Segment index 0-7 (subsystems/payload.yaml num_memory_segments: 8; the model rejects &gt;= 8. The old '0-79' documentation was never executable). | range [0, 7] | default 0</Description>
     </Field>
     <Field Name="tc_PAYLOAD_SET_BAND_CONFIG_mask" Uuid="2702f4f9-28dc-5a59-8dcf-195dedd73e02" Type="UInt8" Kind="Input">
-      <Description>Band mask (bits 0-3: blue/green/red/nir)</Description>
+      <Description>Each enabled band multiplies raw volume by lines x 5000 px x 2 B. Bit order matches SPECTRAL_BANDS[].bit in payload_basic.py. mask = 0x00 is REJECTED (at least one band required). | range [1, 15] | default 15 | bit0=BLUE | bit1=GREEN | bit2=RED | bit3=NIR</Description>
     </Field>
-    <Field Name="tc_PAYLOAD_SET_INTEGRATION_TIME_blue_ms" Uuid="5163daee-2745-5ffa-b94e-e98d5fd9b663" Type="Float32" Kind="Input">
-      <Description>Blue band integration time (ms)</Description>
+    <Field Name="tc_PAYLOAD_SET_INTEGRATION_TIME_blue_ms" Uuid="5163daee-2745-5ffa-b94e-e98d5fd9b663" Type="UInt16" Kind="Input">
+      <Description>Blue band integration time (ms) | [ms] | eng = raw*0.01 (cs(0.01ms)) | range [0.1, 655.35] | default 2.0</Description>
     </Field>
-    <Field Name="tc_PAYLOAD_SET_INTEGRATION_TIME_green_ms" Uuid="e7382691-3529-5219-ac7e-0045a840d874" Type="Float32" Kind="Input">
-      <Description>Green band integration time (ms)</Description>
+    <Field Name="tc_PAYLOAD_SET_INTEGRATION_TIME_green_ms" Uuid="e7382691-3529-5219-ac7e-0045a840d874" Type="UInt16" Kind="Input">
+      <Description>Green band integration time (ms) | [ms] | eng = raw*0.01 (cs(0.01ms)) | range [0.1, 655.35] | default 2.0</Description>
     </Field>
-    <Field Name="tc_PAYLOAD_SET_INTEGRATION_TIME_red_ms" Uuid="9830f15d-2471-54d9-b790-0123988b71e5" Type="Float32" Kind="Input">
-      <Description>Red band integration time (ms)</Description>
+    <Field Name="tc_PAYLOAD_SET_INTEGRATION_TIME_red_ms" Uuid="9830f15d-2471-54d9-b790-0123988b71e5" Type="UInt16" Kind="Input">
+      <Description>Red band integration time (ms) | [ms] | eng = raw*0.01 (cs(0.01ms)) | range [0.1, 655.35] | default 2.0</Description>
     </Field>
-    <Field Name="tc_PAYLOAD_SET_INTEGRATION_TIME_nir_ms" Uuid="bd4574a0-7a62-5c64-a783-fbfe74f4dc23" Type="Float32" Kind="Input">
-      <Description>NIR band integration time (ms)</Description>
+    <Field Name="tc_PAYLOAD_SET_INTEGRATION_TIME_nir_ms" Uuid="bd4574a0-7a62-5c64-a783-fbfe74f4dc23" Type="UInt16" Kind="Input">
+      <Description>NIR band integration time (ms) | [ms] | eng = raw*0.01 (cs(0.01ms)) | range [0.1, 655.35] | default 2.0</Description>
     </Field>
-    <Field Name="tc_PAYLOAD_SET_GAIN_gain" Uuid="19048d36-fdc1-50c9-ab74-8e55178bf742" Type="Float32" Kind="Input">
-      <Description>Detector gain (0.1-10.0)</Description>
+    <Field Name="tc_PAYLOAD_SET_GAIN_gain" Uuid="19048d36-fdc1-50c9-ab74-8e55178bf742" Type="UInt16" Kind="Input">
+      <Description>Detector gain 0.100-10.000 (raw = gain x 1000) | [x] | eng = raw*0.001 (milli-x) | range [0.1, 10.0] | default 1.0</Description>
     </Field>
-    <Field Name="tc_PAYLOAD_COOLER_SETPOINT_setpoint_c" Uuid="aa76977b-6dc9-5987-bfd5-dc1dc03a6eeb" Type="Float32" Kind="Input">
-      <Description>Target temperature (-20C to 0C)</Description>
+    <Field Name="tc_PAYLOAD_COOLER_SETPOINT_setpoint" Uuid="12d0c0da-5113-5f95-b136-651cb3ec30b3" Type="UInt16" Kind="Input">
+      <Description>FPA regulation setpoint in degC (Peltier-class cooler envelope -20..0 degC, subsystems/payload.yaml). Outside the envelope the TC is REJECTED with S1.8 error 0x0003. | [degC] | eng = raw*0.01 + -273.15 (cK) | range [-20.0, 0.0] | default -15.0</Description>
     </Field>
-    <Field Name="tc_PAYLOAD_SET_COMPRESSION_ratio" Uuid="3e101724-b3a3-51dc-9ac0-312de773c706" Type="Float32" Kind="Input">
-      <Description>Compression ratio (0=auto, else manual)</Description>
+    <Field Name="tc_PAYLOAD_START_CALIBRATION_mode" Uuid="770fbd59-ea28-5739-bb38-308aaefff1fa" Type="UInt8" Kind="Input">
+      <Description>0=dark only, 1=flat only, 2=both (COM-011 step 2 uses DARK) | default 2 | 0=DARK | 1=FLAT | 2=BOTH</Description>
+    </Field>
+    <Field Name="tc_PAYLOAD_SET_COMPRESSION_algorithm" Uuid="c983f126-2a96-5d1b-ab4b-f2916f8303d9" Type="UInt8" Kind="Input">
+      <Description>Compression algorithm | default 3 | 0=NONE | 1=CCSDS-121 | 2=CCSDS-122 | 3=CCSDS-123</Description>
+    </Field>
+    <Field Name="tc_PAYLOAD_SET_COMPRESSION_ratio" Uuid="3e101724-b3a3-51dc-9ac0-312de773c706" Type="UInt8" Kind="Input">
+      <Description>Ratio override x10 (0 = AUTO scene-dependent 1.5-4.0; 10-40 = 1.0-4.0) | [x] | eng = raw*0.1 (deci-x) | range [0.0, 4.0] | default 0.0</Description>
+    </Field>
+    <Field Name="tc_PAYLOAD_SELECT_FILTER_position" Uuid="b2ebe096-fb51-5969-a57d-7b5405f1a6e0" Type="UInt8" Kind="Input">
+      <Description>Filter wheel position 0-3 | default 0 | 0=CLEAR | 1=ND2 | 2=DIFFUSER | 3=DARK</Description>
+    </Field>
+    <Field Name="tc_PAYLOAD_CYCLE_SHUTTER_cycles" Uuid="d461b6b2-4a0f-5062-93e4-fbff47c8522c" Type="UInt8" Kind="Input">
+      <Description>Number of open/close cycles (1-100) | [cycles] | range [1, 100] | default 1</Description>
+    </Field>
+    <Field Name="tc_PAYLOAD_INITIATE_TRANSFER_scene_id" Uuid="f80cc2f2-10fc-50ee-ae78-23cbe91e99f7" Type="UInt16" Kind="Input">
+      <Description>Stored scene to transfer | range [1, 65535] | default 1</Description>
+    </Field>
+    <Field Name="tc_PAYLOAD_CAL_LAMP_on" Uuid="a5a07076-8966-5bfb-bea0-e0b846339b1a" Type="UInt8" Kind="Input">
+      <Description>0=off, 1=on | default 0 | 0=OFF | 1=ON</Description>
     </Field>
     <EntryPoint Name="Step" Uuid="52e3d864-d5a5-5238-9a1a-efd1245a58cd">
       <Description>Main simulation step</Description>
@@ -190,8 +234,8 @@
     <EntryPoint Name="UpdateStorage" Uuid="f2f51f50-24ac-5e1a-80ca-73bad08e8f99">
       <Description>UpdateStorage</Description>
     </EntryPoint>
-    <EventSource Name="Payload FPA Temperature High_WARNING" Uuid="e44f1cf0-2bce-5bb2-bfd2-31ac6492b28c">
-      <Description>WARNING alarm for Payload FPA Temperature High</Description>
+    <EventSource Name="Payload FPA Temperature_WARNING" Uuid="3d135875-fcd5-5b95-b947-81552abd2051">
+      <Description>WARNING alarm for Payload FPA Temperature</Description>
     </EventSource>
     <EventSource Name="Payload Storage Full_WARNING" Uuid="7c63af5d-2bd9-5c2a-a838-63756dbdd436">
       <Description>WARNING alarm for Payload Storage Full</Description>

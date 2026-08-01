@@ -18,7 +18,7 @@ CONFIG_ROOT = Path(__file__).resolve().parent.parent.parent / "configs" / "eosat
 ALL_TABS = [
     "system_dashboard", "power_monitor", "fdir_panel", "contact_schedule", "procedure_panel",
     "overview", "eps", "aocs", "tcs", "obdh", "ttc",
-    "payload", "commanding", "pus", "procedures", "manual",
+    "payload", "commanding", "pus", "procedures", "trends", "manual",
 ]
 
 VALID_SUBSYSTEM_NAMES = {"eps", "aocs", "tcs", "obdh", "ttc", "payload", "fdir"}
@@ -44,13 +44,13 @@ def _position_config(positions, name):
 class TestFlightDirectorPosition:
     """Flight Director should have access to all tabs, subsystems, and commands."""
 
-    def test_visible_tabs_all_16(self):
+    def test_visible_tabs_all(self):
         positions = _load_positions()
         cfg = _position_config(positions, "flight_director")
         assert set(cfg.visible_tabs) == set(ALL_TABS), (
             f"FD visible_tabs mismatch: {cfg.visible_tabs}"
         )
-        assert len(cfg.visible_tabs) == 16
+        assert len(cfg.visible_tabs) == len(ALL_TABS)
 
     def test_overview_subsystems_all(self):
         positions = _load_positions()
@@ -79,7 +79,7 @@ class TestEpsTcsPosition:
     def test_visible_tabs(self):
         positions = _load_positions()
         cfg = _position_config(positions, "eps_tcs")
-        expected = ["overview", "eps", "tcs", "commanding", "procedures", "manual"]
+        expected = ["overview", "eps", "tcs", "commanding", "procedures", "trends", "manual"]
         assert cfg.visible_tabs == expected
 
     def test_overview_subsystems(self):
@@ -116,7 +116,7 @@ class TestAocsPosition:
     def test_visible_tabs(self):
         positions = _load_positions()
         cfg = _position_config(positions, "aocs")
-        expected = ["overview", "aocs", "commanding", "procedures", "manual"]
+        expected = ["overview", "aocs", "commanding", "procedures", "trends", "manual"]
         assert cfg.visible_tabs == expected
 
     def test_overview_subsystems(self):
@@ -166,7 +166,7 @@ class TestTtcPosition:
     def test_visible_tabs(self):
         positions = _load_positions()
         cfg = _position_config(positions, "ttc")
-        expected = ["overview", "ttc", "commanding", "procedures", "manual"]
+        expected = ["overview", "ttc", "commanding", "procedures", "trends", "manual"]
         assert cfg.visible_tabs == expected
 
     def test_overview_subsystems(self):
@@ -197,7 +197,7 @@ class TestPayloadOpsPosition:
     def test_visible_tabs(self):
         positions = _load_positions()
         cfg = _position_config(positions, "payload_ops")
-        expected = ["overview", "payload", "commanding", "procedures", "manual"]
+        expected = ["overview", "payload", "commanding", "procedures", "trends", "manual"]
         assert cfg.visible_tabs == expected
 
     def test_overview_subsystems(self):
@@ -228,7 +228,7 @@ class TestFdirSystemsPosition:
     def test_visible_tabs(self):
         positions = _load_positions()
         cfg = _position_config(positions, "fdir_systems")
-        expected = ["overview", "obdh", "commanding", "pus", "procedures", "manual"]
+        expected = ["overview", "obdh", "commanding", "pus", "procedures", "trends", "manual"]
         assert cfg.visible_tabs == expected
 
     def test_overview_subsystems(self):
@@ -313,10 +313,11 @@ class TestCrossPositionConsistency:
             )
 
     def test_six_positions_defined(self):
-        """There should be exactly 6 operator positions."""
+        """There should be exactly 7 operator positions (Phase D added
+        the Propulsion Engineer)."""
         positions = _load_positions()
         expected = {
             "flight_director", "eps_tcs", "aocs",
-            "ttc", "payload_ops", "fdir_systems",
+            "ttc", "payload_ops", "fdir_systems", "propulsion",
         }
         assert set(positions.keys()) == expected

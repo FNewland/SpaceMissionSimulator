@@ -1,0 +1,55 @@
+# OBCP 1 — Pass preparation
+#
+# Prepares the comms chain ahead of a ground-station pass: energise the TTC
+# transmitter line, switch the power amplifier on, deploy the antenna, leave
+# beacon mode, raise the TM data rate and enable the transponder TX. All
+# func_ids are real S8 routes implemented in service_dispatch.py
+# (EPS 18/19, TTC 65/66/69/70).
+#
+# Order matters: the TTC model forces the low rate while beacon_mode is set or
+# the antenna is stowed (ttc_basic.py: "Data rate selection"), so the antenna
+# deploy and beacon-off steps must precede the set-TM-rate step.
+#
+# Format: see docs/OBCP_GUIDE.md. Each step is a complete PUS TC that the
+# spacecraft executes on itself once delay_s (sim seconds, relative to the
+# previous step) has elapsed. Power-line indices (func 19/20 argument byte):
+#   0=obc 1=ttc_rx 2=ttc_tx 3=payload 4=fpa_cooler 5=htr_bat 6=htr_obc 7=aocs_wheels
+procedure:
+  id: 1
+  name: pass_preparation
+  description: "Energise TX line, PA on, high TM rate, transponder TX on"
+  steps:
+    - delay_s: 0          # EPS power_line_on(ttc_tx)
+      service: 8
+      subtype: 1
+      func_id: 19
+      data_hex: "02"
+    - delay_s: 2          # TTC PA on
+      service: 8
+      subtype: 1
+      func_id: 66
+    - delay_s: 2          # TTC deploy antennas (no-op if already deployed)
+      service: 8
+      subtype: 1
+      func_id: 69
+    - delay_s: 2          # TTC beacon mode OFF (resume full-rate TM)
+      service: 8
+      subtype: 1
+      func_id: 70
+      data_hex: "00"
+    # TTC set TM rate = LOW (16 kbps), the routine-operations rung of the
+    # ladder in subsystems/ttc.yaml (defect #85). Catalogued single-byte tier
+    # code, not the old raw-uint32 64000 — which is no longer a configured
+    # rate and would now be refused. The HIGH tier (128 kbps) is not set here
+    # on purpose: it requires DOWNLINK/dump mode, which pass preparation has
+    # not entered, so the dump procedure raises the rate when it needs it.
+    - delay_s: 2
+      service: 8
+      subtype: 1
+      func_id: 65
+      data_hex: "00"
+    - delay_s: 1          # EPS transponder TX enable
+      service: 8
+      subtype: 1
+      func_id: 18
+      data_hex: "01"

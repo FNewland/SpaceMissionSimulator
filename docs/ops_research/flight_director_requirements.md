@@ -610,7 +610,7 @@ The simulator (`packages/smo-simulator/`) must faithfully implement the followin
 - RF link budget (RSSI, link margin, Eb/N0) as a function of elevation and range
 - Power amplifier thermal model with auto-shutdown at 70 C
 - Primary/redundant transponder switching
-- Data rate change (1 kbps / 64 kbps)
+- TM rate tier change (LOW 16 kbps routine <-> HIGH 128 kbps dump; BEACON 1 kbps is bootloader-only). Raising to HIGH also requires DOWNLINK mode and elevation >= 10 deg
 - BER variation with link quality
 - Carrier lock / bit sync / frame sync sequence
 - Transponder failure injection

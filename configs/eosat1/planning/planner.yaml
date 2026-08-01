@@ -1,0 +1,185 @@
+# EOSAT-1 Mission Planner Configuration
+# ---------------------------------------------------------------------------
+# This file belongs to the PLANNING TOOL, not to the spacecraft or the
+# simulator. It holds the settings that are the planner's own: clock defaults,
+# planning horizons, refresh intervals, budget parameters, default-plan
+# behaviour and per-station PLANNING attributes.
+#
+# Schema: smo_planner.planner_config.PlannerConfig (pydantic v2, validated at
+# load — an unknown/mistyped value fails loudly instead of being ignored).
+#
+# ALIGNMENT WITH THE SIMULATOR CONFIG (defect #42, defect #57)
+# -----------------------------------------------------------
+# Ground-station GEOMETRY is canonically owned by ../orbit.yaml. The
+# `stations:` block below adds planning attributes on top of that list and may
+# MIRROR the geometry for readability; the mirrored values are cross-checked
+# against orbit.yaml, they are never the source of truth.
+#
+#   * at planner start-up the check runs automatically and logs a warning (or
+#     raises, see alignment.on_divergence) listing every divergence;
+#   * `GET /api/config/alignment` returns the same report as JSON;
+#   * `python -m smo_planner.planner_config --config configs/eosat1` prints a
+#     side-by-side table and exits 2 on divergence (usable in CI).
+#
+# To add or move a station: edit ../orbit.yaml FIRST, then mirror here and in
+# ground_stations.yaml (RF augmentation), then run the CLI above.
+
+time:
+  # Fallback only — CLI --time-source > env SMO_TIME_SOURCE > mission.yaml
+  # time_source > this value.
+  default_time_source: sim
+  sim_state_url: null            # null -> http://<connect_host>:8080/api/state
+  anchor_refresh_s: 1.5          # background sim-clock anchor refresh (wall s)
+  # Sim-time discontinuity threshold. A breakpoint load, a scenario reset or an
+  # instructor time jump moves sim_time away from what the previous anchor
+  # predicted; more than this many seconds of unexplained movement invalidates
+  # the contact/ground-track caches immediately instead of waiting for the
+  # periodic recompute (defect #59).
+  jump_tolerance_s: 5.0
+  stale_anchor_s: 60.0           # anchor older than this -> clock reported degraded
+
+horizons:
+  contacts_hours: 24.0
+  contacts_step_s: 10.0
+  ground_track_hours: 3.0
+  ground_track_step_s: 30.0
+  imaging_hours: 24.0
+  imaging_step_s: 60.0
+  timeline_hours: 24.0
+
+refresh:
+  recompute_interval_s: 600.0      # wall-clock periodic recompute
+  sim_recompute_interval_s: 1800.0 # also recompute after this much SIM time
+  poll_interval_s: 30.0            # UI poll period
+  spacecraft_refresh_s: 5.0        # UI spacecraft-state poll period
+
+budget:
+  initial_soc_percent: 80.0
+  min_soc_percent: 25.0
+  # null => take the number from the spacecraft config, so the planner can
+  # never drift from it (defect #60):
+  battery_capacity_wh: null        # <- subsystems/eps.yaml battery.capacity_wh
+  storage_capacity_mb: null        # <- subsystems/payload.yaml total_storage_mb (20000)
+  image_size_mb: null              # <- subsystems/payload.yaml image_size_mb (4.0)
+  # THE DOWNLINK IS A LADDER, NOT A RATE (defect #86). The planner reads two
+  # rungs of subsystems/ttc.yaml tm_rate_tiers and never a single number:
+  #   ROUTINE = `default_tier` = LOW, 16 000 bps — housekeeping, events, the
+  #             rate the spacecraft normally sits at, ungated;
+  #   DUMP    = the top rung   = HIGH, 128 000 bps — reached only by a
+  #             `data_dump` activity, and only above the tier's
+  #             `min_elevation_deg` (10 deg), because HIGH also demands a
+  #             deployed antenna and DOWNLINK mode.
+  # `downlink_rate_bps` below is the legacy name for the DUMP rung only.
+  # null => take it from ttc.yaml, so the planner can never drift from the
+  # spacecraft. Setting it here overrides the DUMP rung alone; the routine rung
+  # always comes from the spacecraft.
+  downlink_rate_bps: null          # <- subsystems/ttc.yaml tm_rate_tiers[HIGH] (128000)
+  protocol_overhead: 0.20          # framing/coding overhead on the downlink
+  storage_margin_percent: 10.0
+  # HK accruing outside planned activities. 0 by default: the S15 HK store is
+  # CIRCULAR (it overwrites rather than overflowing), so it neither fills the
+  # science store nor blocks a plan. Set > 0 to bill HK against the science
+  # store for a training exercise.
+  hk_background_mb_per_hour: 0.0
+  warn_utilization_percent: 80.0
+
+imaging:
+  fov_deg: 15.0
+  swath_km: null                   # null -> 2*alt*tan(fov/2) from orbit.yaml
+  max_off_nadir_deg: 7.5           # roll limit for a capture (feasibility gate)
+  capture_duration_s: 120.0
+  capture_power_w: 60.0
+  default_min_solar_elevation_deg: 10.0
+  enforce_solar_elevation: true    # per-target min_solar_elevation_deg is ENFORCED
+  enforce_revisit: true            # per-target revisit_days is ENFORCED
+
+default_plan:
+  # The planner starts with an EMPTY schedule. Standard activities are loaded
+  # explicitly by the operator ("Load standard activities"), never seeded.
+  start_empty: true
+  templates_file: planning/standard_plans.yaml
+  default_template: nominal_ops_day
+
+alignment:
+  canonical_source: orbit.yaml
+  on_divergence: warn              # warn | error | ignore
+  position_tolerance_deg: 0.001    # ~110 m
+  altitude_tolerance_km: 0.01      # 10 m
+  elevation_tolerance_deg: 0.1
+
+# Per-station PLANNING attributes. Geometry mirrors ../orbit.yaml and is
+# cross-checked against it; omit the lat/lon/alt/mask keys to inherit silently.
+stations:
+  - name: Svalbard
+    enabled: true
+    priority: 100                  # highest: 25 passes/48 h, median max-el 42 deg
+    bands: [S]
+    supports_payload_downlink: false
+    setup_time_s: 60.0
+    teardown_time_s: 30.0
+    # Elevation gate on the HIGH tier. MUST match
+    # subsystems/ttc.yaml tm_rate_tiers[HIGH].min_elevation_deg — below it the
+    # spacecraft REJECTS the tier, so a dump planned here would run at LOW
+    # (16 kbps) and move an eighth of the booked volume (defect #86).
+    min_dump_elevation_deg: 10.0
+    lat_deg: 78.2297
+    lon_deg: 15.3975
+    alt_km: 0.458
+    min_elevation_deg: 5.0
+    notes: "KSAT SvalSat — primary polar downlink"
+
+  - name: Troll
+    enabled: true
+    priority: 90                   # 22 passes/48 h, median max-el 27 deg
+    bands: [S]
+    supports_payload_downlink: false
+    setup_time_s: 60.0
+    teardown_time_s: 30.0
+    min_dump_elevation_deg: 10.0
+    lat_deg: -72.012
+    lon_deg: 2.535
+    alt_km: 1.275
+    min_elevation_deg: 5.0
+    notes: "TrollSat — southern-hemisphere counterpart to Svalbard"
+
+  - name: Inuvik
+    enabled: true
+    priority: 80                   # 20 passes/48 h, median max-el 21 deg
+    bands: [S]
+    supports_payload_downlink: false
+    setup_time_s: 60.0
+    teardown_time_s: 30.0
+    min_dump_elevation_deg: 10.0
+    lat_deg: 68.3195
+    lon_deg: -133.5495
+    alt_km: 0.102
+    min_elevation_deg: 5.0
+    notes: "Inuvik Satellite Station Facility"
+
+  - name: O'Higgins
+    enabled: true
+    priority: 60                   # 19 passes/48 h, median max-el 16 deg
+    bands: [S]
+    supports_payload_downlink: false
+    setup_time_s: 60.0
+    teardown_time_s: 30.0
+    min_dump_elevation_deg: 10.0
+    lat_deg: -63.3211
+    lon_deg: -57.9008
+    alt_km: 0.032
+    min_elevation_deg: 5.0
+    notes: "DLR GARS O'Higgins"
+
+  - name: Iqaluit
+    enabled: true
+    priority: 50                   # 17 passes/48 h, median max-el 17 deg
+    bands: [S]
+    supports_payload_downlink: false
+    setup_time_s: 60.0
+    teardown_time_s: 30.0
+    min_dump_elevation_deg: 10.0
+    lat_deg: 63.747
+    lon_deg: -68.518
+    alt_km: 0.034
+    min_elevation_deg: 5.0
+    notes: "Iqaluit Satellite Station Facility"

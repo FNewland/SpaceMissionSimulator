@@ -21,7 +21,10 @@ class TTCState:
     link_active: bool = False
     rssi_dbm: float = -120.0
     link_margin_db: float = 0.0
-    tm_data_rate: int = 64000
+    # Information rate in bps of the *active* tier. This is the tier's `bps`
+    # exactly — modulation changes the SYMBOL rate and the occupied bandwidth,
+    # never the bit rate (defect #85).
+    tm_data_rate: int = 16000
     xpdr_temp: float = 28.0
     ranging_active: bool = False
     range_km: float = 0.0
@@ -35,6 +38,9 @@ class TTCState:
     pa_temp: float = 35.0
     pa_overheat_shutdown: bool = False  # Auto-shutdown at 70C
     tx_fwd_power: float = 2.0  # Watts
+    # Phase E WP-2: last commanded TTC_SET_TX_POWER level (0=LOW, 1=NOMINAL,
+    # 2=HIGH); 1 at power-up (pa_nominal_power_w).
+    tx_power_level: int = 1
 
     # ── BER / Eb-N0 ──
     ber: float = -10.0  # log10 scale (1e-10)
@@ -71,7 +77,18 @@ class TTCState:
     cmd_channel_active: bool = False     # True while timer is running
     antenna_deployed: bool = False       # True after burn-wire deployment
     beacon_mode: bool = False            # True in bootloader beacon mode
-    data_rate_mode: int = 1              # 0=low-rate (1 kbps), 1=high-rate (64 kbps)
+
+    # ── TM data-rate ladder (defect #85) ──
+    # `data_rate_mode` is the COMMANDED tier index over ttc.yaml's
+    # tm_rate_tiers ladder (0=BEACON, 1=LOW, 2=HIGH by default).
+    # It stays authoritative across ticks — that is what defect #74 fixed and
+    # what must not regress. What tick() may change is `tm_tier`, the tier
+    # actually ACTIVE once the permission gates (beacon mode, antenna stowed,
+    # DOWNLINK mode, elevation) have been applied; the commanded value is
+    # remembered so the tier resumes when the gate clears.
+    data_rate_mode: int = 1              # commanded tier index (LOW)
+    tm_tier: int = 1                     # active tier index
+    downlink_mode: bool = False          # True in DOWNLINK / payload-dump mode
 
     # ── Antenna deployment sensors (DEFECT FIX #4) ──
     antenna_deployment_ready: bool = True  # True if pyro continuity OK
@@ -125,24 +142,49 @@ class TTCBasicModel(SubsystemModel):
 
     def __init__(self):
         self._state = TTCState()
+        # Per-model RNG (plan A-2). Standalone construction gets a fresh
+        # unseeded stream so existing unit tests keep working; the engine
+        # replaces this with a Random derived from simulation.yaml `seed`.
+        import random as _random
+        self.rng = _random.Random(20260731)  # deterministic standalone fallback; engine overrides via derive_rng
         self._param_ids: dict[str, int] = {}
         self._eirp = 10.0
         self._gs_gt = 20.0
         self._sc_gain = 3.0
         self._dl_freq_hz = 2200.5e6
         self._min_el = 5.0
-        self._tm_rate_hi = 64000
-        self._tm_rate_lo = 1000
+        # ── TM data-rate ladder (defect #85) ──
+        self._tiers: list[dict[str, Any]] = [
+            dict(t) for t in self.DEFAULT_TM_RATE_TIERS
+        ]
+        self._default_tier = 1   # LOW — routine operations
+        self._beacon_tier = 0    # BEACON — bootloader only
+        self._safe_tier = 1      # LOW — safe mode / FDIR / antenna stowed
         # The carrier->bit->frame sequence is an UPLINK lock paced by the
-        # uplink command rate, NOT the downlink TM rate.
-        self._tc_uplink_rate_bps = 64000
+        # uplink command rate, NOT the downlink TM rate. It must NOT default
+        # to the top TM tier: that would make the telecommand uplink 1 Mbps.
+        self._tc_uplink_rate_bps = 4000
         self._ul_freq_mhz = 449.0
-        self._coding_gain = 3.0  # dB (convolutional + RS)
+        self._coding_gain = 3.0  # dB (convolutional + RS) — ladder default
+        # Link-budget losses (mirror rfsim.yaml link_budget)
+        self._atmospheric_loss = 0.5
+        self._polarization_loss = 0.3
+        self._implementation_loss = 2.0
+        self._gt_derate_10 = 1.5
+        self._gt_derate_30 = 0.5
+        self._required_eb_n0 = 9.6
+        self._applied_tier: int | None = None
         self._pa_max_power_w = 5.0
         self._pa_nominal_power_w = 2.0
         self._pa_shutdown_temp = 70.0
         self._pa_tau = 60.0  # PA thermal time constant (seconds)
         self._was_in_contact = False
+
+    # S-band near-Earth allocations (CCSDS 401.0-B). These are the bands the
+    # ground stations, the RF simulator, ttc.yaml and the textbook all use;
+    # set_ul_freq / set_dl_freq validate against them (roadmap N-4).
+    UL_BAND_MHZ = (2025.0, 2110.0)
+    DL_BAND_MHZ = (2200.0, 2290.0)
 
     # Modulation scheme parameters:
     # bits_per_symbol, spectral_efficiency_factor, required_eb_n0_offset_db
@@ -152,6 +194,284 @@ class TTCBasicModel(SubsystemModel):
         2: {"name": "8PSK",  "bits_per_symbol": 3, "eb_n0_penalty": 3.6},
         3: {"name": "OQPSK", "bits_per_symbol": 2, "eb_n0_penalty": 0.0},
     }
+
+    MODULATION_INDEX = {"BPSK": 0, "QPSK": 1, "8PSK": 2, "OQPSK": 3}
+
+    # Uplink (TC) lock-acquisition pacing thresholds. The nominal TC rate is
+    # 4000 bps (Sentinel-1's) and gives the nominal ~11 s lock; a beacon-rate
+    # 1 kbps uplink triples it, the 64 kbps software-upload rate speeds it up.
+    # These used to be written against the TM ladder's lo/hi rates, which is
+    # wrong now the uplink no longer inherits from the TM ladder.
+    TC_SLOW_LOCK_RATE_BPS = 1000
+    TC_FAST_LOCK_RATE_BPS = 64000
+
+    # ── TM data-rate ladder (defect #85) ────────────────────────────────
+    # Fallback used only when `configure()` is given no `tm_rate_tiers`.
+    # `configs/eosat1/subsystems/ttc.yaml` is the source of truth; these
+    # defaults exist so a bare TTCBasicModel() still has a sane ladder.
+    DEFAULT_TM_RATE_TIERS: list[dict[str, Any]] = [
+        {"name": "BEACON", "bps": 1000, "command_code": 0xFF,
+         "modulation": "BPSK", "coding": "CONV_RS", "coding_gain_db": 7.5,
+         "beacon_only": True, "requires_antenna": False},
+        {"name": "LOW", "bps": 16000, "command_code": 0x00,
+         "modulation": "BPSK", "coding": "CONV_RS", "coding_gain_db": 7.5,
+         "requires_antenna": False},
+        {"name": "HIGH", "bps": 128000, "command_code": 0x01,
+         "modulation": "QPSK", "coding": "RS", "coding_gain_db": 6.0,
+         "requires_antenna": True, "requires_downlink_mode": True,
+         "min_elevation_deg": 10.0},
+    ]
+
+    # ── Ladder helpers ──────────────────────────────────────────────────
+
+    @property
+    def _tm_rate_lo(self) -> int:
+        """Deprecated alias — the safe-mode tier's bps (LOW, 16 kbps).
+
+        Kept so out-of-lane readers keep resolving. New code should use
+        ``tier_bps(model._safe_tier)`` or a tier name.
+        """
+        return self.tier_bps(self._safe_tier)
+
+    @property
+    def _tm_rate_hi(self) -> int:
+        """Deprecated alias — the top tier's bps (HIGH, 1.024 Mbps)."""
+        return self.tier_bps(len(self._tiers) - 1)
+
+    @property
+    def tiers(self) -> list[dict[str, Any]]:
+        """The configured TM rate ladder, ascending in bps."""
+        return self._tiers
+
+    def tier(self, index: int) -> dict[str, Any]:
+        i = max(0, min(len(self._tiers) - 1, int(index)))
+        return self._tiers[i]
+
+    def tier_index(self, name: str) -> int:
+        """Index of a tier by (case-insensitive) name; -1 if unknown."""
+        key = str(name).strip().upper()
+        for i, t in enumerate(self._tiers):
+            if str(t.get("name", "")).upper() == key:
+                return i
+        return -1
+
+    def tier_name(self, index: int) -> str:
+        return str(self.tier(index).get("name", f"TIER{index}"))
+
+    def tier_bps(self, index: int) -> int:
+        return int(self.tier(index).get("bps", 1000))
+
+    def tier_symbol_rate(self, index: int) -> float:
+        """Symbol rate (Bd) of a tier = bps / bits-per-symbol.
+
+        The tier's `bps` is the INFORMATION rate. Changing modulation moves
+        the symbol rate and therefore the occupied bandwidth — it must never
+        change the bit rate, which is what the old
+        ``tm_data_rate = base_rate * bits_per_sym`` did (it reported 128 kbps
+        NOMINAL as 256 kbps the moment QPSK was selected).
+        """
+        t = self.tier(index)
+        mod = self.MODULATION_INDEX.get(str(t.get("modulation", "BPSK")).upper(), 0)
+        bps_per_sym = self.MODULATION_PARAMS.get(
+            mod, {"bits_per_symbol": 1})["bits_per_symbol"]
+        return float(t["bps"]) / max(bps_per_sym, 1)
+
+    def tier_occupied_bw_hz(self, index: int,
+                            rolloff: float = 0.35) -> float:
+        """Occupied bandwidth (Hz) = (1 + alpha) x symbol rate, including the
+        RS(255,223) and TM-transfer-frame expansion and the r=1/2
+        convolutional expansion when the tier codes with it. Used to check
+        the 5.00 MHz per-mission allocation in 2200-2290 MHz."""
+        t = self.tier(index)
+        rs_expand = 255.0 / 223.0 if str(t.get("coding", "RS")).upper() != "NONE" else 1.0
+        frame_expand = 1115.0 / 1107.0
+        conv_expand = 2.0 if str(t.get("coding", "RS")).upper() == "CONV_RS" else 1.0
+        return (self.tier_symbol_rate(index) * rs_expand * frame_expand
+                * conv_expand * (1.0 + rolloff))
+
+    # ── Link-budget helpers (defect #84) ────────────────────────────────
+
+    def _atmospheric_loss_at(self, elevation_deg: float) -> float:
+        """Clear-sky atmospheric loss (dB) at the given elevation.
+
+        `atmospheric_loss_db` is the >=30 deg figure; below that it is scaled
+        by cosec(elevation) — 0.5 * sin(30) / sin(eps) — giving 1.44 dB at
+        10 deg and 2.87 dB at 5 deg. The old model applied no atmospheric,
+        polarisation or implementation loss at all, even though rfsim.yaml's
+        link_budget section defines all three.
+        """
+        el = float(elevation_deg)
+        if el >= 30.0:
+            return self._atmospheric_loss
+        el = max(el, 1.0)  # numerically safe at/below the horizon
+        return self._atmospheric_loss * math.sin(math.radians(30.0)) / \
+            math.sin(math.radians(el))
+
+    def _gt_derate_db(self, elevation_deg: float) -> float:
+        """G/T de-rate (dB) for ground/sky noise pickup at low elevation."""
+        el = float(elevation_deg)
+        if el < 10.0:
+            return self._gt_derate_10
+        if el < 30.0:
+            return self._gt_derate_30
+        return 0.0
+
+    def link_margin_for(self, tier_index: int, range_km: float,
+                        elevation_deg: float,
+                        gs_gt_db: float | None = None) -> dict[str, float]:
+        """Deterministic, noise-free link budget for one tier and geometry.
+
+        Exposed so tools/tests can reproduce the researched arithmetic
+        (link_rate_research.md sections B.2-B.7) without ticking the model.
+        """
+        t = self.tier(tier_index)
+        gt = self._gs_gt if gs_gt_db is None else float(gs_gt_db)
+        fspl = (20 * math.log10(max(range_km, 1e-3) * 1000.0)
+                + 20 * math.log10(self._dl_freq_hz) - 147.55)
+        losses = (self._atmospheric_loss_at(elevation_deg)
+                  + self._polarization_loss + self._implementation_loss)
+        gt_eff = gt - self._gt_derate_db(elevation_deg)
+        c_n0 = (self._eirp + self._sc_gain - fspl - losses + gt_eff + 228.6)
+        eb_n0 = c_n0 - 10 * math.log10(float(t["bps"]))
+        cg = float(t.get("coding_gain_db", self._coding_gain))
+        mod = self.MODULATION_INDEX.get(
+            str(t.get("modulation", "BPSK")).upper(), 0)
+        mod_penalty = self.MODULATION_PARAMS.get(
+            mod, {"eb_n0_penalty": 0.0})["eb_n0_penalty"]
+        required = self._required_eb_n0 + mod_penalty - cg
+        return {
+            "fspl_db": fspl,
+            "losses_db": losses,
+            "gt_eff_db": gt_eff,
+            "c_n0_dbhz": c_n0,
+            "eb_n0_db": eb_n0,
+            "coding_gain_db": cg,
+            "required_eb_n0_db": required,
+            "margin_db": eb_n0 - required,
+        }
+
+    def _decode_tier_arg(self, raw: Any) -> "int | None":
+        """Decode a `set_tm_rate` argument into a tier index.
+
+        Accepts, in this order:
+          * a tier NAME ("NOMINAL", case-insensitive);
+          * a tier `command_code` — the uint8 the catalogue advertises;
+          * a raw bps value equal to one of the configured tier rates.
+
+        The legacy binary encoding survives verbatim because ttc.yaml gives
+        LOW `command_code: 0x00` and HIGH `command_code: 0x01`. Every
+        procedure, OBCP and FDIR action that already sends 0 ("low") or 1
+        ("high") therefore keeps its meaning, and now lands on 16 kbps /
+        128 kbps instead of the unusable 1 kbps beacon and 64 kbps. BEACON's
+        code is 0xFF: it is not selectable by telecommand in nominal software.
+        """
+        if isinstance(raw, str):
+            key = raw.strip()
+            idx = self.tier_index(key)
+            if idx >= 0:
+                return idx
+            try:
+                raw = int(key, 0)
+            except ValueError:
+                return None
+        try:
+            val = int(raw)
+        except (TypeError, ValueError):
+            return None
+        for i, t in enumerate(self._tiers):
+            if val == int(t.get("command_code", i)):
+                return i
+        for i, t in enumerate(self._tiers):
+            if val == int(t["bps"]):
+                return i
+        return None
+
+    def _tier_permission_error(self, index: int,
+                               s: "TTCState | None" = None) -> str | None:
+        """Return a human-readable reason the tier may NOT be selected in the
+        current spacecraft state, or None when it is permitted.
+
+        A tier that is not permitted is REJECTED (S1.8, error 0x0007) — never
+        silently clamped to something else.
+        """
+        s = s if s is not None else self._state
+        if index < 0 or index >= len(self._tiers):
+            return f"Invalid TM rate tier {index}"
+        t = self._tiers[index]
+        name = t.get("name", index)
+        if t.get("beacon_only") and not s.beacon_mode:
+            return (f"{name} is a bootloader/beacon-only tier "
+                    f"({t['bps']} bps); not selectable in nominal operations")
+        if s.beacon_mode and not t.get("beacon_only"):
+            return (f"TM rate is forced to the beacon tier in beacon mode "
+                    f"({name} refused)")
+        if t.get("requires_antenna", True) and not s.antenna_deployed:
+            return f"{name} ({t['bps']} bps) requires a deployed antenna"
+        if t.get("requires_downlink_mode") and not s.downlink_mode:
+            return (f"{name} ({t['bps']} bps) requires DOWNLINK/dump mode "
+                    f"(TTC_SET_DOWNLINK_MODE)")
+        min_el = float(t.get("min_elevation_deg", 0.0) or 0.0)
+        if min_el > 0.0 and s.link_active and s.elevation_deg < min_el:
+            return (f"{name} ({t['bps']} bps) requires elevation >= "
+                    f"{min_el:.0f} deg (now {s.elevation_deg:.1f} deg)")
+        return None
+
+    def _effective_tier(self, s: "TTCState") -> int:
+        """Resolve the ACTIVE tier from the commanded tier and the gates.
+
+        The commanded tier (`data_rate_mode`) is never overwritten here — a
+        gate only demotes the *active* tier, so the commanded tier resumes as
+        soon as the gate clears (e.g. HIGH auto-reverts to NOMINAL at LOS or
+        below the elevation gate, and comes back on the next pass).
+        """
+        if s.beacon_mode:
+            return self._beacon_tier
+        idx = max(0, min(len(self._tiers) - 1, int(s.data_rate_mode)))
+        # Never leave a non-beacon spacecraft sitting on a beacon-only tier.
+        while idx > 0 and self._tiers[idx].get("beacon_only"):
+            idx -= 1
+        if self._tiers[idx].get("beacon_only"):
+            idx = self._safe_tier
+        # Walk down the ladder until every gate is satisfied.
+        while idx > 0 and self._tier_permission_error(idx, s) is not None:
+            idx -= 1
+        if self._tier_permission_error(idx, s) is not None:
+            # Even the bottom rung is gated (beacon-only tier while not in
+            # beacon mode) — fall back to the configured safe tier.
+            idx = self._safe_tier
+        return idx
+
+    def _apply_tier(self, s: "TTCState", index: int) -> None:
+        """Make `index` the active tier: bit rate, modulation and coding.
+
+        The tier's modulation is applied only when the ACTIVE tier changes, so
+        an explicit ``set_modulation`` (an RF-engineering exercise) is a
+        within-tier override that survives subsequent ticks and is reset the
+        next time the tier moves.
+        """
+        t = self.tier(index)
+        changed = (index != getattr(self, "_applied_tier", None))
+        s.tm_tier = index
+        s.tm_data_rate = int(t["bps"])
+        if changed:
+            s.modulation_mode = self.MODULATION_INDEX.get(
+                str(t.get("modulation", "BPSK")).upper(), 0)
+            self._applied_tier = index
+        self._coding_gain = float(t.get("coding_gain_db", self._coding_gain))
+
+    @property
+    def active_coding(self) -> str:
+        """FEC scheme of the active tier ('RS' | 'CONV_RS' | 'NONE')."""
+        return str(self.tier(self._state.tm_tier).get("coding", "RS")).upper()
+
+    @property
+    def active_symbol_rate_bd(self) -> float:
+        """Symbol rate now on air: active bit rate / bits-per-symbol of the
+        modulation actually in use (which may be a within-tier override)."""
+        bps_per_sym = self.MODULATION_PARAMS.get(
+            self._state.modulation_mode,
+            {"bits_per_symbol": 1})["bits_per_symbol"]
+        return float(self._state.tm_data_rate) / max(bps_per_sym, 1)
 
     @staticmethod
     def _ber_for_modulation(mod_mode: int, eb_n0_linear: float) -> float:
@@ -184,16 +504,60 @@ class TTCBasicModel(SubsystemModel):
         self._gs_gt = config.get("gs_g_t_db", 20.0)
         self._sc_gain = config.get("sc_gain_dbi", 3.0)
         self._dl_freq_hz = config.get("dl_freq_mhz", 401.5) * 1e6
-        self._tm_rate_hi = config.get("tm_rate_hi_bps", 64000)
-        self._tm_rate_lo = config.get("tm_rate_lo_bps", 1000)
-        self._tc_uplink_rate_bps = config.get("tc_uplink_rate_bps", self._tm_rate_hi)
+
+        # ── TM data-rate ladder (defect #85) ──
+        tiers = config.get("tm_rate_tiers") or None
+        if tiers:
+            parsed: list[dict[str, Any]] = []
+            for t in tiers:
+                d = t if isinstance(t, dict) else (
+                    t.model_dump() if hasattr(t, "model_dump") else dict(t))
+                parsed.append(d)
+            if parsed:
+                self._tiers = parsed
+        rates = [int(t["bps"]) for t in self._tiers]
+        if rates != sorted(rates):
+            raise ValueError(
+                f"ttc.tm_rate_tiers must be ascending in bps, got {rates}")
+
+        def _tier_cfg(key: str, fallback: int) -> int:
+            name = config.get(key)
+            if name is None:
+                return fallback
+            idx = self.tier_index(str(name))
+            if idx < 0:
+                raise ValueError(
+                    f"ttc.{key}={name!r} is not one of the configured "
+                    f"tm_rate_tiers {[t['name'] for t in self._tiers]}")
+            return idx
+
+        self._beacon_tier = _tier_cfg("beacon_tier", 0)
+        self._safe_tier = _tier_cfg("safe_tier", min(1, len(self._tiers) - 1))
+        # Routine operations default to the SAFE tier, never to the top of the
+        # ladder: the top rung is a gated dump rate that has to be earned.
+        self._default_tier = _tier_cfg("default_tier", self._safe_tier)
+
+        # The telecommand uplink rate is INDEPENDENT of the TM ladder. It used
+        # to default to tm_rate_hi_bps, which under the ladder would have made
+        # the uplink 1.024 Mbps (16x ESA's typical maximum).
+        self._tc_uplink_rate_bps = int(config.get("tc_uplink_rate_bps", 4000))
         self._ul_freq_mhz = config.get("ul_freq_mhz", 449.0)
         self._coding_gain = config.get("coding_gain_db", 3.0)
+        # Link-budget losses (mirror rfsim.yaml link_budget)
+        self._atmospheric_loss = float(config.get("atmospheric_loss_db", 0.5))
+        self._polarization_loss = float(config.get("polarization_loss_db", 0.3))
+        self._implementation_loss = float(
+            config.get("implementation_loss_db", 2.0))
+        self._gt_derate_10 = float(config.get("gt_derate_below_10deg_db", 1.5))
+        self._gt_derate_30 = float(config.get("gt_derate_below_30deg_db", 0.5))
+        self._required_eb_n0 = float(config.get("required_eb_n0_db", 9.6))
         self._pa_max_power_w = config.get("pa_max_power_w", 5.0)
         self._pa_nominal_power_w = config.get("pa_nominal_power_w", 2.0)
         self._pa_shutdown_temp = config.get("pa_shutdown_temp_c", 70.0)
         self._pa_tau = config.get("pa_thermal_tau_s", 60.0)
-        self._state.tm_data_rate = self._tm_rate_hi
+        # Power up on the default operational tier, not the top of the ladder.
+        self._state.data_rate_mode = self._default_tier
+        self._apply_tier(self._state, self._default_tier)
         self._state.tx_fwd_power = self._pa_nominal_power_w
 
         self._param_ids = config.get("param_ids", {
@@ -341,20 +705,8 @@ class TTCBasicModel(SubsystemModel):
 
         # ── Beacon mode ──
         if s.beacon_mode:
-            s.data_rate_mode = 0
-            s.tm_data_rate = self._tm_rate_lo
-
-        # ── Data rate selection (antenna deployment + modulation) ──
-        bits_per_sym = self.MODULATION_PARAMS.get(
-            s.modulation_mode, {"bits_per_symbol": 1})["bits_per_symbol"]
-        if not s.antenna_deployed:
-            # Pre-deployment: force low-rate BPSK
-            s.tm_data_rate = self._tm_rate_lo
-            s.modulation_mode = 0  # safe mode = BPSK
-        elif not s.beacon_mode:
-            # Post-deployment: base rate × bits_per_symbol for modulation
-            base_rate = self._tm_rate_hi if s.data_rate_mode == 1 else self._tm_rate_lo
-            s.tm_data_rate = base_rate * bits_per_sym
+            # The bootloader has one rate and one rate only.
+            s.data_rate_mode = self._beacon_tier
 
         # Uplink loss blocks receive
         if s.uplink_lost:
@@ -374,6 +726,19 @@ class TTCBasicModel(SubsystemModel):
             s.elevation_deg = orbit_state.gs_elevation_deg
             s.azimuth_deg = orbit_state.gs_azimuth_deg
             s.range_km = orbit_state.gs_range_km
+
+        # ── TM data-rate ladder: resolve the ACTIVE tier (defect #85) ──
+        # Runs AFTER link_active/elevation are updated so the HIGH tier's
+        # elevation gate sees this tick's geometry.
+        # `data_rate_mode` holds the COMMANDED tier and is left untouched
+        # (defect #74 — the commanded rate is authoritative). The gates
+        # (beacon mode, antenna stowed, DOWNLINK mode, elevation) can demote
+        # the ACTIVE tier; the commanded tier resumes when the gate clears —
+        # so HIGH auto-reverts to NOMINAL at LOS or below 10 deg and comes
+        # back on the next pass without being re-commanded.
+        # tm_data_rate is the tier's information rate exactly: modulation
+        # moves the symbol rate and the occupied bandwidth, not the bit rate.
+        self._apply_tier(s, self._effective_tier(s))
 
         # ── Lock acquisition sequence ──
         # Defect #28: while the uplink is lost, hold the link unlocked so the
@@ -398,12 +763,15 @@ class TTCBasicModel(SubsystemModel):
             # downlink TM rate — the carrier->bit->frame sequence is the
             # ground station acquiring the spacecraft's uplink, so it is
             # paced by the uplink rate. Decoupled from s.tm_data_rate.
+            # Thresholds are expressed against the fixed 4 kbps TC uplink
+            # (Sentinel-1's TC rate) rather than against the TM ladder, which
+            # the uplink no longer inherits from.
             ul_rate = self._tc_uplink_rate_bps
             rate_factor = 1.0
-            if ul_rate <= self._tm_rate_lo:
+            if ul_rate <= self.TC_SLOW_LOCK_RATE_BPS:
                 rate_factor = 3.0  # low uplink rate: 3x slower lock
-            elif ul_rate >= self._tm_rate_hi * 2:
-                rate_factor = 0.7  # high-order mod: slightly faster
+            elif ul_rate >= self.TC_FAST_LOCK_RATE_BPS:
+                rate_factor = 0.7  # SW-upload uplink rate: slightly faster
 
             s.carrier_lock = s._lock_timer >= s._carrier_lock_delay * rate_factor
             s.bit_sync = (
@@ -434,13 +802,29 @@ class TTCBasicModel(SubsystemModel):
                 + self._sc_gain
                 - fspl
                 + 30.0
-                + random.gauss(0, 0.5)
+                + self.rng.gauss(0, 0.5)
             )
 
+            # ── Eb/N0 (defect #84: the G/T sign was inverted) ──
+            #
+            #   C/N0  = EIRP + G_sc - FSPL - L_atm - L_pol - L_impl
+            #           + G/T + 228.6
+            #   Eb/N0 = C/N0 - 10*log10(R_b) + coding gain
+            #
+            # The old code computed
+            #   noise_floor = -228.6 + gs_gt + 10log10(R)
+            #   snr         = rssi - 30 - noise_floor
+            # which expands to EIRP - FSPL + 228.6 **- G/T** - 10log10(R):
+            # the ground-station G/T was SUBTRACTED where it must be added, a
+            # 2 x G/T = 40 dB error that made a better station give a WORSE
+            # link (Inuvik 22.0 dB/K scored below Troll 18.5 dB/K).
             noise_bw = 10 * math.log10(s.tm_data_rate)
-            # Eb/N0 = EIRP + Gain - FSPL - kTB + coding gain
-            noise_floor = -228.6 + self._gs_gt + noise_bw
-            snr = s.rssi_dbm - 30 - noise_floor
+            gt_eff = self._gs_gt - self._gt_derate_db(s.elevation_deg)
+            losses = (self._atmospheric_loss_at(s.elevation_deg)
+                      + self._polarization_loss
+                      + self._implementation_loss)
+            c_n0 = (s.rssi_dbm - 30.0) - losses + gt_eff + 228.6
+            snr = c_n0 - noise_bw
             # Ground segment penalties (from instructor-injected ground failures)
             gs_penalty = (s.gs_lna_degrade_db + s.gs_antenna_mispoint_db
                           + s.gs_feed_loss_db + s.gs_rfi_db
@@ -452,9 +836,19 @@ class TTCBasicModel(SubsystemModel):
                 - s.ber_inject_offset
                 - s.receiver_nf_degrade
                 - gs_penalty
-                + random.gauss(0, 0.2)
+                + self.rng.gauss(0, 0.2)
             )
-            s.link_margin_db = s.eb_n0 - 12.0 + random.gauss(0, 0.2)
+            # Margin against the UNCODED requirement (9.6 dB for BPSK/QPSK at
+            # BER 1e-5, plus the modulation's own penalty). The active tier's
+            # coding gain has already been credited into eb_n0, so the
+            # effective requirement is 9.6 - 6.0 = 3.6 dB with RS(255,223) and
+            # 9.6 - 7.5 = 2.1 dB with conv(7,1/2)+RS. The old hard-coded
+            # `eb_n0 - 12.0` double-counted the coding gain against an
+            # arbitrary 12 dB threshold.
+            mod_penalty = self.MODULATION_PARAMS.get(
+                s.modulation_mode, {"eb_n0_penalty": 0.0})["eb_n0_penalty"]
+            s.link_margin_db = (s.eb_n0 - self._required_eb_n0 - mod_penalty
+                                + self.rng.gauss(0, 0.2))
 
             # ── Antenna deployment effect on link margin ──
             if not s.antenna_deployed:
@@ -468,7 +862,7 @@ class TTCBasicModel(SubsystemModel):
             else:
                 s.ber = -1.0  # Very high BER
         else:
-            s.rssi_dbm = -120.0 + random.gauss(0, 0.5)
+            s.rssi_dbm = -120.0 + self.rng.gauss(0, 0.5)
             s.link_margin_db = 0.0
             s.eb_n0 = 0.0
             s.ber = -10.0
@@ -478,7 +872,7 @@ class TTCBasicModel(SubsystemModel):
         # ── AGC, Doppler, Range Rate (Phase 4) ──
         if in_contact and s.range_km > 0:
             # AGC tracks received signal level
-            s.agc_level_db = s.rssi_dbm + 60.0 + random.gauss(0, 0.3)
+            s.agc_level_db = s.rssi_dbm + 60.0 + self.rng.gauss(0, 0.3)
 
             # Doppler shift from range rate
             # V_r = d(range)/dt approximated from elevation change
@@ -490,16 +884,17 @@ class TTCBasicModel(SubsystemModel):
             # At low elevation: large |range rate|, at zenith: ~0
             s.range_rate_m_s = v_orbit * math.cos(el_rad) * (
                 -1.0 if s.elevation_deg < 45.0 else 1.0
-            ) + random.gauss(0, 5.0)
+            ) + self.rng.gauss(0, 5.0)
             # Doppler: f_d = f_0 * v_r / c
             c = 3e8
             s.doppler_hz = self._dl_freq_hz * s.range_rate_m_s / c
-            s.doppler_hz += random.gauss(0, 2.0)
+            s.doppler_hz += self.rng.gauss(0, 2.0)
 
             # Bytes transmitted this pass
             if s.frame_sync:
                 s.total_bytes_tx += int(s.tm_data_rate / 8 * dt)
-                s.total_bytes_rx += int(1000 * dt)  # ~1kbps uplink
+                # Uplink accrues at the TC rate (4 kbps), not at any TM tier.
+                s.total_bytes_rx += int(self._tc_uplink_rate_bps / 8 * dt)
         else:
             s.agc_level_db = -120.0
             s.doppler_hz = 0.0
@@ -515,7 +910,7 @@ class TTCBasicModel(SubsystemModel):
         pa_ambient = 25.0
         s.pa_temp += (
             (pa_ambient + pa_heat * 2.0 - s.pa_temp) / self._pa_tau * dt
-            + random.gauss(0, 0.03)
+            + self.rng.gauss(0, 0.03)
         )
 
         # Auto-shutdown at threshold
@@ -530,7 +925,7 @@ class TTCBasicModel(SubsystemModel):
         xpdr_tx = 1.0 if in_contact else 0.2
         s.xpdr_temp += (
             (28.0 + 8.0 * xpdr_tx - s.xpdr_temp) / 300.0 * dt
-            + random.gauss(0, 0.02)
+            + self.rng.gauss(0, 0.02)
         )
 
         # ── Event generation (edge detection) ──
@@ -592,11 +987,39 @@ class TTCBasicModel(SubsystemModel):
         shared_params[0x0536] = float(s.antenna_deployment_sensor)
         # Modulation mode (0=BPSK, 1=QPSK, 2=8PSK, 3=OQPSK)
         shared_params[0x0537] = float(s.modulation_mode)
+        # ── TM data-rate ladder (defect #85) ──
+        # 0x0506 (tm_data_rate) already carries the active tier's bps; these
+        # make the tier itself, the commanded tier and the resulting symbol
+        # rate / occupied bandwidth observable from the ground.
+        shared_params[0x0539] = float(s.tm_tier)          # active tier index
+        shared_params[0x053A] = float(s.data_rate_mode)   # commanded tier index
+        shared_params[0x053B] = self.active_symbol_rate_bd
+        shared_params[0x053C] = 1.0 if s.downlink_mode else 0.0
         # Ground segment total Eb/N0 penalty (dB)
         shared_params[0x0538] = (s.gs_lna_degrade_db + s.gs_antenna_mispoint_db
                                  + s.gs_feed_loss_db + s.gs_rfi_db
                                  + s.gs_hpa_degrade_db + s.gs_ref_osc_drift_db
                                  + s.gs_tracking_loss_db)
+        # Ground equipment health bitmask (0x0524). Catalogued since the first
+        # release and written by nothing, so an S20 read returned 0.0 — "every
+        # chain broken" — whatever the ground segment was doing (brief 08
+        # finding 12). A SET bit means that chain is healthy:
+        #   bit0 antenna   — pointing loss and tracking system
+        #   bit1 LNA       — receive low-noise amplifier
+        #   bit2 HPA       — uplink high-power amplifier
+        #   bit3 frequency — reference oscillator and feed/waveguide
+        # 0x0538 stays the aggregate dB penalty; this is the per-chain answer
+        # to "which box is sick", which is what the operator actually needs.
+        mask = 0
+        if s.gs_antenna_mispoint_db <= 0.0 and s.gs_tracking_loss_db <= 0.0:
+            mask |= 0x1
+        if s.gs_lna_degrade_db <= 0.0:
+            mask |= 0x2
+        if s.gs_hpa_degrade_db <= 0.0:
+            mask |= 0x4
+        if s.gs_ref_osc_drift_db <= 0.0 and s.gs_feed_loss_db <= 0.0:
+            mask |= 0x8
+        shared_params[0x0524] = float(mask)
 
     def _generate_ttc_events(self) -> None:
         """Generate TTC events based on state transitions and thresholds."""
@@ -816,11 +1239,61 @@ class TTCBasicModel(SubsystemModel):
             return {"success": True}
 
         elif command == "set_tm_rate":
-            rate = int(cmd.get("rate", self._tm_rate_hi))
-            if rate in (self._tm_rate_hi, self._tm_rate_lo):
-                self._state.tm_data_rate = rate
-                return {"success": True}
-            return {"success": False, "message": "Invalid rate"}
+            # The commanded tier is authoritative: it sets data_rate_mode,
+            # which is what tick() resolves the active tier from. Setting only
+            # tm_data_rate (the old behaviour) was overwritten on the very next
+            # tick, so the high rate was unreachable from the ground
+            # (roadmap N-8 / defect #74).
+            #
+            # Accepts a tier `command_code` (the uint8 the catalogue
+            # advertises: 0=LOW, 1=HIGH, 0xFF=BEACON), a tier NAME, or a raw
+            # bps value equal to one of the configured tier rates. The legacy
+            # 0/1 binary encoding decodes verbatim as "the low rate" / "the
+            # high rate" (defect #85).
+            raw = cmd.get("rate", self._default_tier)
+            idx = self._decode_tier_arg(raw)
+            if idx is None:
+                return {"success": False,
+                        "message": f"Invalid TM rate/tier {raw!r}. Valid: "
+                                   + ", ".join(
+                                       f"{i}={t['name']}({t['bps']} bps)"
+                                       for i, t in enumerate(self._tiers)),
+                        "error_code": 0x0003}
+            # Permission rules are enforced by REJECTION, never by silent
+            # clamping: an operator who asks for a tier they may not have
+            # gets an S1.8 execution failure saying why.
+            why = self._tier_permission_error(idx)
+            if why is not None:
+                return {"success": False, "message": why, "error_code": 0x0007}
+            self._state.data_rate_mode = idx
+            self._apply_tier(self._state, idx)
+            t = self.tier(idx)
+            logger.info("TTC TM rate tier -> %s (%d bps, %s, %s)",
+                        t["name"], t["bps"], t.get("modulation", "BPSK"),
+                        t.get("coding", "RS"))
+            return {"success": True, "data_rate_mode": idx,
+                    "tier": t["name"], "tier_index": idx,
+                    "modulation": t.get("modulation", "BPSK"),
+                    "coding": t.get("coding", "RS"),
+                    "symbol_rate_bd": self.tier_symbol_rate(idx),
+                    "tm_data_rate": self._state.tm_data_rate}
+
+        elif command == "set_data_rate_mode":
+            # Explicit alias so procedures / OBCPs can name the tier directly.
+            return self.handle_command(
+                {"command": "set_tm_rate",
+                 "rate": cmd.get("mode", self._default_tier)})
+
+        elif command == "set_downlink_mode":
+            # DOWNLINK / payload-dump mode. The HIGH tier is gated on this so
+            # bulk downlink has to be entered deliberately, not drifted into.
+            on = bool(cmd.get("on", True))
+            self._state.downlink_mode = on
+            if not on:
+                # Leaving DOWNLINK mode re-resolves the active tier on the
+                # next tick; the commanded tier is deliberately preserved.
+                pass
+            return {"success": True, "downlink_mode": on}
 
         elif command == "pa_on":
             if self._state.pa_overheat_shutdown:
@@ -837,11 +1310,34 @@ class TTCBasicModel(SubsystemModel):
             return {"success": True}
 
         elif command == "set_tx_power":
-            level = float(cmd.get("power_w", self._pa_nominal_power_w))
-            if 0.0 < level <= self._pa_max_power_w:
-                self._pa_nominal_power_w = level
+            # Phase E WP-2: enumerated SSPA operating points. An SSPA is
+            # commanded to a gain state, not a continuous watt setpoint;
+            # the levels map to the config's pa power ladder. The corrected
+            # watt table (the documented "2 = 8 W" was never executable —
+            # pa_max_power_w is 5.0): 0=LOW 1.0 W, 1=NOMINAL 2.0 W,
+            # 2=HIGH 5.0 W. Unknown codes REJECTED (0x0003), never clamped.
+            if "level" in cmd:
+                level_table = {
+                    0: 1.0,                      # LOW
+                    1: 2.0,                      # NOMINAL (pa_nominal_power_w)
+                    2: self._pa_max_power_w,     # HIGH (5.0 W ceiling)
+                }
+                lvl = int(cmd.get("level", 1))
+                if lvl not in level_table:
+                    return {"success": False, "error_code": 0x0003,
+                            "message": f"Unknown TX power level {lvl} "
+                                       "(0=LOW 1 W, 1=NOMINAL 2 W, "
+                                       "2=HIGH 5 W)"}
+                self._pa_nominal_power_w = level_table[lvl]
+                self._state.tx_power_level = lvl
+                return {"success": True, "power_w": level_table[lvl]}
+            # Legacy internal form (watts) — kept for scenario scripts.
+            power = float(cmd.get("power_w", self._pa_nominal_power_w))
+            if 0.0 < power <= self._pa_max_power_w:
+                self._pa_nominal_power_w = power
                 return {"success": True}
-            return {"success": False, "message": "Power out of range"}
+            return {"success": False, "error_code": 0x0003,
+                    "message": "Power out of range"}
 
         elif command == "cmd_channel_start":
             self._state.cmd_decode_timer = 900.0
@@ -874,19 +1370,26 @@ class TTCBasicModel(SubsystemModel):
             return {"success": True}
 
         elif command == "set_ul_freq":
+            # S-band near-Earth allocation (CCSDS 401.0-B), matching
+            # configs/eosat1/subsystems/ttc.yaml, planning/ground_stations.yaml
+            # and rfsim.yaml. The old UHF 440–460 MHz band agreed with nothing
+            # else in the repo (roadmap N-4).
             freq_mhz = float(cmd.get("freq_mhz", self._ul_freq_mhz))
-            if 440.0 <= freq_mhz <= 460.0:
+            if self.UL_BAND_MHZ[0] <= freq_mhz <= self.UL_BAND_MHZ[1]:
                 self._ul_freq_mhz = freq_mhz
                 return {"success": True}
-            return {"success": False, "message": "Uplink frequency out of range"}
+            return {"success": False,
+                    "message": f"Uplink frequency out of range "
+                               f"({self.UL_BAND_MHZ[0]:.0f}–{self.UL_BAND_MHZ[1]:.0f} MHz, S-band)"}
 
         elif command == "set_dl_freq":
             freq_mhz = float(cmd.get("freq_mhz", self._dl_freq_hz / 1e6))
-            # UHF downlink range 400–410 MHz
-            if 400.0 <= freq_mhz <= 410.0:
+            if self.DL_BAND_MHZ[0] <= freq_mhz <= self.DL_BAND_MHZ[1]:
                 self._dl_freq_hz = freq_mhz * 1e6
                 return {"success": True}
-            return {"success": False, "message": "Downlink frequency out of range (400–410 MHz for UHF)"}
+            return {"success": False,
+                    "message": f"Downlink frequency out of range "
+                               f"({self.DL_BAND_MHZ[0]:.0f}–{self.DL_BAND_MHZ[1]:.0f} MHz, S-band)"}
 
         elif command == "set_modulation":
             mod_mode = int(cmd.get("mode", 0))
@@ -897,14 +1400,22 @@ class TTCBasicModel(SubsystemModel):
             old_mode = self._state.modulation_mode
             self._state.modulation_mode = mod_mode
             mp = self.MODULATION_PARAMS[mod_mode]
-            # Effective data rate scales with bits per symbol
-            base_rate = self._tm_rate_hi if self._state.data_rate_mode == 1 else self._tm_rate_lo
-            self._state.tm_data_rate = base_rate * mp["bits_per_symbol"]
-            logger.info("TTC modulation: %s → %s (data rate %d bps)",
+            # The tier's bps is the INFORMATION rate. Modulation changes the
+            # SYMBOL rate and therefore the occupied bandwidth — never the bit
+            # rate. The old `tm_data_rate = base_rate * bits_per_symbol` meant
+            # selecting QPSK silently doubled the reported bit rate, so a
+            # "128 kbps NOMINAL" tier would have reported 256 kbps.
+            bit_rate = self._state.tm_data_rate
+            symbol_rate = float(bit_rate) / max(mp["bits_per_symbol"], 1)
+            logger.info("TTC modulation: %s → %s (%d bps unchanged, "
+                        "symbol rate %.0f Bd)",
                         self.MODULATION_PARAMS[old_mode]["name"],
-                        mp["name"], self._state.tm_data_rate)
+                        mp["name"], bit_rate, symbol_rate)
+            # NOTE: tick() re-applies the ACTIVE TIER's modulation, so this is
+            # a within-tier override that survives until the tier changes.
             return {"success": True, "modulation": mp["name"],
-                    "data_rate_bps": self._state.tm_data_rate}
+                    "data_rate_bps": bit_rate,
+                    "symbol_rate_bd": symbol_rate}
 
         elif command == "set_rx_gain":
             agc_target = float(cmd.get("agc_db", -60.0))
@@ -1025,12 +1536,18 @@ class TTCBasicModel(SubsystemModel):
 
     def get_state(self) -> dict[str, Any]:
         import dataclasses
-        return dataclasses.asdict(self._state)
+        from smo_common.state import rng_state_to_json
+        d = dataclasses.asdict(self._state)
+        d["_rng_state"] = rng_state_to_json(self.rng.getstate())
+        return d
 
     def set_state(self, state: dict[str, Any]) -> None:
-        for k, v in state.items():
-            if hasattr(self._state, k):
-                setattr(self._state, k, v)
+        # Container fields are deep-copied by restore_dataclass_state: the
+        # plain setattr this used to do aliased the snapshot's own dicts and
+        # lists into live model state (G2-f).
+        from smo_common.state import restore_dataclass_state, restore_rng
+        restore_rng(self.rng, state.get("_rng_state"))
+        restore_dataclass_state(self._state, state, skip=("_rng_state",))
 
     # S2 Device Access — device-level on/off control
     def set_device_state(self, device_id: int, on_off: bool) -> bool:

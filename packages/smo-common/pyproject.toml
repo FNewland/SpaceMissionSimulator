@@ -14,5 +14,11 @@ dependencies = [
     "numpy>=1.24",
 ]
 
+[project.optional-dependencies]
+# Plot rendering for the delayed-TM report generator (smo_common.reporting).
+# Reports still generate without it: plot sections degrade to a stated
+# "plots unavailable" notice rather than failing the run.
+reports = ["matplotlib>=3.7"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/smo_common"]

@@ -281,7 +281,9 @@ def build_pdf():
             ['Period', '~94 min (15.24 rev/day)'],
             ['Ground Stations', 'Iqaluit (63.7\u00b0N, 68.5\u00b0W), Troll (72.0\u00b0S, 2.5\u00b0E)'],
             ['Payload', '4-band multispectral camera (ocean colour)'],
-            ['Downlink', 'S-band, 64 kbps high / 1 kbps low rate'],
+            ['Downlink', 'S-band 2200 MHz; TM rate ladder BEACON 1 kbps / '
+                          'LOW 16 kbps (routine ops) / HIGH 128 kbps (dumps, gated)'],
+            ['Uplink', 'S-band 2025 MHz, fixed 4 kbps TC (not on the TM ladder)'],
             ['Power', '6 body-mounted GaAs panels, 120 Wh Li-ion battery'],
             ['Redundancy', 'Cold-redundant: transceiver, PDM, OBC (A/B), magnetometers (A/B)'],
         ],

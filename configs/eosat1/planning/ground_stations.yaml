@@ -1,6 +1,14 @@
 # EOSAT-1 Ground Station Configuration — S-band
 # Canonical source: mission.yaml specifies S-band.
 # Frequencies per CCSDS 401.0-B for near-Earth S-band links.
+#
+# NOTE (defect #42 — config duplication): this file is the RF AUGMENTATION
+# layer only (antenna, band, G/T, frequencies, TX power). Station GEOMETRY
+# (lat/lon/alt/min_elevation) is canonically defined in ../orbit.yaml, which
+# the simulator/planner/MCS all load. The geometry fields duplicated below
+# exist for standalone RF tooling convenience and MUST match orbit.yaml —
+# the MCS cross-checks them at load and logs a warning if they diverge.
+# When adding/moving a station, edit ../orbit.yaml first, then mirror here.
 ground_stations:
   - name: Iqaluit
     lat_deg: 63.747
@@ -21,6 +29,39 @@ ground_stations:
     antenna_diameter_m: 7.3
     band: S-band
     g_t_db: 18.5
+    tx_power_w: 200.0
+    tx_freq_mhz: 2025.0    # S-band uplink
+    rx_freq_mhz: 2200.0    # S-band downlink
+  - name: Svalbard
+    lat_deg: 78.2297
+    lon_deg: 15.3975
+    alt_km: 0.458
+    min_elevation_deg: 5.0
+    antenna_diameter_m: 11.3
+    band: S-band
+    g_t_db: 21.5
+    tx_power_w: 200.0
+    tx_freq_mhz: 2025.0    # S-band uplink
+    rx_freq_mhz: 2200.0    # S-band downlink
+  - name: Inuvik
+    lat_deg: 68.3195
+    lon_deg: -133.5495
+    alt_km: 0.102
+    min_elevation_deg: 5.0
+    antenna_diameter_m: 13.0
+    band: S-band
+    g_t_db: 22.0
+    tx_power_w: 200.0
+    tx_freq_mhz: 2025.0    # S-band uplink
+    rx_freq_mhz: 2200.0    # S-band downlink
+  - name: O'Higgins
+    lat_deg: -63.3211
+    lon_deg: -57.9008
+    alt_km: 0.032
+    min_elevation_deg: 5.0
+    antenna_diameter_m: 9.0
+    band: S-band
+    g_t_db: 20.0
     tx_power_w: 200.0
     tx_freq_mhz: 2025.0    # S-band uplink
     rx_freq_mhz: 2200.0    # S-band downlink

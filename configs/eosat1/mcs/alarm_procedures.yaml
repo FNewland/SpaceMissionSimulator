@@ -1,0 +1,110 @@
+# Alarm → contingency-procedure linkage (brief 08, operator gap 3)
+#
+# "This alarm ⇒ run CTG-001" is the half of an alarm SYSTEM that an alarm
+# LIST does not have.  Until Phase G the MCS journal told an operator that a
+# parameter had gone out of band and stopped there; the 34 contingency and 6
+# emergency procedures in `configs/eosat1/procedures/` were reachable only by
+# reading the index and guessing which one applied.
+#
+# Resolution order, most specific first:
+#   1. `by_parameter`  — the ground-limit (LIMIT) or on-board (S12) alarm names
+#                        a parameter id; this is the sharpest signal available.
+#   2. `by_event`      — S5 event alarms name an event id from
+#                        `configs/eosat1/events/event_catalog.yaml`.
+#   3. `by_subsystem`  — the catch-all so that every alarm carries *some*
+#                        starting point rather than none.
+#
+# Ids must exist in `configs/eosat1/procedures/procedure_index.yaml`; the
+# content test asserts that, so a renamed procedure breaks the build rather
+# than silently un-linking the alarm.
+alarm_procedures:
+
+  by_parameter:
+    # ── EPS ───────────────────────────────────────────────────────────
+    0x0100: CTG-001   # bat_voltage      → Under-Voltage Load Shed
+    0x0101: CTG-001   # bat_soc          → Under-Voltage Load Shed
+    0x0102: CTG-013   # bat_temp         → Battery Cell Failure
+    0x0105: CTG-001   # bus_voltage      → Under-Voltage Load Shed
+    0x0118: CTG-012   # line_current_0   → Overcurrent Response
+    0x0119: CTG-012
+    0x011A: CTG-012
+    0x011B: CTG-012
+    0x011C: CTG-012
+    0x011D: CTG-012
+    0x011E: CTG-012
+    0x011F: CTG-012
+    0x0120: CTG-023   # bat_dod          → Progressive Load Shed
+
+    # ── AOCS ──────────────────────────────────────────────────────────
+    0x0204: CTG-002   # rate_roll        → AOCS Anomaly Recovery
+    0x0205: CTG-002
+    0x0206: CTG-002
+    0x0207: CTG-007   # rw1_speed        → Reaction Wheel Anomaly
+    0x0217: CTG-002   # att_error        → AOCS Anomaly Recovery
+    0x0218: CTG-007   # rw1_temp         → Reaction Wheel Anomaly
+    0x025B: CTG-007   # total_momentum   → Reaction Wheel Anomaly
+    0x0273: CTG-025   # gyro_temp        → AOCS Sensor Loss Recovery
+    0x0275: CTG-027   # gps_pdop         → GPS Time Sync / AOCS Recovery
+    0x02BA: CTG-007   # h_env_frac       → Reaction Wheel Anomaly
+
+    # ── TCS ───────────────────────────────────────────────────────────
+    0x0406: CTG-004   # temp_obc         → Thermal Exceedance
+    0x0407: CTG-004   # temp_battery     → Thermal Exceedance
+    0x0408: CTG-004   # temp_fpa         → Thermal Exceedance
+    0x0411: CTG-004   # htr_total_power  → Thermal Exceedance
+
+    # ── OBDH ──────────────────────────────────────────────────────────
+    0x0302: CTG-010   # cpu_load         → OBDH Watchdog Recovery
+    0x030A: CTG-011   # reboot_count     → OBC Redundancy Switchover
+    0x0312: CTG-016   # hktm_buf_fill    → Memory Segment Failure
+    0x0313: CTG-016
+    0x0314: CTG-016
+    0x0319: CTG-016   # seu_count        → Memory Segment Failure
+    0x031C: CTG-010   # stack_usage      → OBDH Watchdog Recovery
+    0x031D: CTG-010   # heap_usage       → OBDH Watchdog Recovery
+
+    # ── TTC ───────────────────────────────────────────────────────────
+    0x0506: CTG-003   # tm_data_rate     → TTC Link Loss Recovery
+    0x050C: CTG-014   # ber              → BER Anomaly
+    0x050F: CTG-004   # pa_temp          → Thermal Exceedance
+    0x051A: CTG-003   # agc_level        → TTC Link Loss Recovery
+    0x0539: CTG-003   # tm_tier (active)
+    0x053A: CTG-003   # tm_tier_cmd
+    0x053B: CTG-003   # tm_symbol_rate
+    0x053C: CTG-003   # downlink_mode
+
+    # ── Payload ───────────────────────────────────────────────────────
+    0x0601: CTG-006   # fpa_temp         → Payload Anomaly
+    0x0616: CTG-006   # snr              → Payload Anomaly
+    0x0617: CTG-006   # detector_temp    → Payload Anomaly
+
+    # ── Propulsion (Phase D) ──────────────────────────────────────────
+    0x0B01: CTG-028   # tank_pressure    → Propulsion Anomaly
+    0x0B02: CTG-028
+    0x0B05: CTG-028
+    0x0B09: CTG-028
+    0x0B0C: CTG-028
+
+  by_event:
+    0x0102: CTG-001   # BATTERY_SOC_CRITICAL      → Under-Voltage Load Shed
+    0x0104: CTG-001   # BUS_UNDERVOLTAGE_CRITICAL → Under-Voltage Load Shed
+    0x0105: CTG-012   # BUS_OVERCURRENT           → Overcurrent Response
+    0x0108: CTG-023   # LOAD_SHED_STAGE_3         → Progressive Load Shed
+    0x010F: CTG-012   # PDU_OVERCURRENT           → Overcurrent Response
+    0x0111: CTG-005   # EPS_SAFE_MODE_ENTRY       → EPS Safe Mode
+    0x0201: CTG-007   # RW_OVERSPEED              → Reaction Wheel Anomaly
+    0x0203: CTG-008   # ST_BLIND                  → Star Tracker Failure
+    0x0205: CTG-007   # MOMENTUM_SATURATION       → Reaction Wheel Anomaly
+    0x0206: CTG-002   # ATTITUDE_ERROR_HIGH       → AOCS Anomaly Recovery
+    0x0209: CTG-027   # GPS_LOCK_LOST             → GPS Time Sync Recovery
+
+  by_subsystem:
+    eps: CTG-005      # EPS Safe Mode
+    aocs: CTG-002     # AOCS Anomaly Recovery
+    tcs: CTG-004      # Thermal Exceedance
+    ttc: CTG-003      # TTC Link Loss Recovery
+    obdh: CTG-010     # OBDH Watchdog Recovery
+    payload: CTG-006  # Payload Anomaly
+    prop: CTG-028     # Propulsion Anomaly
+    orbital: CTG-019  # No Telemetry at Pass Start
+    fdir: EMG-001     # Emergency Safe Mode

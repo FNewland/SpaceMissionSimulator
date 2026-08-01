@@ -29,18 +29,24 @@ if [ ! -d ".venv" ]; then
 fi
 source .venv/bin/activate
 
-# Ensure packages are installed
-pip install -q -e packages/smo-common -e packages/smo-gateway 2>/dev/null
+# Packages are installed by deploy/install.sh. A start script must not reach
+# the network in an offline classroom (D-3).
+if ! python -c "import smo_common, smo_gateway" 2>/dev/null; then
+    echo "ERROR: smo-common / smo-gateway are not installed in .venv."
+    echo "       Run deploy/install.sh once, then start again."
+    exit 1
+fi
 
 UPSTREAM_HOST="${GATEWAY_UPSTREAM_HOST:-${SIMULATOR_HOST:-localhost}}"
 UPSTREAM_PORT="${GATEWAY_UPSTREAM_PORT:-${SIMULATOR_TM_PORT:-8002}}"
 LISTEN_PORT="${GATEWAY_LISTEN_PORT:-10025}"
+LISTEN_BIND="${GATEWAY_BIND:-0.0.0.0}"
 
 echo "============================================="
 echo "  SMO Gateway (TM/TC Relay)"
 echo "============================================="
 echo "  Upstream:  ${UPSTREAM_HOST}:${UPSTREAM_PORT}"
-echo "  Listen:    0.0.0.0:${LISTEN_PORT}"
+echo "  Listen:    ${LISTEN_BIND}:${LISTEN_PORT}"
 echo "============================================="
 echo "  MCS instances should connect to port ${LISTEN_PORT}"
 echo "============================================="
@@ -50,4 +56,4 @@ echo ""
 
 exec smo-gateway \
     --upstream "${UPSTREAM_HOST}:${UPSTREAM_PORT}" \
-    --listen "0.0.0.0:${LISTEN_PORT}"
+    --listen "${LISTEN_BIND}:${LISTEN_PORT}"

@@ -3,6 +3,7 @@
 Config-driven central tick loop. Loads subsystem models from the registry,
 manages shared parameter store, PUS packet queues, and FDIR callbacks.
 """
+import math
 import threading
 import time
 import queue
@@ -13,11 +14,13 @@ from typing import Any, Optional
 
 from smo_common.config.loader import (
     load_mission_config, load_orbit_config, load_all_subsystem_configs,
-    load_fdir_config, load_hk_structures,
+    load_fdir_config, load_hk_structures, load_simulation_config,
 )
+from smo_common.state import DEFAULT_SEED, derive_rng
 from smo_common.orbit.propagator import OrbitPropagator, GroundStation
 from smo_common.models.registry import create_model
 from smo_common.telemetry.tm_builder import TMBuilder
+from smo_common.protocol.pus_services import format_command_rejection
 from smo_simulator.tc_scheduler import TCScheduler
 from smo_simulator.tm_storage import OnboardTMStorage
 from smo_simulator.fdir import FaultPropagationRule
@@ -58,6 +61,22 @@ _SEVERITY_NAME_TO_INT = {
 }
 
 
+def _put_tm(engine, pkt: bytes) -> None:
+    """Put a packet on an engine's outbound TM queue, counting drops.
+
+    A module-level function rather than a method so it still does real work
+    when called on the ``MagicMock(spec=SimulationEngine)`` engines several
+    unit tests drive ``_enqueue_tm`` with.
+    """
+    try:
+        engine.tm_queue.put_nowait(pkt)
+        engine.tm_packets_enqueued += 1
+    except queue.Full:
+        engine.tm_queue_drops += 1
+        logger.warning("TM queue full (%d) — packet dropped",
+                       engine.tm_queue.maxsize)
+
+
 class SimulationEngine:
     """Config-driven simulation engine.
 
@@ -65,9 +84,12 @@ class SimulationEngine:
     runs tick loop, manages shared parameter store and packet queues.
     """
 
-    def __init__(self, config_dir: str | Path, speed: float = 1.0):
+    def __init__(self, config_dir: str | Path, speed: float | None = None):
         self.config_dir = Path(config_dir)
-        self.speed = speed
+        # speed=None => use simulation.yaml speed.default (1.0 when absent).
+        # An explicit argument always wins, so existing callers are unchanged.
+        self._speed_arg = speed
+        self.speed = 1.0 if speed is None else speed
         self.running = False
         self._tick_count = 0
 
@@ -91,6 +113,23 @@ class SimulationEngine:
         self.tm_queue_drops: int = 0
         self.tm_packets_enqueued: int = 0
 
+        # Tick-loop fault surface (roadmap N-1 / DI-01). `engine_fault` is
+        # None while the loop is healthy; it is reported in /api/state and the
+        # instructor snapshot so a crashed tick is visible instead of looking
+        # like frozen telemetry.
+        self.engine_fault: str | None = None
+        self.engine_fault_count: int = 0
+        self._engine_fault_last_log: float = 0.0
+        self.instr_cmd_rejects: int = 0
+
+        # Immutable per-tick state snapshot (roadmap N-2 / DI-02). The tick
+        # thread publishes under _params_lock; readers take the published
+        # object and never touch live state, so they cannot observe a torn
+        # multi-field read. A lock held only by the readers — which is what
+        # was here before — provides no mutual exclusion at all.
+        self._snapshot: dict | None = None
+        self._snapshot_tick: int = -1
+
         self._sim_time = datetime.now(timezone.utc)
 
         # Load configs
@@ -98,6 +137,25 @@ class SimulationEngine:
         self._orbit_cfg = load_orbit_config(self.config_dir)
         self._subsys_configs = load_all_subsystem_configs(self.config_dir)
         self._fdir_cfg = load_fdir_config(self.config_dir)
+        # Simulation tuning layer (configs/<mission>/simulation.yaml). Absent
+        # file => all-defaults object reproducing the previous hard-coded
+        # behaviour, so minimal test config dirs keep working (defect #51).
+        self._sim_cfg = load_simulation_config(self.config_dir)
+        if self._speed_arg is None:
+            self.speed = float(self._sim_cfg.speed.default)
+
+        # Seeded RNGs (plan A-2). One master seed from simulation.yaml; every
+        # component (engine + each model + failure manager) gets its own
+        # random.Random derived from (seed, component-name), so tick order
+        # cannot couple the streams and each stream round-trips through
+        # breakpoints independently.
+        self.seed: int = int(getattr(self._sim_cfg, 'seed', DEFAULT_SEED))
+        self.rng = derive_rng(self.seed, "engine")
+
+        # Sub-stepped tick integration limits (plan A-3).
+        tick_cfg = getattr(self._sim_cfg, 'tick', None)
+        self._dt_max_s: float = float(getattr(tick_cfg, 'dt_max_s', 1.0))
+        self._max_substeps: int = max(1, int(getattr(tick_cfg, 'max_substeps', 600)))
 
         # Init orbit propagator
         gs_list = []
@@ -113,21 +171,74 @@ class SimulationEngine:
             ground_stations=gs_list,
             earth_radius_km=self._orbit_cfg.earth_radius_km,
         )
+        # Reproducible runs (roadmap N-5 / DI-16): start the propagator at the
+        # configured reference epoch instead of the wall clock, so every cohort
+        # sees the same passes, eclipses and SoC trace. simulation.yaml
+        # `epoch: wall` restores the old behaviour; so does an orbit.yaml with
+        # no t0_epoch.
+        self._t0_epoch: datetime | None = self._resolve_t0_epoch()
+        if self._t0_epoch is not None:
+            self.orbit.reset(self._t0_epoch)
+            self._sim_time = self._t0_epoch
+            logger.info("Orbit epoch pinned to t0_epoch %s (reproducible run)",
+                        self._t0_epoch.isoformat())
+        else:
+            logger.info("Orbit epoch = wall clock (run is not reproducible)")
 
         # Instantiate subsystem models from config
         self.subsystems: dict[str, Any] = {}
         for name, cfg in self._subsys_configs.items():
             model_name = cfg.model if hasattr(cfg, 'model') else f"{name}_basic"
             try:
-                model = create_model(model_name, cfg.model_dump() if hasattr(cfg, 'model_dump') else {})
+                cfg_dict = cfg.model_dump() if hasattr(cfg, 'model_dump') else {}
+                # Merge the simulation.yaml tuning block for this subsystem
+                # (eps:/tcs:) under a reserved key. The hardware sheet
+                # (subsystems/*.yaml) stays authoritative for hardware ratings;
+                # simulation.yaml owns protection levels, initial conditions and
+                # environment. No key is defined in both files.
+                sim_block = getattr(self._sim_cfg, name, None)
+                if sim_block is not None and hasattr(sim_block, 'model_dump'):
+                    cfg_dict["simulation"] = sim_block.model_dump()
+                # The FPA thermal envelope is single-sourced in
+                # subsystems/tcs.yaml because TCS owns the FPA node
+                # (DECISIONS §3 / G3-d). The payload reads that node and needs
+                # the same envelope for its readiness rule and its over/under
+                # -temp events, so it is injected here rather than duplicated
+                # into subsystems/payload.yaml — a second copy is exactly the
+                # defect this ruling removes.
+                if name == "payload" and "fpa_envelope" not in cfg_dict:
+                    tcs_cfg = self._subsys_configs.get("tcs")
+                    env = getattr(tcs_cfg, "fpa_envelope", None)
+                    if env is not None:
+                        cfg_dict["fpa_envelope"] = (
+                            env.model_dump() if hasattr(env, "model_dump")
+                            else dict(env))
+                model = create_model(model_name, cfg_dict)
                 # Defect #23: give the model a back-reference to the engine so its
                 # event-generation code (guarded by `if self._engine`) actually
                 # runs and its events get delivered via _drain_model_events().
                 model._engine = self
+                # Deterministic per-model RNG stream (plan A-2), replacing the
+                # module-global `random` the models used to draw from.
+                model.rng = derive_rng(self.seed, f"model:{name}")
                 self.subsystems[name] = model
                 logger.info("Loaded subsystem model: %s (%s)", name, model_name)
             except Exception as e:
                 logger.warning("Failed to load model %s for %s: %s", model_name, name, e)
+
+        # Reproducibility (plan A-2): the OBDH model initialises its CUC clock
+        # from the wall clock in configure(); when the run is pinned to
+        # t0_epoch, re-pin the OBC clock to it too, otherwise param 0x0309
+        # (obdh.obc_time) differs between two same-seed runs started a second
+        # apart.
+        if self._t0_epoch is not None:
+            obdh = self.subsystems.get("obdh")
+            if obdh is not None and hasattr(obdh, '_state') \
+                    and hasattr(obdh._state, 'obc_time_cuc'):
+                from smo_common.protocol.ecss_packet import TIME_EPOCH
+                t0_naive = self._t0_epoch.astimezone(timezone.utc).replace(tzinfo=None)
+                obdh._state.obc_time_cuc = int(
+                    (t0_naive - TIME_EPOCH).total_seconds())
 
         # TM builder — two APIDs: bootloader and application.
         # At power-up we use the bootloader APID; on OBC app boot (phase 3→4) we
@@ -164,12 +275,20 @@ class SimulationEngine:
         self._hk_intervals: dict[int, float] = {}
         self._hk_timers: dict[int, float] = {}
         self._hk_enabled: dict[int, bool] = {}
+        # Default HK enable state is config-driven (defect #75). The operations
+        # manual says HK generation is enabled *by command*; the engine used to
+        # switch every SID on at startup, which made TC(3,5) HK_ENABLE a no-op
+        # and skipped the commissioning step entirely. Default now: only the
+        # essential SIDs — 1 (EPS platform vitals, needed to judge whether the
+        # spacecraft is power-safe before anything else is switched on) and 11
+        # (the APID 2 beacon, the only telemetry the bootloader produces).
+        self._hk_default_enabled_sids = self._resolve_default_hk_sids()
         for hk in self._hk_structures_raw:
             params_list = [(p.param_id, p.pack_format, p.scale) for p in hk.parameters]
             self._hk_structures[hk.sid] = params_list
             self._hk_intervals[hk.sid] = hk.interval_s
             self._hk_timers[hk.sid] = 0.0
-            self._hk_enabled[hk.sid] = True
+            self._hk_enabled[hk.sid] = hk.sid in self._hk_default_enabled_sids
 
         # FDIR state
         # sc_mode is DERIVED state recomputed each tick by _update_sc_mode().
@@ -192,20 +311,51 @@ class SimulationEngine:
         self._procedure_executor = ProcedureExecutor()
         self._current_load_shed_stage = LOAD_SHED_STAGE_NORMAL
         self._sim_elapsed_fdir = 0.0
+        # Fault-cascade / recovery runtime (WP-5). Detection had no call site
+        # at all before Phase G, so none of this existed.
+        self._recovery_max_attempts = 3
+        self._recovery_initial_level = 1
+        self._recovery_level_delays: dict[int, float] = {}
+        self._recovery_actions: dict[str, dict] = {}
+        self._cascade_callbacks: dict[str, Any] = {}
+        self._pending_cascades: list[dict] = []   # scheduled by delay_s
+        self._fault_persist: dict[str, float] = {}
+        # Edge detector for SAFE_MODE_ENTRY/EXIT. Seeded from the initial mode
+        # so power-up (which starts SAFE, uncommissioned) does not fire a
+        # spurious 0x0F0A on the first tick — that event drives S19 rule 8005
+        # PROP_DISARM, so a false entry has real consequences.
+        self._prev_sc_safe = True
+        self._prev_eps_mode: int | None = None
+        self._param_catalogue_ids()   # warm the name->id map off the tick thread
         self._load_fault_propagation_config()
 
         # Transition tracking
         self._prev_in_contact = False
         self._prev_in_eclipse = False
         self._in_contact = False  # current contact state for TM gating
+        self._active_gs: str | None = None   # ground station currently in view
+        self._prev_active_gs: str | None = None  # station of the last contact (for LOS event)
 
         # TC Scheduler (S11)
         self._tc_scheduler = TCScheduler()
 
-        # Delayed-TM (S15) dump archive directory: env > mission config > default.
-        import os as _os
-        _dump_dir = (_os.environ.get("SMO_DUMP_DIR") or getattr(self._mission_cfg, "dump_dir", None) or "workspace/dumps")
-        self._dump_dir = Path(_dump_dir).expanduser()
+        # On-Board Control Procedures (S18 OBCP). Boot-time procedures are
+        # pre-loaded from configs/<mission>/obcp/*.yaml (like the S19 rules)
+        # so students can activate them immediately.
+        from smo_simulator.obcp import ObcpManager
+        self._obcp_manager = ObcpManager(self)
+        try:
+            self._obcp_manager.load_from_dir(self.config_dir / "obcp")
+        except Exception as e:  # noqa: BLE001 — bad OBCP config must not block boot
+            logger.warning("OBCP boot-load failed: %s", e)
+
+        # Delayed-TM (S15) dump archive directory. The resolution order
+        # (SMO_DUMP_DIR > mission.yaml dump_dir > workspace/dumps) lives in
+        # smo_common.dump_store so the writer here and every reader — the MCS
+        # dump API, the simulator's own dump API, tools/delayed_tm_viewer.py —
+        # agree on one location (defect #90).
+        from smo_common.dump_store import resolve_dump_dir as _resolve_dump_dir
+        self._dump_dir = _resolve_dump_dir(self._mission_cfg)
         logger.info("Delayed-TM dump archive dir: %s", self._dump_dir)
 
         # Onboard TM Storage (S15)
@@ -216,6 +366,14 @@ class SimulationEngine:
         self._dump_byte_budget: float = 0.0
         # Stores currently being dumped (auto-cleared on completion)
         self._dump_active_stores: set[int] = set()
+
+        # Real-time TM pacing (defect #74): backlog + byte budget, mirroring
+        # the S15 dump pacer but for HK / event / verification telemetry.
+        self._rt_pending: list[bytes] = []
+        self._rt_byte_budget: float = 0.0
+        self._rt_backlog_max: int = int(
+            getattr(self._sim_cfg.ttc, 'rt_tm_backlog_max', 2000))
+        self._force_rt_pacing: bool = False
 
         # Subsystem event edge-detection
         self._prev_aocs_mode: Optional[int] = None
@@ -229,7 +387,8 @@ class SimulationEngine:
         # `start_in_bootloader`, we drop to phase 3 below after storage init.
         self._spacecraft_phase = 6   # 0=PRE_SEP,1=SEP_TIMER,2=INIT_PWR,3=BOOT,4=LEOP,5=COMM,6=NOM
         self._sep_timer = 0.0        # separation timer countdown (seconds)
-        self._sep_timer_duration = 1800.0  # 30 minutes default
+        # simulation.yaml phases.separation_timer_s (default 1800 s = 30 min)
+        self._sep_timer_duration = float(self._sim_cfg.phases.separation_timer_s)
 
         # Auto-TX hold-down. On reception of any accepted TC, the platform
         # autonomously powers the TTC TX line on for AUTO_TX_HOLD_S seconds
@@ -237,18 +396,30 @@ class SimulationEngine:
         # the first valid uplink. Each new accepted TC re-arms the timer.
         # This mirrors a common LEOP autonomy: "if I just heard a good
         # command, the ground is talking to me — go ahead and reply".
-        self._auto_tx_hold_s: float = 15.0 * 60.0   # 15 minutes
+        # simulation.yaml ttc.auto_tx_hold_s (default 900 s; EOSAT-1 uses 300 s
+        # so the hold does not defeat the ttc_tx load-shed stage during passes).
+        self._auto_tx_hold_s: float = float(self._sim_cfg.ttc.auto_tx_hold_s)
         self._auto_tx_remaining: float = 0.0
+        # Instructor speed clamp (simulation.yaml speed.max)
+        self._speed_max: float = float(self._sim_cfg.speed.max)
+        # Phase D: latched once per burn when the engine clamps acceleration
+        # to prop.max_speed_during_burn (event 0x0811 fires on the edge).
+        self._prop_speed_clamped: bool = False
 
         # S12 monitoring: edge-triggered violation tracking.  Only the
         # transition into violation (OK → violated) emits an S5 event.
         self._s12_violation_active: set[int] = set()
+        # mon_id -> last violation record, so the clear transition (TM 12,10)
+        # can name the parameter and limits it belongs to.
+        self._s12_violation_records: dict[int, dict] = {}
 
         # Failure manager
         from smo_simulator.failure_manager import FailureManager
         self._failure_manager = FailureManager(
             inject_fn=self._handle_failure_inject,
             clear_fn=self._handle_failure_clear,
+            config=self._sim_cfg.failures,   # simulation.yaml failures: block
+            rng=derive_rng(self.seed, "failure_manager"),  # plan A-2
         )
 
         # Named state breakpoints (snapshot store for instructor save/load).
@@ -264,6 +435,7 @@ class SimulationEngine:
         from smo_simulator.scenario_engine import ScenarioEngine
         self._scenario_engine = ScenarioEngine(
             failure_manager=self._failure_manager, engine=self,
+            defaults=self._sim_cfg.scenario_defaults,
         )
         try:
             self._scenario_engine.load_scenarios_from_dir(self.config_dir / "scenarios")
@@ -274,6 +446,22 @@ class SimulationEngine:
         from smo_simulator.service_dispatch import ServiceDispatcher
         self._dispatcher = ServiceDispatcher(self)
 
+        # S6 on-board memory: config-declared map + sparse patchable image.
+        # One declaration (configs/<mission>/memory/memory_map.yaml) replaces
+        # the three disagreeing hard-coded maps (defect #71).
+        from smo_simulator.memory_map import MemoryImage, MemoryMap
+        self._memory_map = MemoryMap.load(self.config_dir)
+        self._memory = MemoryImage(self._memory_map, self)
+        self._dispatcher._memory = self._memory
+
+        # Scenario schema problems found at load time become real telemetry
+        # (SCENARIO_CONFIG_INVALID). Deferred to here because _emit_event needs
+        # the TM builder and dispatcher, which are created after scenario load.
+        try:
+            self._scenario_engine.emit_load_issues()
+        except Exception as e:  # noqa: BLE001 — never block startup
+            logger.debug("Scenario load-issue emission failed: %s", e)
+
         # Load S12/S19 configurations at startup
         self._load_monitoring_configs()
 
@@ -281,6 +469,7 @@ class SimulationEngine:
         self._fdir_callbacks: dict[str, Any] = {}
         self._wire_fdir()
         self._wire_load_shedding()
+        self._wire_fault_cascades()
         self._wire_procedure_executor()
 
         # If mission config requests bootloader boot-up, put the spacecraft
@@ -289,6 +478,64 @@ class SimulationEngine:
         # not ticking (handled by phase gate in main loop).
         if getattr(self._mission_cfg, 'start_in_bootloader', True):
             self._enter_bootloader_mode()
+
+        # ── Stateful-component registry (plan A-4) ──
+        # Every component holding mutable simulation state MUST be registered
+        # here; the BreakpointManager serialises exactly this set (plus the
+        # legacy top-level fields), and a save failure in ANY component fails
+        # the whole save. tests/test_simulator/test_breakpoint_round_trip.py
+        # asserts completeness: any engine-reachable object with a tick()
+        # method must be registered or explicitly allowlisted with a reason.
+        self._stateful_components: dict[str, Any] = {}
+        self.register_stateful("engine", self)
+        for name, model in self.subsystems.items():
+            self.register_stateful(f"model:{name}", model)
+        self.register_stateful("tm_storage", self._tm_storage)
+        self.register_stateful("obcp", self._obcp_manager)
+        self.register_stateful("memory", self._memory)
+        self.register_stateful("tc_scheduler", self._tc_scheduler)
+        self.register_stateful("failure_manager", self._failure_manager)
+        self.register_stateful("scenario_engine", self._scenario_engine)
+        self.register_stateful("dispatcher", self._dispatcher)
+        self.register_stateful("load_shedding", self._load_shedding)
+        self.register_stateful("fault_propagator", self._fault_propagator)
+        self.register_stateful("procedure_executor", self._procedure_executor)
+
+    def _resolve_default_hk_sids(self) -> set[int]:
+        """SIDs that are enabled without a ground command (defect #75)."""
+        hk_cfg = getattr(self._sim_cfg, 'housekeeping', None)
+        all_sids = {hk.sid for hk in self._hk_structures_raw}
+        if hk_cfg is None:
+            return all_sids
+        if getattr(hk_cfg, 'enable_all_by_default', False):
+            return all_sids
+        sids = {int(s) for s in getattr(hk_cfg, 'default_enabled_sids', []) or []}
+        # The bootloader beacon SID is not optional — without it the spacecraft
+        # is silent at power-up and cannot be commissioned at all.
+        sids.add(BOOTLOADER_BEACON_SID)
+        return sids & all_sids if all_sids else sids
+
+    def _resolve_t0_epoch(self) -> Optional[datetime]:
+        """Return the reference epoch to start the propagator at, or None.
+
+        None means "use the wall clock" — either simulation.yaml asked for it
+        (`epoch: wall`) or the orbit config declares no `t0_epoch`.
+        """
+        mode = str(getattr(self._sim_cfg, 'epoch', 't0') or 't0').strip().lower()
+        if mode == 'wall':
+            return None
+        raw = getattr(self._orbit_cfg, 't0_epoch', None)
+        if not raw:
+            return None
+        try:
+            epoch = datetime.fromisoformat(str(raw).replace('Z', '+00:00'))
+        except ValueError:
+            logger.warning("orbit.yaml t0_epoch %r is not ISO-8601 — "
+                           "falling back to wall clock", raw)
+            return None
+        if epoch.tzinfo is None:
+            epoch = epoch.replace(tzinfo=timezone.utc)
+        return epoch.astimezone(timezone.utc)
 
     def _enter_bootloader_mode(self) -> None:
         """Configure the engine for bootloader/beacon operation.
@@ -384,7 +631,12 @@ class SimulationEngine:
             t.pa_on = False
             t.beacon_mode = True
             t.antenna_deployed = False
-            t.data_rate_mode = 0
+            # BEACON tier (1 kbps) — the bootloader's only rate (defect #85).
+            t.data_rate_mode = getattr(ttc, '_beacon_tier', 0)
+            t.downlink_mode = False
+            if hasattr(ttc, '_apply_tier'):
+                # Apply immediately so the rate is right before the first tick.
+                ttc._apply_tier(t, t.data_rate_mode)
 
         # Payload off
         payload = self.subsystems.get("payload")
@@ -410,16 +662,38 @@ class SimulationEngine:
         except Exception:
             pass
 
-        # Re-enable all HK SIDs (application has full telemetry access)
-        for sid in self._hk_enabled:
-            self._hk_enabled[sid] = True
+        # Restore the *configured* default HK enable state — not "everything on"
+        # (defect #75). The application has full telemetry access, but the
+        # operator still has to command HK_ENABLE for the non-essential SIDs,
+        # which is what the operations manual and the commissioning cards say.
+        self._apply_default_hk_enable()
 
         # TM stores come online (empty but enabled)
         if self._tm_storage is not None:
             for sid in list(self._tm_storage._stores.keys()):
                 self._tm_storage.enable_store(sid)
-        logger.info("Application booted: APID=0x%03X, all HK SIDs enabled, stores online",
-                    self._application_apid)
+
+        # ── TM data-rate ladder (defect #85) ──
+        # Leaving the bootloader leaves the BEACON tier behind. The
+        # application comes up on the configured SAFE tier (LOW, 16 kbps) —
+        # enough for real-time HK plus stored-HK playback with the antenna
+        # still stowed — and the operator commands NOMINAL once the antenna
+        # is deployed. Nominal operations never default to the top tier.
+        # While beacon mode is still latched the tick pins the tier to BEACON
+        # anyway; once TTC_SET_BEACON_MODE(off) is sent the beacon-only tier
+        # is no longer permitted and the model steps down to this one.
+        ttc = self.subsystems.get("ttc")
+        if ttc is not None and hasattr(ttc, '_state') \
+                and not ttc._state.beacon_mode:
+            ttc._state.data_rate_mode = getattr(ttc, '_safe_tier', 1)
+        logger.info(
+            "Application booted: APID=0x%03X, default HK SIDs %s enabled, stores online",
+            self._application_apid, sorted(self._hk_default_enabled_sids))
+
+    def _apply_default_hk_enable(self) -> None:
+        """Set every HK SID to its configured power-up enable state."""
+        for sid in self._hk_enabled:
+            self._hk_enabled[sid] = sid in self._hk_default_enabled_sids
 
     def _get_cuc_time(self) -> int:
         obdh = self.subsystems.get("obdh")
@@ -460,7 +734,10 @@ class SimulationEngine:
             self._fdir_callbacks["heater_on_battery"] = lambda: tcs.handle_command({"command": "heater", "circuit": "battery", "on": True})
             self._fdir_callbacks["heater_off_battery"] = lambda: tcs.handle_command({"command": "heater", "circuit": "battery", "on": False})
         if aocs:
-            self._fdir_callbacks["safe_mode_aocs"] = lambda: aocs.handle_command({"command": "set_mode", "mode": 2})
+            # Phase C WP-9: AOCS safe mode = COARSE_SUN (mode 3), a sun-safe
+            # power-positive hold — not DETUMBLE (mode 2), which is a rate-
+            # damping mode with no pointing and was semantically wrong here.
+            self._fdir_callbacks["safe_mode_aocs"] = lambda: aocs.handle_command({"command": "set_mode", "mode": 3})
             for i in range(4):
                 self._fdir_callbacks[f"disable_rw{i+1}"] = (lambda idx=i: aocs.handle_command({"command": "disable_wheel", "wheel": idx}))
         if obdh:
@@ -495,13 +772,48 @@ class SimulationEngine:
                     primary_param=cascade_cfg.get("primary_param", ""),
                     threshold=cascade_cfg.get("threshold"),
                     cascades=cascade_cfg.get("cascades", []),
+                    condition=cascade_cfg.get("condition", "<"),
+                    flags=[int(f) for f in cascade_cfg.get("flags", []) or []],
+                    persist_s=float(cascade_cfg.get("persist_s", 0.0) or 0.0),
+                    recovery=str(cascade_cfg.get("recovery", "") or ""),
+                    requires=dict(cascade_cfg.get("requires", {}) or {}),
                 )
                 self._fault_propagator.register_rule(rule)
 
-            # Register load shedding stages
+            # Recovery escalation (WP-5). These four entries were parsed by
+            # nobody; they are what turns a detected fault into a *started*
+            # recovery procedure.
+            esc = config.get("recovery_escalation", {}) or {}
+            self._recovery_max_attempts = int(esc.get("max_attempts", 3))
+            self._recovery_initial_level = int(esc.get("initial_level", 1))
+            self._recovery_level_delays = {}
+            for lvl_key, lvl_cfg in (esc.get("escalation_delays", {}) or {}).items():
+                try:
+                    self._recovery_level_delays[int(str(lvl_key).split("_")[-1])] = \
+                        float((lvl_cfg or {}).get("delay_s", 0.0))
+                except (ValueError, AttributeError, TypeError):
+                    continue
+            self._recovery_actions = esc.get("recovery_actions", {}) or {}
+
+            # Register load shedding stages. The SoC entry thresholds are owned
+            # by simulation.yaml (eps.load_shed.soc_stage_thresholds_pct); the
+            # per-stage `soc_threshold` values here are cross-checked so the two
+            # files cannot silently diverge (defect #51).
+            shed_thresholds = list(
+                self._sim_cfg.eps.load_shed.soc_stage_thresholds_pct)
+            self._load_shedding.set_soc_stage_thresholds(shed_thresholds)
             for stage_key, stage_cfg in config.get("load_shedding_stages", {}).items():
                 stage_num = int(stage_key.split("_")[-1])
                 self._load_shedding.register_stage_config(stage_num, stage_cfg)
+                if 1 <= stage_num <= len(shed_thresholds):
+                    yaml_thr = stage_cfg.get("soc_threshold")
+                    if (yaml_thr is not None
+                            and abs(float(yaml_thr) - shed_thresholds[stage_num - 1]) > 1e-6):
+                        logger.warning(
+                            "Load-shed stage %d soc_threshold in fault_propagation.yaml "
+                            "(%.1f%%) diverges from simulation.yaml (%.1f%%) — "
+                            "simulation.yaml wins",
+                            stage_num, float(yaml_thr), shed_thresholds[stage_num - 1])
 
             logger.info("Loaded fault propagation configuration from %s", propagation_file)
         except Exception as e:
@@ -527,9 +839,13 @@ class SimulationEngine:
             )
 
         if tcs:
+            # Phase G: TCS has no "heater_duty" command (same class as defect
+            # #27 for EPS/TTC) — handle_command fell through and returned
+            # success:False, so load shedding never reduced heater duty. The
+            # real command is `set_heater_duty_limit`, per circuit, in percent.
             self._load_shedding.register_callback(
                 "tcs_heater_duty",
-                lambda val: tcs.handle_command({"command": "heater_duty", "value": float(val)})
+                lambda val: self._tcs_duty_limit_all(float(val) * 100.0)
             )
 
         if ttc:
@@ -540,6 +856,77 @@ class SimulationEngine:
                 "ttc_power_level",
                 lambda val: ttc.handle_command({"command": "set_tx_power", "power_w": float(val)})
             )
+
+    def _wire_fault_cascades(self) -> None:
+        """Bind every ``(target_subsystem, action)`` pair declared in
+        ``fault_propagation.yaml`` to a real subsystem command (WP-5).
+
+        Nine cascade rules were registered and none of their actions had an
+        implementation, because ``detect_fault()`` had no call site — the
+        actions were never reached, so nothing ever complained.  The
+        contract test ``test_fault_propagation.py`` now asserts this map
+        covers every declared pair, so a new cascade action cannot be added
+        to the config without an implementation.
+        """
+        eps = self.subsystems.get("eps")
+        aocs = self.subsystems.get("aocs")
+        tcs = self.subsystems.get("tcs")
+        ttc = self.subsystems.get("ttc")
+        payload = self.subsystems.get("payload")
+        cb = self._cascade_callbacks
+
+        if aocs:
+            # Same sun-safe hold Phase C made the FDIR safe mode (mode 3
+            # COARSE_SUN); mode 2 is DETUMBLE and is not a safe mode.
+            cb["aocs:enter_safe_mode"] = lambda: aocs.handle_command(
+                {"command": "set_mode", "mode": 3})
+        if payload:
+            cb["payload:power_off"] = lambda: payload.handle_command(
+                {"command": "set_mode", "mode": 0})
+            cb["payload:standby"] = lambda: payload.handle_command(
+                {"command": "set_mode", "mode": 1})
+            cb["payload:reduce_duty_cycle"] = lambda: payload.handle_command(
+                {"command": "set_mode", "mode": 1})
+        if tcs:
+            # TCS has no "heater_duty" command — the duty control is
+            # `set_heater_duty_limit` with a per-circuit percentage. (The
+            # load-shedding wiring still uses the non-existent name; see
+            # `_wire_load_shedding`, fixed there too.)
+            cb["tcs:heater_standby"] = lambda: self._tcs_duty_limit_all(30.0)
+            cb["tcs:heater_emergency_off"] = lambda: self._tcs_duty_limit_all(0.0)
+        if ttc:
+            cb["ttc:reduce_tx_power"] = lambda: ttc.handle_command(
+                {"command": "set_tx_power", "power_w": 1.0})
+            cb["ttc:standby"] = lambda: ttc.handle_command(
+                {"command": "set_tx_power", "power_w": 0.5})
+            # Drop one rung on the rate ladder rather than jumping to the
+            # bottom: the lesson is that FDIR demotes the link, and the
+            # console shows active-vs-commanded tier (defect #86).
+            cb["ttc:reduce_data_rate"] = self._cascade_reduce_data_rate
+        if eps:
+            cb["eps:enter_safe_mode"] = lambda: eps.handle_command(
+                {"command": "set_eps_mode", "mode": 1})
+            cb["eps:reduce_charge_rate"] = lambda: eps.handle_command(
+                {"command": "set_charge_rate", "rate_a": 0.5})
+            cb["eps:reduce_power_to_aocs"] = lambda: eps.handle_command(
+                {"command": "power_line_off", "line_name": "aocs_wheels"})
+
+    def _tcs_duty_limit_all(self, duty_pct: float) -> None:
+        tcs = self.subsystems.get("tcs")
+        if tcs is None:
+            return
+        for circuit in (0, 1, 2):   # battery, obc, thruster
+            tcs.handle_command({"command": "set_heater_duty_limit",
+                                "circuit": circuit,
+                                "duty_limit_pct": duty_pct})
+
+    def _cascade_reduce_data_rate(self) -> None:
+        ttc = self.subsystems.get("ttc")
+        if ttc is None or not hasattr(ttc, "_state"):
+            return
+        cur = int(getattr(ttc._state, "data_rate_mode", 1))
+        ttc.handle_command({"command": "set_data_rate_mode",
+                            "mode": max(0, cur - 1)})
 
     def _wire_procedure_executor(self) -> None:
         """Register procedure commands and callbacks."""
@@ -612,25 +999,365 @@ class SimulationEngine:
             self._procedure_executor.register_procedure("safe_mode_entry", safe_mode_proc)
 
     def _tick_fdir_advanced(self, dt: float) -> None:
-        """Advanced FDIR tick: handle fault propagation, load shedding, recovery."""
+        """Advanced FDIR tick: fault propagation, load shedding, recovery.
+
+        Phase G (WP-5). Before this, ``FaultPropagator.detect_fault`` and
+        ``ProcedureExecutor.start_procedure`` had zero call sites, so the nine
+        configured cascades never cascaded, the ten recovery procedures never
+        ran, and seven of the eight FDIR events in the catalogue could not be
+        emitted. Only load shedding was live.
+        """
         self._sim_elapsed_fdir += dt
+        now = self._sim_elapsed_fdir
 
         # Check load shedding based on battery SoC
         eps = self.subsystems.get("eps")
         if eps and hasattr(eps, '_state'):
-            soc = getattr(eps._state, 'soc', 100.0)
-            new_stage = self._load_shedding.update_stage(soc, self._sim_elapsed_fdir)
+            # Defect #49: this read `eps._state.soc`, an attribute that does not
+            # exist on EPSState — so the default 100.0 was used on every tick and
+            # the configured SoC load-shed stages could never trigger. The real
+            # attribute is `bat_soc_pct`.
+            soc = getattr(eps._state, 'bat_soc_pct', 100.0)
+            prev_stage = self._current_load_shed_stage
+            new_stage = self._load_shedding.update_stage(soc, now)
             if new_stage is not None:
                 self._current_load_shed_stage = new_stage
                 self._load_shedding.execute_stage(new_stage)
-                self._emit_event({
-                    'event_id': 0x0F05,  # LOAD_SHED_ACTIVATED
-                    'severity': 2,
-                    'description': f"Load shedding activated: {self._load_shedding.stage_name(new_stage)}",
-                })
+                if new_stage > prev_stage:
+                    self._emit_event({
+                        'event_id': 0x0F05,  # LOAD_SHED_ACTIVATED
+                        'severity': 2,
+                        'description': (f"Load shedding activated: "
+                                        f"{self._load_shedding.stage_name(new_stage)}"),
+                    })
+                else:
+                    # Recovering up the ladder is an event in its own right —
+                    # 0x0F06 was in the catalogue and emitted by nothing.
+                    self._emit_event({
+                        'event_id': 0x0F06,  # LOAD_SHED_DEACTIVATED
+                        'severity': 1,
+                        'description': (f"Load shedding relaxed to "
+                                        f"{self._load_shedding.stage_name(new_stage)}"),
+                    })
+
+        # Fault detection + cascading.
+        #
+        # Armed only once the spacecraft is commissioned, which is how a real
+        # FDIR is configured: during LEOP the reaction wheels are unpowered, so
+        # `aocs.wheels_enabled` is legitimately 0 and the
+        # `aocs_wheel_failure_dual` rule would declare a double wheel failure
+        # on the first tick and cut AOCS bus power — a deadlock the operator
+        # cannot command their way out of. Likewise `aocs_safe_mode_entry`
+        # (mode == COARSE_SUN) is the *expected* state through commissioning.
+        # Load shedding above stays armed in every phase: it is battery
+        # protection, not fault reasoning.
+        if self._spacecraft_phase >= SC_PHASE_NOMINAL:
+            self._tick_fault_detection(dt, now)
+            self._tick_pending_cascades(now)
+            self._tick_recovery(now)
+        elif self._fault_propagator.active_faults() or self._pending_cascades:
+            # Dropping back below NOMINAL (e.g. an instructor rewind) disarms
+            # the model rather than leaving stale faults latched.
+            for fid in list(self._fault_propagator.active_faults()):
+                self._fault_propagator.clear_fault(fid)
+            self._pending_cascades.clear()
+            self._fault_persist.clear()
 
         # Tick procedure executor
-        self._procedure_executor.tick_procedures(self._sim_elapsed_fdir)
+        self._procedure_executor.tick_procedures(now)
+        self._publish_fdir_parameters()
+
+    # ─── Fault detection / cascade / recovery (WP-5) ──────────────────
+
+    def _tick_fault_detection(self, dt: float, now: float) -> None:
+        """Evaluate every fault-cascade rule against live telemetry."""
+        for rule in self._fault_propagator.rules():
+            if not self._fault_precondition_met(rule):
+                # Not judgeable right now (e.g. the subsystem is unpowered).
+                # Clear any latched fault so the model does not hold a verdict
+                # it can no longer justify.
+                if rule.fault_id in self._fault_propagator.active_faults():
+                    self._fault_propagator.clear_fault(rule.fault_id)
+                self._fault_persist.pop(rule.fault_id, None)
+                continue
+            pid = self._resolve_param_name(rule.primary_param)
+            if pid is None:
+                continue
+            raw = self.params.get(pid)
+            if raw is None:
+                continue          # parameter not produced — nothing to judge
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                continue
+
+            present = rule.evaluate(value)
+            # Persistence: the same filter Phase C added to the basic FDIR
+            # rules, so a single noisy sample cannot cascade a spacecraft.
+            if rule.persist_s > 0.0:
+                acc = self._fault_persist.get(rule.fault_id, 0.0)
+                acc = acc + dt if present else 0.0
+                self._fault_persist[rule.fault_id] = acc
+                if present and acc < rule.persist_s:
+                    present = False
+
+            already = rule.fault_id in self._fault_propagator.active_faults()
+            if present and not already:
+                cascades = self._fault_propagator.detect_fault(rule.fault_id, now)
+                self._emit_event({
+                    'event_id': 0x0F00,  # FDIR_FAULT_DETECTED
+                    'severity': 3,
+                    'description': (f"FDIR fault {rule.fault_id}: "
+                                    f"{rule.primary_param}={value:.3f} "
+                                    f"{rule.condition} {rule.threshold}"),
+                })
+                for c in cascades:
+                    c["due"] = now + float(c.get("delay_s", 0.0) or 0.0)
+                    self._pending_cascades.append(c)
+                if rule.recovery:
+                    self._start_recovery(rule, now)
+            elif not present and already:
+                self._fault_propagator.clear_fault(rule.fault_id)
+                # Drop any cascade for this fault that has not fired yet — the
+                # condition it was a response to no longer holds.
+                self._pending_cascades = [
+                    c for c in self._pending_cascades
+                    if c.get("fault_id") != rule.fault_id
+                ]
+                self._complete_recovery(rule.fault_id, now)
+
+    def _fault_precondition_met(self, rule) -> bool:
+        """Is this rule's `requires:` precondition satisfied?"""
+        req = getattr(rule, "requires", None)
+        if not req:
+            return True
+        name = req.get("param")
+        if not name:
+            return True
+        pid = self._resolve_param_name(str(name))
+        if pid is None:
+            return True
+        raw = self.params.get(pid)
+        if raw is None:
+            return False
+        try:
+            return float(raw) >= float(req.get("min", 1.0))
+        except (TypeError, ValueError):
+            return False
+
+    def _tick_pending_cascades(self, now: float) -> None:
+        """Apply cascades whose declared ``delay_s`` has elapsed."""
+        if not self._pending_cascades:
+            return
+        due = [c for c in self._pending_cascades if now >= c.get("due", 0.0)]
+        if not due:
+            return
+        self._pending_cascades = [c for c in self._pending_cascades
+                                  if now < c.get("due", 0.0)]
+        for c in due:
+            key = f"{c['target_subsystem']}:{c['action']}"
+            cb = self._cascade_callbacks.get(key)
+            if cb is None:
+                logger.warning("No cascade implementation for %s (fault %s)",
+                               key, c.get("fault_id"))
+                continue
+            try:
+                cb()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Cascade %s failed: %s", key, e)
+                continue
+            self._emit_event({
+                'event_id': 0x0F00,  # FDIR_FAULT_DETECTED (cascade applied)
+                'severity': 2,
+                'description': (f"Cascade {c['fault_id']} -> "
+                                f"{c['target_subsystem']}.{c['action']}"),
+            })
+
+    def _start_recovery(self, rule, now: float) -> None:
+        """Begin (or restart) the escalating recovery for a fault."""
+        group = self._recovery_actions.get(rule.recovery)
+        if not group:
+            return
+        rs = self._fault_propagator.create_recovery_state(
+            rule.fault_id, rule.recovery, now,
+            max_attempts=self._recovery_max_attempts)
+        rs.group = rule.recovery
+        rs.level = 0
+        self._enter_recovery_level(rs, self._recovery_initial_level, now,
+                                   escalated=False)
+
+    def _enter_recovery_level(self, rs, level: int, now: float,
+                              escalated: bool) -> None:
+        group = self._recovery_actions.get(rs.group) or {}
+        action_cfg = group.get(f"level_{level}")
+        if not action_cfg:
+            return
+        rs.level = level
+        rs.level_started = now
+        rs.state = "RUNNING"
+        rs.recovery_attempts += 1
+        rs.last_attempt_time = now
+        # The config names a procedure *file*; the executor is keyed by the
+        # `procedure_id` inside it, which is the stem in every shipped file.
+        proc_ref = str(action_cfg.get("procedure", ""))
+        proc_id = proc_ref[:-5] if proc_ref.endswith(".yaml") else proc_ref
+        rs.procedure = proc_id
+        exec_id = self._procedure_executor.start_procedure(proc_id, now)
+        rs.exec_id = exec_id or ""
+        if escalated:
+            self._emit_event({
+                'event_id': 0x0F04,  # FDIR_LEVEL_ESCALATION
+                'severity': 4,
+                'description': (f"FDIR escalation L{level} for {rs.fault_id}: "
+                                f"{action_cfg.get('action', '')}"),
+            })
+        self._emit_event({
+            'event_id': 0x0F01,  # FDIR_RECOVERY_STARTED
+            'severity': 3,
+            'description': (f"Recovery L{level} {proc_id} for {rs.fault_id}"
+                            + ("" if exec_id else " (procedure not registered)")),
+        })
+        if exec_id is None:
+            rs.state = "FAILED"
+            self._emit_event({
+                'event_id': 0x0F03,  # FDIR_RECOVERY_FAILED
+                'severity': 4,
+                'description': (f"Recovery L{level} for {rs.fault_id} could not "
+                                f"start: unknown procedure {proc_id}"),
+            })
+
+    def _tick_recovery(self, now: float) -> None:
+        """Escalate recoveries whose level delay has expired."""
+        for fault_id, rs in self._fault_propagator.recovery_states().items():
+            if rs.state in ("COMPLETE", "FAILED"):
+                continue
+            if fault_id not in self._fault_propagator.active_faults():
+                continue
+            delay = self._recovery_level_delays.get(rs.level, 0.0)
+            if delay <= 0.0 or now - rs.level_started < delay:
+                continue
+            next_level = rs.level + 1
+            group = self._recovery_actions.get(rs.group) or {}
+            if f"level_{next_level}" in group and \
+                    rs.recovery_attempts < rs.max_attempts:
+                self._emit_event({
+                    'event_id': 0x0F03,  # FDIR_RECOVERY_FAILED (this level)
+                    'severity': 3,
+                    'description': (f"Recovery L{rs.level} for {fault_id} did not "
+                                    f"clear the fault; escalating"),
+                })
+                self._enter_recovery_level(rs, next_level, now, escalated=True)
+            else:
+                rs.state = "FAILED"
+                self._emit_event({
+                    'event_id': 0x0F03,  # FDIR_RECOVERY_FAILED (terminal)
+                    'severity': 4,
+                    'description': (f"Recovery exhausted for {fault_id} after "
+                                    f"L{rs.level}"),
+                })
+
+    def _complete_recovery(self, fault_id: str, now: float) -> None:
+        rs = self._fault_propagator.get_recovery_state(fault_id)
+        if rs is None or rs.state in ("COMPLETE",):
+            return
+        rs.state = "COMPLETE"
+        self._emit_event({
+            'event_id': 0x0F02,  # FDIR_RECOVERY_COMPLETE
+            'severity': 1,
+            'description': (f"Fault {fault_id} cleared"
+                            + (f" after recovery L{rs.level}" if rs.level else "")),
+        })
+
+    def _check_safe_mode_events(self) -> None:
+        """Emit SAFE_MODE_ENTRY/EXIT and EPS_SAFE_MODE_ENTRY (WP-5).
+
+        0x0F0A, 0x0F0B and 0x0111 were in the event catalogue and raised by
+        nothing, so entering safe mode — the single most important thing the
+        spacecraft can do autonomously — produced no event on the ground.
+        """
+        safe = (self.sc_mode == SC_SAFE)
+        if safe != self._prev_sc_safe:
+            self._prev_sc_safe = safe
+            self._emit_event({
+                'event_id': 0x0F0A if safe else 0x0F0B,
+                'severity': 3 if safe else 1,
+                'description': ("Spacecraft entered SAFE mode"
+                                if safe else "Spacecraft exited SAFE mode"),
+            })
+        eps = self.subsystems.get("eps")
+        if eps is not None and hasattr(eps, '_state'):
+            mode = int(getattr(eps._state, 'eps_mode', 0) or 0)
+            if self._prev_eps_mode is None:
+                self._prev_eps_mode = mode
+            elif mode != self._prev_eps_mode:
+                if mode != 0:
+                    self._emit_event({
+                        'event_id': 0x0111,  # EPS_SAFE_MODE_ENTRY
+                        'severity': 2,
+                        'description': f"EPS entered contingency mode {mode}",
+                    })
+                self._prev_eps_mode = mode
+
+    def _publish_fdir_parameters(self) -> None:
+        """Populate fdir.* and proc.* telemetry (0x0700-3, 0x0900-3).
+
+        These eight parameters were defined in the catalogue and written by
+        nothing; the FDIR window's "what is the spacecraft doing about it"
+        half had no data source at all.
+        """
+        faults = self._fault_propagator.active_faults()
+        recoveries = self._fault_propagator.recovery_states().values()
+        running = [r for r in recoveries if r.state == "RUNNING"]
+        level = 0
+        if self._fdir_emergency_active:
+            level = 3
+        elif self._fdir_safe_active or running:
+            level = 2
+        elif faults:
+            level = 1
+        self.params[0x0700] = level
+        self.params[0x0701] = len(faults)
+        self.params[0x0702] = sum(1 for r in recoveries if r.state == "FAILED")
+        self.params[0x0703] = len(running)
+
+        active = self._procedure_executor.get_active_procedures()
+        if active:
+            proc = active[0]
+            self.params[0x0900] = round(proc["progress_pct"], 1)
+            self.params[0x0901] = proc["step"]
+            self.params[0x0902] = proc["total_steps"]
+            self.params[0x0903] = 1  # running
+        else:
+            self.params[0x0900] = 0.0
+            self.params[0x0901] = 0
+            self.params[0x0902] = 0
+            self.params[0x0903] = 0
+
+        # sat.mode (0x0001) — the top-level "is this spacecraft healthy"
+        # summary the manual and three procedures quote. It was catalogued and
+        # written by nothing, so an S20 read returned 0.0, which reads as
+        # SAFE: the single most alarming value a student can be handed, at
+        # every moment of a nominal pass (brief 08 finding 12).
+        #   0 = safe, 1 = nominal, 2 = emergency
+        if self._fdir_emergency_active:
+            self.params[0x0001] = 2
+        elif self._fdir_safe_active:
+            self.params[0x0001] = 0
+        else:
+            self.params[0x0001] = 1
+
+        # ttc.active_gs (0x0523) — 1-based index into orbit.yaml's station
+        # list, 0 when out of contact. Same defect: catalogued, unwritten,
+        # and the SA header's "which station" now has a telemetry source
+        # rather than an instructor-console-only fact.
+        gs_name = self._active_gs
+        idx = 0
+        if gs_name:
+            for i, gs in enumerate(self._orbit_cfg.ground_stations, start=1):
+                if gs.name == gs_name:
+                    idx = i
+                    break
+        self.params[0x0523] = float(idx)
 
     # ------------------------------------------------------------------
     # Spacecraft phase state machine
@@ -809,6 +1536,157 @@ class SimulationEngine:
         # Uplink requires: (orbital contact AND TTC link OK) OR override
         return ((self._in_contact and bool(ttc_link_ok)) or self._override_passes)
 
+    # Rate-limit for the tick-fault traceback (roadmap N-1: a crash loop must
+    # not fill the disk with identical stack traces).
+    _ENGINE_FAULT_LOG_INTERVAL_S = 10.0
+
+    # ------------------------------------------------------------------
+    # State round-trip (plan A-4)
+    # ------------------------------------------------------------------
+
+    def register_stateful(self, name: str, component: Any) -> None:
+        """Register a component whose mutable state must survive breakpoints.
+
+        Raises TypeError when the component does not implement the Stateful
+        protocol — a new stateful component without get_state/set_state must
+        fail loudly, not silently lose its state on the next breakpoint load.
+        """
+        if not (callable(getattr(component, 'get_state', None))
+                and callable(getattr(component, 'set_state', None))):
+            raise TypeError(
+                f"Component {name!r} ({type(component).__name__}) does not "
+                f"implement the Stateful protocol (get_state/set_state)")
+        self._stateful_components[name] = component
+
+    def stateful_components(self) -> dict[str, Any]:
+        """Name → component map the BreakpointManager serialises (plan A-4)."""
+        return dict(self._stateful_components)
+
+    def get_state(self) -> dict[str, Any]:
+        """Serialise ENGINE-LEVEL mutable state (plan A-4).
+
+        Everything here used to be silently lost on breakpoint load (brief 08
+        B-2): the phase machine, edge detectors (whose loss re-fired spurious
+        AOS/eclipse/mode events on the first tick after a load), dump/RT
+        pacing backlogs, FDIR latches, TM sequence counters and the RNG.
+        Params/sim-time/speed/sc_mode/HK timers stay top-level in the
+        breakpoint for backwards compatibility with existing snapshots.
+        """
+        from smo_common.state import rng_state_to_json
+        return {
+            "spacecraft_phase": self._spacecraft_phase,
+            "sep_timer": self._sep_timer,
+            "sep_timer_duration": self._sep_timer_duration,
+            "auto_tx_remaining": self._auto_tx_remaining,
+            "current_load_shed_stage": self._current_load_shed_stage,
+            "sim_elapsed_fdir": self._sim_elapsed_fdir,
+            "fdir_safe_active": self._fdir_safe_active,
+            "fdir_emergency_active": self._fdir_emergency_active,
+            "prev_in_contact": self._prev_in_contact,
+            "prev_in_eclipse": self._prev_in_eclipse,
+            "in_contact": self._in_contact,
+            "active_gs": self._active_gs,
+            "prev_active_gs": self._prev_active_gs,
+            "prev_aocs_mode": self._prev_aocs_mode,
+            "prev_payload_mode": self._prev_payload_mode,
+            "prev_obdh_mode": self._prev_obdh_mode,
+            "event_flags": dict(self._event_flags),
+            "s12_violation_active": sorted(self._s12_violation_active),
+            "s12_violation_records": {
+                str(k): dict(v)
+                for k, v in self._s12_violation_records.items()},
+            "dump_pending": [[pkt.hex(), int(store_id)]
+                             for pkt, store_id in self._dump_pending],
+            "dump_active_stores": sorted(self._dump_active_stores),
+            "dump_byte_budget": self._dump_byte_budget,
+            "rt_pending": [pkt.hex() for pkt in self._rt_pending],
+            "rt_byte_budget": self._rt_byte_budget,
+            "override_passes": self._override_passes,
+            "tm_apid": self.tm_builder.apid,
+            "tm_seq_count": self.tm_builder._seq_count,
+            "seed": self.seed,
+            "rng_state": rng_state_to_json(self.rng.getstate()),
+            "prop_speed_clamped": bool(getattr(self, "_prop_speed_clamped",
+                                               False)),
+        }
+
+    def set_state(self, state: dict[str, Any]) -> None:
+        """Restore engine-level mutable state (see get_state)."""
+        from smo_common.state import restore_rng
+        g = state.get
+        self._spacecraft_phase = int(g("spacecraft_phase",
+                                       self._spacecraft_phase))
+        self._sep_timer = float(g("sep_timer", self._sep_timer))
+        self._sep_timer_duration = float(g("sep_timer_duration",
+                                           self._sep_timer_duration))
+        self._auto_tx_remaining = float(g("auto_tx_remaining",
+                                          self._auto_tx_remaining))
+        self._current_load_shed_stage = int(
+            g("current_load_shed_stage", self._current_load_shed_stage))
+        self._sim_elapsed_fdir = float(g("sim_elapsed_fdir",
+                                         self._sim_elapsed_fdir))
+        self._fdir_safe_active = bool(g("fdir_safe_active",
+                                        self._fdir_safe_active))
+        self._fdir_emergency_active = bool(g("fdir_emergency_active",
+                                             self._fdir_emergency_active))
+        self._prev_in_contact = bool(g("prev_in_contact",
+                                       self._prev_in_contact))
+        self._prev_in_eclipse = bool(g("prev_in_eclipse",
+                                       self._prev_in_eclipse))
+        self._in_contact = bool(g("in_contact", self._in_contact))
+        self._active_gs = g("active_gs", self._active_gs)
+        self._prev_active_gs = g("prev_active_gs", self._prev_active_gs)
+        self._prev_aocs_mode = g("prev_aocs_mode", self._prev_aocs_mode)
+        self._prev_payload_mode = g("prev_payload_mode",
+                                    self._prev_payload_mode)
+        self._prev_obdh_mode = g("prev_obdh_mode", self._prev_obdh_mode)
+        self._event_flags = dict(g("event_flags", {}))
+        self._s12_violation_active = set(
+            int(i) for i in g("s12_violation_active", []))
+        self._s12_violation_records = {
+            int(k): dict(v)
+            for k, v in g("s12_violation_records", {}).items()}
+        self._dump_pending = [
+            (bytes.fromhex(pkt), int(store_id))
+            for pkt, store_id in g("dump_pending", [])]
+        self._dump_active_stores = set(
+            int(i) for i in g("dump_active_stores", []))
+        self._dump_byte_budget = float(g("dump_byte_budget",
+                                         self._dump_byte_budget))
+        self._rt_pending = [bytes.fromhex(pkt) for pkt in g("rt_pending", [])]
+        self._rt_byte_budget = float(g("rt_byte_budget",
+                                       self._rt_byte_budget))
+        self._override_passes = bool(g("override_passes",
+                                       self._override_passes))
+        if "tm_apid" in state:
+            # set_apid resets the sequence counter on change — restore the
+            # counter AFTER the APID so both survive exactly.
+            self.tm_builder.set_apid(int(state["tm_apid"]))
+        if "tm_seq_count" in state:
+            self.tm_builder._seq_count = int(state["tm_seq_count"])
+        if "seed" in state and state["seed"] is not None:
+            self.seed = int(state["seed"])
+        self._prop_speed_clamped = bool(g("prop_speed_clamped",
+                                          getattr(self, "_prop_speed_clamped",
+                                                  False)))
+        restore_rng(self.rng, state.get("rng_state"))
+
+    def reseed(self, seed: int) -> None:
+        """Re-derive every component RNG from `seed` (plan A-2).
+
+        Resets the engine's, each model's and the failure manager's random
+        streams to the start of the streams that a fresh engine constructed
+        with this seed would use. Lets tests (and instructors) rebase a live
+        engine onto a different — or the same — reproducible universe.
+        """
+        self.seed = int(seed)
+        self.rng = derive_rng(self.seed, "engine")
+        for name, model in self.subsystems.items():
+            model.rng = derive_rng(self.seed, f"model:{name}")
+        fm = getattr(self, '_failure_manager', None)
+        if fm is not None:
+            fm.rng = derive_rng(self.seed, "failure_manager")
+
     def start(self) -> None:
         self.running = True
         self._thread = threading.Thread(target=self._run_loop, daemon=True, name="sim-engine")
@@ -820,13 +1698,29 @@ class SimulationEngine:
         logger.info("SimulationEngine stopping")
 
     def _run_loop(self) -> None:
-        tick_hz = 1.0  # default
+        # Tick rate: simulation.yaml tick_hz, else mission.yaml
+        # network.sim_tick_hz, else 1 Hz (previous hard-coded default).
+        tick_hz = self._sim_cfg.tick_hz
+        if tick_hz is None:
+            tick_hz = getattr(getattr(self._mission_cfg, 'network', None),
+                              'sim_tick_hz', None) or 1.0
+        tick_hz = float(tick_hz) if float(tick_hz) > 0 else 1.0
         dt_real = 1.0 / tick_hz
+        logger.info("Sim loop tick rate: %.3f Hz (dt_real=%.3f s)", tick_hz, dt_real)
         last_wall = time.monotonic()
 
         while self.running:
             dt_sim = dt_real * self.speed
-            self._tick_once(dt_sim)
+            # Roadmap N-1 / DI-01: a single exception out of _tick_once used to
+            # kill this daemon thread while `running` stayed True and every
+            # server kept serving the last frozen state — the sim looked like
+            # it had a spacecraft symptom rather than a software fault. Now the
+            # fault is caught, counted, surfaced as `engine_fault` in
+            # /api/state, and the loop continues.
+            try:
+                self._tick_once(dt_sim)
+            except Exception as e:  # noqa: BLE001 — deliberately broad
+                self._record_engine_fault(e)
 
             # Rate control
             elapsed = time.monotonic() - last_wall
@@ -835,53 +1729,172 @@ class SimulationEngine:
                 time.sleep(sleep_t)
             last_wall = time.monotonic()
 
+    def _apply_prop_impulse(self, imp: dict) -> None:
+        """Apply a finished burn's delta-V to the orbit propagator.
+
+        The element re-fit is timestamped at the burn MID-POINT (utc_mid);
+        on success epoch_version increments (0x0B19 + /api/state) so the
+        planner and MCS invalidate their contact/ground-track caches. A
+        divergent fit leaves the orbit unchanged and raises 0x0812.
+        """
+        from smo_common.orbit.propagator import DeltaVFitError
+        utc = self.orbit.utc
+        if imp.get("utc_mid"):
+            try:
+                utc = datetime.fromisoformat(imp["utc_mid"])
+            except Exception:  # noqa: BLE001 — fall back to "now"
+                pass
+        try:
+            res = self.orbit.apply_delta_v(imp["dv_eci_km_s"], utc)
+        except DeltaVFitError as e:
+            logger.warning("Post-burn orbit fit failed: %s", e)
+            self._emit_event({
+                'event_id': 0x0812, 'severity': 'HIGH',
+                'description': f"PROP_ORBIT_FIT_FAILED: {e} — element set "
+                               f"unchanged, flight dynamics to investigate",
+            })
+            return
+        logger.info("Orbit updated after burn: da=%+.3f km, epoch_version=%d",
+                    res["da_km"], res["epoch_version"])
+        self._emit_event({
+            'event_id': 0x080F, 'severity': 'INFO',
+            'description': (f"PROP_ORBIT_UPDATED: dv "
+                            f"{imp.get('dv_mag_m_s', 0.0):.3f} m/s, da "
+                            f"{res['da_km']:+.3f} km, epoch_version "
+                            f"{res['epoch_version']}"),
+        })
+
+    def _tick_prop_speed_clamp(self, prop) -> None:
+        """Clamp time acceleration to <= prop.max_speed_during_burn while a
+        burn is FIRING (event 0x0811). At 1000x one tick outlasts a whole
+        burn and every mid-burn lesson would be unobservable."""
+        try:
+            firing = int(getattr(prop._state, 'state', 0)) == 2
+        except Exception:  # noqa: BLE001
+            firing = False
+        if not firing:
+            self._prop_speed_clamped = False
+            return
+        max_speed = float(getattr(prop, 'max_speed_during_burn', 10.0))
+        if self.speed > max_speed:
+            logger.info("Speed clamped %.0fx -> %.0fx during burn",
+                        self.speed, max_speed)
+            self.speed = max_speed
+            if not getattr(self, "_prop_speed_clamped", False):
+                self._prop_speed_clamped = True
+                self._emit_event({
+                    'event_id': 0x0811, 'severity': 'INFO',
+                    'description': (f"PROP_SPEED_CLAMPED: time acceleration "
+                                    f"clamped to {max_speed:.0f}x during "
+                                    f"burn"),
+                })
+
+    def _record_engine_fault(self, exc: BaseException) -> None:
+        """Record a tick-loop fault without spamming the log (roadmap N-1)."""
+        self.engine_fault_count += 1
+        self.engine_fault = f"{type(exc).__name__}: {exc}"
+        now = time.monotonic()
+        if now - self._engine_fault_last_log >= self._ENGINE_FAULT_LOG_INTERVAL_S:
+            self._engine_fault_last_log = now
+            logger.exception(
+                "Simulation tick failed (%d total) — loop continues: %s",
+                self.engine_fault_count, self.engine_fault)
+
     def _tick_once(self, dt_sim: float) -> None:
         """Execute one simulation step. Extracted from _run_loop so tests (and
         any future scheduler) can drive the loop body deterministically without
-        the real-time pacing/threading of start()."""
-        if True:
-            # Process instructor commands first (may set override flags
-            # needed by orbit/subsystem logic below).
-            self._drain_instr_queue()
+        the real-time pacing/threading of start().
 
-            # Advance orbit
-            orbit_state = self.orbit.advance(dt_sim)
-            self._in_contact = orbit_state.in_contact
-            self.params[0x05FF] = 1 if self._override_passes else 0
+        Sub-stepped integration (plan A-3): when dt_sim exceeds
+        ``simulation.yaml tick.dt_max_s`` (i.e. under time acceleration), the
+        physics chain — orbit, phase machine, subsystem models, coupling,
+        S12/FDIR, edge detectors, failure manager — runs
+        N = ceil(dt_sim / dt_max_s) times with dt_sim/N each, so the model
+        equations see the same step size at x60 as at x1 and edge-triggered
+        events fire once per transition at the sub-step where it happens.
+        N is capped at ``tick.max_substeps``; if the cap binds the per-substep
+        dt grows above dt_max_s (simulated time is never truncated).
 
-            # Spacecraft phase state machine (must run before subsystem ticks)
-            self._tick_spacecraft_phase(dt_sim)
+        Per-tick OUTPUTS stay at the outer cadence: TC drain, S11 scheduler
+        release, OBCP and scenario advance, HK sampling, real-time TM pacing
+        and S15 dump pacing run once per outer tick with the full dt_sim,
+        embedded in the LAST sub-step at exactly their historical position in
+        the chain (so a dt_sim <= dt_max_s tick is byte-identical to the old
+        single-pass behaviour).
+        """
+        # Process instructor commands first (may set override flags
+        # needed by orbit/subsystem logic below).
+        self._drain_instr_queue()
 
-            # Auto-TX hold-down decay (set by _dispatch_tc on accepted TCs).
-            self._tick_auto_tx_hold(dt_sim)
+        n_sub = 1
+        if self._dt_max_s > 0 and dt_sim > self._dt_max_s:
+            n_sub = min(int(math.ceil(dt_sim / self._dt_max_s)),
+                        self._max_substeps)
+        dt_sub = dt_sim / n_sub
 
-            # Determine which subsystems to tick based on spacecraft phase.
-            # EPS, TTC, and OBDH are always-on (OBC + TTC RX are non-switchable
-            # power lines), so they tick even in bootloader phases 0-1 to keep
-            # beacon telemetry, link budget, and power modelling alive.
-            _ALWAYS_ON = {"eps", "ttc", "obdh"}
-            if self._spacecraft_phase < 2:
-                active_subsystems = _ALWAYS_ON
-            elif self._spacecraft_phase < 4:
-                # Early application phases: critical subsystems + TCS
-                active_subsystems = _ALWAYS_ON | {"tcs"}
-            else:
-                active_subsystems = set(self.subsystems.keys())
+        for i in range(n_sub):
+            self._tick_substep(dt_sub, dt_sim, last=(i == n_sub - 1))
+            # Advance sim time at the end of each sub-step so events emitted
+            # in sub-step i+1 carry the correct intra-tick timestamp. For
+            # n_sub == 1 this is the historical end-of-tick advance.
+            self._sim_time += timedelta(seconds=dt_sub)
 
-            for name, model in self.subsystems.items():
-                if name not in active_subsystems:
-                    continue
-                try:
-                    model.tick(dt_sim, orbit_state, self.params)
-                except Exception as e:
-                    logger.warning("Subsystem %s tick error: %s", name, e)
+        self._tick_count += 1
 
-            # Scenario engine tick (defect #9): advances the active scenario so
-            # its timed/conditional events fire. No-op when no scenario is active.
+        # Publish the immutable per-tick snapshot readers consume (N-2).
+        self._publish_snapshot()
+
+    def _tick_substep(self, dt: float, dt_outer: float, last: bool) -> None:
+        """One pass of the subsystem tick chain (plan A-3).
+
+        ``dt`` is the physics step; ``dt_outer`` is the full outer-tick dt
+        handed to the once-per-tick handlers, which only run when ``last``.
+        """
+        # Advance orbit
+        orbit_state = self.orbit.advance(dt)
+        self._in_contact = orbit_state.in_contact
+        self._active_gs = getattr(orbit_state, 'active_gs', None)
+        self.params[0x05FF] = 1 if self._override_passes else 0
+        # Engine speed for models that change fidelity above a threshold
+        # (AOCS secular mode above 60x — Phase C WP-1).
+        self.params[0x05FE] = float(self.speed)
+
+        # Spacecraft phase state machine (must run before subsystem ticks)
+        self._tick_spacecraft_phase(dt)
+
+        # Auto-TX hold-down decay (set by _dispatch_tc on accepted TCs).
+        self._tick_auto_tx_hold(dt)
+
+        # Determine which subsystems to tick based on spacecraft phase.
+        # EPS, TTC, and OBDH are always-on (OBC + TTC RX are non-switchable
+        # power lines), so they tick even in bootloader phases 0-1 to keep
+        # beacon telemetry, link budget, and power modelling alive.
+        _ALWAYS_ON = {"eps", "ttc", "obdh"}
+        if self._spacecraft_phase < 2:
+            active_subsystems = _ALWAYS_ON
+        elif self._spacecraft_phase < 4:
+            # Early application phases: critical subsystems + TCS
+            active_subsystems = _ALWAYS_ON | {"tcs"}
+        else:
+            active_subsystems = set(self.subsystems.keys())
+
+        for name, model in self.subsystems.items():
+            if name not in active_subsystems:
+                continue
+            try:
+                model.tick(dt, orbit_state, self.params)
+            except Exception as e:
+                logger.warning("Subsystem %s tick error: %s", name, e)
+
+        if last:
+            # Scenario engine tick (defect #9): advances the active scenario
+            # so its timed/conditional events fire. Once per outer tick, full
+            # dt — scenario timelines deal in elapsed sim time, not physics
+            # steps. No-op when no scenario is active.
             se = getattr(self, '_scenario_engine', None)
             if se is not None and se.is_active():
                 try:
-                    se.tick(dt_sim, self.params)
+                    se.tick(dt_outer, self.params)
                 except Exception as e:  # noqa: BLE001
                     logger.warning("Scenario engine tick error: %s", e)
 
@@ -898,45 +1911,70 @@ class SimulationEngine:
             for tc_pkt in due_tcs:
                 self._dispatch_tc(tc_pkt)
 
-            # Cross-subsystem coupling
-            eps = self.subsystems.get("eps")
-            tcs = self.subsystems.get("tcs")
-            if eps and tcs and hasattr(eps, 'set_bat_ambient_temp') and hasattr(tcs, 'get_battery_temp'):
-                eps.set_bat_ambient_temp(tcs.get_battery_temp())
+            # On-board control procedures (S18 OBCP): advance running
+            # procedures on sim time; due steps self-dispatch via _dispatch_tc.
+            try:
+                self._obcp_manager.tick(dt_outer)
+            except Exception as e:  # noqa: BLE001 — OBCP must not kill the loop
+                logger.warning("OBCP tick error: %s", e)
 
-            # S12 on-board monitoring — check parameter limits
-            self._tick_s12_monitoring()
+        # Cross-subsystem coupling
+        eps = self.subsystems.get("eps")
+        tcs = self.subsystems.get("tcs")
+        if eps and tcs and hasattr(eps, 'set_bat_ambient_temp') and hasattr(tcs, 'get_battery_temp'):
+            eps.set_bat_ambient_temp(tcs.get_battery_temp())
 
-            # FDIR
-            if self._fdir_enabled:
-                self._tick_fdir()
-                self._tick_fdir_advanced(dt_sim)
+        # Phase D propulsion coupling: apply a completed/aborted burn's
+        # delta-V to the orbit (single impulse at the burn mid-point, via a
+        # TLE differential-correction re-fit that bumps epoch_version), and
+        # clamp time acceleration while a burn is FIRING so the burn — and
+        # the abort-on-attitude-error lesson — stays observable.
+        prop = self.subsystems.get("prop")
+        if prop is not None and hasattr(prop, 'consume_pending_impulse'):
+            try:
+                imp = prop.consume_pending_impulse()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Prop impulse coupling error: %s", e)
+                imp = None
+            if imp and imp.get("dv_eci_km_s"):
+                self._apply_prop_impulse(imp)
+            self._tick_prop_speed_clamp(prop)
 
-            # Derive spacecraft mode (sc_mode) AFTER FDIR has updated its latched
-            # flags this tick. Runs unconditionally (even if FDIR is disabled) so
-            # phase/payload-driven SAFE/NOMINAL/SCIENCE transitions still happen.
-            self._update_sc_mode()
+        # S12 on-board monitoring — check parameter limits
+        self._tick_s12_monitoring()
 
-            # Subsystem event generation
-            self._check_subsystem_events()
+        # FDIR
+        if self._fdir_enabled:
+            self._tick_fdir()
+            self._tick_fdir_advanced(dt)
 
-            # Deliver events raised inside the subsystem models (defect #23).
-            self._drain_model_events()
+        # Derive spacecraft mode (sc_mode) AFTER FDIR has updated its latched
+        # flags this tick. Runs unconditionally (even if FDIR is disabled) so
+        # phase/payload-driven SAFE/NOMINAL/SCIENCE transitions still happen.
+        self._update_sc_mode()
+        self._check_safe_mode_events()
 
-            # Transitions
-            self._check_transitions(orbit_state)
+        # Subsystem event generation
+        self._check_subsystem_events()
 
+        # Deliver events raised inside the subsystem models (defect #23).
+        self._drain_model_events()
+
+        # Transitions
+        self._check_transitions(orbit_state)
+
+        if last:
             # HK emission
-            self._emit_hk_packets(dt_sim)
+            self._emit_hk_packets(dt_outer)
+
+            # Real-time TM release, paced at the commanded TM data rate.
+            self._tick_rt_emission(dt_outer)
 
             # S15 paced dump emission (after HK so real-time HK gets priority)
-            self._tick_dump_emission(dt_sim)
+            self._tick_dump_emission(dt_outer)
 
-            # Failure manager
-            self._failure_manager.tick(dt_sim)
-
-            self._tick_count += 1
-            self._sim_time += timedelta(seconds=dt_sim)
+        # Failure manager (onset ramps + flicker are sim-time physics)
+        self._failure_manager.tick(dt)
 
     # ------------------------------------------------------------------
     # FDIR
@@ -954,9 +1992,14 @@ class SimulationEngine:
             if param_id is None:
                 continue
 
-            value = self.params.get(param_id, 0.0)
+            # An FDIR rule must not fire against a parameter the spacecraft
+            # does not produce. `.get(pid, 0.0)` made every unwritten parameter
+            # read as 0.0, so a `< 1` rule latched from the first tick.
+            raw = self.params.get(param_id)
+            if raw is None:
+                continue
             try:
-                value = float(value)
+                value = float(raw)
             except (TypeError, ValueError):
                 continue
 
@@ -969,6 +2012,22 @@ class SimulationEngine:
 
             rule_key = f"{param_name}_{rule.action}"
             was_triggered = self._fdir_triggered.get(rule_key, False)
+
+            # Persistence filter (Phase C): with real attitude transients a
+            # commanded acquisition legitimately holds att_error above the
+            # anomaly threshold for minutes — a rule with persist_s only
+            # fires when the condition has been continuously true that long.
+            persist = float(getattr(rule, 'persist_s', 0.0) or 0.0)
+            if persist > 0.0:
+                if not hasattr(self, '_fdir_persist'):
+                    self._fdir_persist = {}
+                if condition_met:
+                    acc = self._fdir_persist.get(rule_key, 0.0) + 1.0
+                    self._fdir_persist[rule_key] = acc
+                    if acc < persist:
+                        condition_met = False
+                else:
+                    self._fdir_persist[rule_key] = 0.0
 
             if condition_met and not was_triggered:
                 self._fdir_triggered[rule_key] = True
@@ -1040,8 +2099,16 @@ class SimulationEngine:
         self.sc_mode = SC_NOMINAL
 
     def _resolve_param_name(self, name: str) -> Optional[int]:
-        """Resolve dotted param name to param ID using subsystem configs."""
-        # Simple lookup from known param_ids in subsystem configs
+        """Resolve a dotted parameter name to its id.
+
+        Subsystem ``param_ids`` blocks are partial — they carry the handful of
+        ids the model needs, not the catalogue. Four of the seventeen shipped
+        FDIR rules (``aocs.wheels_enabled``, ``obdh.can_bus_status``,
+        ``obdh.temp``, ``ttc.pa_temp``) named parameters that appear only in
+        ``telemetry/parameters.yaml``, so this returned None and the rules
+        were skipped every tick without a word. The catalogue is now the
+        fallback and is the authority on names.
+        """
         parts = name.split(".", 1)
         if len(parts) != 2:
             return None
@@ -1050,8 +2117,41 @@ class SimulationEngine:
         if cfg and hasattr(cfg, 'model_dump'):
             d = cfg.model_dump()
             pids = d.get("param_ids", {})
-            return pids.get(param_key)
-        return None
+            if param_key in pids:
+                return pids[param_key]
+        return self._param_catalogue_ids().get(name)
+
+    def _param_catalogue_ids(self) -> dict[str, int]:
+        """name -> id from telemetry/parameters.yaml (built once, at init).
+
+        Read straight from YAML rather than through the pydantic loader: this
+        is a name lookup, and validating 330 ParameterDef models cost ~130 ms
+        the first time a rule resolved a name — on the tick thread.
+        """
+        cached = getattr(self, '_param_name_ids', None)
+        if cached is not None:
+            return cached
+        names: dict[str, int] = {}
+        try:
+            import yaml as _yaml
+            path = self.config_dir / "telemetry" / "parameters.yaml"
+            with open(path) as f:
+                data = _yaml.safe_load(f) or {}
+            for entry in data.get("parameters", []) or []:
+                raw = entry.get("id")
+                name = entry.get("name")
+                if raw is None or not name:
+                    continue
+                try:
+                    names[str(name)] = (int(raw) if isinstance(raw, int)
+                                        else int(str(raw), 0))
+                except (TypeError, ValueError):
+                    continue
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Parameter catalogue unavailable for name "
+                           "resolution: %s", e)
+        self._param_name_ids = names
+        return names
 
     # ------------------------------------------------------------------
     # TC handling
@@ -1066,8 +2166,15 @@ class SimulationEngine:
                     from smo_common.protocol.ecss_packet import decommutate_packet
                     pkt = decommutate_packet(raw)
                     if pkt and pkt.primary:
+                        # Link-side refusal, not an on-board one: the S1.2
+                        # carries the reason (defect #87) but no
+                        # COMMAND_REJECTED event is raised — the OBSW never
+                        # saw the telecommand.
                         rej = self.tm_builder.build_verification_failure(
-                            pkt.primary.apid, pkt.primary.sequence_count, 0x0005)
+                            pkt.primary.apid, pkt.primary.sequence_count,
+                            0x0005,
+                            "Uplink is not available (no command channel "
+                            "lock); the telecommand was not accepted")
                         self._enqueue_tm(rej)
                     continue
                 self._dispatch_tc(raw)
@@ -1085,7 +2192,7 @@ class SimulationEngine:
         0x0003 = invalid data length
         0x0004 = subsystem power off
         """
-        known_services = {2, 3, 5, 6, 8, 9, 11, 12, 15, 17, 19, 20}
+        known_services = {2, 3, 5, 6, 8, 9, 11, 12, 15, 17, 18, 19, 20}
         if service not in known_services:
             return False, 0x0001
 
@@ -1100,6 +2207,7 @@ class SimulationEngine:
             12: {1, 2, 6, 7},
             15: {1, 2, 9, 11, 13},
             17: {1},
+            18: {1, 2, 3, 4, 6},
             19: {1, 2, 4, 5, 8},
             20: {1, 3},
         }
@@ -1111,6 +2219,97 @@ class SimulationEngine:
             return False, 0x0003
 
         return True, 0
+
+    @staticmethod
+    def _acceptance_failure_reason(service: int, subtype: int, data: bytes,
+                                   error_code: int) -> str:
+        """Human-readable reason for a ``_check_tc_acceptance`` refusal.
+
+        Kept separate from ``_check_tc_acceptance`` so its (accepted, code)
+        contract is unchanged; the text is what the S1.2 failure notice
+        carries to the ground (defect #87).
+        """
+        if error_code == 0x0001:
+            return (f"Service {service} is not implemented by this on-board "
+                    f"software")
+        if error_code == 0x0002:
+            return f"S{service}.{subtype} is not an implemented subtype"
+        if error_code == 0x0003:
+            return (f"S{service}.{subtype}: application data field is too "
+                    f"short ({len(data)} octets)")
+        return f"S{service}.{subtype} refused at acceptance"
+
+    # S5 event raised whenever a telecommand is refused, at acceptance or at
+    # execution. See configs/<mission>/events/event_catalog.yaml — the
+    # rejection is operationally interesting in its own right, so it belongs
+    # in the event log and the FDIR journal, not only against the one S1
+    # verification entry the operator may not be watching (defect #87).
+    EV_COMMAND_REJECTED = 0x030B
+
+    @staticmethod
+    def _tc_identity(service: int, subtype: int, data: bytes) -> str:
+        """Short identity of a telecommand: ``S8.1 func 65`` / ``S3.6``."""
+        ident = f"S{service}.{subtype}"
+        if service == 8 and subtype == 1 and data:
+            ident += f" func {data[0]}"
+        return ident
+
+    def _emit_command_rejected(self, service: int, subtype: int, data: bytes,
+                               error_code: int, reason: str,
+                               stage: str) -> None:
+        """Raise the COMMAND_REJECTED S5 event for a refused telecommand.
+
+        ``stage`` is "acceptance" or "execution" — the same event covers both
+        so an operator has one thing to look for.
+
+        This is also the single choke point through which the failure code
+        reaches *telemetry*: the OBDH model latches it into
+        ``obdh.last_tc_error_code`` (0x0315) so the code is visible on a
+        parameter display and not only in the event text (defect #88).
+        """
+        ident = self._tc_identity(service, subtype, data)
+        obdh = self.subsystems.get("obdh")
+        if obdh is not None and hasattr(obdh, 'record_tc_failure_code'):
+            try:
+                obdh.record_tc_failure_code(int(error_code))
+            except Exception as e:  # noqa: BLE001 — telemetry must not block TM
+                logger.debug("Could not latch last TC failure code: %s", e)
+        try:
+            self._emit_event({
+                'event_id': self.EV_COMMAND_REJECTED,
+                'severity': 'MEDIUM',
+                'description': format_command_rejection(
+                    ident, stage, int(error_code), reason),
+                'service': int(service),
+                'subtype': int(subtype),
+                'func_id': int(data[0]) if (service == 8 and subtype == 1
+                                            and data) else None,
+                'error_code': int(error_code),
+                'reason': reason,
+                'stage': stage,
+            })
+        except Exception as e:  # noqa: BLE001 — a rejection must still report
+            logger.warning("Failed to emit COMMAND_REJECTED event: %s", e)
+
+    def _reject_tc(self, pkt, error_code: int, reason: str) -> None:
+        """Refuse a telecommand at acceptance: S1.2 + COMMAND_REJECTED event.
+
+        Every acceptance-time refusal goes through here so the reason reaches
+        the ground exactly once, in both the verification report and the event
+        log, without each gate having to remember to do it (defect #87).
+        """
+        svc = pkt.secondary.service if pkt.secondary else 0
+        sub = pkt.secondary.subtype if pkt.secondary else 0
+        rej = self.tm_builder.build_verification_failure(
+            pkt.primary.apid, pkt.primary.sequence_count, error_code, reason)
+        self._enqueue_tm(rej)
+        obdh = self.subsystems.get("obdh")
+        if obdh and hasattr(obdh, 'record_tc_rejected'):
+            obdh.record_tc_rejected()
+        logger.info("TC rejected at acceptance — %s (err 0x%04X)",
+                    reason, error_code)
+        self._emit_command_rejected(svc, sub, pkt.data_field or b'',
+                                    error_code, reason, "acceptance")
 
     def _dispatch_tc(self, raw: bytes) -> None:
         from smo_common.protocol.ecss_packet import decommutate_packet
@@ -1178,12 +2377,12 @@ class SimulationEngine:
                     allowed = True
             if not allowed:
                 # Reject at acceptance — no S1.3/S1.7 is emitted.
-                rej = self.tm_builder.build_verification_failure(
-                    pkt.primary.apid, pkt.primary.sequence_count, 0x0006)
-                self._enqueue_tm(rej)
-                logger.info(
-                    "Bootloader: rejected TC S%d.%d (phase=%d, not in allowed subset)",
-                    svc, sub, int(self._spacecraft_phase))
+                ident = self._tc_identity(svc, sub, pkt.data_field)
+                self._reject_tc(
+                    pkt, 0x0006,
+                    f"{ident} is not in the bootloader command subset "
+                    f"(phase {int(self._spacecraft_phase)}); boot the "
+                    f"application (S8.1 func 55) first")
                 return
 
         # Bus-reachability gate (defect #29): if the active CAN bus has failed,
@@ -1194,23 +2393,19 @@ class SimulationEngine:
             func_id = pkt.data_field[0]
             is_obdh_func = (50 <= func_id <= 62) or func_id == 80
             if not is_obdh_func:
-                rej = self.tm_builder.build_verification_failure(
-                    pkt.primary.apid, pkt.primary.sequence_count, 0x0004)
-                self._enqueue_tm(rej)
-                if obdh and hasattr(obdh, 'record_tc_rejected'):
-                    obdh.record_tc_rejected()
-                logger.info("TC rejected — subsystem unreachable (active bus failed), func_id=%d", func_id)
+                self._reject_tc(
+                    pkt, 0x0004,
+                    f"S8.1 func {func_id}: target subsystem is unreachable — "
+                    f"the OBC's active CAN bus has failed (recover with "
+                    f"func 54 OBC_SELECT_BUS)")
                 return
 
         # Check acceptance
         accepted, error_code = self._check_tc_acceptance(svc, sub, pkt.data_field)
         if not accepted:
             # Send S1.2 acceptance failure
-            rej = self.tm_builder.build_verification_failure(
-                pkt.primary.apid, pkt.primary.sequence_count, error_code)
-            self._enqueue_tm(rej)
-            if obdh and hasattr(obdh, 'record_tc_rejected'):
-                obdh.record_tc_rejected()
+            self._reject_tc(pkt, error_code, self._acceptance_failure_reason(
+                svc, sub, pkt.data_field, error_code))
             return
 
         # Centralised power-state gate. Reject TCs whose target unit
@@ -1231,12 +2426,7 @@ class SimulationEngine:
         if not in_bootloader:
             power_ok, reason = dispatcher.check_power_state(svc, sub, pkt.data_field)
         if not power_ok:
-            rej = self.tm_builder.build_verification_failure(
-                pkt.primary.apid, pkt.primary.sequence_count, 0x0004)
-            self._enqueue_tm(rej)
-            if obdh and hasattr(obdh, 'record_tc_rejected'):
-                obdh.record_tc_rejected()
-            logger.info("TC rejected at acceptance — %s", reason)
+            self._reject_tc(pkt, 0x0004, reason)
             return
 
         # Send S1.1 acceptance success
@@ -1258,19 +2448,42 @@ class SimulationEngine:
         for rpt in exec_start_reports:
             self._enqueue_tm(rpt)
 
-        # Execute
-        dispatcher._last_error = None
-        dispatcher._last_error_code = 0
-        responses = dispatcher.dispatch(svc, sub, pkt.data_field, pkt.primary)
-        for resp_pkt in responses:
+        # Execute. The outcome comes back WITH the packets (WP-7): the old
+        # `_last_error` / `_last_exec_fail` side-channels were reset here and
+        # read back after the call, which is not reentrant — an S11 release, an
+        # S19 event-action or an S18 OBCP step dispatches from inside this one,
+        # and the inner command's flag became the outer command's verdict.
+        result = dispatcher.dispatch(svc, sub, pkt.data_field, pkt.primary)
+        for resp_pkt in result:
             self._enqueue_tm(resp_pkt)
 
-        # Check if dispatcher signaled an error
-        if getattr(dispatcher, '_last_error', None):
+        # The model's own words go into the S1.8 failure notice AND into a
+        # COMMAND_REJECTED event: an S1.8 carrying only "0x0007" left the
+        # operator with no way to tell which of the several gates sharing that
+        # code had refused the command (defect #87).
+        if result.failure_kind == "execution":
+            exec_reason = result.reason
+            exec_code = result.error_code or 0x0001
             fail = self.tm_builder.build_execution_failure(
                 pkt.primary.apid, pkt.primary.sequence_count,
-                getattr(dispatcher, '_last_error_code', 0x0001))
+                exec_code, exec_reason)
             self._enqueue_tm(fail)
+            logger.info("TC S%d.%d failed in execution — %s (err 0x%04X)",
+                        svc, sub, exec_reason, int(exec_code))
+            self._emit_command_rejected(svc, sub, pkt.data_field or b'',
+                                        exec_code, exec_reason, "execution")
+        elif result.failure_kind == "exec_start":
+            # The dispatcher downlinked its own S1.4 execution-START failure
+            # (every S6 memory refusal, and the S3/S12/S19 argument gates).
+            # The S1.4 now carries the real sequence count, so the MCS can
+            # attach it to the verification row; the engine must still not
+            # follow it with an S1.7 "execution complete" on the same sequence
+            # number, which used to turn the row green (defect #88).
+            logger.info("TC S%d.%d refused at execution start — %s (err 0x%04X)",
+                        svc, sub, result.reason, int(result.error_code))
+            self._emit_command_rejected(svc, sub, pkt.data_field or b'',
+                                        result.error_code, result.reason,
+                                        "execution")
         else:
             # Send S1.7 execution complete
             comp = self.tm_builder.build_verification_completion(pkt.primary.apid, pkt.primary.sequence_count)
@@ -1362,11 +2575,16 @@ class SimulationEngine:
     # ------------------------------------------------------------------
 
     def _check_transitions(self, orbit_state) -> None:
+        gs_name = getattr(orbit_state, 'active_gs', None)
         if orbit_state.in_contact and not self._prev_in_contact:
+            gs_tag = f" {gs_name}" if gs_name else ""
             self._emit_event({'event_id': 0x0001, 'severity': 1,
-                              'description': f"AOS — elevation {orbit_state.gs_elevation_deg:.1f}°"})
+                              'description': f"AOS{gs_tag} — elevation {orbit_state.gs_elevation_deg:.1f}°"})
         elif not orbit_state.in_contact and self._prev_in_contact:
-            self._emit_event({'event_id': 0x0002, 'severity': 1, 'description': "LOS"})
+            gs_tag = f" {self._prev_active_gs}" if self._prev_active_gs else ""
+            self._emit_event({'event_id': 0x0002, 'severity': 1, 'description': f"LOS{gs_tag}"})
+        if orbit_state.in_contact and gs_name:
+            self._prev_active_gs = gs_name
         if orbit_state.in_eclipse and not self._prev_in_eclipse:
             self._emit_event({'event_id': 0x0010, 'severity': 1, 'description': "Eclipse entry"})
         elif not orbit_state.in_eclipse and self._prev_in_eclipse:
@@ -1392,6 +2610,10 @@ class SimulationEngine:
         """
         violations = self._dispatcher.check_monitoring()
         currently_violated: set[int] = set()
+        # Snapshot of each violating definition, so a *clear* transition can
+        # still report the parameter and limits it belongs to.
+        for v in violations:
+            self._s12_violation_records[v.get('mon_id', v['param_id'])] = v
 
         for v in violations:
             mon_id = v.get('mon_id', v['param_id'])
@@ -1415,7 +2637,15 @@ class SimulationEngine:
             name = v.get('name', f"param_0x{param_id:04X}")
             description = v.get('description', '')
 
-            # Generate S5 event for the violation (transition IN)
+            # Real S12 check-transition report, TM(12,9) "limit entered".
+            # This is what the ground actually decodes as monitoring telemetry;
+            # without it every S12 alarm arrived only as a synthesised 0x9xxx
+            # S5 event and was filed under "unknown" (defect #69).
+            self._emit_s12_transition(v, entered=True)
+
+            # Generate S5 event for the violation (transition IN). Kept in
+            # addition to TM(12,9) because the S19 event-action path and the
+            # alarm store both hang off _emit_event.
             event_id = 0x9000 | (param_id & 0x0FFF)
 
             self._emit_event({
@@ -1427,9 +2657,12 @@ class SimulationEngine:
                 ),
             })
 
-        # Emit "return to nominal" events for violations that have cleared
+        # Emit "return to nominal" reports for violations that have cleared
         cleared = self._s12_violation_active - currently_violated
         for mon_id in cleared:
+            record = self._s12_violation_records.pop(mon_id, None)
+            if record is not None:
+                self._emit_s12_transition(record, entered=False)
             self._emit_event({
                 'event_id': 0xA000 | (mon_id & 0x0FFF),
                 'severity': 1,  # INFO
@@ -1437,6 +2670,16 @@ class SimulationEngine:
             })
 
         self._s12_violation_active = currently_violated
+
+    def _emit_s12_transition(self, violation: dict, entered: bool) -> None:
+        """Queue a TM(12,9)/(12,10) check-transition report for `violation`."""
+        try:
+            pkt = self._dispatcher.build_s12_transition_report(violation, entered)
+        except Exception as e:  # noqa: BLE001 — never let a report kill the tick
+            logger.warning("S12 transition report build failed: %s", e)
+            return
+        if pkt:
+            self._enqueue_tm(pkt)
 
     def _emit_event(self, ev: dict) -> None:
         event_id = ev.get('event_id', 0)
@@ -1467,9 +2710,20 @@ class SimulationEngine:
             except queue.Full:
                 pass
 
-            # S19 event-action: trigger any matching event-action rules
-            # Pass the actual event_id so S19 can match it properly
-            self._dispatcher.trigger_event_action(event_id)
+            # S19 event-action: trigger any matching event-action rules.
+            # Event ids and monitored parameter ids share 0x0000-0x0FFF, so the
+            # namespace must be passed explicitly (defect #70). S12 limit
+            # violations reach us encoded as 0x9000 | param_id; everything else
+            # is a genuine S5 event id.
+            from smo_simulator.monitoring_loader import (
+                TRIGGER_KIND_EVENT, TRIGGER_KIND_PARAM,
+            )
+            if (event_id & 0xF000) == 0x9000:
+                self._dispatcher.trigger_event_action(
+                    event_id & 0x0FFF, kind=TRIGGER_KIND_PARAM)
+            else:
+                self._dispatcher.trigger_event_action(
+                    event_id, kind=TRIGGER_KIND_EVENT)
 
     def _drain_model_events(self) -> None:
         """Deliver events generated inside subsystem models (defect #23).
@@ -1571,11 +2825,10 @@ class SimulationEngine:
             self._dump_byte_budget = 0.0
             return
 
-        # Resolve current TM data rate (bps) from TTC subsystem, fall back to 1 kbps
-        rate_bps = 1000.0
-        ttc = self.subsystems.get("ttc")
-        if ttc is not None and hasattr(ttc, "_state"):
-            rate_bps = float(getattr(ttc._state, "tm_data_rate", 1000) or 1000)
+        # Resolve the ACTIVE tier's rate (bps) from the TTC subsystem. The S15
+        # dump pacer and the real-time pacer share one source of truth, so a
+        # tier change moves both (defect #85).
+        rate_bps = self._current_tm_rate_bps()
 
         # Accumulate byte budget
         self._dump_byte_budget += (rate_bps / 8.0) * dt
@@ -1703,6 +2956,96 @@ class SimulationEngine:
         elif store_pct <= 85:
             self._event_flags['store_warn'] = False
 
+    # ------------------------------------------------------------------
+    # Real-time TM rate pacing (defect #74)
+    # ------------------------------------------------------------------
+
+    @property
+    def _rt_pacing_active(self) -> bool:
+        """True when real-time TM should be paced at the commanded TM rate.
+
+        `simulation.yaml ttc.rt_tm_pacing`:
+          auto (default) — pace only while the engine owns the clock, i.e. the
+                           tick loop is running. Unit tests that dispatch a TC
+                           and read tm_queue without ticking are unaffected.
+          on  — always pace.   off — never pace (previous behaviour).
+        """
+        if getattr(self, '_rt_pending', None) is None:
+            return False  # engine not fully constructed (mock/partial engines)
+        sim_cfg = getattr(self, '_sim_cfg', None)
+        mode = str(getattr(getattr(sim_cfg, 'ttc', None),
+                           'rt_tm_pacing', 'auto')).lower()
+        if mode == 'on':
+            return True
+        if mode == 'off':
+            return False
+        return bool(getattr(self, 'running', False)) or bool(
+            getattr(self, '_force_rt_pacing', False))
+
+    #: Rate assumed when no TTC model is available (partial/mock engines).
+    #: The BEACON rung of the ladder — deliberately the slowest thing on the
+    #: ladder so a missing model can never flatter the downlink.
+    _TM_RATE_FALLBACK_BPS = 1000.0
+
+    def _current_tm_rate_bps(self) -> float:
+        """Information rate (bps) of the TTC model's ACTIVE ladder tier.
+
+        Both TM pacers — real-time (`_tick_rt_emission`) and S15 dump
+        (`_tick_dump_emission`) — read this, so both honour the tier.
+        """
+        try:
+            ttc = self.subsystems.get("ttc")
+            if ttc is not None and hasattr(ttc, "_state"):
+                return float(getattr(ttc._state, "tm_data_rate", 0)
+                             or self._TM_RATE_FALLBACK_BPS)
+        except (TypeError, ValueError, AttributeError):
+            pass
+        return self._TM_RATE_FALLBACK_BPS
+
+    def _current_tm_tier(self) -> tuple[int, str]:
+        """(index, name) of the TTC model's active TM rate tier."""
+        try:
+            ttc = self.subsystems.get("ttc")
+            if ttc is not None and hasattr(ttc, "_state"):
+                idx = int(getattr(ttc._state, "tm_tier", 0))
+                return idx, ttc.tier_name(idx)
+        except (TypeError, ValueError, AttributeError):
+            pass
+        return 0, "UNKNOWN"
+
+    def _current_tm_coding(self) -> str:
+        """FEC of the active TM tier ('RS' | 'CONV_RS' | 'NONE')."""
+        try:
+            ttc = self.subsystems.get("ttc")
+            if ttc is not None and hasattr(ttc, "active_coding"):
+                return str(ttc.active_coding)
+        except (TypeError, ValueError, AttributeError):
+            pass
+        return "RS"
+
+    def _tick_rt_emission(self, dt: float) -> None:
+        """Release backlogged real-time TM according to the TM data rate.
+
+        The same byte-budget model as `_tick_dump_emission`, applied to
+        real-time HK / event / verification TM. Without it `tm_data_rate` was
+        read by the dump pacer alone, so commanding 64 kbps changed nothing
+        about what the radio and the MCS actually saw (defect #74).
+        """
+        self._rt_byte_budget += (self._current_tm_rate_bps() / 8.0) * max(dt, 0.0)
+        while self._rt_pending and self._rt_byte_budget >= len(self._rt_pending[0]):
+            pkt = self._rt_pending.pop(0)
+            self._rt_byte_budget -= len(pkt)
+            _put_tm(self, pkt)
+        if self._rt_pending:
+            # Cap the carried budget so an idle period cannot bank credit and
+            # then burst the whole backlog in one tick.
+            cap = float(len(self._rt_pending[0]))
+            if self._rt_byte_budget > cap:
+                self._rt_byte_budget = cap
+        else:
+            self._rt_byte_budget = min(self._rt_byte_budget,
+                                       self._current_tm_rate_bps() / 8.0)
+
     def _enqueue_tm(self, pkt: bytes) -> None:
         # Only downlink TM when RF link is active (orbit contact + transponder OK)
         if not self.downlink_active:
@@ -1718,13 +3061,26 @@ class SimulationEngine:
                 except Exception:
                     pass
         if self.downlink_active:
-            try:
-                self.tm_queue.put_nowait(pkt)
-                self.tm_packets_enqueued += 1
-            except queue.Full:
-                self.tm_queue_drops += 1
-                logger.warning("TM queue full (%d) — packet dropped",
-                               self.tm_queue.maxsize)
+            # `_rt_pending is None` => partially-constructed / mocked engine;
+            # such callers get the direct, unpaced path.
+            pending = getattr(self, '_rt_pending', None)
+            if pending is not None and self._rt_pacing_active:
+                # Rate-paced: the packet joins the real-time backlog and is
+                # released by _tick_rt_emission at the ACTIVE tier's rate. The
+                # shipped HK structures generate 1351.5 bps of packets
+                # (~1557 bps of channel after RS + frame overhead), so at
+                # BEACON (1 kbps) the backlog grows without bound and packets
+                # are dropped, while at LOW (16 kbps) and above it drains —
+                # which is what makes the tier observable at all (defect #85).
+                if len(pending) >= self._rt_backlog_max:
+                    self.tm_queue_drops += 1
+                    logger.warning(
+                        "Real-time TM backlog full (%d) at %.0f bps — packet dropped",
+                        self._rt_backlog_max, self._current_tm_rate_bps())
+                else:
+                    pending.append(pkt)
+            else:
+                _put_tm(self, pkt)
         # Route to onboard storage regardless of contact — but ONLY when the
         # nominal OBSW is running. The bootloader has no PUS-C S15 storage
         # service, so nothing should accumulate in HK/Event/Science/Alarm
@@ -1742,18 +3098,153 @@ class SimulationEngine:
     # Instructor commands
     # ------------------------------------------------------------------
 
+    # Instructor command types the engine accepts. Applied by
+    # `validate_instructor_cmd` to BOTH the HTTP and WebSocket paths — the WS
+    # handler previously had no allowlist at all, so an unvalidated payload
+    # went straight onto the same queue as a validated one (roadmap N-1).
+    INSTRUCTOR_CMD_TYPES = frozenset({
+        'set_speed', 'freeze', 'resume', 'inject', 'clear_failure',
+        'failure_inject', 'failure_clear', 'failure_clear_all',
+        'override_passes', 'set_phase', 'pause_scenario', 'start_separation',
+        'save_breakpoint', 'load_breakpoint', 'start_scenario', 'stop_scenario',
+    })
+
+    # Numeric fields validated (and range-checked) before enqueueing, so a
+    # malformed value is rejected at the door instead of raising inside the
+    # tick thread. `None` bound = unbounded on that side.
+    _INSTRUCTOR_NUMERIC_FIELDS = {
+        'set_speed': [('value', 0.0, None)],
+        'set_phase': [('phase', 0, 6)],
+        'failure_inject': [('magnitude', None, None),
+                           ('duration_s', 0.0, None),
+                           ('onset_duration_s', 0.0, None)],
+    }
+
+    @classmethod
+    def validate_instructor_cmd(cls, cmd: Any) -> tuple[bool, str]:
+        """Validate an instructor command payload. Returns (ok, reason).
+
+        One implementation for every channel: the HTTP route, the instructor
+        WebSocket and any scenario-driven caller. Rejecting here means a
+        `{"type":"set_speed","value":"fast"}` can no longer reach — and kill —
+        the tick thread (roadmap N-1 / DI-01).
+        """
+        if not isinstance(cmd, dict):
+            return False, "instructor command must be an object"
+        t = cmd.get('type')
+        if not isinstance(t, str) or t not in cls.INSTRUCTOR_CMD_TYPES:
+            return False, f"unknown instructor command type: {t!r}"
+        for field, lo, hi in cls._INSTRUCTOR_NUMERIC_FIELDS.get(t, ()):
+            if field not in cmd or cmd[field] is None:
+                continue
+            value = cmd[field]
+            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+                return False, f"{t}.{field} must be a number"
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                return False, f"{t}.{field} must be a number, got {cmd[field]!r}"
+            if value != value or value in (float('inf'), float('-inf')):
+                return False, f"{t}.{field} must be finite"
+            if lo is not None and value < lo:
+                return False, f"{t}.{field} must be >= {lo}"
+            if hi is not None and value > hi:
+                return False, f"{t}.{field} must be <= {hi}"
+        return True, ""
+
+    def submit_instructor_cmd(self, cmd: Any) -> tuple[bool, str]:
+        """Validate then enqueue an instructor command. Returns (ok, reason)."""
+        ok, reason = self.validate_instructor_cmd(cmd)
+        if not ok:
+            self.instr_cmd_rejects += 1
+            logger.warning("Instructor command rejected: %s (cmd=%r)", reason, cmd)
+            return False, reason
+        try:
+            self.instr_queue.put_nowait(cmd)
+        except queue.Full:
+            self.instr_cmd_rejects += 1
+            return False, "instructor queue full"
+        return True, ""
+
+    def submit_instructor_cmd_sync(self, cmd: dict,
+                                   timeout_s: float = 10.0) -> tuple[bool, str]:
+        """Enqueue an instructor command and wait for the tick thread to run it.
+
+        Used by the HTTP breakpoint routes (A-3 / roadmap X-6). `save()` and
+        `load()` reassign `engine.params`, `_sim_time` and every model's state;
+        running them inline on the aiohttp thread meant a load landing
+        mid-tick produced a spacecraft state with no physical cause — the worst
+        thing to hand a student mid-exercise.
+
+        When the tick thread is not running (unit tests, a frozen-but-not-
+        started engine) the command is executed inline: single-threaded by
+        construction, so there is nothing to coordinate with.
+        """
+        done = threading.Event()
+        outcome: dict = {}
+        cmd = dict(cmd)
+        cmd['_done'] = done
+        cmd['_outcome'] = outcome
+        if not self.running or not getattr(self, '_thread', None):
+            try:
+                self._handle_instructor_cmd(cmd)
+            except Exception as e:  # noqa: BLE001
+                return False, str(e)
+            finally:
+                done.set()
+            return bool(outcome.get('ok', True)), str(outcome.get('reason', ''))
+        ok, reason = self.submit_instructor_cmd(cmd)
+        if not ok:
+            return False, reason
+        if not done.wait(timeout_s):
+            return False, "timed out waiting for the tick thread"
+        return bool(outcome.get('ok', True)), str(outcome.get('reason', ''))
+
     def _drain_instr_queue(self) -> None:
         while not self.instr_queue.empty():
             try:
                 cmd = self.instr_queue.get_nowait()
-                self._handle_instructor_cmd(cmd)
             except queue.Empty:
                 break
+            # Second line of defence: anything that bypassed
+            # submit_instructor_cmd (a direct instr_queue.put by a test or a
+            # scenario) must still not be able to kill the tick thread.
+            try:
+                self._handle_instructor_cmd(cmd)
+            except Exception as e:  # noqa: BLE001 — deliberately broad
+                self.instr_cmd_rejects += 1
+                logger.warning("Instructor command %r failed: %s", cmd, e)
+                if isinstance(cmd, dict) and isinstance(cmd.get('_outcome'), dict):
+                    cmd['_outcome'].update({'ok': False, 'reason': str(e)})
+            finally:
+                if isinstance(cmd, dict) and isinstance(cmd.get('_done'),
+                                                        threading.Event):
+                    cmd['_done'].set()
 
     def _handle_instructor_cmd(self, cmd: dict) -> None:
+        if not isinstance(cmd, dict):
+            logger.warning("Dropping malformed instructor command: %r", cmd)
+            return
         t = cmd.get('type')
         if t == 'set_speed':
-            self.speed = float(cmd.get('value', 1.0))
+            # Clamped to simulation.yaml speed.max (default 1000x) so a stray
+            # UI/scenario value cannot stall the loop with an absurd dt_sim.
+            try:
+                requested = float(cmd.get('value', 1.0))
+            except (TypeError, ValueError):
+                logger.warning("set_speed value %r is not a number — ignored",
+                               cmd.get('value'))
+                self.instr_cmd_rejects += 1
+                return
+            self.speed = max(0.0, min(requested, self._speed_max))
+            if self.speed != requested:
+                logger.warning("set_speed %.1f clamped to %.1f (speed.max)",
+                               requested, self.speed)
+            # Phase D: an active burn re-clamps immediately (0x0811 fires on
+            # the edge in _tick_prop_speed_clamp on the next sub-step).
+            prop = self.subsystems.get("prop")
+            if prop is not None:
+                self._tick_prop_speed_clamp(prop)
         elif t == 'freeze':
             self.speed = 0.0
         elif t == 'resume':
@@ -1807,13 +3298,16 @@ class SimulationEngine:
             if 0 <= new_phase <= 6:
                 old_phase = self._spacecraft_phase
                 self._spacecraft_phase = new_phase
-                if new_phase == 1:
-                    self._sep_timer = self._sep_timer_duration
                 # Gate HK SIDs, APID, and stores based on new phase
                 if new_phase <= 3:
                     # Bootloader/beacon mode: only SID 11 active, bootloader APID
                     self._enter_bootloader_mode()
                     self._spacecraft_phase = new_phase
+                    # Arm the separation timer AFTER _enter_bootloader_mode(),
+                    # which zeroes it — otherwise commanding phase 1 left the
+                    # timer at 0 and it expired on the very next tick.
+                    if new_phase == 1:
+                        self._sep_timer = self._sep_timer_duration
                 else:
                     # Application mode: all HK enabled, application APID, stores online.
                     # Force OBDH sw_image to APPLICATION so the reboot-detection
@@ -1826,8 +3320,8 @@ class SimulationEngine:
                             obdh._state.boot_app_pending = False
                     if old_phase <= 3:
                         self._exit_bootloader_mode()
-                    for sid in self._hk_enabled:
-                        self._hk_enabled[sid] = True
+                    else:
+                        self._apply_default_hk_enable()
                 self._emit_event({
                     'event_id': 0x0052,
                     'severity': 2,
@@ -1915,8 +3409,12 @@ class SimulationEngine:
                 BreakpointManager(self).save(name=state['name'], path=gen_path)
             logger.info("Breakpoint saved: %s (tick=%s)", state['name'],
                         state.get('tick_count'))
+            if isinstance(cmd.get('_outcome'), dict):
+                cmd['_outcome'].update({'ok': True, 'name': state['name']})
         except Exception as e:  # noqa: BLE001 — never let a bad snapshot kill the loop
             logger.error("Breakpoint save failed for %r: %s", name, e)
+            if isinstance(cmd.get('_outcome'), dict):
+                cmd['_outcome'].update({'ok': False, 'reason': str(e)})
 
     def _handle_load_breakpoint(self, cmd: dict) -> None:
         """Restore a previously-saved snapshot by name (defect #10).
@@ -1930,6 +3428,9 @@ class SimulationEngine:
             state = self._breakpoints.get(name)
         if state is None:
             logger.warning("Breakpoint load failed: no snapshot named %r", name)
+            if isinstance(cmd.get('_outcome'), dict):
+                cmd['_outcome'].update(
+                    {'ok': False, 'reason': f"no snapshot named {name!r}"})
             return
         try:
             ok = BreakpointManager(self).load(state=state)
@@ -1952,8 +3453,14 @@ class SimulationEngine:
                     pass
             logger.info("Breakpoint load %s: %s",
                         "succeeded" if ok else "returned False", name)
+            if isinstance(cmd.get('_outcome'), dict):
+                cmd['_outcome'].update(
+                    {'ok': bool(ok),
+                     'reason': "" if ok else "BreakpointManager.load returned False"})
         except Exception as e:  # noqa: BLE001
             logger.error("Breakpoint load failed for %r: %s", name, e)
+            if isinstance(cmd.get('_outcome'), dict):
+                cmd['_outcome'].update({'ok': False, 'reason': str(e)})
 
     def _handle_start_scenario(self, cmd: dict) -> None:
         """Start a training scenario by name (defect #9)."""
@@ -1993,8 +3500,6 @@ class SimulationEngine:
         - OBDH: SW image = bootloader (0), not running application
         - Payload: Mode OFF (0)
         """
-        import random
-
         # Set spacecraft phase
         self._spacecraft_phase = 1  # SEPARATION_TIMER
         self._sep_timer = self._sep_timer_duration  # 30 minutes = 1800s
@@ -2017,9 +3522,9 @@ class SimulationEngine:
             s = aocs._state
             s.mode = 0  # MODE_OFF — no attitude control
             # Set tumbling rates from separation impulse (~1-2 deg/s per axis)
-            s.rate_roll = random.uniform(0.8, 2.0) * (1 if random.random() > 0.5 else -1)
-            s.rate_pitch = random.uniform(0.8, 2.0) * (1 if random.random() > 0.5 else -1)
-            s.rate_yaw = random.uniform(0.8, 2.0) * (1 if random.random() > 0.5 else -1)
+            s.rate_roll = self.rng.uniform(0.8, 2.0) * (1 if self.rng.random() > 0.5 else -1)
+            s.rate_pitch = self.rng.uniform(0.8, 2.0) * (1 if self.rng.random() > 0.5 else -1)
+            s.rate_yaw = self.rng.uniform(0.8, 2.0) * (1 if self.rng.random() > 0.5 else -1)
             # Sensors and actuators unpowered at separation — operators
             # power them on during AOCS commissioning.
             s.st1_status = 0
@@ -2087,8 +3592,15 @@ class SimulationEngine:
             s.pa_on = False  # Power amplifier OFF
             s.cmd_decode_timer = 900.0  # 15 min command decoder enable timer
             s.cmd_channel_active = True  # Command channel monitoring active
-            s.data_rate_mode = 0  # Low-rate (1 kbps) in beacon mode
-            logger.info("TTC configured: antenna=NOT_DEPLOYED, beacon_mode=ON, PA=OFF")
+            # BEACON tier — 1 kbps, BPSK, conv(7,1/2)+RS. This is the ONLY
+            # rung of the ladder the bootloader ever uses, and the only place
+            # 1 kbps appears at all now (defect #85).
+            s.data_rate_mode = getattr(ttc, '_beacon_tier', 0)
+            s.downlink_mode = False
+            if hasattr(ttc, '_apply_tier'):
+                ttc._apply_tier(s, s.data_rate_mode)
+            logger.info("TTC configured: antenna=NOT_DEPLOYED, beacon_mode=ON, PA=OFF, "
+                        "TM tier=BEACON")
 
         # OBDH configuration
         obdh = self.subsystems.get("obdh")
@@ -2171,8 +3683,63 @@ class SimulationEngine:
         self._eclipse_transition_cache = (self._tick_count, result)
         return result
 
+    # ------------------------------------------------------------------
+    # Threading contract (roadmap N-2 / DI-02)
+    # ------------------------------------------------------------------
+    # WRITER: the tick thread (`_run_loop` -> `_tick_once`) exclusively owns
+    #   `self.params`, every subsystem `_state`, and all engine state. At the
+    #   end of each tick it publishes an immutable snapshot under
+    #   `_params_lock`.
+    # READERS: aiohttp handlers, the WS broadcaster and the MCS poller call
+    #   `get_state_summary()` / `get_instructor_snapshot()`. Both take the
+    #   *published snapshot* under the same lock and never read live state, so
+    #   they cannot see two fields from different ticks (a "torn" read) nor
+    #   `RuntimeError: dictionary changed size during iteration`.
+    # Before this the lock was acquired only by the readers, which provided
+    # zero mutual exclusion while reading as if it were a design decision.
+
+    def _publish_snapshot(self) -> None:
+        """Publish this tick's immutable state snapshots for readers (N-2)."""
+        try:
+            snapshot = self._build_state_summary()
+        except Exception as e:  # noqa: BLE001 — never let export kill the tick
+            logger.warning("State snapshot build failed: %s", e)
+            return
+        # A-1: the instructor snapshot is built HERE, on the tick thread, with
+        # deep copies. It used to be assembled on the aiohttp thread: it read
+        # `self.orbit.state` live and walked every subsystem's `_state.__dict__`
+        # while this thread was mutating it, storing dict/list values (power
+        # lines, wheel speeds, the image catalogue) BY REFERENCE. json.dumps on
+        # the response thread could raise "dictionary changed size during
+        # iteration" against a growing image_catalog, and a caller mutating the
+        # response would have corrupted the simulation.
+        try:
+            instructor = self._build_instructor_snapshot()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Instructor snapshot build failed: %s", e)
+            instructor = None
+        with self._params_lock:
+            self._snapshot = snapshot
+            self._snapshot_tick = self._tick_count
+            if instructor is not None:
+                self._instructor_snapshot = instructor
+
     def get_state_summary(self) -> dict:
-        """Return spacecraft state summary with parameters mapped by subsystem.
+        """Return the most recently published spacecraft state summary.
+
+        Reader side of the threading contract above: this hands back the
+        snapshot the tick thread published, so every field in it comes from the
+        same tick. Before the first tick completes there is no snapshot yet, so
+        one is built inline (single-threaded at that point, by construction).
+        """
+        with self._params_lock:
+            snapshot = getattr(self, '_snapshot', None)
+        if snapshot is None:
+            return self._build_state_summary()
+        return snapshot
+
+    def _build_state_summary(self) -> dict:
+        """Build the state summary from live state. Tick-thread only.
 
         Field names include unit suffixes to match hardcoded HTML UI expectations
         (e.g., power_gen_W, rssi_dbm, att_error_deg, soc_pct, etc.).
@@ -2180,8 +3747,7 @@ class SimulationEngine:
         the display. Once displays become config-driven, this can be refactored.
         """
         o = self.orbit.state
-        with self._params_lock:
-            p = dict(self.params)
+        p = dict(self.params)
 
         # Build state grouped by subsystem
         summary = {
@@ -2192,10 +3758,19 @@ class SimulationEngine:
             'sc_mode': self.sc_mode,
             'in_eclipse': bool(o.in_eclipse),
             'in_contact': bool(o.in_contact),
+            'ground_station_name': getattr(o, 'active_gs', None) or '',
+            'gs_elevation_deg': round(o.gs_elevation_deg, 1),
+            'gs_range_km': round(o.gs_range_km, 1),
             **self._get_eclipse_transition(),
             'lat': round(o.lat_deg, 4),
             'lon': round(o.lon_deg, 4),
             'alt_km': round(o.alt_km, 2),
+            # Phase D: versioned element set. epoch_version increments on
+            # every applied burn; planner/MCS treat a change like a time jump
+            # (drop contact/ground-track caches, adopt the new TLE).
+            'orbit_epoch_version': int(getattr(self.orbit, 'epoch_version', 0)),
+            'orbit_elset': (self.orbit.get_elset()
+                            if hasattr(self.orbit, 'get_elset') else None),
             'eps': {
                 'soc_pct': round(p.get(0x0101, 0), 1),
                 'bat_voltage_V': round(p.get(0x0100, 0), 2),
@@ -2252,12 +3827,29 @@ class SimulationEngine:
                 'pa_temp_C': round(p.get(0x050F, 0), 1),
                 'tx_power_W': round(p.get(0x050D, 0), 2),
                 'data_rate_bps': int(p.get(0x0506, 0)),
+                # TM rate ladder (defect #85): the RF bridge retunes the
+                # pipeline from these, and the MCS can label the rate.
+                'tm_tier': self._current_tm_tier()[0],
+                'tm_tier_name': self._current_tm_tier()[1],
+                'tm_coding': self._current_tm_coding(),
+                'symbol_rate_bd': round(p.get(0x053B, 0), 1),
+                'downlink_mode': bool(p.get(0x053C, 0)),
             },
             'payload': {
                 'mode': int(p.get(0x0600, 0)),
                 'fpa_temp_C': round(p.get(0x0601, 0), 1),
                 'store_used_pct': round(p.get(0x0604, 0), 1),
                 'image_count': int(p.get(0x0605, 0)),
+            },
+            'prop': {
+                'state': int(p.get(0x0B00, 0)),
+                'tank_pressure_bar': round(p.get(0x0B01, 0), 2),
+                'propellant_g': round(p.get(0x0B02, 0), 1),
+                'catbed_temp_C': round(p.get(0x0B05, 0), 1),
+                'dv_accum_m_s': round(p.get(0x0B0B, 0), 3),
+                'dv_remaining_m_s': round(p.get(0x0B0C, 0), 2),
+                'burn_status': int(p.get(0x0B0D, 0)),
+                'arm_inhibit_mask': int(p.get(0x0B15, 0)),
             },
             'spacecraft_phase': self._spacecraft_phase,
             'downlink_active': self.downlink_active,
@@ -2266,6 +3858,20 @@ class SimulationEngine:
             'active_failures': self._failure_manager.active_failures(),
             'scheduler': self._tc_scheduler.get_status(),
             'tm_stores': self._tm_storage.get_status(),
+            # Tick-loop health (roadmap N-1): non-null means a tick raised and
+            # the loop recovered — telemetry is stale-but-live, not frozen.
+            'engine_fault': getattr(self, 'engine_fault', None),
+            'engine_fault_count': getattr(self, 'engine_fault_count', 0),
+            'hk_enabled': dict(getattr(self, '_hk_enabled', {}) or {}),
+            'tm_rate_bps': int(self._current_tm_rate_bps()),
+            'tm_tier': self._current_tm_tier()[0],
+            'tm_tier_name': self._current_tm_tier()[1],
+            'rt_tm_backlog': len(getattr(self, '_rt_pending', None) or []),
+            # Autonomy picture (WP-5): active faults, pending cascades and the
+            # running recovery procedure. Same route as `sc_mode` — not
+            # downlinked telemetry, so the console tags it as coming from the
+            # simulator rather than from the spacecraft.
+            'fdir': self.fdir_status(),
             # Include raw params dict for MCS to access via param(id) function
             'params': p,
         }
@@ -2281,16 +3887,32 @@ class SimulationEngine:
     def get_instructor_snapshot(self) -> dict:
         """Return complete ground-truth state for instructor display.
 
-        Instructor has god-mode visibility, so this bypasses RF link gating and
-        returns every parameter + every subsystem model's internal state directly.
-        Used by the instructor/operator UI to show complete visibility.
+        Reader side of the threading contract (see `_publish_snapshot`): this
+        hands back the snapshot the TICK thread built, already deep-copied, so
+        an aiohttp handler never touches live state (A-1). Before the first
+        tick completes there is no snapshot yet, so one is built inline —
+        single-threaded at that point, by construction.
         """
+        with self._params_lock:
+            published = getattr(self, '_instructor_snapshot', None)
+        if published is not None:
+            return published
+        return self._build_instructor_snapshot()
+
+    def _build_instructor_snapshot(self) -> dict:
+        """Build the instructor snapshot from live state. Tick-thread only.
+
+        Instructor has god-mode visibility, so this bypasses RF link gating and
+        returns every parameter + every subsystem model's internal state.
+        """
+        import copy as _copy
         o = self.orbit.state
         with self._params_lock:
-            p = dict(self.params)
+            snapshot = getattr(self, '_snapshot', None)
+        p = dict(snapshot['params']) if snapshot else dict(self.params)
 
         # Build comprehensive snapshot with all subsystem internals + params
-        snapshot = {
+        out = {
             'meta': {
                 'timestamp': self._sim_time.isoformat(),
                 'tick': self._tick_count,
@@ -2303,6 +3925,7 @@ class SimulationEngine:
                 'alt_km': round(o.alt_km, 2),
                 'in_eclipse': bool(o.in_eclipse),
                 'in_contact': bool(o.in_contact),
+                'active_gs': getattr(o, 'active_gs', None),
                 'semi_major_axis_km': round(o.semi_major_axis_km, 2) if hasattr(o, 'semi_major_axis_km') else None,
                 'eccentricity': round(o.eccentricity, 6) if hasattr(o, 'eccentricity') else None,
                 'inclination_deg': round(o.inclination_deg, 4) if hasattr(o, 'inclination_deg') else None,
@@ -2318,18 +3941,63 @@ class SimulationEngine:
             },
             'parameters': p,  # All raw parameters by ID
             'subsystems': self._get_all_subsystem_states(),
-            'tm_stores': self._tm_storage.get_status() if hasattr(self, '_tm_storage') else {},
-            'active_failures': self._failure_manager.active_failures() if hasattr(self, '_failure_manager') else [],
-            'fdir': {
-                'enabled': self._fdir_enabled,
-                'triggered_rules': dict(self._fdir_triggered),
-                'load_shed_stage': self._current_load_shed_stage,
-            },
+            # deepcopy: both of these can hand back live model containers, and
+            # the reader is a different thread (A-1).
+            'tm_stores': _copy.deepcopy(self._tm_storage.get_status())
+                         if hasattr(self, '_tm_storage') else {},
+            'active_failures': _copy.deepcopy(
+                self._failure_manager.active_failures())
+                if hasattr(self, '_failure_manager') else [],
+            'fdir': self.fdir_status(),
+            'engine_fault': self.engine_fault,
+            'engine_fault_count': self.engine_fault_count,
+            'instr_cmd_rejects': self.instr_cmd_rejects,
+            'hk_enabled': dict(self._hk_enabled),
         }
-        return snapshot
+        return out
+
+    def fdir_status(self) -> dict:
+        """The FDIR picture the ground displays render (WP-5).
+
+        `active_faults`, `recovery` and `procedures` are new: the FDIR window
+        could only ever show S12 transitions, S19 firings and command
+        rejections, because the fault-cascade model and the ten recovery
+        procedures behind it never ran.
+        """
+        recoveries = self._fault_propagator.recovery_states()
+        return {
+            'enabled': self._fdir_enabled,
+            'triggered_rules': dict(self._fdir_triggered),
+            'load_shed_stage': self._current_load_shed_stage,
+            'level': int(self.params.get(0x0700, 0) or 0),
+            'active_faults': self._fault_propagator.active_faults(),
+            'pending_cascades': [
+                {'fault_id': c.get('fault_id'),
+                 'target': c.get('target_subsystem'),
+                 'action': c.get('action'),
+                 'due_in_s': round(max(0.0, c.get('due', 0.0)
+                                       - self._sim_elapsed_fdir), 1)}
+                for c in self._pending_cascades
+            ],
+            'recovery': [
+                {'fault_id': fid, 'group': rs.group, 'level': rs.level,
+                 'state': rs.state, 'procedure': rs.procedure,
+                 'attempts': rs.recovery_attempts,
+                 'max_attempts': rs.max_attempts,
+                 'exec_id': rs.exec_id}
+                for fid, rs in recoveries.items()
+            ],
+            'procedures': self._procedure_executor.get_active_procedures(),
+        }
 
     def _get_all_subsystem_states(self) -> dict:
-        """Extract complete internal state from all subsystem models."""
+        """Extract complete internal state from all subsystem models.
+
+        Tick-thread only (A-1). Container values are DEEP-COPIED: they used to
+        be stored by reference, so `power_lines`, `rw_speed` and the growing
+        `image_catalog` were handed to the aiohttp thread as live objects.
+        """
+        import copy
         states = {}
         for name, model in self.subsystems.items():
             if hasattr(model, '_state'):
@@ -2337,18 +4005,22 @@ class SimulationEngine:
                 # Convert dataclass to dict
                 if hasattr(state_obj, '__dict__'):
                     state_dict = {}
-                    for key, value in state_obj.__dict__.items():
+                    for key, value in list(state_obj.__dict__.items()):
                         # Skip private fields
-                        if not key.startswith('_'):
-                            # Convert complex types to simple types for JSON serialization
-                            if isinstance(value, (dict, list)):
-                                state_dict[key] = value
-                            elif isinstance(value, bool):
-                                state_dict[key] = value
-                            elif isinstance(value, (int, float)):
-                                state_dict[key] = value
-                            else:
+                        if key.startswith('_'):
+                            continue
+                        # Convert complex types to simple types for JSON
+                        if isinstance(value, (dict, list, tuple, set)):
+                            try:
+                                state_dict[key] = copy.deepcopy(value)
+                            except Exception:  # noqa: BLE001
                                 state_dict[key] = str(value)
+                        elif isinstance(value, bool):
+                            state_dict[key] = value
+                        elif isinstance(value, (int, float)):
+                            state_dict[key] = value
+                        else:
+                            state_dict[key] = str(value)
                     states[name] = state_dict
                 else:
                     states[name] = str(state_obj)

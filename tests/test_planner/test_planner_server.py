@@ -133,6 +133,7 @@ def _build_app(server: PlannerServer) -> web.Application:
     app.router.add_delete("/api/schedule/{id}", server._handle_delete_activity)
     app.router.add_get("/api/schedule/validate", server._handle_validate_schedule)
     app.router.add_get("/api/activity-types", server._handle_activity_types)
+    app.router.add_get("/api/time-source", server._handle_time_source)
     app.router.add_post("/api/schedule/pass-activity", server._handle_pass_activity)
     app.router.add_get("/api/budget/power", server._handle_power_budget)
     app.router.add_get("/api/budget/data", server._handle_data_budget)
@@ -485,5 +486,55 @@ class TestActivityTypesEndpoint:
             assert isinstance(data["activity_types"], list)
             assert len(data["activity_types"]) == 1
             assert data["activity_types"][0]["name"] == "imaging"
+        finally:
+            await client.close()
+
+
+# ── GET /api/time-source ──────────────────────────────────────────
+
+class TestTimeSourceEndpoint:
+    """Test GET /api/time-source returns the configured mode.
+
+    The frontend uses this to label its data-source badges
+    (sim -> SIM/SIMULATED, real -> LIVE/LIVE DATA).
+    """
+
+    @pytest.mark.asyncio
+    async def test_api_time_source_sim(self):
+        server = _make_planner_server()
+        server._time_source = "sim"
+        client = await _make_client(server)
+        try:
+            resp = await client.get("/api/time-source")
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["time_source"] == "sim"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_api_time_source_real(self):
+        server = _make_planner_server()
+        server._time_source = "real"
+        client = await _make_client(server)
+        try:
+            resp = await client.get("/api/time-source")
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["time_source"] == "real"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_api_time_source_defaults_to_real_when_unset(self):
+        # _make_planner_server() builds via __new__ without _time_source;
+        # the handler must degrade gracefully to "real".
+        server = _make_planner_server()
+        client = await _make_client(server)
+        try:
+            resp = await client.get("/api/time-source")
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["time_source"] == "real"
         finally:
             await client.close()

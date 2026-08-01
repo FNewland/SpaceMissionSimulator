@@ -39,11 +39,13 @@ Verify autonomous safe mode reversion works correctly.
 **Verify:** `aocs.rate_yaw` (0x0206) < 0.05 deg/s within 120s
 **GO/NO-GO:** NOMINAL_POINT achieved with nadir-pointing < 1 degree error
 
-### Step 3 — Transition: NOMINAL_POINT to FINE_POINT (Mode 4)
-**TC:** `AOCS_SET_MODE(mode=4)` (Service 8, Subtype 1)
-**Verify:** `aocs.mode` (0x020F) = 4 (FINE_POINT) within 30s
+### Step 3 — Transition: NOMINAL to FINE_POINT (Mode 5)
+**TC:** `AOCS_FINE_READY_CHECK` (func 89) — 0x02C5 must read 0 (ST ≥ 5 stars,
+4 wheels, MEKF converged 30 s, rates < 0.01 deg/s, momentum < 70 %, slew idle)
+**TC:** `AOCS_SET_MODE(mode=5)` (Service 8, Subtype 1)
+**Verify:** `aocs.mode` (0x020F) = 5 (FINE_POINT) within 30s
 **Action:** FINE_POINT tightens control bandwidth for imaging. Requires star tracker and all four wheels. Monitor for improved pointing stability.
-**Verify:** `aocs.att_error` (0x0217) < 0.1 deg within 180s
+**Verify:** `aocs.att_error` (0x0217) < 0.1 deg within 300s
 **Verify:** `aocs.rate_roll` (0x0204) < 0.01 deg/s within 180s
 **Verify:** `aocs.rate_pitch` (0x0205) < 0.01 deg/s within 180s
 **Verify:** `aocs.rate_yaw` (0x0206) < 0.01 deg/s within 180s

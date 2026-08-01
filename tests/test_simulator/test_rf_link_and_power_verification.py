@@ -92,21 +92,60 @@ def test_rf_link_closes_during_real_pass():
 
 def test_rf_link_budget_positive_at_overhead_pass():
     """Hand link budget at a nominal overhead pass range (~450 km, zenith)
-    must be comfortably positive with the configured EIRP/G-T/frequency."""
+    must be comfortably positive with the configured EIRP/G-T/frequency.
+
+    Recomputed by hand here (defect #84): C/N0 = EIRP + G_sc - FSPL - losses
+    + G/T + 228.6, and Eb/N0 = C/N0 - 10log10(R). The ground-station G/T is
+    ADDED. The model must agree with this arithmetic to 0.1 dB.
+    """
     ttc_cfg = _load("subsystems/ttc.yaml")
     ttc = TTCBasicModel()
     ttc.configure(ttc_cfg)
 
     rng_km = 460.0  # overhead pass: ~altitude + GS altitude
-    rate = ttc._tm_rate_hi
+    top = len(ttc.tiers) - 1                       # HIGH, 1.024 Mbps
+    rate = ttc.tier_bps(top)
     fspl = (20 * math.log10(rng_km * 1000)
             + 20 * math.log10(ttc._dl_freq_hz) - 147.55)
-    rssi = ttc._eirp + ttc._sc_gain - fspl + 30.0
-    noise_bw = 10 * math.log10(rate)
-    noise_floor = -228.6 + ttc._gs_gt + noise_bw
-    ebn0 = (rssi - 30 - noise_floor) + ttc._coding_gain
-    margin = ebn0 - 12.0
+    losses = (ttc_cfg["atmospheric_loss_db"]
+              + ttc_cfg["polarization_loss_db"]
+              + ttc_cfg["implementation_loss_db"])
+    c_n0 = (ttc._eirp + ttc._sc_gain - fspl - losses + ttc._gs_gt + 228.6)
+    ebn0 = c_n0 - 10 * math.log10(rate)
+    required = (ttc_cfg["required_eb_n0_db"]
+                - ttc.tier(top)["coding_gain_db"])
+    margin = ebn0 - required
     assert margin > 5.0, f"overhead-pass link margin too low: {margin:.1f} dB"
+
+    model = ttc.link_margin_for(top, rng_km, 90.0)
+    assert abs(model["margin_db"] - margin) < 0.1, (
+        f"model {model['margin_db']:.2f} dB disagrees with the hand budget "
+        f"{margin:.2f} dB")
+
+
+def test_link_budget_adds_the_ground_station_gt():
+    """Defect #84 regression: a BETTER ground station must give a BETTER link.
+
+    The old model computed `noise_floor = -228.6 + gs_gt + 10log10(R)` and
+    then `snr = rssi - 30 - noise_floor`, which SUBTRACTS G/T — a 2 x G/T
+    error that made Inuvik (22.0 dB/K) score 7 dB WORSE than Troll (18.5).
+    """
+    ttc_cfg = _load("subsystems/ttc.yaml")
+    ttc = TTCBasicModel()
+    ttc.configure(ttc_cfg)
+
+    tier = ttc.tier_index("NOMINAL")
+    troll = ttc.link_margin_for(tier, 1944.5, 5.0, gs_gt_db=18.5)
+    inuvik = ttc.link_margin_for(tier, 1944.5, 5.0, gs_gt_db=22.0)
+    assert inuvik["margin_db"] > troll["margin_db"], (
+        "a higher-G/T station must give a higher margin")
+    assert abs((inuvik["margin_db"] - troll["margin_db"]) - 3.5) < 0.01, (
+        "margin must move 1:1 with G/T, not -1:1")
+
+    # And 1 dB more G/T must be worth exactly +1 dB, not -1 dB.
+    a = ttc.link_margin_for(tier, 1000.0, 45.0, gs_gt_db=20.0)
+    b = ttc.link_margin_for(tier, 1000.0, 45.0, gs_gt_db=21.0)
+    assert abs((b["margin_db"] - a["margin_db"]) - 1.0) < 1e-9
 
 
 # ──────────────────────────────────────────────────────────────────────────

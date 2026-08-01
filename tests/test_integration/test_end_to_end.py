@@ -425,8 +425,11 @@ class TestS11ScheduleList:
         engine = make_mock_engine()
         engine._tc_scheduler.insert.return_value = 1
         engine._tc_scheduler.list_commands.return_value = [
-            {'id': 1, 'exec_time': 5000},
+            {'id': 1, 'exec_time': 5000, 'apid': 1, 'service': 8,
+             'subtype': 1, 'data_len': 2, 'data': b'\x1a\x02'},
         ]
+        engine._tc_scheduler.get_status.return_value = {
+            'enabled': True, 'count': 1, 'next_id': 2}
         dispatcher = ServiceDispatcher(engine)
 
         # Step 1 — insert a time-tagged command via S11.4
@@ -446,13 +449,23 @@ class TestS11ScheduleList:
         assert call_kwargs[1]['service'] == 11
         assert call_kwargs[1]['subtype'] == 18
 
-        # Verify list data: count(2) + [id(2) + exec_time(4)] per entry
+        # TM(11,18) detailed schedule report (defect #72):
+        #   header count(u16) + enabled(u8) + next_id(u16)
+        #   record id(u16) + exec_time(u32) + apid(u16) + svc(u8) + st(u8)
+        #          + data_len(u8) + n_bytes(u8) + data[n_bytes]
         resp_data = call_kwargs[1]['data']
-        count = struct.unpack('>H', resp_data[:2])[0]
+        count, enabled, next_id = struct.unpack('>HBH', resp_data[:5])
         assert count == 1
-        cmd_id, cmd_time = struct.unpack('>HI', resp_data[2:8])
+        assert enabled == 1
+        assert next_id == 2
+        (cmd_id, cmd_time, apid, svc, st,
+         data_len, n_bytes) = struct.unpack('>HIHBBBB', resp_data[5:17])
         assert cmd_id == 1
         assert cmd_time == 5000
+        # The command identity is what makes the report usable to an operator.
+        assert (apid, svc, st) == (1, 8, 1)
+        assert data_len == 2
+        assert resp_data[17:17 + n_bytes] == b'\x1a\x02'
 
 
 # ===================================================================

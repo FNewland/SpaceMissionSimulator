@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="TCS" Creator="EOSAT-1 SMDL Generator" Date="2026-04-19" Version="1.0">
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="TCS" Creator="EOSAT-1 SMDL Generator" Date="2026-08-01" Version="1.0">
   <Description>SMP2 model catalogue for TCS subsystem</Description>
   <Type Name="UInt8" Uuid="d34e4c59-80ab-5b96-ba66-a437b3642d60" xsi:type="Integer" Size="1" Signed="false"/>
   <Type Name="UInt16" Uuid="c89f8923-d36b-59fe-9443-00c81cb94841" xsi:type="Integer" Size="2" Signed="false"/>
@@ -35,14 +35,23 @@
     <Field Name="tcs_temp_fpa" Uuid="16d86dbd-8a50-5b94-8b91-e48b3efba2ef" Type="Int16" Kind="Output" View="true">
       <Description>[C]</Description>
     </Field>
+    <Field Name="tcs_temp_thruster" Uuid="3da7dd5d-3dc4-59a9-8717-b8cb32859cc6" Type="Float32" Kind="Output" View="true">
+      <Description>Thruster catalyst-bed temperature (propulsion arm interlock &gt;= 180 C) [C]</Description>
+    </Field>
     <Field Name="tcs_htr_battery" Uuid="c19abab6-2170-51f4-958a-e2c18fea75bd" Type="UInt8" Kind="Output" View="true"/>
     <Field Name="tcs_htr_obc" Uuid="c0c45cc7-5430-5775-9832-bf2880a50626" Type="UInt8" Kind="Output" View="true"/>
     <Field Name="tcs_cooler_fpa" Uuid="1b7e3832-6d88-5909-8064-cd81c53cf1b8" Type="UInt8" Kind="Output" View="true"/>
+    <Field Name="tcs_htr_thruster" Uuid="b4a905c2-2369-5785-ae89-3449deeae248" Type="Float32" Kind="Output" View="true">
+      <Description>Thruster catalyst-bed heater state (12 W, EPS prop line, S8 func 42)</Description>
+    </Field>
     <Field Name="tcs_htr_duty_battery" Uuid="f719aae1-343e-5a6f-9dac-794b7b25c441" Type="UInt16" Kind="Output" View="true">
       <Description>Battery heater duty cycle [%]</Description>
     </Field>
     <Field Name="tcs_htr_duty_obc" Uuid="7e8891bb-2821-54f6-994e-c3c78e9f7744" Type="UInt16" Kind="Output" View="true">
       <Description>OBC heater duty cycle [%]</Description>
+    </Field>
+    <Field Name="tcs_htr_duty_thruster" Uuid="09a1815e-1201-54b5-88d6-19eed02898f9" Type="Float32" Kind="Output" View="true">
+      <Description>Thruster catalyst-bed heater duty cycle (Phase D: real 12 W catbed heater) [%]</Description>
     </Field>
     <Field Name="tcs_htr_total_power" Uuid="bb90765f-68ac-5cc6-81fa-6b5f11708a85" Type="UInt16" Kind="Output" View="true">
       <Description>Total heater power consumption [W]</Description>
@@ -70,6 +79,9 @@
     </Field>
     <Field Name="tcs_thermal_gradient" Uuid="f4447fee-a5ad-5803-9eb4-c74c86d6474d" Type="Int16" Kind="Output" View="true">
       <Description>Thermal gradient (max-min temperature between all zones) [C]</Description>
+    </Field>
+    <Field Name="tcs_temp_regulation_margin" Uuid="fd723993-4730-5844-b11f-bf3dd8aa67b3" Type="Float32" Kind="Output" View="true">
+      <Description>Minimum margin of any regulated zone (battery/OBC/FPA) to its alarm band; negative = out of band [C]</Description>
     </Field>
     <Field Name="tcs_htr_duty_z1" Uuid="586a0b97-64da-533f-b1c1-549f86d627b4" Type="Float32" Kind="Output" View="true">
       <Description>Heater zone 1 duty cycle [%]</Description>
@@ -99,21 +111,21 @@
       <Description>OBC heater setpoint [C]</Description>
     </Field>
     <Field Name="tcs_temp_radiator_n" Uuid="875422b2-9c2e-5d63-afd0-fb89d13976af" Type="Float32" Kind="Output" View="true">
-      <Description>Radiator North temp [C]</Description>
+      <Description>Radiator North temp (first-order proxy off the -Z panel) [C]</Description>
     </Field>
     <Field Name="tcs_temp_radiator_s" Uuid="e6d1942e-7349-5b8b-b60c-d733e7a4f1ed" Type="Float32" Kind="Output" View="true">
-      <Description>Radiator South temp [C]</Description>
+      <Description>Radiator South temp (first-order proxy off the -Z panel) [C]</Description>
     </Field>
-    <Field Name="tc_HEATER_BATTERY_True" Uuid="0ed72bfb-1f12-5220-a3ae-f2a8c7f70a57" Type="UInt8" Kind="Input">
+    <Field Name="tc_HEATER_BATTERY_on" Uuid="86b0186b-4351-5bcd-a0b3-ca73139e6ee5" Type="UInt8" Kind="Input">
       <Description>0=off, 1=on</Description>
     </Field>
-    <Field Name="tc_HEATER_OBC_True" Uuid="12affc36-9bd0-520a-83b3-93dd6b7f230b" Type="UInt8" Kind="Input">
+    <Field Name="tc_HEATER_OBC_on" Uuid="44b17e09-05e0-545b-851a-335c4e7b9878" Type="UInt8" Kind="Input">
       <Description>0=off, 1=on</Description>
     </Field>
-    <Field Name="tc_HEATER_THRUSTER_True" Uuid="cade2875-554f-5b32-85fb-e01153c6582c" Type="UInt8" Kind="Input">
+    <Field Name="tc_HEATER_THRUSTER_on" Uuid="efbcd4ee-4391-52e6-8b81-0c102d7a42ea" Type="UInt8" Kind="Input">
       <Description>0=off, 1=on</Description>
     </Field>
-    <Field Name="tc_FPA_COOLER_True" Uuid="8e07eb34-5a4c-55b6-a9ed-903ff428a54d" Type="UInt8" Kind="Input">
+    <Field Name="tc_FPA_COOLER_on" Uuid="dfbb8c01-4de2-561e-8c4f-30134439fe31" Type="UInt8" Kind="Input">
       <Description>0=off, 1=on</Description>
     </Field>
     <Field Name="tc_HEATER_SET_SETPOINT_circuit" Uuid="380639af-81f7-500e-8cd5-2bea1f60f5e0" Type="UInt8" Kind="Input">
@@ -146,11 +158,11 @@
     <EntryPoint Name="UpdateHeaters" Uuid="e0c4ebc9-4ada-57ac-94d8-3cfb5fe60226">
       <Description>UpdateHeaters</Description>
     </EntryPoint>
-    <EventSource Name="TCS FPA Temperature High_WARNING" Uuid="d9a5242c-2d0e-5871-8701-5724ec6e876b">
-      <Description>WARNING alarm for TCS FPA Temperature High</Description>
+    <EventSource Name="TCS FPA Temperature Warning_WARNING" Uuid="5d17c72d-adda-52aa-9467-50fb885ffbce">
+      <Description>WARNING alarm for TCS FPA Temperature Warning</Description>
     </EventSource>
-    <EventSource Name="TCS FPA Temperature Low_WARNING" Uuid="a5d0af55-4af2-5a0b-be1e-7598ea253156">
-      <Description>WARNING alarm for TCS FPA Temperature Low</Description>
+    <EventSource Name="TCS FPA Temperature Alarm_ALARM" Uuid="876962c4-b73c-5b0d-a0af-e6b00435ade5">
+      <Description>ALARM alarm for TCS FPA Temperature Alarm</Description>
     </EventSource>
     <EventSource Name="TCS Battery Overtemp_WARNING" Uuid="08913bc4-1749-5ed9-8ac5-544edfecf37f">
       <Description>WARNING alarm for TCS Battery Overtemp</Description>

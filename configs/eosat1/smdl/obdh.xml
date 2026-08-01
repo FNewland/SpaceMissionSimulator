@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="OBDH" Creator="EOSAT-1 SMDL Generator" Date="2026-04-19" Version="1.0">
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="OBDH" Creator="EOSAT-1 SMDL Generator" Date="2026-08-01" Version="1.0">
   <Description>SMP2 model catalogue for OBDH subsystem</Description>
   <Type Name="UInt8" Uuid="4e73fc8f-c4b0-5788-a75e-634a28fbbdd8" xsi:type="Integer" Size="1" Signed="false"/>
   <Type Name="UInt16" Uuid="a3adba6a-8630-5a9d-a78b-683cf4e4fd19" xsi:type="Integer" Size="2" Signed="false"/>
@@ -21,6 +21,9 @@
     <Field Name="obdh_tc_rx_count" Uuid="8cceb43d-975d-5922-b518-56511f5c9074" Type="UInt32" Kind="Output" View="true"/>
     <Field Name="obdh_tc_acc_count" Uuid="11706509-2fdd-55bd-ae16-519691f0f69c" Type="UInt32" Kind="Output" View="true"/>
     <Field Name="obdh_tc_rej_count" Uuid="bfcbd318-b31e-5a89-9408-54aa9c19c7aa" Type="UInt16" Kind="Output" View="true"/>
+    <Field Name="obdh_last_tc_error_code" Uuid="6f6f12d4-9b6f-56f1-9e43-9b938eca2a99" Type="UInt16" Kind="Output" View="true">
+      <Description>S1 failure code of the most recently refused telecommand (0=none since boot; see FAILURE_CODES)</Description>
+    </Field>
     <Field Name="obdh_tm_pkt_count" Uuid="0fb03477-a5a9-535e-b5b7-1e57540915a5" Type="UInt32" Kind="Output" View="true"/>
     <Field Name="obdh_uptime" Uuid="1a0005ac-5d98-586a-b3ae-7d32c785a508" Type="UInt32" Kind="Output" View="true">
       <Description>[s]</Description>

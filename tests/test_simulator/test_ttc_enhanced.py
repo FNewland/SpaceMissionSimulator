@@ -267,8 +267,11 @@ class TestTTCEnhanced:
         model.tick(1.0, orbit, params)
         baseline_ber = model._state.ber
 
-        # Inject high BER with a large offset to overcome any margin
-        model.inject_failure("high_ber", 1.0, offset=25.0)
+        # Inject high BER with a large offset to overcome any margin. The
+        # offset has to be bigger than it used to be because fixing the
+        # inverted G/T sign (defect #84) restored ~40 dB of margin that the
+        # old budget was throwing away.
+        model.inject_failure("high_ber", 1.0, offset=70.0)
         model.tick(1.0, orbit, params)
         degraded_ber = model._state.ber
 
@@ -375,49 +378,53 @@ class TestTTCEnhanced:
         )
 
     # ------------------------------------------------------------------
-    # DEFECT FIX #1: Downlink frequency validation (UHF 400–410 MHz)
+    # Frequency validation — S-band (roadmap N-4)
+    #
+    # The mission flies S-band: 2025–2110 MHz up, 2200–2290 MHz down (CCSDS
+    # 401.0-B near-Earth allocations), which is what ttc.yaml,
+    # planning/ground_stations.yaml, rfsim.yaml and the textbook all say. The
+    # UHF 440–460 / 400–410 MHz validators this test used to pin agreed with
+    # nothing else in the repo.
     # ------------------------------------------------------------------
-    def test_downlink_frequency_uhf_valid(self):
-        """DEFECT FIX #1: set_dl_freq should accept UHF range 400–410 MHz."""
+    def test_downlink_frequency_sband_valid(self):
+        """set_dl_freq accepts the S-band downlink allocation."""
         model = self._make_model()
 
-        # Valid UHF frequencies should succeed
-        result = model.handle_command({"command": "set_dl_freq", "freq_mhz": 400.0})
-        assert result["success"] is True, (
-            f"set_dl_freq(400.0) should succeed for UHF, got: {result}"
-        )
-
-        result = model.handle_command({"command": "set_dl_freq", "freq_mhz": 401.5})
-        assert result["success"] is True, (
-            f"set_dl_freq(401.5) should succeed for UHF, got: {result}"
-        )
-
-        result = model.handle_command({"command": "set_dl_freq", "freq_mhz": 410.0})
-        assert result["success"] is True, (
-            f"set_dl_freq(410.0) should succeed for UHF, got: {result}"
-        )
+        for freq in (2200.0, 2245.0, 2290.0):
+            result = model.handle_command(
+                {"command": "set_dl_freq", "freq_mhz": freq})
+            assert result["success"] is True, (
+                f"set_dl_freq({freq}) should succeed for S-band, got: {result}")
 
     def test_downlink_frequency_out_of_range(self):
-        """DEFECT FIX #1: set_dl_freq should reject frequencies outside UHF band."""
+        """set_dl_freq rejects anything outside the S-band downlink band."""
         model = self._make_model()
 
-        # S-band frequency (old range) should fail
-        result = model.handle_command({"command": "set_dl_freq", "freq_mhz": 2200.0})
-        assert result["success"] is False, (
-            f"set_dl_freq(2200.0) should fail (S-band, not UHF), got: {result}"
-        )
+        for freq in (401.5, 2199.0, 2291.0, 8400.0):
+            result = model.handle_command(
+                {"command": "set_dl_freq", "freq_mhz": freq})
+            assert result["success"] is False, (
+                f"set_dl_freq({freq}) should fail (outside S-band), got: {result}")
 
-        # Out of range low
-        result = model.handle_command({"command": "set_dl_freq", "freq_mhz": 390.0})
-        assert result["success"] is False, (
-            f"set_dl_freq(390.0) should fail (below UHF band), got: {result}"
-        )
+    def test_uplink_frequency_sband_valid(self):
+        """set_ul_freq accepts the S-band uplink allocation."""
+        model = self._make_model()
 
-        # Out of range high
-        result = model.handle_command({"command": "set_dl_freq", "freq_mhz": 420.0})
-        assert result["success"] is False, (
-            f"set_dl_freq(420.0) should fail (above UHF band), got: {result}"
-        )
+        for freq in (2025.0, 2067.0, 2110.0):
+            result = model.handle_command(
+                {"command": "set_ul_freq", "freq_mhz": freq})
+            assert result["success"] is True, (
+                f"set_ul_freq({freq}) should succeed for S-band, got: {result}")
+
+    def test_uplink_frequency_out_of_range(self):
+        """set_ul_freq rejects the legacy UHF band and out-of-band values."""
+        model = self._make_model()
+
+        for freq in (449.0, 2024.0, 2111.0):
+            result = model.handle_command(
+                {"command": "set_ul_freq", "freq_mhz": freq})
+            assert result["success"] is False, (
+                f"set_ul_freq({freq}) should fail (outside S-band), got: {result}")
 
     # ------------------------------------------------------------------
     # DEFECT FIX #4: Antenna deployment sensor telemetry
@@ -534,3 +541,102 @@ class TestTTCEnhanced:
         assert model._state.pa_on is True, (
             "PA should be on after successful pa_on command"
         )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase E WP-2 — TTC_SET_TX_POWER is an ENUMERATED level, and the three
+# FDIR procedures that were silently ignored now take effect.
+# ══════════════════════════════════════════════════════════════════════
+
+class TestTxPowerLevelsWP2:
+
+    def _model(self):
+        from smo_simulator.models.ttc_basic import TTCBasicModel
+        m = TTCBasicModel()
+        m.configure({})
+        return m
+
+    def test_level_0_is_one_watt(self):
+        m = self._model()
+        r = m.handle_command({"command": "set_tx_power", "level": 0})
+        assert r["success"] and r["power_w"] == 1.0
+        assert m._pa_nominal_power_w == 1.0
+
+    def test_level_1_is_two_watts(self):
+        m = self._model()
+        r = m.handle_command({"command": "set_tx_power", "level": 1})
+        assert r["success"] and r["power_w"] == 2.0
+
+    def test_level_2_is_the_five_watt_ceiling_not_eight(self):
+        m = self._model()
+        r = m.handle_command({"command": "set_tx_power", "level": 2})
+        assert r["success"] and r["power_w"] == 5.0, (
+            "HIGH is pa_max_power_w = 5.0 W; the documented 8 W was never "
+            "executable on a 12 W DC transponder line")
+
+    def test_unknown_level_is_rejected_never_clamped(self):
+        m = self._model()
+        before = m._pa_nominal_power_w
+        r = m.handle_command({"command": "set_tx_power", "level": 3})
+        assert r["success"] is False
+        assert r["error_code"] == 0x0003
+        assert m._pa_nominal_power_w == before
+
+
+class TestTxPowerDispatchWP2:
+    """The wire form the FDIR procedures actually send."""
+
+    def _dispatch(self):
+        from unittest.mock import MagicMock
+        from smo_simulator.service_dispatch import ServiceDispatcher
+        from smo_simulator.models.ttc_basic import TTCBasicModel
+        engine = MagicMock()
+        ttc = TTCBasicModel()
+        ttc.configure({})
+        engine.subsystems = {"ttc": ttc}
+        return ServiceDispatcher(engine), ttc
+
+    def test_44_00_sets_one_watt(self):
+        d, ttc = self._dispatch()
+        d.dispatch(8, 1, bytes([68, 0x00]), None)
+        assert ttc._pa_nominal_power_w == 1.0
+
+    def test_44_02_sets_five_watts(self):
+        d, ttc = self._dispatch()
+        d.dispatch(8, 1, bytes([68, 0x02]), None)
+        assert ttc._pa_nominal_power_w == 5.0
+
+    def test_44_03_is_refused(self):
+        # WP-7: the refusal now travels back on the DispatchResult instead of
+        # on the dispatcher's non-reentrant _last_error side-channel.
+        d, ttc = self._dispatch()
+        res = d.dispatch(8, 1, bytes([68, 0x03]), None)
+        assert res.failure_kind == "execution", \
+            "an unknown level must report a failure reason"
+        assert res.reason
+        assert res.error_code == 0x0003
+
+    def test_the_fdir_procedures_now_lower_the_power(self):
+        """ttc_reduce_power / ttc_antenna_switch / load_shed_stage3 all send
+        the byte in their YAML; before Phase E the float32 handler substituted
+        2.0 W for every one of them and S1.7 reported success."""
+        import yaml
+        from pathlib import Path
+        repo = Path(__file__).resolve().parents[2]
+        for name in ("ttc_reduce_power", "ttc_antenna_switch",
+                     "load_shed_stage3"):
+            doc = yaml.safe_load(
+                (repo / "configs" / "eosat1" / "fdir" / "procedures"
+                 / f"{name}.yaml").read_text())
+            steps = [s for s in doc["steps"]
+                     if s.get("params", {}).get("func_id") == 68]
+            assert steps, f"{name} no longer commands TX power"
+            data = bytes(steps[0]["params"]["data"])
+            assert data == bytes([0x00]), (
+                f"{name} sends {data.hex()}; the LOW level is 0x00 "
+                f"(0x32 was a percent value no handler understood)")
+            d, ttc = self._dispatch()
+            before = ttc._pa_nominal_power_w
+            d.dispatch(8, 1, bytes([68]) + data, None)
+            assert ttc._pa_nominal_power_w < before, (
+                f"{name} did not measurably lower the TX power")

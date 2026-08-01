@@ -283,15 +283,39 @@ class TestPhase3:
         assert sw_image == 1, f"sw_image should be 1 (APPLICATION) after boot, got {sw_image}"
         assert sc_phase >= 4, f"spacecraft_phase should be >= 4 after boot, got {sc_phase}"
 
-    def test_all_sids_enabled_after_boot(self):
-        """Phase 3.1: After OBC_BOOT_APP, all SIDs 1-6 should be enabled."""
+    def test_default_sids_after_boot_match_config(self):
+        """Phase 3.1: after OBC_BOOT_APP only the configured SIDs are enabled.
+
+        The engine used to switch every SID on at application boot, which made
+        TC(3,5) HK_ENABLE a no-op and skipped the commissioning step the
+        operations manual and the commissioning walkthrough both specify
+        (`HK_ENABLE(sid=1..6)` after boot) — defect #75. The power-up set is
+        now config-driven via simulation.yaml `housekeeping`.
+        """
         eng = _make_engine(phase=3)
         _run_ticks(eng, 2)
         _send_tc(eng, 8, 1, bytes([55]))
         _run_ticks(eng, 12)
+
+        expected = set(eng._hk_default_enabled_sids)
+        enabled = {sid for sid, on in eng._hk_enabled.items() if on}
+        assert enabled == expected & set(eng._hk_enabled), (
+            f"HK enable state after boot is {sorted(enabled)}, "
+            f"config declares {sorted(expected)}")
+
+    def test_hk_enable_is_not_a_no_op_after_boot(self):
+        """Phase 3.1: the operator can bring SIDs 1-6 online by command."""
+        eng = _make_engine(phase=3)
+        _run_ticks(eng, 2)
+        _send_tc(eng, 8, 1, bytes([55]))
+        _run_ticks(eng, 12)
+
+        import struct as _struct
         for sid in range(1, 7):
-            enabled = eng._hk_enabled.get(sid, False)
-            assert enabled, f"SID {sid} should be enabled after boot, but is disabled"
+            _send_tc(eng, 3, 5, _struct.pack('>H', sid))
+        for sid in range(1, 7):
+            assert eng._hk_enabled.get(sid, False), (
+                f"HK_ENABLE(sid={sid}) did not enable periodic reporting")
 
 
 # ===================================================================
@@ -627,6 +651,12 @@ class TestPhase12:
         _run_ticks(eng, 12)
         _send_tc(eng, 8, 1, bytes([19, 7]))  # aocs wheels
         _run_ticks(eng, 3)
+        # Phase C: the actuators are real now — the pre-separation state
+        # leaves wheels and magnetorquers disabled, so commissioning must
+        # enable them (COM-004 actuator checkout) before any pointing mode.
+        for w in range(4):
+            _send_tc(eng, 8, 1, bytes([3, w]))   # RW_ENABLE wheel w
+        _send_tc(eng, 8, 1, bytes([9, 1]))       # MTQ enable
         _send_tc(eng, 8, 1, bytes([0, 2]))  # DETUMBLE
         _run_ticks(eng, 20)
         _send_tc(eng, 8, 1, bytes([0, 4]))  # NADIR
@@ -649,24 +679,33 @@ class TestPhase12:
         assert st1_status >= 0, f"ST1 status should be in params, got {st1_status}"
 
     def test_transition_to_fine_point(self):
-        """Phase 12.5: AOCS_SET_MODE(5) should transition to FINE_POINT."""
+        """Phase 12.5 (Phase C rewrite): AOCS_SET_MODE(5) is REFUSED until
+        the 0x02C5 preconditions are met (TM(1,8) refusal, brief 02 WP-6),
+        then accepted once NOMINAL has converged and the MEKF has sustained
+        convergence for 30 s."""
         eng = self._make_nadir_engine()
         _send_tc(eng, 8, 1, bytes([4, 1]))  # ST1 ON
         # Star tracker needs 60s boot time before TRACKING → st_valid
         _run_ticks(eng, 65)
-        # Verify ST is tracking before attempting FINE_POINT
         st1_status = eng.params.get(0x0240, -1)
         assert st1_status == 2, f"ST1 should be TRACKING (2) after 65s, got {st1_status}"
-        # Force ST validity to avoid flaky sun-blinding geometry
-        eng.subsystems["aocs"]._state.st_valid = True
-        eng.subsystems["aocs"]._state.st1_status = 2
+        # Early FINE attempt: preconditions unmet → refused, mode unchanged
+        pkts = _send_tc(eng, 8, 1, bytes([0, 5]))
+        svcs = _svc_subtypes(pkts)
+        assert (1, 1) not in svcs or (1, 8) in svcs, (
+            f"AOCS_SET_MODE(5) should be refused before convergence, got {svcs}")
+        assert eng.subsystems["aocs"]._state.mode != 5
+        # Run the acquisition out (~350 s from the post-detumble attitude,
+        # + 30 s MEKF sustain) until the readiness bitmask clears.
+        for _ in range(12):
+            _run_ticks(eng, 60)
+            if eng.params.get(0x02C5, 0x7F) == 0:
+                break
+        assert eng.params.get(0x02C5, 0x7F) == 0, (
+            f"FINE preconditions never met: mask 0x{int(eng.params.get(0x02C5, 0x7F)):02X}")
         pkts = _send_tc(eng, 8, 1, bytes([0, 5]))
         svcs = _svc_subtypes(pkts)
         assert (1, 1) in svcs, f"AOCS_SET_MODE(5) should be accepted, got {svcs}"
-        # Verify mode set immediately — orbital geometry may blind ST during
-        # ticks causing an automatic fallback, so we check internal state
-        # directly.  Param propagation via shared_params is covered by the
-        # SID 2 test and the engine integrity tests.
         aocs_mode = eng.subsystems["aocs"]._state.mode
         assert aocs_mode == 5, (
             f"AOCS mode should be 5 (FINE_POINT) after command, got {aocs_mode}"
@@ -782,8 +821,18 @@ class TestPhase15:
         assert pld_mode == 2, f"Payload mode should be 2 (IMAGING), got {pld_mode}"
 
     def test_payload_capture(self):
-        """Phase 15.5: PAYLOAD_CAPTURE (func_id 28) should increment image_count."""
+        """Phase 15.5 (Phase C rewrite): PAYLOAD_CAPTURE (func_id 28) is
+        gated on AOCS FINE_POINT (brief 02 WP-6) — commission the AOCS to
+        FINE alongside the payload cooldown, then capture."""
         eng = self._make_booted_engine()
+        # AOCS commissioning: line on, actuators enabled, ST on, NOMINAL
+        _send_tc(eng, 8, 1, bytes([19, 7]))
+        _run_ticks(eng, 2)
+        for w in range(4):
+            _send_tc(eng, 8, 1, bytes([3, w]))
+        _send_tc(eng, 8, 1, bytes([9, 1]))
+        _send_tc(eng, 8, 1, bytes([4, 1]))
+        _send_tc(eng, 8, 1, bytes([0, 4]))
         _send_tc(eng, 8, 1, bytes([19, 3]))  # Payload power
         _run_ticks(eng, 3)
         _send_tc(eng, 8, 1, bytes([26, 1]))  # STANDBY
@@ -791,11 +840,30 @@ class TestPhase15:
         _send_tc(eng, 8, 1, bytes([19, 4]))  # FPA cooler power
         _run_ticks(eng, 3)
         _send_tc(eng, 8, 1, bytes([43, 1]))  # FPA cooler ON
-        # FPA needs to cool from 5°C to in-range (<-10°C, tau=100s → ~139s)
-        # plus 60s hysteresis settling = ~200s total.
-        _run_ticks(eng, 220)
+        # Phase B single FPA node: the TCS bracket cools from ~+10°C toward
+        # the -15°C setpoint (tau=120s, in range < -10°C at ~190 s), the
+        # payload detector lags it (tau=100s), then the 60 s readiness
+        # hysteresis must elapse → ~420 s total.
+        _run_ticks(eng, 450)
         fpa_ready = eng.subsystems["payload"]._state.fpa_ready
         assert fpa_ready, "FPA should be ready after cooldown"
+        # Finish AOCS convergence and enter FINE_POINT (capture gate)
+        for _ in range(10):
+            _run_ticks(eng, 60)
+            if eng.params.get(0x02C5, 0x7F) == 0:
+                break
+        assert eng.params.get(0x02C5, 0x7F) == 0, "FINE preconditions unmet"
+        _send_tc(eng, 8, 1, bytes([0, 5]))   # AOCS FINE_POINT
+        _run_ticks(eng, 5)
+        assert eng.subsystems["aocs"]._state.mode == 5
+        # FINE must settle to the capture gate (total pointing < 0.05°,
+        # rate stability < 0.005 °/s) — of order 100-200 s after entry
+        for _ in range(8):
+            _run_ticks(eng, 60)
+            if (eng.params.get(0x02AA, 1.0) < 0.045
+                    and eng.params.get(0x02C3, 1.0) < 0.0045):
+                break
+        assert eng.params.get(0x02AA, 1.0) < 0.05, "FINE never met capture gate"
         _send_tc(eng, 8, 1, bytes([26, 2]))  # IMAGING
         _run_ticks(eng, 3)
         count_before = eng.params.get(0x0605, 0)

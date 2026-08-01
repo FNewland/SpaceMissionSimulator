@@ -1,0 +1,120 @@
+# EOSAT-1 Propulsion — 1U green-monopropellant blowdown module (Phase D)
+# =============================================================================
+# PURPOSE (Flight Director ruling): debris-avoidance manoeuvres (CAM) and
+# LIMITED orbit maintenance (drag make-up / SMA biasing). This is NOT an
+# end-of-life deorbit system: natural decay from 450 km at B = 77.9 kg/m2 is
+# 1.7 yr (mean solar activity), 4.8 yr (solar min) — inside the FCC 5-year
+# rule at every solar condition, and 0.2 yr with the wings commanded
+# broadside. A propulsive deorbit (450->300 km perigee) would cost 42.6 m/s —
+# a second complete propulsion system — and is explicitly excluded.
+#
+# Hardware sheet: LMP-103S/ADN-class monoprop, single thruster on the -X
+# face thrusting along +X body (= prograde in the nominal nadir attitude, so
+# a retrograde burn requires a deliberate 180-degree yaw — the AOCS coupling
+# is intentional). Blowdown 22.0 -> 9.33 bar (2.36:1), thrust 0.33 -> 0.14 N,
+# Isp 220 -> 196 s (208 s mean), 0.400 kg propellant = 66.9 m/s total dV.
+# The catalyst bed preheats at 12 W for ~20 min via HEATER_THRUSTER (S8
+# func 42, TCS circuit 2) before arming is permitted.
+#
+# dV budget framing (debris avoidance + drag make-up, 2-yr active phase):
+#   drag make-up 42.6 + SMA/LTAN biasing 3.0 + CAM (6 events) 0.6
+#   + commissioning/cal 1.0 + eccentricity control 1.5 + margins 7.3
+#   = 56.0 m/s required vs 66.9 m/s capability (+19.5 %).
+#
+# Burn convention: finite burn integrated at <= 1 s sub-steps while FIRING;
+# the resulting dV is applied to the SGP4 orbit as a SINGLE IMPULSE at the
+# burn MID-POINT (finite-burn gravity loss for a 32 s burn on this orbit is
+# 0.005 % — negligible), via a TLE differential-correction re-fit that bumps
+# orbit epoch_version (0x0B19) so planner/MCS caches invalidate.
+#
+# OUT OF SCOPE (model limitations, taught not simulated): multi-thruster /
+# thrust-vector control; propulsive disposal; plane changes / direct
+# inclination-LTAN control; orbit raising / phasing / rendezvous; closed-loop
+# autonomous orbit control; real conjunction screening (CAM is a scripted
+# scenario input); combustion/feed transients; non-isothermal blowdown;
+# slosh / CG migration; inertia-tensor coupling (published as TM only);
+# propellant servicing / pyro / burst-disc actuation (S12 alarm only);
+# redundant thruster (two latch-valve BRANCHES, one thruster behind them).
+
+model: prop_basic
+propellant: "LMP-103S/ADN"
+
+# Masses. sc_dry_mass_kg is the whole-spacecraft dry mass INCLUDING the
+# 1.15 kg propulsion dry mass; wet = 12.40 kg at BOL.
+sc_dry_mass_kg: 12.0
+propellant_mass_kg: 0.400
+propellant_density_kg_m3: 1240.0
+
+# Tank / blowdown (isothermal, P*V_ull = const): 560 cm3 tank, 237 cm3
+# initial ullage, 22.0 bar BOL -> 22*237.4/560 = 9.33 bar at depletion.
+tank_volume_cm3: 560.0
+tank_pressure_bol_bar: 22.0
+tank_pressure_eol_bar: 9.33
+
+# Thruster: F = F0 * P/P0 (blowdown), Isp linear in P between BOL and EOL.
+thrust_bol_n: 0.33
+isp_bol_s: 220.0
+isp_eol_s: 196.0
+thrust_axis: [1.0, 0.0, 0.0]     # +X body; retrograde needs a 180-deg yaw
+thrust_offset_mm: 5.0            # -> 1.65 mN*m disturbance torque at BOL
+
+# Power: valve drivers/electronics while ARMED or FIRING (billed on the EPS
+# `prop` line from actual state); the 12 W catbed heater is the TCS thruster
+# circuit (HEATER_THRUSTER func 42) on the same line.
+valve_power_w: 2.0
+catbed_heater_w: 12.0
+
+# Two-step arming: PROP_SET_BURN must precede PROP_ARM (code 0xA5C3) by no
+# more than arm_window_s.
+arm_code: 0xA5C3
+arm_window_s: 300.0
+
+# Arm interlocks — ALL must hold; each failure returns a distinct S1(8) code
+# and sets its bit in prop.arm_inhibit_mask (0x0B15).
+interlocks:
+  catbed_min_c: 180.0            # tcs.temp_thruster (0x0409)
+  tank_p_min_bar: 6.0
+  tank_p_max_bar: 24.0
+  prop_min_g: 5.0
+  aocs_modes: [4, 5, 9]          # NOMINAL / FINE_POINT / INERTIAL (yaw hold)
+  att_err_max_deg: 2.0           # aocs.att_error (0x0217)
+  soc_min_pct: 45.0              # eps.bat_soc (0x0101)
+  min_phase: 6                   # spacecraft phase >= NOMINAL
+  allow_eclipse_burn: false      # scenario override in simulation.yaml prop:
+
+# On-board burn-abort thresholds (PROP_SET_LIMITS reconfigures in flight).
+abort:
+  att_err_max_deg: 2.0
+  p_min_bar: 4.0
+  catbed_max_c: 350.0
+  t_burn_max_s: 300.0
+
+param_ids:
+  state: 0x0B00
+  tank_pressure: 0x0B01
+  propellant_mass: 0x0B02
+  propellant_pct: 0x0B03
+  tank_temp: 0x0B04
+  catbed_temp: 0x0B05
+  latch_a_state: 0x0B06
+  latch_b_state: 0x0B07
+  fcv_state: 0x0B08
+  thrust_est: 0x0B09
+  isp_est: 0x0B0A
+  dv_accum: 0x0B0B
+  dv_remaining: 0x0B0C
+  burn_status: 0x0B0D
+  burn_dv_cmd: 0x0B0E
+  burn_dv_achieved: 0x0B0F
+  burn_time_cmd: 0x0B10
+  burn_time_elapsed: 0x0B11
+  burn_count: 0x0B12
+  total_on_time: 0x0B13
+  abort_reason: 0x0B14
+  arm_inhibit_mask: 0x0B15
+  leak_rate: 0x0B16
+  thrust_offset_torque: 0x0B17
+  sc_mass: 0x0B18
+  orbit_epoch_version: 0x0B19
+  sma_km: 0x0B1A
+  power_draw: 0x0B1B

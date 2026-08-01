@@ -5,6 +5,7 @@ are lost. Exercises both the simulator-side queue and the RF pipeline.
 """
 
 import asyncio
+import math
 import queue
 import struct
 import time
@@ -382,19 +383,25 @@ class TestNominalModeSustained:
             # Small delay to let TX process
             time.sleep(0.1)
 
-        # Wait for recovery
-        # Wait for recovery using batch drain with retries
+        # Wait for recovery using batch drain with retries. The silence that
+        # means "the pipeline has finished" is measured in FRAMES, not in a
+        # fixed number of 0.3 s polls: the downlink delivers telemetry one
+        # transfer frame at a time, and a frame takes 0.08 s at the ladder's
+        # HIGH tier and 1.28 s at LOW. A fixed poll count is a silent
+        # under-count of `recovered` as soon as the rate drops.
         recovered = []
-        empty_rounds = 0
+        quiet_polls = 0
+        poll = min(0.25, max(0.02, coord.frame_air_time_s / 4.0))
+        quiet_needed = max(2, math.ceil(3.0 * coord.frame_air_time_s / poll))
         deadline = time.monotonic() + 20.0
-        while time.monotonic() < deadline and empty_rounds < 5:
+        while time.monotonic() < deadline and quiet_polls < quiet_needed:
             batch = coord.drain_recovered_packets()
             if batch:
                 recovered.extend(batch)
-                empty_rounds = 0
+                quiet_polls = 0
             else:
-                empty_rounds += 1
-                time.sleep(0.3)
+                quiet_polls += 1
+                time.sleep(poll)
         coord.stop()
 
         diag = coord.get_diagnostics()

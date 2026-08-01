@@ -38,12 +38,49 @@ def evaluate_condition(condition: str, value: float, threshold: float) -> bool:
 
 @dataclass
 class FaultPropagationRule:
-    """Models how a fault cascades to other subsystems."""
+    """Models how a fault cascades to other subsystems.
+
+    ``condition`` is explicit in the configuration rather than inferred from
+    the parameter name: the file declares thresholds like ``2.0`` for
+    "fewer than two wheels" and ``80.0`` for "hotter than 80 C", and guessing
+    the direction from the description is exactly the kind of drift the
+    contract tests exist to stop.  Supported: ``<``, ``>``, ``==``,
+    ``bitset`` (any bit named in ``flags`` set in an integer bitmask).
+    """
     fault_id: str
     description: str
     primary_param: str
     threshold: Optional[float] = None
     cascades: list[dict] = field(default_factory=list)
+    condition: str = "<"
+    flags: list[int] = field(default_factory=list)
+    persist_s: float = 0.0
+    recovery: str = ""
+    #: Optional precondition: {"param": <dotted name>, "min": <float>}. The
+    #: rule is not evaluated at all unless the named parameter is >= min.
+    #: Without this, "fewer than two wheels are enabled" is true whenever the
+    #: reaction-wheel bus is simply unpowered, and FDIR declares a double wheel
+    #: failure on a spacecraft that has not been switched on yet.
+    requires: dict = field(default_factory=dict)
+
+    def evaluate(self, value: float) -> bool:
+        """True when *value* means this fault is present."""
+        cond = (self.condition or "<").strip()
+        if cond == "bitset":
+            try:
+                mask = int(value)
+            except (TypeError, ValueError):
+                return False
+            return any((mask >> int(b)) & 1 for b in self.flags)
+        if self.threshold is None:
+            return False
+        if cond.startswith("<"):
+            return value < self.threshold
+        if cond.startswith(">"):
+            return value > self.threshold
+        if cond.startswith("=="):
+            return abs(value - self.threshold) < 0.5
+        return False
 
 
 @dataclass
@@ -56,6 +93,11 @@ class RecoveryState:
     max_attempts: int = 3
     last_attempt_time: float = 0.0
     state: str = "IDLE"  # IDLE, RUNNING, COMPLETE, FAILED
+    level: int = 0            # current escalation level (1..3), 0 = not started
+    level_started: float = 0.0
+    exec_id: str = ""         # active procedure execution, if any
+    procedure: str = ""       # procedure id started at this level
+    group: str = ""           # recovery_actions group in fault_propagation.yaml
 
 
 class FaultPropagator:
@@ -132,15 +174,70 @@ class FaultPropagator:
         rs.last_attempt_time = current_time
         return rs.recovery_attempts < rs.max_attempts
 
+    def rules(self) -> list[FaultPropagationRule]:
+        return list(self._propagation_rules.values())
+
+    def fault_detected_at(self, fault_id: str) -> Optional[float]:
+        return self._active_faults.get(fault_id)
+
+    def recovery_states(self) -> dict[str, RecoveryState]:
+        return dict(self._recovery_states)
+
+    # ─── State save/restore (plan A-4) ───────────────────────────────
+
+    def get_state(self) -> dict:
+        return {
+            "active_faults": dict(self._active_faults),
+            "recovery_states": {
+                fid: {
+                    "fault_id": rs.fault_id, "response_taken": rs.response_taken,
+                    "timestamp": rs.timestamp,
+                    "recovery_attempts": rs.recovery_attempts,
+                    "max_attempts": rs.max_attempts,
+                    "last_attempt_time": rs.last_attempt_time,
+                    "state": rs.state, "level": rs.level,
+                    "level_started": rs.level_started, "exec_id": rs.exec_id,
+                    "procedure": rs.procedure, "group": rs.group,
+                }
+                for fid, rs in self._recovery_states.items()
+            },
+        }
+
+    def set_state(self, state: dict) -> None:
+        self._active_faults = {str(k): float(v) for k, v in
+                               (state.get("active_faults") or {}).items()}
+        self._recovery_states = {}
+        for fid, d in (state.get("recovery_states") or {}).items():
+            self._recovery_states[fid] = RecoveryState(**d)
+
 
 class LoadSheddingManager:
     """Manages priority-based load shedding based on battery SoC."""
+
+    # Entry thresholds (battery SoC %) for stages 1/2/3, highest first.
+    # Module-level fallback only — the engine overrides these from
+    # simulation.yaml eps.load_shed.soc_stage_thresholds_pct (defect #51).
+    DEFAULT_SOC_STAGE_THRESHOLDS = (30.0, 20.0, 10.0)
 
     def __init__(self):
         self._current_stage = LOAD_SHED_STAGE_NORMAL
         self._stage_config: dict[int, dict] = {}
         self._callbacks: dict[str, Callable] = {}
         self._last_stage_change = 0.0
+        self._soc_thresholds: list[float] = list(self.DEFAULT_SOC_STAGE_THRESHOLDS)
+
+    def set_soc_stage_thresholds(self, thresholds: list[float]) -> None:
+        """Set stage 1/2/3 SoC entry thresholds (descending)."""
+        vals = [float(t) for t in thresholds if t is not None]
+        if len(vals) != 3:
+            logger.warning("Load shed: expected 3 SoC stage thresholds, got %r "
+                           "— keeping %r", thresholds, self._soc_thresholds)
+            return
+        self._soc_thresholds = sorted(vals, reverse=True)
+        logger.info("Load shed SoC stage thresholds: %s", self._soc_thresholds)
+
+    def soc_stage_thresholds(self) -> list[float]:
+        return list(self._soc_thresholds)
 
     def register_stage_config(self, stage: int, config: dict) -> None:
         """Register configuration for a load shedding stage."""
@@ -152,12 +249,18 @@ class LoadSheddingManager:
         self._callbacks[action] = callback
 
     def get_required_stage(self, soc: float) -> int:
-        """Determine required load shedding stage based on SoC."""
-        if soc >= 30.0:
+        """Determine required load shedding stage based on SoC.
+
+        Thresholds come from simulation.yaml (via ``set_soc_stage_thresholds``)
+        rather than being hard-coded here, so the ladder has a single
+        configurable source.
+        """
+        t1, t2, t3 = self._soc_thresholds
+        if soc >= t1:
             return LOAD_SHED_STAGE_NORMAL
-        elif soc >= 20.0:
+        elif soc >= t2:
             return LOAD_SHED_STAGE_1
-        elif soc >= 10.0:
+        elif soc >= t3:
             return LOAD_SHED_STAGE_2
         else:
             return LOAD_SHED_STAGE_3
@@ -198,6 +301,19 @@ class LoadSheddingManager:
         config = self._stage_config.get(stage, {})
         return config.get("name", f"Stage {stage}")
 
+    # ─── State save/restore (plan A-4) ───────────────────────────────
+    # The stage used to reset to NORMAL on breakpoint load while the restored
+    # power lines were still shed (brief 08 B-2).
+
+    def get_state(self) -> dict:
+        return {"current_stage": self._current_stage,
+                "last_stage_change": self._last_stage_change}
+
+    def set_state(self, state: dict) -> None:
+        self._current_stage = int(state.get("current_stage",
+                                            LOAD_SHED_STAGE_NORMAL))
+        self._last_stage_change = float(state.get("last_stage_change", 0.0))
+
 
 class ProcedureExecutor:
     """Manages procedure loading and execution."""
@@ -207,6 +323,7 @@ class ProcedureExecutor:
         self._active_procedures: dict[str, "ProcedureExecution"] = {}
         self._callbacks: dict[str, Callable] = {}
         self._event_callback: Optional[Callable] = None
+        self._last_finished: Optional["ProcedureExecution"] = None
 
     def register_procedure(self, proc_id: str, config: dict) -> None:
         """Register a procedure definition."""
@@ -256,6 +373,7 @@ class ProcedureExecutor:
         completed = []
         for exec_id, proc in list(self._active_procedures.items()):
             if proc.state == "COMPLETE" or proc.state == "FAILED":
+                self._last_finished = proc
                 completed.append(exec_id)
                 continue
 
@@ -269,6 +387,13 @@ class ProcedureExecutor:
                 if current_time - proc.start_time >= step_delay:
                     self._execute_step(proc, step, current_time)
                     step["executed"] = True
+
+            # Step counters drive the proc.* telemetry (0x0900-0x0903) and the
+            # progress bar in the FDIR window. `ProcedureExecution.tick` never
+            # updated them, so both read 0 for the whole run.
+            proc.completed_steps = sum(1 for s in proc.steps if s.get("executed"))
+            proc.current_step = min(proc.completed_steps + 1, len(proc.steps)) \
+                if proc.steps else 0
 
             # Check if procedure complete
             all_done = all(s.get("executed", False) for s in proc.steps)
@@ -316,10 +441,59 @@ class ProcedureExecutor:
                 "proc_id": proc.proc_id,
                 "state": proc.state,
                 "step": proc.current_step,
+                "completed_steps": proc.completed_steps,
                 "total_steps": len(proc.steps),
+                "progress_pct": (100.0 * proc.completed_steps / len(proc.steps)
+                                 if proc.steps else 0.0),
             }
             for proc in self._active_procedures.values()
         ]
+
+    def execution_state(self, exec_id: str) -> Optional[str]:
+        proc = self._active_procedures.get(exec_id)
+        if proc is not None:
+            return proc.state
+        if self._last_finished is not None and self._last_finished.exec_id == exec_id:
+            return self._last_finished.state
+        return None
+
+    def registered_procedures(self) -> list[str]:
+        return sorted(self._procedures)
+
+    # ─── State save/restore (plan A-4) ───────────────────────────────
+
+    def get_state(self) -> dict:
+        # `steps` is deep-copied out and in: the step dicts carry the per-run
+        # `executed` flag that `tick_procedures` writes, so handing the live
+        # list to a breakpoint (or restoring the breakpoint's own list into a
+        # live execution) let snapshot and running procedure mutate each
+        # other (G2-f).
+        import copy
+        return {
+            "active": [
+                {
+                    "exec_id": p.exec_id, "proc_id": p.proc_id,
+                    "steps": copy.deepcopy(p.steps), "start_time": p.start_time,
+                    "state": p.state, "current_step": p.current_step,
+                    "completed_steps": p.completed_steps,
+                }
+                for p in self._active_procedures.values()
+            ],
+        }
+
+    def set_state(self, state: dict) -> None:
+        import copy
+        self._active_procedures = {}
+        for d in state.get("active") or []:
+            ex = ProcedureExecution(
+                exec_id=d["exec_id"], proc_id=d["proc_id"],
+                steps=copy.deepcopy(d.get("steps", [])),
+                start_time=d.get("start_time", 0.0),
+                state=d.get("state", "RUNNING"),
+                current_step=d.get("current_step", 0),
+                completed_steps=d.get("completed_steps", 0),
+            )
+            self._active_procedures[ex.exec_id] = ex
 
 
 @dataclass

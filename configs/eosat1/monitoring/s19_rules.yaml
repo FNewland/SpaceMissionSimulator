@@ -1,28 +1,57 @@
 # S19 Event-Action Rules
-# Format: ea_id, event_type (severity or specific event ID), action_func_id, description
 #
-# Automatically triggers S8 function commands when specified events occur.
+# Each rule links an on-board condition to one S8 function that the spacecraft
+# executes autonomously, with no operator in the loop.
+#
+#   ea_id            unique rule id (uint16)
+#   trigger.kind     WHICH NAMESPACE the trigger id lives in:
+#                      event -> an S5 event id from configs/eosat1/events/event_catalog.yaml
+#                      param -> a parameter id watched by monitoring/s12_definitions.yaml
+#                               (fires on the S12 limit violation for that parameter)
+#   trigger.id       the id itself (uint16)
+#   action_func_id   the S8 function dispatched when the rule fires
+#
+# The `kind` discriminator is mandatory in practice: event ids and parameter
+# ids both live in 0x0000-0x0FFF, so the bare `event_type:` field this file
+# used to carry was ambiguous and the dispatcher matched BOTH namespaces —
+# 17 of the 26 rules below fired on two unrelated conditions (defect #70).
+# The legacy `event_type:` field is still accepted by the loader and is always
+# read as kind `event`.
+#
+# The trigger ids themselves are UNCHANGED by the disambiguation. Where a
+# rule's chosen id does not agree with its own description (1001, 1002, 1003,
+# 2004) that is trigger drift, an FDIR-domain decision owned by Flight Ops; it
+# is recorded in tests/test_content/test_s19_rules_content.py (KNOWN_TRIGGER_DRIFT)
+# rather than silently "fixed" here. The same applies to the 13 rules whose
+# action_func_id contradicts their description (KNOWN_MISROUTED).
+#
 # Loaded at engine startup and registered with the S19 framework.
 
 s19_rules:
   # ===== EPS Power Management =====
   - name: eps_bus_undervoltage_payload_off
     ea_id: 1001
-    event_type: 0x0102  # BUS_UNDERVOLTAGE
+    trigger:
+      kind: event          # 0x0102 = BATTERY_SOC_CRITICAL in event_catalog.yaml. NOTE: the rule name/description say "bus undervoltage", which is 0x0103/0x0104 — trigger drift, flagged for Flight Ops (defect #70), id deliberately unchanged
+      id: 0x0102   # was: BUS_UNDERVOLTAGE
     action_func_id: 10   # S8 func 10: payload mode OFF (load shedding)
     description: "EPS Bus Undervoltage -> Payload Off (Load Shed)"
     enabled: true
 
   - name: eps_soc_critical_fpa_cooler_off
     ea_id: 1002
-    event_type: 0x0100  # SOC_CRITICAL (battery <20%)
+    trigger:
+      kind: event          # 0x0100 = EPS_MODE_CHANGE. NOTE: description says "SoC critical" (=0x0102) — trigger drift, flagged for Flight Ops, id unchanged
+      id: 0x0100   # was: SOC_CRITICAL (battery <20%)
     action_func_id: 11   # S8 func 11: FPA cooler OFF
     description: "EPS Battery SoC Critical -> FPA Cooler Off"
     enabled: true
 
   - name: eps_soc_critical_payload_power_off
     ea_id: 1003
-    event_type: 0x0100  # SOC_CRITICAL
+    trigger:
+      kind: event          # 0x0100 = EPS_MODE_CHANGE. NOTE: description says "SoC critical" — trigger drift, flagged for Flight Ops, id unchanged
+      id: 0x0100   # was: SOC_CRITICAL
     action_func_id: 14   # S8 func 14: power line OFF (dynamic load shedding)
     description: "EPS Battery SoC Critical -> Payload Power Off"
     enabled: true
@@ -30,50 +59,75 @@ s19_rules:
   # ===== AOCS Momentum Management =====
   - name: aocs_momentum_saturation_desaturate
     ea_id: 2001
-    event_type: 0x025B  # AOCS total_momentum saturation (custom event from S12)
+    trigger:
+      kind: param          # S12 monitor on 0x02BA AOCS momentum envelope %
+      id: 0x02BA   # Phase C: h_env_frac (%); the old 0x025B monitor sat at
+                   # ±90 N·m·s against an 11.5 N·m·s max — dead autonomy
     action_func_id: 1    # S8 func 1: desaturate wheels
     description: "AOCS Momentum Saturated -> Trigger Desaturation"
     enabled: true
 
   - name: aocs_star_tracker_1_blind_switch
     ea_id: 2002
-    event_type: 0x0240  # AOCS star tracker 1 blind/failed (custom from S12)
+    trigger:
+      kind: param          # S12 monitor on 0x0240 star tracker 1
+      id: 0x0240   # was: AOCS star tracker 1 blind/failed (custom from S12)
     action_func_id: 6    # S8 func 6: ST select (switch to redundant)
+    action_data: [0x02]  # select ST2 (previously no byte -> defaulted to ST1, a no-op)
     description: "AOCS Star Tracker 1 Blind -> Switch to ST2"
     enabled: true
 
   - name: aocs_star_tracker_2_blind_fallback
     ea_id: 2003
-    event_type: 0x0243  # AOCS star tracker 2 blind/failed
-    action_func_id: 6    # S8 func 6: ST select (will select default or available)
+    trigger:
+      kind: param          # S12 monitor on 0x0243 star tracker 2
+      id: 0x0243   # was: AOCS star tracker 2 blind/failed
+    action_func_id: 6    # S8 func 6: ST select (fall back to ST1)
+    action_data: [0x01]
     description: "AOCS Star Tracker 2 Blind -> ST Fallback"
     enabled: true
 
   - name: aocs_attitude_error_safe_mode
     ea_id: 2004
-    event_type: 0x0202  # ATT_WARNING (attitude error high, from S12)
-    action_func_id: 0    # S8 func 0: AOCS set_mode SAFE
+    trigger:
+      kind: param          # Phase C WP-9: trigger is now the S12 att_error
+      id: 0x0217           # monitor (was event 0x0202 RW_BEARING_DEGRADED —
+                           # trigger drift; the rule NAME was always att-error)
+    action_func_id: 0    # S8 func 0: AOCS set_mode
+    action_data: [0x03]  # mode 3 = COARSE_SUN (sun-safe); with no byte this
+                         # commanded mode 0 = AOCS OFF
     description: "AOCS Attitude Error High -> Safe Mode"
-    enabled: true
+    # Phase C: DISABLED by default. With real dynamics every commanded slew
+    # or acquisition legitimately crosses the 1.0° S12 monitor and this rule
+    # would autonomously abort it to COARSE_SUN. Sustained-excursion safing
+    # is owned by fdir.yaml (att_error > 5°, persist_s 420). Instructors can
+    # enable this rule for FDIR exercises via TC(19,4).
+    enabled: false
 
   # ===== TCS Thermal Management =====
   - name: tcs_fpa_overtemp_payload_off
     ea_id: 3001
-    event_type: 0x0408  # TCS FPA temperature (from S12)
+    trigger:
+      kind: param          # S12 monitor on 0x0408 TCS FPA temperature
+      id: 0x0408   # was: TCS FPA temperature (from S12)
     action_func_id: 20   # S8 func 20: Payload mode OFF
     description: "TCS FPA Overtemp -> Payload Off"
     enabled: true
 
   - name: tcs_battery_overtemp_transponder_off
     ea_id: 3002
-    event_type: 0x0407  # TCS Battery temperature (from S12)
+    trigger:
+      kind: param          # S12 monitor on 0x0407 TCS battery temperature
+      id: 0x0407   # was: TCS Battery temperature (from S12)
     action_func_id: 12   # S8 func 12: Transponder TX OFF (reduce power)
     description: "TCS Battery Overtemp -> Transponder TX Off"
     enabled: true
 
   - name: tcs_obc_overtemp_safe_mode
     ea_id: 3003
-    event_type: 0x0406  # TCS OBC temperature (from S12)
+    trigger:
+      kind: param          # S12 monitor on 0x0406 TCS OBC temperature
+      id: 0x0406   # was: TCS OBC temperature (from S12)
     action_func_id: 40   # S8 func 40: OBDH set_mode SAFE
     description: "TCS OBC Overtemp -> OBC Safe Mode"
     enabled: true
@@ -81,21 +135,27 @@ s19_rules:
   # ===== TTC Link Management =====
   - name: ttc_link_margin_critical_boost_tx
     ea_id: 4001
-    event_type: 0x0503  # TTC link_margin critical (from S12)
+    trigger:
+      kind: param          # S12 monitor on 0x0503 TTC link margin
+      id: 0x0503   # was: TTC link_margin critical (from S12)
     action_func_id: 68   # S8 func 68: TTC set_tx_power (increase). NOTE: func 55 is OBDH obc_boot_app, NOT set-TX — mapping 55 here auto-booted the OBC out of bootloader at startup (bug 3 root cause).
     description: "TTC Link Margin Critical -> Increase TX Power"
     enabled: true
 
   - name: ttc_pa_overheat_pa_off
     ea_id: 4002
-    event_type: 0x050F  # TTC PA temperature (from S12)
+    trigger:
+      kind: param          # S12 monitor on 0x050F TTC PA temperature
+      id: 0x050F   # was: TTC PA temperature (from S12)
     action_func_id: 54   # S8 func 54: PA OFF
     description: "TTC PA Overheat -> PA Off"
     enabled: true
 
   - name: ttc_high_ber_boost_tx
     ea_id: 4003
-    event_type: 0x050C  # TTC bit error rate high (from S12)
+    trigger:
+      kind: param          # S12 monitor on 0x050C TTC bit error rate
+      id: 0x050C   # was: TTC bit error rate high (from S12)
     action_func_id: 68   # S8 func 68: TTC set_tx_power (increase). NOTE: func 55 is OBDH obc_boot_app, NOT set-TX — mapping 55 here auto-booted the OBC out of bootloader at startup (bug 3 root cause).
     description: "TTC High BER -> Increase TX Power"
     enabled: true
@@ -103,28 +163,36 @@ s19_rules:
   # ===== OBDH System Management =====
   - name: obc_reboot_event
     ea_id: 5001
-    event_type: 0x0301  # OBC_REBOOT
+    trigger:
+      kind: event          # 0x0301 = OBC_REBOOT in event_catalog.yaml
+      id: 0x0301   # was: OBC_REBOOT
     action_func_id: 42   # S8 func 42: OBC reboot
     description: "OBC Reboot Event -> Acknowledge"
     enabled: true
 
   - name: obdh_excessive_reboots_switch_bus
     ea_id: 5002
-    event_type: 0x030A  # OBDH reboot_count (from S12)
+    trigger:
+      kind: param          # S12 monitor on 0x030A OBDH reboot count
+      id: 0x030A   # was: OBDH reboot_count (from S12)
     action_func_id: 44   # S8 func 44: OBC select bus (switch CAN bus)
     description: "OBDH Excessive Reboots -> Switch CAN Bus"
     enabled: true
 
   - name: obdh_memory_errors_scrub
     ea_id: 5003
-    event_type: 0x031E  # OBDH memory errors (from S12)
+    trigger:
+      kind: param          # S12 monitor on 0x031E OBDH memory errors
+      id: 0x031E   # was: OBDH memory errors (from S12)
     action_func_id: 41   # S8 func 41: memory scrub
     description: "OBDH Memory Errors -> Memory Scrub"
     enabled: true
 
   - name: obdh_cpu_overload_safe_mode
     ea_id: 5004
-    event_type: 0x0302  # OBDH CPU_load (from S12)
+    trigger:
+      kind: param          # S12 monitor on 0x0302 OBDH CPU load
+      id: 0x0302   # was: OBDH CPU_load (from S12)
     action_func_id: 40   # S8 func 40: set_mode SAFE
     description: "OBDH CPU Overload -> Safe Mode"
     enabled: true
@@ -132,21 +200,27 @@ s19_rules:
   # ===== Payload Imaging Management =====
   - name: payload_storage_full_stop_imaging
     ea_id: 6001
-    event_type: 0x0604  # Payload storage_used (from S12)
+    trigger:
+      kind: param          # S12 monitor on 0x0604 payload storage used
+      id: 0x0604   # was: Payload storage_used (from S12)
     action_func_id: 20   # S8 func 20: Payload mode OFF
     description: "Payload Storage Full -> Stop Imaging"
     enabled: true
 
   - name: payload_fpa_overtemp_standby
     ea_id: 6002
-    event_type: 0x0601  # Payload FPA temperature (from S12)
+    trigger:
+      kind: param          # S12 monitor on 0x0601 payload FPA temperature
+      id: 0x0601   # was: Payload FPA temperature (from S12)
     action_func_id: 21   # S8 func 21: set_scene (standby mode)
     description: "Payload FPA Overtemp -> Payload Standby"
     enabled: true
 
   - name: payload_checksum_errors_verify
     ea_id: 6003
-    event_type: 0x0609  # Payload checksum_errors (from S12)
+    trigger:
+      kind: param          # S12 monitor on 0x0609 payload checksum errors
+      id: 0x0609   # was: Payload checksum_errors (from S12)
     action_func_id: 26   # S8 func 26: get_image_catalog (diagnostics)
     description: "Payload Checksum Errors -> Verify Data"
     enabled: true
@@ -154,43 +228,124 @@ s19_rules:
   # ===== Reaction Wheel Monitoring =====
   - name: aocs_wheel_1_overspeed_disable
     ea_id: 2005
-    event_type: 0x0207  # AOCS RW1 speed (from S12)
+    trigger:
+      kind: param          # S12 monitor on 0x0207 RW1 speed
+      id: 0x0207   # was: AOCS RW1 speed (from S12)
     action_func_id: 2    # S8 func 2: disable_wheel 0
+    action_data: [0x00]  # wheel index 0 (previously no byte -> always wheel 0)
     description: "AOCS Wheel 1 Overspeed -> Disable Wheel 1"
     enabled: true
 
   - name: aocs_wheel_2_overspeed_disable
     ea_id: 2006
-    event_type: 0x0208  # AOCS RW2 speed (from S12)
+    trigger:
+      kind: param          # S12 monitor on 0x0208 RW2 speed
+      id: 0x0208   # was: AOCS RW2 speed (from S12)
     action_func_id: 2    # S8 func 2: disable_wheel 1
+    action_data: [0x01]  # wheel index 1 (previously no byte -> always wheel 0)
     description: "AOCS Wheel 2 Overspeed -> Disable Wheel 2"
     enabled: true
 
   - name: aocs_wheel_3_overspeed_disable
     ea_id: 2007
-    event_type: 0x0209  # AOCS RW3 speed (from S12)
+    trigger:
+      kind: param          # S12 monitor on 0x0209 RW3 speed
+      id: 0x0209   # was: AOCS RW3 speed (from S12)
     action_func_id: 2    # S8 func 2: disable_wheel 2
+    action_data: [0x02]  # wheel index 2 (previously no byte -> always wheel 0)
     description: "AOCS Wheel 3 Overspeed -> Disable Wheel 3"
     enabled: true
 
   - name: aocs_wheel_4_overspeed_disable
     ea_id: 2008
-    event_type: 0x020A  # AOCS RW4 speed (from S12)
+    trigger:
+      kind: param          # S12 monitor on 0x020A RW4 speed
+      id: 0x020A   # was: AOCS RW4 speed (from S12)
     action_func_id: 2    # S8 func 2: disable_wheel 3
+    action_data: [0x03]  # wheel index 3 (previously no byte -> always wheel 0)
     description: "AOCS Wheel 4 Overspeed -> Disable Wheel 4"
     enabled: true
 
   # ===== Solar Array Degradation =====
   - name: eps_solar_array_a_degraded_loadshed
     ea_id: 1004
-    event_type: 0x0103  # EPS SA_A_current low (from S12)
+    trigger:
+      kind: param          # S12 monitor on 0x0103 EPS SA-A current
+      id: 0x0103   # was: EPS SA_A_current low (from S12)
     action_func_id: 10   # S8 func 10: set_payload_mode OFF
     description: "EPS Solar Array A Degraded -> Load Shedding"
     enabled: true
 
   - name: eps_solar_array_b_degraded_loadshed
     ea_id: 1005
-    event_type: 0x0104  # EPS SA_B_current low (from S12)
+    trigger:
+      kind: param          # S12 monitor on 0x0104 EPS SA-B current
+      id: 0x0104   # was: EPS SA_B_current low (from S12)
     action_func_id: 10   # S8 func 10: set_payload_mode OFF
     description: "EPS Solar Array B Degraded -> Load Shedding"
     enabled: true
+
+  # ===== Propulsion (Phase D) — ea_id 8001+ =====
+  # Autonomous burn protection. Funcs: 112 = PROP_ABORT, 114 = PROP_ISO_CLOSE,
+  # 109 = PROP_DISARM (Phase D block 108-118; brief 03's planned 85-95 was
+  # taken by the Phase C AOCS pointing commands).
+  - name: prop_burn_abort_on_attitude_error
+    ea_id: 8001
+    trigger:
+      kind: param          # S12 monitor on 0x0217 aocs.att_error (> 1.0 deg)
+      id: 0x0217
+    action_func_id: 112  # PROP_ABORT — harmless no-op when not FIRING
+    description: "Attitude error out of limits during burn -> abort the burn (thrust off-axis; see CTG-002 for the AOCS recovery)"
+    enabled: true
+
+  - name: prop_abort_on_low_tank_pressure
+    ea_id: 8002
+    trigger:
+      kind: param          # S12 monitors on 0x0B01 prop.tank_pressure
+      id: 0x0B01
+    action_func_id: 112  # PROP_ABORT
+    description: "Tank pressure out of band -> abort the burn"
+    enabled: true
+
+  - name: prop_abort_on_catbed_overtemp
+    ea_id: 8003
+    trigger:
+      kind: event          # 0x0809 PROP_CATBED_OVERTEMP
+      id: 0x0809
+    action_func_id: 112  # PROP_ABORT
+    description: "Catalyst bed over temperature -> abort the burn"
+    enabled: true
+
+  - name: prop_isolate_on_leak
+    ea_id: 8004
+    trigger:
+      kind: event          # 0x080B PROP_LEAK_DETECTED
+      id: 0x080B
+    action_func_id: 114  # PROP_ISO_CLOSE
+    action_data: [0x02]  # both branches (CTG-028 step 2)
+    description: "Propellant leak -> isolate both latch-valve branches"
+    enabled: true
+
+  - name: prop_disarm_on_safe_mode
+    ea_id: 8005
+    trigger:
+      kind: event          # 0x0F0A SAFE_MODE_ENTRY
+      id: 0x0F0A
+    action_func_id: 109  # PROP_DISARM
+    description: "Safe-mode entry -> disarm propulsion (safing must always disarm)"
+    enabled: true
+
+  - name: prop_abort_on_soc_critical
+    ea_id: 8006
+    trigger:
+      kind: event          # 0x0102 BATTERY_SOC_CRITICAL
+      id: 0x0102
+    action_func_id: 112  # PROP_ABORT
+    description: "Battery SoC critical -> abort the burn (a manoeuvre is a power activity)"
+    enabled: true
+
+  # NOTE: the brief's rule 8007 ("inhibit after SECOND abort") needs a
+  # 2-count trigger the S19 dispatcher does not have; the double-abort latch
+  # is implemented deterministically inside prop_basic (INHIBIT(3) after the
+  # second abort, PROP_INHIBIT_CLR to clear) instead of as a rule that would
+  # have latched on the FIRST abort.

@@ -27,12 +27,14 @@ steps:
 
   - step_id: 3
     name: "Reduce TX Power"
-    description: "Set TX power to reduced level"
+    description: "Set TX power to the LOW operating point (1.0 W RF)"
     delay_s: 2.0
     command: "s8_command"
     params:
       func_id: 68  # TTC_SET_TX_POWER
-      data: [0x32]  # 50% power (0x32 hex = 50)
+      # Phase E WP-2: enumerated level 0 = LOW (1.0 W); the old 0x32
+      # "50 %" byte was silently ignored by the float32-era handler.
+      data: [0x00]
 
 timeout_s: 20.0
 max_retries: 1

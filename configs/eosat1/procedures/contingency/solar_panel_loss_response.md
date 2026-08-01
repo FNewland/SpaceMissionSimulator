@@ -43,8 +43,8 @@ reduced power generation.
 | Command | Service | Subtype | Func ID | Description |
 |---|---|---|---|---|
 | HK_REQUEST | 3 | 27 | — | Request one-shot HK report |
-| PAYLOAD_SET_MODE | 8 | 1 | 20 | Set payload mode |
-| FPA_COOLER | 8 | 1 | 33 | Control FPA cooler |
+| PAYLOAD_SET_MODE | 8 | 1 | 26 | Set payload mode |
+| FPA_COOLER | 8 | 1 | 43 | Control FPA cooler |
 | AOCS_SET_MODE | 8 | 1 | 0 | Set AOCS mode |
 
 ## Procedure Steps
@@ -112,17 +112,17 @@ projected, proceed to Step 5.
 to match available generation" on the operations loop.
 
 **Step 5a — Reduce Payload to STANDBY:**
-**Action:** `PAYLOAD_SET_MODE(mode=1)` (func_id 20) — reduce from IMAGING to STANDBY
+**Action:** `PAYLOAD_SET_MODE(mode=1)` (func_id 26) — reduce from IMAGING to STANDBY
 **Verify:** `payload.mode` (0x0600) = 1 (STANDBY) within 10 s
 **Verify:** `eps.power_cons` (0x0106) decreases by >= 12 W
 
 **Step 5b — If margin still insufficient, disable FPA cooler:**
-**Action:** `FPA_COOLER(on=0)` (func_id 33)
+**Action:** `FPA_COOLER(on=0)` (func_id 43)
 **Verify:** `tcs.cooler_fpa` (0x040C) = 0 within 5 s
 **Verify:** `eps.power_cons` (0x0106) decreases by ~15 W
 
 **Step 5c — If margin still insufficient, shut down payload completely:**
-**Action:** `PAYLOAD_SET_MODE(mode=0)` (func_id 20) — full payload OFF
+**Action:** `PAYLOAD_SET_MODE(mode=0)` (func_id 26) — full payload OFF
 **Verify:** `payload.mode` (0x0600) = 0 (OFF) within 10 s
 
 **Action:** Recalculate orbit-averaged power budget with reduced loads.

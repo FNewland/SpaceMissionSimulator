@@ -1,0 +1,29 @@
+name: "Propulsion Slow Leak"
+difficulty: INTERMEDIATE
+duration_s: 5400
+briefing: |
+  A micrometeoroid strike on a feed line causes a very slow propellant leak
+  (2 mg/s) with a gradual onset over 10 minutes from T+600s. Nothing crosses
+  an absolute limit for hours: at this rate the tank loses ~0.1 bar per
+  half-orbit, buried in sensor noise on any single sample. Only trending
+  discipline — and the S12 delta monitor on prop.tank_pressure — catches it.
+  The exercise rewards the operator who plots 0x0B01 and 0x0B02 across
+  passes instead of watching instantaneous values.
+events:
+  - time_offset_s: 600
+    action: inject
+    params:
+      subsystem: prop
+      failure: leak
+      magnitude: 1.0
+      rate_mg_s: 2.0
+      onset: gradual
+      onset_duration_s: 600
+  - time_offset_s: 60
+    action: message
+    params:
+      text: "FDS note: next drag make-up burn planned in 3 days — verify propulsion trending is current."
+expected_responses:
+  - { category: detect, description: "Detect the slow pressure/mass downtrend across passes (0x0B01/0x0B02 trending; delta monitor + PROP_LEAK_DETECTED)" }
+  - { category: isolate, description: "Distinguish propellant leak (P and mass falling together) from pressurant leak; isolate branches per CTG-028" }
+  - { category: recover, description: "Bound the remaining delta-V envelope at the measured leak rate and re-plan the manoeuvre schedule" }

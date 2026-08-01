@@ -35,11 +35,15 @@ procedure. Do NOT proceed with payload operations.
 
 ### Step 3 --- Verify AOCS Pointing
 **TC:** `HK_REQUEST` SID=2 (Service 3, Subtype 25) --- request AOCS housekeeping
-**Verify:** `aocs.mode` (0x020F) = 0 (NOMINAL / NADIR_POINT) within 10 s
-**Verify:** `aocs.att_error` (0x0217) < 1.0 deg within 10 s
-**Verify:** `aocs.rate_roll` (0x0204) < 0.05 deg/s
-**Verify:** `aocs.rate_pitch` (0x0205) < 0.05 deg/s
-**Verify:** `aocs.rate_yaw` (0x0206) < 0.05 deg/s
+**Verify:** `aocs.mode` (0x020F) = 4 (NOMINAL, nadir tracking) within 10 s
+**Verify:** `aocs.att_error` (0x0217) < 1.0 deg within 10 s if already converged;
+allow up to 400 s re-convergence after a disturbance (Phase C: real settling,
+4/(ζωn) ≈ 140 s plus the rate-limited acquisition arc)
+**Verify:** |`aocs.rate_roll`| (0x0204) < 0.05 deg/s
+**Verify:** `aocs.rate_pitch` (0x0205) = -0.063 ± 0.02 deg/s (nadir tracking
+carries the orbit rate about body -Y — a zero pitch rate here would mean the
+spacecraft is NOT tracking nadir)
+**Verify:** |`aocs.rate_yaw`| (0x0206) < 0.05 deg/s
 **GO/NO-GO:** If attitude error > 1 deg or any rate > 0.1 deg/s, hold and
 evaluate. Consider executing NOM-007 momentum management before continuing.
 

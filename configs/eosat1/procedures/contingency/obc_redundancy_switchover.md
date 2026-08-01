@@ -40,9 +40,9 @@ loads correctly, and verifies all subsystems return to nominal operation.
 | Command | Service | Subtype | Func ID | Description |
 |---|---|---|---|---|
 | HK_REQUEST | 3 | 27 | — | Request one-shot HK report |
-| OBC_SWITCH_UNIT | 8 | 1 | 43 | Switch to redundant OBC (critical) |
-| OBC_BOOT_APP | 8 | 1 | 45 | Boot application software from bootloader |
-| OBC_SET_MODE | 8 | 1 | 40 | Set OBC mode |
+| OBC_SWITCH_UNIT | 8 | 1 | 53 | Switch to redundant OBC (critical) |
+| OBC_BOOT_APP | 8 | 1 | 55 | Boot application software from bootloader |
+| OBC_SET_MODE | 8 | 1 | 50 | Set OBC mode |
 
 ## Procedure Steps
 
@@ -62,7 +62,7 @@ If `obdh.reboot_count` > 4, FDIR may have already triggered safe mode.
 ### Step 2: Command OBC Switchover
 **Action:** Announce "COMMANDING OBC SWITCHOVER" on the operations loop.
 **Action:** All position operators prepare for temporary telemetry loss.
-**Action:** Command OBC switch: `OBC_SWITCH_UNIT` (func_id 43)
+**Action:** Command OBC switch: `OBC_SWITCH_UNIT` (func_id 53)
 **Note:** CRITICAL COMMAND — This will:
 1. Halt OBC-A operations
 2. Power on OBC-B processor
@@ -111,7 +111,7 @@ during the switchover. If so, restore to nominal mode after confirming stability
 switchover. Restore to STANDBY after confirming OBC stability.
 **Verify:** `ttc.link_status` (0x0501) = 1
 **Action:** If `obdh.mode` (0x0300) = 1 (SAFE), restore to NOMINAL when all subsystems
-are confirmed: `OBC_SET_MODE(mode=0)` (func_id 40)
+are confirmed: `OBC_SET_MODE(mode=0)` (func_id 50)
 **Verify:** `obdh.mode` (0x0300) = 0 (NOMINAL) within 10 s
 **GO/NO-GO:** All subsystems nominal on OBC-B — switchover complete.
 
@@ -122,7 +122,7 @@ are confirmed: `OBC_SET_MODE(mode=0)` (func_id 40)
 - OBC-B boot time and application version
 - All subsystem states post-switchover
 - Any subsystems that required mode restoration
-**Action:** Clear reboot counter if desired: `OBC_CLEAR_REBOOT_CNT` (func_id 47)
+**Action:** Clear reboot counter if desired: `OBC_CLEAR_REBOOT_CNT` (func_id 57)
 **Action:** Notify Flight Director: "OBC switchover complete. Operating on OBC-B.
 OBC-A is offline and requires engineering assessment before reuse."
 **Note:** The spacecraft is now operating on the redundant OBC with no further
@@ -140,7 +140,7 @@ OBC redundancy. Any failure of OBC-B is mission-critical.
 ## Contingency
 - If OBC-B does not respond after switchover (no HK within 60 s): The switchover may
   have failed or OBC-B has a fault. Wait up to 120 s. If still no response, OBC-B may
-  be in a boot loop. Try `OBC_BOOT_INHIBIT(inhibit=1)` (func_id 46) to stop
+  be in a boot loop. Try `OBC_BOOT_INHIBIT(inhibit=1)` (func_id 56) to stop
   auto-boot cycling, then `OBC_BOOT_APP` manually.
 - If `obdh.sw_image` remains 0 (stuck in bootloader): Application image may be corrupt.
   Follow CTG-018 (Boot Loader Recovery) for memory check and recovery.
@@ -151,5 +151,5 @@ OBC redundancy. Any failure of OBC-B is mission-critical.
   Follow CTG-017 (CAN Bus Failure Switchover) to check and switch bus.
 - If it is not possible to switch to OBC-B (command rejected or `obc_b_status` = 0):
   OBC-B may not be in STANDBY or may have a hardware fault. Attempt to recover OBC-A
-  using `OBC_REBOOT` (func_id 42). If OBC-A also cannot recover, this is a
+  using `OBC_REBOOT` (func_id 52). If OBC-A also cannot recover, this is a
   mission-critical emergency — escalate immediately.

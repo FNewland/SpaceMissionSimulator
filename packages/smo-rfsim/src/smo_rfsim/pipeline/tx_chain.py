@@ -76,6 +76,15 @@ class SpacecraftTX(threading.Thread):
         self.data_frames = 0
         self.packet_drops = 0
 
+    @property
+    def frame_interval(self) -> float:
+        """Wall-clock seconds to put one coded frame on the air.
+
+        Recomputed by ``reconfigure()``, so it follows a data-rate tier
+        change (symbol rate and modulation) rather than a fixed constant.
+        """
+        return self._frame_interval
+
     def _calc_frame_interval(self) -> float:
         """Time in seconds to transmit one coded frame."""
         frame_bytes = self._frame_length

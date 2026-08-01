@@ -165,12 +165,12 @@ Commands rejected at acceptance (S1.2) if target subsystem's EPS power line is O
 | SID | Name | Interval | Params | Power-gated |
 |-----|------|----------|--------|-------------|
 | 1 | EPS | 1.0s | 51 | No |
-| 2 | AOCS | 4.0s | 67 | aocs_wheels |
+| 2 | AOCS | 4.0s | 71 | aocs_wheels |
 | 3 | TCS | 60.0s | 17 | No |
 | 4 | Platform | 8.0s | 26 | No |
 | 5 | Payload | 8.0s | 23 | payload |
 | 6 | TTC | 8.0s | 27 | No |
-| 11 | Beacon | 30.0s | 7 | No (bootloader-safe) |
+| 11 | Beacon | 30.0s | 6 | No (bootloader-safe) |
 
 ## 5. RF Simulation Layer
 

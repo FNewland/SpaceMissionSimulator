@@ -46,7 +46,7 @@ Orbit-average power generation at sun-pointing: ~35W. Margin over survival: limi
 ### Step 2 --- Set Battery Heater to Thermostat-Only Mode
 **Check:** Verify EPS power line 5 for battery heater (`eps.pl_htr_bat`, 0x0115) is ON.
 The battery heater thermostat requires this power line to operate.
-**Action:** If `eps.pl_htr_bat` (0x0115) = 0 (OFF), send: `EPS_POWER_ON(line_index=5)` (func_id 13) 
+**Action:** If `eps.pl_htr_bat` (0x0115) = 0 (OFF), send: `EPS_POWER_ON(line_index=5)` (func_id 19) 
 to enable the battery heater power line.
 **TC:** `HEATER_CONTROL(circuit=battery, on=true)` (Service 8, Subtype 7) --- ensure battery heater
 is enabled but under thermostat control only (activates below -5 degC, deactivates above 0 degC).

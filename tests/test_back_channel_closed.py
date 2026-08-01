@@ -73,25 +73,24 @@ def test_mcs_param_cache_starts_empty_and_marks_stale():
     assert server._last_tm_frame_ts is None  # No TM received means stale
 
 
-def test_mcs_command_endpoint_returns_410_gone():
-    """Test 6: MCS /api/command endpoint is disabled (returns 410 Gone).
+def test_mcs_has_no_http_command_back_channel():
+    """Test 6: the MCS exposes no `/api/command` route at all.
 
-    All commands must use /api/pus-command via TC TCP socket,
-    not the HTTP /api/command back-channel.
+    It used to answer 410 Gone. Phase G deleted the stub together with its
+    only caller (`sendLegacyCommand()` in the removed `old_index.html`): a
+    route that exists only to refuse is still a route students find in a
+    grep, and the property this test defends is the ABSENCE of the
+    back-channel. All commands go out over the TC TCP socket via
+    /api/pus-command, which is what makes RF gating and command logging
+    possible.
     """
-    config_dir = Path(__file__).parent.parent / "configs/eosat1"
-    server = MCSServer(config_dir)
-
-    # Verify the handler exists and would return 410
-    # We test the handler logic directly
-    handler = server._handle_command
-    assert handler is not None, "_handle_command handler should exist"
-
-    # Check the source code for the 410 response
-    import inspect
-    source = inspect.getsource(handler)
-    assert '410' in source or 'gone' in source.lower(), \
-        "Handler should return 410 Gone or similar"
+    server_src = (Path(__file__).parent.parent
+                  / "packages/smo-mcs/src/smo_mcs/server.py").read_text()
+    assert 'add_post("/api/command"' not in server_src
+    assert 'add_get("/api/command"' not in server_src
+    assert not hasattr(MCSServer, "_handle_command"), \
+        "the disabled /api/command handler is back"
+    assert "_handle_pus_command" in server_src
 
 
 def test_instructor_command_rejects_tc_commands():

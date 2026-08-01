@@ -131,8 +131,13 @@ Elevation
 | 60–90 deg     | 10–12 min         | Excellent        |
 
 Higher maximum elevation passes provide longer contact times and better link margins.
-Passes with maximum elevation below 10 deg should be used only for critical commanding.
-Low-rate mode (1 kbps) extends the usable contact window for low-elevation passes.
+The 10 deg line is not a rule of thumb here — it is the HIGH tier's hard gate. A pass
+whose maximum elevation is below 10 deg can never run the 128 kbps dump tier, so it is
+usable for commanding and for routine housekeeping at LOW (16 kbps) but carries no
+imagery. Above 10 deg, only the arc above 10 deg holds HIGH: a 30 deg pass spends about
+76 % of its window above the gate, a 12 deg pass only 47 %. The mission planner computes
+that fraction from the pass geometry and books dumps accordingly, so a plan cannot quietly
+assume a flat rate.
 
 ### 4.4 Visibility and Scheduling
 

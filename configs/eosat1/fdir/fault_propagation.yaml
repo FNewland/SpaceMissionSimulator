@@ -7,7 +7,12 @@ fault_cascades:
   - fault_id: "eps_undervoltage"
     description: "EPS bus voltage drops below safe operating level"
     primary_param: "eps.bus_voltage"
-    threshold: 26.0
+    # Phase B (brief 01 WP-6): 26.0 -> 23.0 V (~19 % SoC). The old value sat at
+    # ~58 % SoC, ahead of every gentler protection in the ladder.
+    condition: "<"
+    threshold: 23.0
+    persist_s: 3.0
+    recovery: eps_recovery
     cascades:
       - target_subsystem: "aocs"
         action: "enter_safe_mode"
@@ -24,8 +29,13 @@ fault_cascades:
 
   - fault_id: "eps_overcurrent_aocs"
     description: "EPS overcurrent trip on AOCS power bus"
-    primary_param: "eps.overcurrent_flags"
+    # Phase G: the parameter is `eps.oc_trip_flags` (0x010D). The old name
+    # `eps.overcurrent_flags` exists nowhere in parameters.yaml, so this rule
+    # could never have fired even once detection was wired up.
+    primary_param: "eps.oc_trip_flags"
+    condition: "bitset"
     flags: [2]  # bus 2 = AOCS
+    recovery: eps_recovery
     cascades:
       - target_subsystem: "aocs"
         action: "enter_safe_mode"
@@ -39,7 +49,10 @@ fault_cascades:
   - fault_id: "eps_low_soc"
     description: "Battery state of charge critically low"
     primary_param: "eps.bat_soc"
+    condition: "<"
     threshold: 10.0
+    persist_s: 3.0
+    recovery: eps_recovery
     cascades:
       - target_subsystem: "payload"
         action: "power_off"
@@ -59,7 +72,15 @@ fault_cascades:
   - fault_id: "aocs_wheel_failure_dual"
     description: "Multiple reaction wheels failed (2+ wheels)"
     primary_param: "aocs.wheels_enabled"
+    condition: "<"
     threshold: 2.0  # less than 2 wheels available
+    # "Fewer than two wheels are enabled" is also true of a spacecraft whose
+    # reaction-wheel bus has not been switched on. Without this precondition
+    # FDIR declares a double wheel failure at power-up and the cascade below
+    # cuts the very bus the operator is trying to energise.
+    requires: { param: "eps.pl_aocs_wheels", min: 1 }
+    persist_s: 5.0
+    recovery: aocs_recovery
     cascades:
       - target_subsystem: "aocs"
         action: "enter_safe_mode"
@@ -77,7 +98,11 @@ fault_cascades:
   - fault_id: "aocs_safe_mode_entry"
     description: "AOCS entered safe mode due to any cause"
     primary_param: "aocs.mode"
-    threshold: 2.0  # mode 2 = safe
+    # Phase C made COARSE_SUN (mode 3) the sun-safe hold that FDIR commands;
+    # mode 2 is DETUMBLE, a rate-damping mode with no pointing. The threshold
+    # follows the action `safe_mode_aocs` takes, not the old numbering.
+    condition: "=="
+    threshold: 3.0  # mode 3 = COARSE_SUN (the safe hold)
     cascades:
       - target_subsystem: "payload"
         action: "standby"
@@ -89,7 +114,9 @@ fault_cascades:
   - fault_id: "tcs_battery_overtemp"
     description: "Battery temperature exceeds safe limit"
     primary_param: "tcs.temp_battery"
+    condition: ">"
     threshold: 45.0
+    persist_s: 3.0
     cascades:
       - target_subsystem: "eps"
         action: "reduce_charge_rate"
@@ -109,6 +136,7 @@ fault_cascades:
   - fault_id: "obdh_can_bus_failure"
     description: "OBDH CAN bus communication loss"
     primary_param: "obdh.can_bus_status"
+    condition: "=="
     threshold: 0.0  # 0 = failed
     cascades:
       - target_subsystem: "aocs"
@@ -131,6 +159,7 @@ fault_cascades:
   - fault_id: "obdh_watchdog_reset"
     description: "OBDH watchdog triggered, system rebooted"
     primary_param: "obdh.reboot_count"
+    condition: ">"
     threshold: 1.0
     cascades:
       - target_subsystem: "aocs"
@@ -147,7 +176,10 @@ fault_cascades:
   - fault_id: "ttc_pa_overheat"
     description: "TTC power amplifier overheating"
     primary_param: "ttc.pa_temp"
+    condition: ">"
     threshold: 80.0
+    persist_s: 3.0
+    recovery: ttc_recovery
     cascades:
       - target_subsystem: "ttc"
         action: "reduce_tx_power"

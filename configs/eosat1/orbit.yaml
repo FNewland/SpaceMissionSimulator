@@ -1,6 +1,15 @@
 # EOSAT-1 Orbit Configuration — Sun-Synchronous LEO (Ocean Current Monitoring)
 # 450 km altitude, 98° inclination SSO
 # TLE generated for 450 km circular SSO (mean motion ~15.24 rev/day)
+#
+# CANONICAL ground-station geometry source (defect #42):
+# The `ground_stations` list below (name / lat / lon / alt / min elevation)
+# is THE canonical station list and geometry used by the simulator, the
+# planner, and the MCS (via load_orbit_config). The contact model treats the
+# spacecraft as in contact whenever ANY station here is above its elevation
+# mask. RF-only augmentation (G/T, frequencies, antenna size) lives in
+# planning/ground_stations.yaml; geometry there must MATCH this file — the
+# MCS cross-checks and warns on divergence.
 tle_line1: "1 99001U 26001A   26068.50000000  .00000100  00000-0  10000-4 0  9990"
 tle_line2: "2 99001  98.0000 120.0000 0001200  90.0000 270.0000 15.24000000 00010"
 # T-0: mission start epoch for MET computation (ISO 8601 UTC)
@@ -9,6 +18,26 @@ altitude_km: 450.0
 inclination_deg: 98.0
 earth_radius_km: 6371.0
 
+# EOSAT-1 ground network — five high-latitude stations.
+#
+# Coordinates are the real-world locations of the corresponding facilities,
+# rounded to ~10 m. Sources (public station documentation / gazetteers):
+#   Iqaluit    — NRCan/CSA Iqaluit Satellite Station Facility, Nunavut, CA
+#   Troll      — TrollSat, Jutulsessen, Queen Maud Land, Antarctica (NO)
+#   Svalbard   — KSAT SvalSat, Plataberget, Longyearbyen, Svalbard (NO)
+#   Inuvik     — Inuvik Satellite Station Facility (ISSF), NWT, CA
+#   O'Higgins  — DLR GARS O'Higgins, Antarctic Peninsula (DE/CL)
+# Elevation masks are 5 deg throughout: all five are clear-horizon polar sites
+# and 5 deg is the S-band tracking mask assumed by the link budget in
+# planning/ground_stations.yaml.
+#
+# Adding/removing a station here changes the mission's contact statistics.
+# Measured with tools/pass_gap_analysis.py over 48 h from t0_epoch:
+#   2 stations (Iqaluit+Troll): 39 passes, median gap 84 min, max gap 148 min
+#   5 stations (this list):    103 passes, median gap 33 min, max gap  79 min
+# The planner mirrors this list with planning-only attributes in
+# planning/planner.yaml; `python -m smo_planner.planner_config --config
+# configs/eosat1` prints a side-by-side alignment report of the two.
 ground_stations:
   - name: Iqaluit
     lat_deg: 63.747
@@ -19,4 +48,19 @@ ground_stations:
     lat_deg: -72.012
     lon_deg: 2.535
     alt_km: 1.275
+    min_elevation_deg: 5.0
+  - name: Svalbard
+    lat_deg: 78.2297
+    lon_deg: 15.3975
+    alt_km: 0.458
+    min_elevation_deg: 5.0
+  - name: Inuvik
+    lat_deg: 68.3195
+    lon_deg: -133.5495
+    alt_km: 0.102
+    min_elevation_deg: 5.0
+  - name: O'Higgins
+    lat_deg: -63.3211
+    lon_deg: -57.9008
+    alt_km: 0.032
     min_elevation_deg: 5.0

@@ -1,0 +1,39 @@
+# OBCP 3 — Payload checkout
+#
+# Powers the imager line, steps the payload through STANDBY -> IMAGING,
+# captures one scene (ground-assigned scene_id 1042, 2048 lines — Phase E
+# WP-1: geolocation is stamped ON BOARD from the ephemeris, not commanded)
+# and returns to STANDBY. All func_ids are real S8 routes (EPS 19, payload
+# 26/28). The capture step (28) is power/mode gated: it only executes
+# because the line is energised in step 1 and the mode is IMAGING by step 3.
+# Steps with `args:` are packed by the shared catalogue encoder at load.
+procedure:
+  id: 3
+  name: payload_checkout
+  description: "Payload line on, STANDBY, IMAGING, capture, back to STANDBY"
+  steps:
+    - delay_s: 0          # EPS power_line_on(payload)
+      service: 8
+      subtype: 1
+      func_id: 19
+      data_hex: "03"
+    - delay_s: 3          # Payload set_mode STANDBY (1)
+      service: 8
+      subtype: 1
+      func_id: 26
+      data_hex: "01"
+    - delay_s: 3          # Payload set_mode IMAGING (2)
+      service: 8
+      subtype: 1
+      func_id: 26
+      data_hex: "02"
+    - delay_s: 2          # Payload capture: scene_id 1042 + 2048 lines
+      service: 8
+      subtype: 1
+      func_id: 28
+      args: { scene_id: 1042, lines: 2048 }
+    - delay_s: 2          # Payload set_mode STANDBY (1)
+      service: 8
+      subtype: 1
+      func_id: 26
+      data_hex: "01"

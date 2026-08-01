@@ -314,11 +314,16 @@ def test_setpoint_rejected_for_heaterless_thruster_circuit(engine):
     assert tcs.handle_command(
         {"command": "set_setpoint", "circuit": 1, "on_temp": 2.0, "off_temp": 6.0}
     )["success"]
-    # thruster (idx 2) has no heater -> rejected, not a false success
+    # thruster (idx 2) gained a real heater circuit in the propulsion build,
+    # so setpoint and auto mode are now legitimately accepted
     assert tcs.handle_command(
         {"command": "set_setpoint", "circuit": 2, "on_temp": 2.0, "off_temp": 6.0}
+    )["success"]
+    assert tcs.handle_command({"command": "auto_mode", "circuit": 2})["success"]
+    # an out-of-range circuit index is still rejected, not a false success
+    assert tcs.handle_command(
+        {"command": "set_setpoint", "circuit": 99, "on_temp": 2.0, "off_temp": 6.0}
     )["success"] is False
-    assert tcs.handle_command({"command": "auto_mode", "circuit": 2})["success"] is False
 
 
 def test_heater_duty_limit_enforced(engine):

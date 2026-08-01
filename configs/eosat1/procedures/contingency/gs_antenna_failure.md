@@ -152,9 +152,10 @@ in safe autonomous state.
   issue (NOC failure, frequency interference, solar event). Escalate to network
   operations and Flight Director.
 - If the failed station partially recovers (intermittent signal): Attempt to send
-  the highest-priority commands during signal windows. Use low data rate for more
-  robust uplink: prepare `TTC_SET_DATA_RATE(rate=0)` (func_id 52) for uplink at
-  next solid contact.
+  the highest-priority commands during signal windows. Hold the downlink at LOW
+  (16 kbps): prepare `TTC_SET_DATA_RATE(rate=0)` (func_id 65) for the next solid
+  contact, and do NOT plan a dump — the HIGH tier needs elevation >= 10 deg and a
+  station that can hold 64 kBd QPSK lock.
 - If critical time-tagged commands were on the onboard schedule and need
   cancellation: These cannot be cancelled without uplink. Assess the consequences
   of the scheduled commands executing autonomously.

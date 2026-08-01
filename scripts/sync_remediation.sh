@@ -53,7 +53,7 @@ FILES=(
   configs/eosat1/scenarios/aocs_wheel_failure.yaml
   configs/eosat1/scenarios/debris_impact_hermes3.yaml
   DEFECTS.md
-  REMEDIATION_PLAN.md
+  docs/archive/2026-05/REMEDIATION_PLAN.md
   scripts/upload_and_file_defects.sh
   scripts/sync_remediation.sh
   tests/test_remediation_phase01.py

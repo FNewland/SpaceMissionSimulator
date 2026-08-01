@@ -1,0 +1,98 @@
+{
+  "satellite": "EOSAT1-BEST",
+  "norad": 0,
+  "mode": "GFSK",
+  "transmitter": "SIMULATED GFSK 9600 Bd",
+  "nominal_downlink_hz": 437375500.0,
+  "sdr_center_freq_hz": 437304500.0,
+  "sample_rate_hz": 250000.0,
+  "iq_format": "complex64 (interleaved float32 I,Q), little-endian",
+  "recorded_seconds": 30.0,
+  "signal_confirmed": true,
+  "recorded_at_utc": "2026-07-05T19:25:00.604978+00:00",
+  "source": "SIMULATED (smo-rfsim BasebandRecorder)",
+  "simulation": {
+    "modulation": "GFSK",
+    "modulation_index": 7,
+    "symbol_rate_hz": 9600.0,
+    "sps_internal": 8,
+    "rolloff": 0.35,
+    "gmsk_bt": 0.5,
+    "data_source": "ccsds",
+    "frame_length": 223,
+    "random_seed": 0,
+    "impairments": {
+      "carrier_offset_hz": 71000.0,
+      "doppler_model": "leo_scurve",
+      "doppler_peak_hz": 3000.0,
+      "doppler_tca_frac": 0.5,
+      "doppler_constant_hz": 0.0,
+      "envelope_model": "elevation_hump",
+      "envelope_depth_db": 5.0,
+      "envelope_tca_frac": 0.5,
+      "burst_enabled": false,
+      "burst_period_s": 1.0,
+      "burst_duty": 0.3,
+      "phase_noise_rad": 0.02,
+      "iq_gain_imbalance_db": 0.6,
+      "iq_phase_imbalance_deg": 3.5,
+      "dc_offset": 0.01,
+      "residual_doppler_hz": 0.0,
+      "residual_doppler_jitter_hz": 0.0,
+      "snr_db": 12.0,
+      "sky_noise_fraction": 0.1,
+      "sky_noise_slope": 2.5,
+      "impulsive_prob": 0.0,
+      "impulsive_gain": 8.0,
+      "quantization_bits": 8,
+      "clip_level": 0.9,
+      "phase_noise_model": "powerlaw",
+      "phase_noise_level_dbc_1k": -80.0,
+      "phase_noise_floor_dbc": -140.0,
+      "multipath_enabled": false,
+      "ricean_k_db": 12.0,
+      "multipath_delay_us": 0.0,
+      "fading_rate_hz": 0.0,
+      "cw_interferers": [
+        [
+          -30000.0,
+          -25.0
+        ],
+        [
+          -101000.0,
+          -30.0
+        ],
+        [
+          122000.0,
+          -30.0
+        ]
+      ],
+      "broadband_rfi_db": -999.0,
+      "band_edge_filter": false,
+      "sample_clock_ppm": 0.0
+    },
+    "diagnostics": {
+      "envelope_span_db": 4.999999999993153,
+      "phase_noise_rms_rad": 0.012303410664505429,
+      "doppler_span_hz": 6000.0,
+      "cw_interferers": [
+        [
+          -30000.0,
+          -25.0
+        ],
+        [
+          -101000.0,
+          -30.0
+        ],
+        [
+          122000.0,
+          -30.0
+        ]
+      ],
+      "sky_noise_fraction": 0.1,
+      "sky_noise_slope": 2.5,
+      "wideband_snr_db": -0.8533500713746307,
+      "inband_snr_db_target": 12.0
+    }
+  }
+}

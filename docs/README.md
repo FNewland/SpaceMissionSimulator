@@ -2,7 +2,23 @@
 
 **Complete reference documentation for the EOSAT-1 mission operations simulator**
 
-Generated: April 2026
+Updated: 2026-08-01. The repository root's [`README.md`](../README.md) is the
+one-page entry point; this file is the documentation index.
+
+---
+
+## New in the 2026-08 build
+
+| Document | What it is |
+|---|---|
+| **[DETERMINISM.md](./DETERMINISM.md)** | What is reproducible, what `speed` does to the physics, the secular-mode honesty flag. **Read before setting a numerical exercise.** |
+| **[THREADING_AND_STATE.md](./THREADING_AND_STATE.md)** | Who writes what, when the snapshot publishes, exactly what a breakpoint captures. **Read before changing the simulator.** |
+| **[PARAMETER_MAP.md](./PARAMETER_MAP.md)** | Generated from config in CI: parameter → HK SID → ground limits → S12 monitor |
+| **[STATUS.md](./STATUS.md)** | What is still open, and what is deliberately not being done. Replaces four root-level reports |
+| **[CHANGELOG.md](./CHANGELOG.md)** | Release history, brought current |
+| `archive/YYYY-MM/` | Superseded reports, each folder with an `INDEX.md` saying what replaced them |
+| `source_material/` | The `.docx` and `.skill` inputs the courseware was built from |
+| `plan_2026-08/` | This build's plan artefacts: deleted-file list and the textbook errata |
 
 ---
 
@@ -18,6 +34,16 @@ Start here for practical, hands-on guidance:
   - Common operational scenarios
   - Anomaly response procedures
   - Training scenarios
+
+### For Instructors Running the Suite on a Server
+- **[DEPLOYMENT.md](./DEPLOYMENT.md)** — Networked/classroom deployment
+  - Deployment shapes (single machine, server + client browsers, distributed)
+  - Every service, port and bind address (verified against `start.sh`)
+  - Which ports must be reachable from a student machine
+  - Where every persistent artefact lives and how a client retrieves it
+  - Delayed-TM dump store: location rules and the HTTP API
+  - Breakpoints in a networked deployment
+  - End-to-end classroom recipe and troubleshooting
 
 ### For Command & Control Engineers
 Use this to understand and execute PUS commands:
@@ -78,6 +104,7 @@ See what still needs work:
 | Document | Purpose | Audience |
 |----------|---------|----------|
 | **OPERATIONS_GUIDE.md** | Practical operations guide, scenarios, troubleshooting | Operators, trainers, new users |
+| **DEPLOYMENT.md** | Server/classroom deployment, ports, artefact locations | Instructors, sysadmins |
 | **PUS_SERVICE_REFERENCE.md** | Complete PUS command reference, syntax guide | Command & control engineers |
 
 ### Change Management

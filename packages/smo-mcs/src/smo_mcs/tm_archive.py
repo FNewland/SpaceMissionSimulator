@@ -264,6 +264,48 @@ class TMArchive:
         )
         self._conn.commit()
 
+    def query_commands(
+        self,
+        start_epoch: float | None = None,
+        end_epoch: float | None = None,
+        limit: int = 500,
+    ) -> list[dict]:
+        """Command history, newest last (same ordering as query_alarms)."""
+        if not self._conn:
+            return []
+        sql = ("SELECT id, utc_epoch, seq, name, service, subtype, data_hex, "
+               "position, state FROM tc_log WHERE 1=1")
+        args: list[Any] = []
+        if start_epoch is not None:
+            sql += " AND utc_epoch >= ?"
+            args.append(start_epoch)
+        if end_epoch is not None:
+            sql += " AND utc_epoch <= ?"
+            args.append(end_epoch)
+        sql += " ORDER BY utc_epoch DESC, id DESC LIMIT ?"
+        args.append(limit)
+        rows = self._conn.execute(sql, args).fetchall()
+        return [
+            {"id": r[0], "utc_epoch": r[1], "seq": r[2], "name": r[3],
+             "service": r[4], "subtype": r[5], "data_hex": r[6],
+             "position": r[7], "state": r[8]}
+            for r in reversed(rows)
+        ]
+
+    def parameter_names(self, limit: int = 2000) -> list[str]:
+        """Distinct parameter names present in the archive.
+
+        The trend page needs the list of what can actually be plotted; the
+        archive stores whatever `_archive_state_snapshot` saw, which is a
+        superset-by-alias of `parameters.yaml` (the UI key map renames some).
+        """
+        if not self._conn:
+            return []
+        rows = self._conn.execute(
+            "SELECT DISTINCT param_name FROM tm_parameters "
+            "ORDER BY param_name LIMIT ?", (limit,)).fetchall()
+        return [r[0] for r in rows]
+
     # ── Playback support ──────────────────────────────────────────
 
     def get_playback_data(

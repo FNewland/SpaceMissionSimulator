@@ -47,8 +47,19 @@ def test_legacy_func_102_103_solar_array_b(engine):
 
 
 def test_legacy_func_104_107_heaters(engine):
-    """Funcs 104-107 toggle the battery and OBC heaters via TCS."""
+    """Funcs 104-107 toggle the battery and OBC heaters via TCS.
+
+    Phase B (brief 05 WP-4): a heater ON command with its EPS power line dark
+    is now REFUSED instead of silently reverting next tick, so the test first
+    verifies the refusal, then powers the lines and verifies the toggles.
+    """
     tcs = engine.subsystems["tcs"]
+    # Lines are OFF at power-up: heater ON must fail loudly, not lie.
+    engine._dispatcher._handle_s8(1, bytes([104]))
+    assert tcs._state.htr_battery is False
+    # Power the heater lines (EPS lines 5 and 6) and publish their state.
+    engine.params[0x0115] = 1
+    engine.params[0x0116] = 1
     engine._dispatcher._handle_s8(1, bytes([104]))  # battery heater ON
     assert tcs._state.htr_battery is True
     engine._dispatcher._handle_s8(1, bytes([105]))  # battery heater OFF

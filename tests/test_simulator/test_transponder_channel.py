@@ -165,32 +165,37 @@ class TestDataRateModes:
     """Test low-rate vs high-rate data modes."""
 
     def test_low_rate_before_deployment(self):
-        """Before antenna deployment, TM data rate should be low-rate."""
+        """With the antenna stowed the ladder cannot go above LOW."""
         model = _make_model()
         assert model._state.antenna_deployed is False
         params = {}
         orbit = make_orbit_state(in_contact=False)
         model.tick(1.0, orbit, params)
-        assert model._state.tm_data_rate == model._tm_rate_lo
+        assert model._state.tm_data_rate == model.tier_bps(model._safe_tier)
+        assert model.tier_name(model._state.tm_tier) == "LOW"
 
-    def test_high_rate_after_deployment(self):
-        """After antenna deployment, TM data rate should be high-rate (64kbps)."""
+    def test_routine_rate_after_deployment_is_low_not_the_top_tier(self):
+        """Deploying the antenna does not by itself raise the rate: routine
+        operations sit at LOW, and HIGH has to be earned (defect #85)."""
         model = _make_model()
         model.handle_command({"command": "deploy_antennas"})
         params = {}
         orbit = make_orbit_state(in_contact=False)
         model.tick(1.0, orbit, params)
-        assert model._state.tm_data_rate == model._tm_rate_hi
+        assert model._state.tm_data_rate == model.tier_bps(model._default_tier)
+        assert model.tier_name(model._state.tm_tier) == "LOW"
 
-    def test_default_low_rate_is_1000(self):
-        """Low rate mode should be 1000 bps (1 kbps)."""
+    def test_ladder_rungs_are_the_configured_ones(self):
+        """The shipped ladder is 1 / 16 / 128 kbps (defect #85)."""
         model = _make_model()
-        assert model._tm_rate_lo == 1000
+        assert [t["name"] for t in model.tiers] == ["BEACON", "LOW", "HIGH"]
+        assert [t["bps"] for t in model.tiers] == [1000, 16000, 128000]
 
-    def test_default_high_rate_is_64000(self):
-        """High rate mode should be 64000 bps (64 kbps)."""
+    def test_deprecated_aliases_track_the_ladder(self):
+        """_tm_rate_lo/_tm_rate_hi are aliases onto the ladder, not constants."""
         model = _make_model()
-        assert model._tm_rate_hi == 64000
+        assert model._tm_rate_lo == 16000   # safe tier (LOW)
+        assert model._tm_rate_hi == 128000  # top tier (HIGH)
 
     def test_data_rate_param_in_shared(self):
         """Param for tm_data_rate should be present in shared params."""
@@ -220,15 +225,17 @@ class TestBeaconMode:
         assert result["success"] is True
         assert model._state.beacon_mode is False
 
-    def test_beacon_mode_forces_low_rate(self):
-        """In beacon mode, data rate should be forced to low-rate."""
+    def test_beacon_mode_forces_beacon_tier(self):
+        """In beacon mode the ladder is pinned to BEACON (1 kbps)."""
         model = _make_model()
         model.handle_command({"command": "deploy_antennas"})  # Deploy first
         model.handle_command({"command": "set_beacon_mode", "on": True})
         params = {}
         orbit = make_orbit_state(in_contact=False)
         model.tick(1.0, orbit, params)
-        assert model._state.tm_data_rate == model._tm_rate_lo
+        assert model._state.tm_data_rate == model.tier_bps(model._beacon_tier)
+        assert model._state.tm_data_rate == 1000
+        assert model.tier_name(model._state.tm_tier) == "BEACON"
 
     def test_beacon_mode_param_in_shared(self):
         """Param 0x0521 should reflect beacon_mode state."""

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="EPS" Creator="EOSAT-1 SMDL Generator" Date="2026-04-19" Version="1.0">
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="EPS" Creator="EOSAT-1 SMDL Generator" Date="2026-08-01" Version="1.0">
   <Description>SMP2 model catalogue for EPS subsystem</Description>
   <Type Name="UInt8" Uuid="1b57882a-4b2d-53f8-a27f-be0563caa586" xsi:type="Integer" Size="1" Signed="false"/>
   <Type Name="UInt16" Uuid="5fcf9bfd-72b9-5f0c-b036-3cad6f5a8506" xsi:type="Integer" Size="2" Signed="false"/>
@@ -131,11 +131,11 @@
     <Field Name="eps_sep_timer_remaining" Uuid="9440cbe6-afb3-522e-b827-82648768db69" Type="Float32" Kind="Output" View="true">
       <Description>Separation timer remaining seconds [s]</Description>
     </Field>
-    <Field Name="eps_pdm_unsw_status" Uuid="f6940a11-ce9e-5078-a6cd-4d623890829d" Type="UInt8" Kind="Output" View="true">
-      <Description>PDM unswitchable lines status bitmask (RX|OBC)</Description>
-    </Field>
-    <Field Name="eps_spacecraft_phase" Uuid="0589a7a5-10f1-544d-97e2-c3cd99752e4d" Type="Float32" Kind="Output" View="true">
+    <Field Name="eps_spacecraft_phase" Uuid="0589a7a5-10f1-544d-97e2-c3cd99752e4d" Type="UInt8" Kind="Output" View="true">
       <Description>Spacecraft phase (0=pre-sep,1=sep-timer,2=init-pwr,3=bootloader,4=leop,5=commission,6=nominal)</Description>
+    </Field>
+    <Field Name="eps_pdm_unsw_status" Uuid="f6940a11-ce9e-5078-a6cd-4d623890829d" Type="Float32" Kind="Output" View="true">
+      <Description>PDM unswitchable lines status bitmask (RX|OBC)</Description>
     </Field>
     <Field Name="eps_sa_px_current" Uuid="877adbaa-2b1d-529f-8b91-b58b5fb5329b" Type="UInt16" Kind="Output" View="true">
       <Description>Solar panel +X current [A]</Description>
@@ -182,34 +182,52 @@
     <Field Name="eps_battery_heater_setpoint" Uuid="e77e330f-32b1-5a99-8ade-d42af4e05315" Type="Int16" Kind="Output" View="true">
       <Description>Battery heater setpoint [C]</Description>
     </Field>
-    <Field Name="eps_wing_status" Uuid="6b7d3089-2e58-5d01-a3a9-53d6717cc302" Type="Float32" Kind="Output" View="true">
+    <Field Name="eps_wing_status" Uuid="6b7d3089-2e58-5d01-a3a9-53d6717cc302" Type="UInt8" Kind="Output" View="true">
       <Description>Solar wing deployment status bitmask (bit0=+Y deployed, bit1=-Y deployed)</Description>
     </Field>
     <Field Name="eps_wing_deploy_timer" Uuid="2ef40b2c-5d5c-593e-8ebd-71a660502e90" Type="Float32" Kind="Output" View="true">
       <Description>Solar wing deployment timer (countdown, 0=complete) [s]</Description>
     </Field>
-    <Field Name="eps_eclipse_active" Uuid="67f3e8b4-3f75-57a3-a175-f15ee8de8070" Type="Float32" Kind="Output" View="true">
+    <Field Name="eps_sa_wing_py_current" Uuid="3fa610da-7b10-517c-8237-b17e4905d5e9" Type="UInt16" Kind="Output" View="true">
+      <Description>+Y deployable wing current (wing only, excl. body face) [A]</Description>
+    </Field>
+    <Field Name="eps_sa_wing_my_current" Uuid="9a39c9b1-254d-57aa-9bbb-782753c2209a" Type="UInt16" Kind="Output" View="true">
+      <Description>-Y deployable wing current (wing only, excl. body face) [A]</Description>
+    </Field>
+    <Field Name="eps_bus_load_current" Uuid="8954fc14-1ef4-55cf-9e4f-0b6a47e778a1" Type="UInt16" Kind="Output" View="true">
+      <Description>Total load bus current (sum of all line currents) [A]</Description>
+    </Field>
+    <Field Name="eps_fpa_cooler_cmd" Uuid="9d11244a-25fd-5fda-9db3-bc3b36ec2501" Type="Float32" Kind="Output" View="true">
+      <Description>EPS-side FPA cooler command flag (S8 func 17)</Description>
+    </Field>
+    <Field Name="eps_pl_prop" Uuid="ef5d28a5-a006-5d61-84cc-40ae1207c387" Type="Float32" Kind="Output" View="true">
+      <Description>Power line Propulsion (catbed heater + valve drivers; LAST in the shed order)</Description>
+    </Field>
+    <Field Name="eps_line_current_8" Uuid="94e3625c-57bd-52fa-9f6d-3e61d6368dd4" Type="Float32" Kind="Output" View="true">
+      <Description>Power line 8 (Propulsion) current [A]</Description>
+    </Field>
+    <Field Name="eps_eclipse_active" Uuid="67f3e8b4-3f75-57a3-a175-f15ee8de8070" Type="UInt8" Kind="Output" View="true">
       <Description>Eclipse active flag (0=sun, 1=eclipse)</Description>
     </Field>
-    <Field Name="eps_power_margin" Uuid="2448f27f-c4d3-5342-8f9f-8168d717d6e4" Type="Float32" Kind="Output" View="true">
+    <Field Name="eps_power_margin" Uuid="2448f27f-c4d3-5342-8f9f-8168d717d6e4" Type="Int16" Kind="Output" View="true">
       <Description>Power margin (generation - consumption) [W]</Description>
     </Field>
-    <Field Name="eps_subsys_power_eps" Uuid="c0f3f7b6-dadc-5b5e-a999-280abb70548a" Type="Float32" Kind="Output" View="true">
+    <Field Name="eps_subsys_power_eps" Uuid="c0f3f7b6-dadc-5b5e-a999-280abb70548a" Type="UInt16" Kind="Output" View="true">
       <Description>EPS subsystem power draw [W]</Description>
     </Field>
-    <Field Name="eps_subsys_power_aocs" Uuid="136e3fef-0622-507c-9025-4201d883543a" Type="Float32" Kind="Output" View="true">
+    <Field Name="eps_subsys_power_aocs" Uuid="136e3fef-0622-507c-9025-4201d883543a" Type="UInt16" Kind="Output" View="true">
       <Description>AOCS subsystem power draw [W]</Description>
     </Field>
-    <Field Name="eps_subsys_power_tcs" Uuid="aaf66ab1-5604-598d-8097-1e9e17d1cfb3" Type="Float32" Kind="Output" View="true">
+    <Field Name="eps_subsys_power_tcs" Uuid="aaf66ab1-5604-598d-8097-1e9e17d1cfb3" Type="UInt16" Kind="Output" View="true">
       <Description>TCS subsystem power draw [W]</Description>
     </Field>
-    <Field Name="eps_subsys_power_ttc" Uuid="91cbcdba-cb3c-53b3-9c9b-d02f58c32eda" Type="Float32" Kind="Output" View="true">
+    <Field Name="eps_subsys_power_ttc" Uuid="91cbcdba-cb3c-53b3-9c9b-d02f58c32eda" Type="UInt16" Kind="Output" View="true">
       <Description>TTC subsystem power draw [W]</Description>
     </Field>
-    <Field Name="eps_subsys_power_payload" Uuid="11620600-cd4a-551d-8569-a96b865544c7" Type="Float32" Kind="Output" View="true">
+    <Field Name="eps_subsys_power_payload" Uuid="11620600-cd4a-551d-8569-a96b865544c7" Type="UInt16" Kind="Output" View="true">
       <Description>Payload subsystem power draw [W]</Description>
     </Field>
-    <Field Name="eps_subsys_power_obdh" Uuid="07757abe-c165-5556-84da-dc1a97c4ecd5" Type="Float32" Kind="Output" View="true">
+    <Field Name="eps_subsys_power_obdh" Uuid="07757abe-c165-5556-84da-dc1a97c4ecd5" Type="UInt16" Kind="Output" View="true">
       <Description>OBDH subsystem power draw [W]</Description>
     </Field>
     <Field Name="eps_actual_charge_current_a" Uuid="e2514a6e-12c0-5a4b-b4cd-e321f7d4b3b1" Type="UInt16" Kind="Output" View="true">
@@ -218,10 +236,10 @@
     <Field Name="tc_EPS_PAYLOAD_MODE_mode" Uuid="9b9af66c-210f-58fb-9720-d494d7708489" Type="UInt8" Kind="Input">
       <Description>0=off, 1=standby, 2=imaging</Description>
     </Field>
-    <Field Name="tc_EPS_FPA_COOLER_True" Uuid="92cf8928-a31b-558e-937f-442b6cd3af85" Type="UInt8" Kind="Input">
+    <Field Name="tc_EPS_FPA_COOLER_on" Uuid="ad59394f-0bf5-5dc7-95be-565c181169dc" Type="UInt8" Kind="Input">
       <Description>0=off, 1=on</Description>
     </Field>
-    <Field Name="tc_EPS_TRANSPONDER_TX_True" Uuid="e98bdb83-2bc7-5f05-b1bd-3bed6a8d485e" Type="UInt8" Kind="Input">
+    <Field Name="tc_EPS_TRANSPONDER_TX_on" Uuid="f85ca467-dea4-5954-b667-dbc6cd8226b8" Type="UInt8" Kind="Input">
       <Description>0=off, 1=on</Description>
     </Field>
     <Field Name="tc_EPS_POWER_ON_line_index" Uuid="3e6fb092-28d9-5db3-9d8b-df3ae1f71775" Type="UInt8" Kind="Input">
@@ -243,10 +261,13 @@
       <Description>Charge rate in Amps (0=auto)</Description>
     </Field>
     <Field Name="tc_EPS_SOLAR_ARRAY_DRIVE_angle_deg" Uuid="b5445eb2-13d3-53ac-b1ae-2069a178f77d" Type="Int16" Kind="Input">
-      <Description>Drive angle in degrees (-90 to +90)</Description>
+      <Description>Drive angle in CENTI-degrees; the handler divides by 100 (-9000..+9000 = -90..+90 deg)</Description>
     </Field>
     <Field Name="tc_EPS_EMERGENCY_LOAD_SHED_stage" Uuid="f19bcf91-a388-54b8-a7cc-1e916d858089" Type="UInt8" Kind="Input">
       <Description>Shed stage (0-3)</Description>
+    </Field>
+    <Field Name="tc_EPS_SET_MODE_mode" Uuid="a90b1e16-3e8f-58b5-a925-a87e4b6446e3" Type="UInt8" Kind="Input">
+      <Description>0=nominal, 1=safe, 2=emergency</Description>
     </Field>
     <EntryPoint Name="Step" Uuid="cf36da21-1288-5034-bcaa-550b495ce899">
       <Description>Main simulation step</Description>

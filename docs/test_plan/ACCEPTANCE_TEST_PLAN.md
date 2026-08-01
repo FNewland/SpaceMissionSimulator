@@ -144,7 +144,10 @@ Each test sends one S8.1 command, verifies S1.1 acceptance ACK, and checks the e
 | CMD-TTC-011 | 76 | ranging_start | 4C | ttc.ranging_active | True |
 | CMD-TTC-012 | 77 | ranging_stop | 4D | ttc.ranging_active | False |
 | CMD-TTC-013 | 78 | set_coherent_mode(on) | 4E 01 | ttc.coherent_mode | True |
-| CMD-TTC-014 | 65 | set_tm_rate(64000) | 41 0000FA00 | ttc.tm_data_rate | 64000 |
+| CMD-TTC-014 | 65 | set_tm_rate(LOW) | 41 00 | ttc.tm_data_rate | 16000 |
+| CMD-TTC-014a | 79 | set_downlink_mode(on) | 4F 01 | ttc.downlink_mode | 1 |
+| CMD-TTC-014b | 65 | set_tm_rate(HIGH), gates satisfied | 41 01 | ttc.tm_data_rate | 128000 |
+| CMD-TTC-014c | 65 | set_tm_rate(HIGH), DOWNLINK mode off | 41 01 | S1.8 error code | 0x0007 (rejected, not clamped) |
 | CMD-TTC-015 | 68 | set_tx_power(1.5W) | 44 3FC00000 | ttc.tx_fwd_power | 1.5 |
 | CMD-TTC-016 | 75 | set_rx_gain(-80dB) | 4B C2A00000 | ttc.agc_level_db | -80.0 |
 
