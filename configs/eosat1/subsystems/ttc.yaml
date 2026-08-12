@@ -12,6 +12,29 @@
 # TTC_SET_UL_FREQ / TTC_SET_DL_FREQ advertise the same bands. The old
 # UHF 440–460 / 400–410 validators and the 2000–2100 / 8400–8500
 # catalogue text are gone.
+# ── TWO TRANSMITTERS, not one (Franz's ruling R2, 2026-08-12) ───────────
+#
+# This file used to assert a single radio ("the whole ladder is reachable
+# with a single TT&C radio"). That was true of the *TM rate ladder* and false
+# of the spacecraft: the textbook (docs/review_2026-07/textbook_inventory.md
+# :46,131) has always described "S-band prime (body-fixed patch) + UHF whip
+# bootloader beacon", and UPGRADE_ROADMAP.md:97 scope (d) says to retain the
+# UHF numbers as the bootloader-beacon link. EO-Sat-1 therefore flies:
+#
+#   * the S-BAND PRIME CHAIN — this file's ul/dl_freq_mhz, tm_rate_tiers,
+#     eirp_dbw, sc_gain_dbi. Carries everything: real-time HK, playback,
+#     image dumps, S1 verification, on-demand reads. Dies with the PA
+#     (TTC_PA_DISABLE, S8 func 67) and with the EPS `ttc_tx` line.
+#   * the UHF BEACON TRANSMITTER — the `beacon:` block below. A separate
+#     radio, separate band, separate antenna, separate power. Carries HK
+#     SID 11 and NOTHING else, and survives the S-band PA being off. It is
+#     the lifeline that answers "is the OBC alive?" when the prime chain is
+#     dead, which is exactly why it is a second box on a real spacecraft.
+#
+# The two are gated independently — see `tx_active` (0x0525) for the S-band
+# chain and `beacon_active` (0x0527) for the beacon. `beacon_mode` (0x0521)
+# is a THIRD, unrelated thing: a rung of the S-band rate ladder below. Do not
+# conflate them; docs/LINK_BUDGET_AND_RATES.md §9 spells the difference out.
 model: ttc_basic
 ul_freq_mhz: 2025.0
 dl_freq_mhz: 2200.0
@@ -33,8 +56,12 @@ dl_freq_mhz: 2200.0
 # this mission flies are Sentinel-1's low and nominal rates exactly. 128 kbps
 # is also the top of the commodity CubeSat TT&C-radio class (GomSpace NanoCom
 # AX2150 96 kbps, EnduroSat 125 kbps), so the whole ladder is reachable with
-# a single TT&C radio — no separate high-rate transmitter is implied, which
-# is the right hardware story for a 6U.
+# ONE S-BAND radio — no separate HIGH-RATE transmitter is implied, which is
+# the right hardware story for a 6U. (Amended 2026-08b/R2: this says nothing
+# about the UHF beacon transmitter, which is a separate box on a separate
+# band carrying SID 11 only. "One radio for the ladder" is not "one radio on
+# the spacecraft" — the earlier wording was read as the latter and that is
+# how the beacon came to be modelled as rung 0 of the S-band ladder.)
 #
 # Why not the old 1 kbps "low" rate for routine ops: the shipped
 # telemetry/hk_structures.yaml generates 1351.5 bps of PUS packets, which is
@@ -68,6 +95,13 @@ tm_rate_tiers:
     coding_gain_db: 7.5
     # SID 11 is 28 bytes every 30 s = 7.47 bps, so 1 kbps carries the beacon
     # with 134x headroom. Reachable ONLY from the bootloader / beacon mode.
+    #
+    # NOTE (2026-08b/R2): this rung is the S-BAND ladder's lowest rate. It is
+    # NOT the UHF beacon transmitter — that is the `beacon:` block at the foot
+    # of this file, and it has its own band, PA, antenna and budget. This rung
+    # is what the S-band chain drops to when `beacon_mode` is latched; the UHF
+    # beacon runs at its own 1 kbps regardless of which rung the S-band chain
+    # is on, and keeps running when the S-band PA is off altogether.
     beacon_only: true
     requires_antenna: false
   - name: LOW
@@ -125,9 +159,62 @@ safe_tier: LOW            # safe mode, FDIR fallback, antenna stowed
 tm_rate_lo_bps: 16000
 tm_rate_hi_bps: 128000
 
+# ── S-band EIRP, and why it is no longer a constant ─────────────────────
+#
+# `eirp_dbw` is the REFERENCE EIRP, quoted at `pa_ref_power_w` watts of RF
+# output. The model now scales it with the commanded PA power:
+#
+#     EIRP(P) = eirp_dbw + 10*log10(P / pa_ref_power_w)
+#
+# Before 2026-08b this was a fixed constant, so TTC_SET_TX_POWER (S8 func 68)
+# moved telemetry 0x050D and nothing else — margin, Eb/N0, BER and the whole
+# RF pipeline were identical at LOW and HIGH, and FDIR's "reduce TX power"
+# recovery was a no-op on the link it was supposed to protect. Selecting LOW
+# (1.0 W) now costs 3.01 dB of margin and selecting HIGH (5.0 W) buys
+# 3.98 dB, which is what a PA does.
+#
+# The reference is the NOMINAL operating point, 2.0 W RF = 33 dBm — the top
+# of the EnduroSat S-Band Transceiver's published "24 to 33 dBm" output
+# range, and the same 2 W RF / 11 W DC point that docs/plan_2026-08b/
+# POWER_SIZING.md §2.3 sized the `ttc_tx` line's HIGH tier against. The two
+# sheets now describe the same radio at the same operating point.
+#
+# KNOWN OPEN ITEM, deliberately not changed here: 10.0 dBW at 2 W RF implies
+# 7 dB of feed-and-antenna gain ahead of the 3.0 dBi patch, which no 6U has.
+# The honest absolute figure is ~3.0 dBW conducted (2 W) + 3.0 dBi = 6.0 dBW
+# EIRP, i.e. every margin in docs/LINK_BUDGET_AND_RATES.md §4 is 7 dB
+# optimistic. It is NOT corrected in this batch because rfsim.yaml's
+# link_budget.eirp_dbw must move with it (tests/test_rfsim/
+# test_rate_ladder_pipeline.py asserts the two files are equal) and rfsim.yaml
+# belongs to another owner. Raised in docs/plan_2026-08b/
+# DISPLAY_REQUESTS_TTC.md as a two-file change. Every rung closes with 26+ dB
+# to spare either way, so the teaching content is unaffected.
 eirp_dbw: 10.0
+pa_ref_power_w: 2.0   # RF watts at which eirp_dbw above is quoted (= NOMINAL)
 gs_g_t_db: 20.0       # Iqaluit 9 m S-band dish (planning/ground_stations.yaml)
 sc_gain_dbi: 3.0
+
+# ── S-band SSPA operating points (TTC_SET_TX_POWER, S8 func 68) ─────────
+# RF output watts, not DC. The DC draw of the ttc_tx line is EPS's number
+# (eps.yaml transponder_power_w / transponder_hi_power_w = 5 / 11 W, from the
+# EnduroSat S-band transceiver's "Maximum transmit: 11 W @ 12 V (33 dBm)").
+# These used to be code defaults in ttc_basic.py; they are configuration now
+# because the EIRP is derived from them and a hardware number that drives a
+# link budget must live in the hardware sheet.
+#
+# SECOND OPEN ITEM: 5.0 W RF out of an 11 W DC line is 45 % PAE, which no
+# S-band SSPA achieves (20-35 % is the real range), and it is above the
+# EnduroSat part's 33 dBm / 2 W ceiling. The researched ladder is
+# 0.25 / 1.0 / 2.0 W RF. Not changed here because the level table is quoted
+# verbatim in configs/eosat1/manual/09_command_reference.md, which is
+# generated from tc_catalog.yaml and asserted by
+# tests/test_content/test_generated_command_reference.py — a coordinated
+# catalogue + regenerate + manual change owned elsewhere. Also raised in
+# DISPLAY_REQUESTS_TTC.md. Because the EIRP is now DERIVED from these watts,
+# retuning them is a one-line change here and the link follows.
+pa_low_power_w: 1.0       # level 0 = LOW
+pa_nominal_power_w: 2.0   # level 1 = NOMINAL (== pa_ref_power_w, 33 dBm)
+pa_max_power_w: 5.0       # level 2 = HIGH; see the open item above
 
 # Telecommand uplink rate. Sentinel-1's TC rate, and the value already in
 # rfsim.yaml pipeline.tc_symbol_rate. This MUST be set explicitly: it used to
@@ -162,6 +249,95 @@ gt_derate_below_30deg_db: 0.5
 # above and must NOT be added here as well.
 required_eb_n0_db: 9.6
 
+# ══════════════════════════════════════════════════════════════════════════
+# UHF BOOTLOADER BEACON TRANSMITTER (Franz's ruling R2, 2026-08-12)
+# ══════════════════════════════════════════════════════════════════════════
+#
+# A SECOND, PHYSICALLY SEPARATE RADIO. Not a mode of the S-band transponder,
+# not a rung of tm_rate_tiers. It has its own PA (TTC_BEACON_TX_ON/OFF, S8
+# funcs 97/98), its own band, its own antenna, its own link budget and its own
+# power draw, and it carries HK SID 11 and nothing else.
+#
+# Why a real spacecraft carries one: the prime chain has a long list of single
+# points of failure — the S-band PA, the ttc_tx power line, the deployable
+# patch, the transponder, the uplink lock chain. The beacon shares none of
+# them. It is the box that tells you the OBC is alive when everything else on
+# the RF side is dead, and it is the box a university ground station or an
+# amateur can hear during LEOP before anybody has a 9 m dish on the pass.
+#
+# ── Flight hardware the numbers come from ─────────────────────────────────
+#   EnduroSat UHF Type II Transceiver — 435-438 MHz, output "up to 33 dBm"
+#     (2 W), typical 30 dBm (1 W); GMSK/AX.25; RX draw ~0.2 W.
+#   GomSpace NanoCom AX100 — 430-440 MHz, up to 30 dBm (1 W) RF.
+#   EnduroSat UHF Antenna Type II — deployable tape-spring dipole, ~0 dBi,
+#     linear polarisation, omnidirectional in the plane of the dipole.
+#   NASA, State of the Art of Small Spacecraft Technology, ch. 9
+#     (Communications): UHF is the standard CubeSat beacon/TT&C band.
+#   437.5 MHz sits in the 435-438 MHz amateur-satellite segment that IARU
+#     coordinates for CubeSats; it is where a beacon is actually flown.
+#
+# ── The contrast that is the teaching point ───────────────────────────────
+# S-band patch to a 9 m polar dish and UHF whip to a university Yagi close
+# COMPLETELY differently, and the two budgets sitting side by side is the
+# lesson (docs/LINK_BUDGET_AND_RATES.md §9.3):
+#   * UHF wins 14.0 dB of free-space path loss (2200/437.5 = 5.03x) and 0.3 dB
+#     of atmosphere,
+#   * and gives back 28.0 dB of G/T (a 9 m dish at 20.0 dB/K vs a crossed
+#     Yagi at -8.0 dB/K) and 3.0 dBi of spacecraft antenna gain,
+#   * and pays 2.7 dB more polarisation loss, because a linear dipole on an
+#     uncontrolled spacecraft against a circular ground antenna is a 3 dB
+#     nominal mismatch, not the 0.3 dB of a pointed circular pair.
+# Net: the beacon closes on 1 W at 1 kbps with ~27 dB, against ~46 dB for the
+# S-band LOW rung at 16 kbps. Same physics, different everything else.
+beacon:
+  enabled: true
+  # 437.5 MHz: 435-438 MHz amateur-satellite segment, IARU-coordinated,
+  # where CubeSat beacons are actually flown. Deliberately far from the
+  # S-band plan so a student sees two independent RF chains.
+  dl_freq_mhz: 437.5
+  band_mhz: [435.0, 438.0]
+  # 1.0 W = 30 dBm: EnduroSat UHF Type II typical output, AX100 maximum.
+  # The 2 W (33 dBm) ceiling exists but is not flown continuously on a 6U.
+  rf_power_w: 1.0
+  # Deployable tape-spring dipole. 0 dBi is the honest figure for an omni
+  # whip once you stop quoting boresight: this antenna exists to have no
+  # boresight, which is the whole point during tumbling.
+  sc_gain_dbi: 0.0
+  # University / amateur UHF ground station: ~16 dBic crossed Yagi over a
+  # T_sys of about 300 K (sky + ground pickup + a 0.7 dB LNA) = 24.8 dBK.
+  # 16.0 - 24.8 = -8.8; -8.0 dB/K adopted as the round figure for a decent
+  # station. The 9 m S-band dish is 20.0 dB/K — 28 dB better.
+  gs_g_t_db: -8.0
+  bps: 1000
+  # conv(7,1/2) + RS(255,223), the same concatenation the S-band BEACON rung
+  # uses. A beacon is the last thing you want uncoded.
+  coding_gain_db: 7.5
+  required_eb_n0_db: 9.6
+  # UHF is far below the water-vapour and oxygen lines: 0.2 dB at zenith
+  # against S-band's 0.5 dB, scaled by cosec(elevation) below 30 deg.
+  atmospheric_loss_db: 0.2
+  # 3.0 dB, not 0.3: linear dipole vs circular ground antenna is a 3 dB
+  # nominal mismatch and the spacecraft may be tumbling. This is the term
+  # that pays back a chunk of the path-loss advantage.
+  polarization_loss_db: 3.0
+  implementation_loss_db: 2.0
+  # DC while keying, from the EnduroSat UHF Type II TX figure at 30 dBm.
+  # Duty is tiny: SID 11 is 28 bytes at 1000 bps = 0.224 s every 30 s =
+  # 0.75 %, so the orbit-average TX draw is 0.013 W. The receiver-side
+  # standby is the number that actually matters, and eps.yaml already books
+  # it — POWER_SIZING.md §3 lists transponder_rx_power_w = 1.5 W as
+  # "EnduroSat idle/Rx 1.2 W + ~0.3 W UHF beacon Rx". The beacon therefore
+  # needs NO eps.yaml change; see DISPLAY_REQUESTS_TTC.md for the arithmetic.
+  dc_power_w: 1.8
+  standby_dc_power_w: 0.2
+  # The EPS line the beacon is billed to. `ttc_rx` is the NON-SWITCHABLE
+  # receiver line, and that is the correct place: a lifeline beacon that an
+  # operator could accidentally de-energise with a power-line command is not
+  # a lifeline. TTC_BEACON_TX_OFF can silence it; POWER_LINE_OFF cannot.
+  eps_line: ttc_rx
+  # HK SID the beacon carries, and nothing else.
+  hk_sid: 11
+
 param_ids:
   ttc_mode: 0x0500
   link_status: 0x0501
@@ -175,3 +351,13 @@ param_ids:
   range_km: 0x0509
   contact_elevation: 0x050A
   contact_az: 0x050B
+  # ── Downlink gating (2026-08b T-a) and the UHF beacon (R2) ──
+  # 0x0523 was already taken by ttc.active_gs, so tx_active is 0x0525.
+  tx_active: 0x0525
+  beacon_tx_on: 0x0526
+  beacon_active: 0x0527
+  beacon_link_margin: 0x0528
+  beacon_dl_freq: 0x0529
+  beacon_tx_power: 0x052A
+  tx_gate_status: 0x052B
+  eirp_dbw: 0x052C

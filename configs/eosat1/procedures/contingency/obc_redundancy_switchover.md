@@ -14,7 +14,7 @@ loads correctly, and verifies all subsystems return to nominal operation.
 
 ## Prerequisites
 - [ ] OBC-A anomaly confirmed — repeated reboots, memory errors, or unresponsive behavior
-- [ ] TT&C link active — `ttc.link_status` (0x0501) = 1
+- [ ] TT&C link active — `ttc.link_status` (0x0501) = 2 (LOCKED)
 - [ ] Flight Director authorizes OBC switchover (critical command)
 - [ ] Backup OBC (OBC-B) in STANDBY — `obdh.obc_b_status` (0x030D) = 1
 - [ ] All position operators briefed on impending OBC switchover
@@ -34,7 +34,7 @@ loads correctly, and verifies all subsystems return to nominal operation.
 | eps.bus_voltage | 0x0105 | > 27.0 V |
 | aocs.mode | 0x020F | Verify post-switchover |
 | payload.mode | 0x0600 | Verify post-switchover |
-| ttc.link_status | 0x0501 | 1 (active) |
+| ttc.link_status | 0x0501 | 2 (LOCKED) |
 
 ## Required Commands
 | Command | Service | Subtype | Func ID | Description |
@@ -47,7 +47,7 @@ loads correctly, and verifies all subsystems return to nominal operation.
 ## Procedure Steps
 
 ### Step 1: Verify OBC-A Anomaly
-**Action:** Request OBDH housekeeping: `HK_REQUEST(sid=4)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) — Request OBDH housekeeping
 **Verify:** `obdh.mode` (0x0300) — record current mode
 **Verify:** `obdh.reboot_count` (0x030A) — record value (elevated if watchdog reboots)
 **Verify:** `obdh.last_reboot_cause` (0x0316) — record cause:
@@ -62,7 +62,7 @@ If `obdh.reboot_count` > 4, FDIR may have already triggered safe mode.
 ### Step 2: Command OBC Switchover
 **Action:** Announce "COMMANDING OBC SWITCHOVER" on the operations loop.
 **Action:** All position operators prepare for temporary telemetry loss.
-**Action:** Command OBC switch: `OBC_SWITCH_UNIT` (func_id 53)
+**TC:** `OBC_SWITCH_UNIT` (Service 8, Subtype 1, func_id 53) — Command OBC switch
 **Note:** CRITICAL COMMAND — This will:
 1. Halt OBC-A operations
 2. Power on OBC-B processor
@@ -73,22 +73,23 @@ If `obdh.reboot_count` > 4, FDIR may have already triggered safe mode.
 **GO/NO-GO:** Command sent — wait for bootloader confirmation.
 
 ### Step 3: Verify Boot to Bootloader
-**Action:** Request OBDH housekeeping: `HK_REQUEST(sid=4)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) — Request OBDH housekeeping
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) — TT&C housekeeping
 **Note:** If no response within 15 s, retry the request. OBC-B may still be in early boot.
 **Verify:** `obdh.active_obc` (0x030C) = 1 (OBC-B is now active)
 **Verify:** `obdh.sw_image` (0x0311) = 0 (bootloader — not yet running application)
 **Verify:** `obdh.last_reboot_cause` (0x0316) = 3 (switchover)
 **Verify:** `obdh.temp` (0x0301) — OBC-B temperature within limits
-**Verify:** `ttc.link_status` (0x0501) = 1 — TTC link maintained
+**Verify:** `ttc.link_status` (0x0501) = 2 (LOCKED) — TTC link maintained
 **GO/NO-GO:** OBC-B in bootloader — proceed to boot application.
 
 ### Step 4: Verify Software Image and Boot Application
-**Action:** Verify the application software image is valid before booting:
-`HK_REQUEST(sid=4)` — check `obdh.sw_version` (0x030B) is available in bootloader
-context (may report bootloader version).
-**Action:** Command application boot: `OBC_BOOT_APP` (func_id 55)
+**Note:** Verify the application software image is valid before booting:
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) — check `obdh.sw_version` (0x030B) is available in bootloader
+**Note:** context (may report bootloader version).
+**TC:** `OBC_BOOT_APP` (Service 8, Subtype 1, func_id 55) — Command application boot
 **Verify:** Wait 30 s for application to initialize.
-**Action:** Request OBDH housekeeping: `HK_REQUEST(sid=4)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) — Request OBDH housekeeping
 **Verify:** `obdh.sw_image` (0x0311) = 1 (application running)
 **Verify:** `obdh.sw_version` (0x030B) — correct application software version
 **Verify:** `obdh.mode` (0x0300) — OBC should enter SAFE or NOMINAL mode
@@ -96,22 +97,23 @@ context (may report bootloader version).
 **GO/NO-GO:** Application booted successfully on OBC-B — proceed to subsystem verification.
 
 ### Step 5: Verify All Subsystems Nominal
-**Action:** Request HK from all subsystems:
-- `HK_REQUEST(sid=1)` — EPS
-- `HK_REQUEST(sid=2)` — AOCS
-- `HK_REQUEST(sid=3)` — TCS
-- `HK_REQUEST(sid=5)` — TTC
-- `HK_REQUEST(sid=6)` — Payload
+**Note:** Request HK from all subsystems:
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — EPS
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — AOCS
+**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 27) — TCS
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) — TTC
+**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 27) — Payload
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) — Platform/OBDH housekeeping
 **Verify:** All HK responses received within 15 s.
 **Verify:** `eps.bus_voltage` (0x0105) > 27.0 V
 **Verify:** `eps.bat_soc` (0x0101) — record value
-**Verify:** `aocs.mode` (0x020F) — record mode. AOCS may have reverted to SAFE_POINT
+**Verify:** `aocs.mode` (0x020F) — record mode. AOCS may have reverted to COARSE_SUN
 during the switchover. If so, restore to nominal mode after confirming stability.
 **Verify:** `payload.mode` (0x0600) — record mode. Payload may have gone to OFF during
 switchover. Restore to STANDBY after confirming OBC stability.
-**Verify:** `ttc.link_status` (0x0501) = 1
-**Action:** If `obdh.mode` (0x0300) = 1 (SAFE), restore to NOMINAL when all subsystems
-are confirmed: `OBC_SET_MODE(mode=0)` (func_id 50)
+**Verify:** `ttc.link_status` (0x0501) = 2 (LOCKED)
+**Note:** If `obdh.mode` (0x0300) = 1 (SAFE), restore to NOMINAL when all subsystems
+**TC:** `OBC_SET_MODE(mode=0)` (Service 8, Subtype 1, func_id 50) — are confirmed
 **Verify:** `obdh.mode` (0x0300) = 0 (NOMINAL) within 10 s
 **GO/NO-GO:** All subsystems nominal on OBC-B — switchover complete.
 
@@ -122,7 +124,9 @@ are confirmed: `OBC_SET_MODE(mode=0)` (func_id 50)
 - OBC-B boot time and application version
 - All subsystem states post-switchover
 - Any subsystems that required mode restoration
-**Action:** Clear reboot counter if desired: `OBC_CLEAR_REBOOT_CNT` (func_id 57)
+**Note:** Optional, and a Flight-Director decision — the reboot counter is the
+only on-board record of how many times this has happened.
+**TC:** `OBC_CLEAR_REBOOT_CNT` (Service 8, Subtype 1, func_id 57) — clear the reboot counter
 **Action:** Notify Flight Director: "OBC switchover complete. Operating on OBC-B.
 OBC-A is offline and requires engineering assessment before reuse."
 **Note:** The spacecraft is now operating on the redundant OBC with no further

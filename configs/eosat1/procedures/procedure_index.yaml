@@ -13,6 +13,27 @@
 #   runnable: {kind: markdown}      # derive command steps from the **TC:**
 #                                   # annotations in this document
 #
+#   runnable: {kind: advisory, reason: <why>}
+#                                   # the document deliberately commands
+#                                   # NOTHING; not offered for execution
+#
+# `runnable: {kind: advisory}` — the document deliberately commands NOTHING.
+# Only CTG-020 (ground-segment antenna failure) qualifies today.
+# Without the flag, "extracts zero command steps" is indistinguishable from
+# the 2026-08b defect in which 21 documents wrote all their commanding behind
+# `**Action:**` prose and were silently inert; the audit gate pins
+# ZERO_COMMAND_PROCEDURE at zero and an advisory card is the declared
+# exception rather than an accident.
+#
+# `command_services:` is DERIVED, not editorial: it must equal the set of PUS
+# service numbers `smo_common.procedures.markdown_steps` actually extracts
+# from the document. Before 2026-08b every one of the 67 entries was written by
+# hand and 61 of them disagreed with their own document — CTG-001 declared
+# [3, 5, 8, 20] while yielding no steps at all. Regenerate with
+# `tests/test_content/test_procedure_gates.py::
+#  test_command_services_matches_the_extracted_steps`, which fails the build
+# on any drift.
+#
 # Only a few exemplars are linked today (NOM-002, NOM-003, NOM-009, NOM-008).
 # Adding a link is a Flight-Ops decision per procedure: a document is only
 # automatable if its **TC:** annotations are the whole of its commanding, and
@@ -46,7 +67,7 @@ procedures:
       flight_director: "Coordinate checkout sequence"
       eps_tcs: "Verify power and thermal status"
       fdir_systems: "Verify OBDH and HK configuration"
-    command_services: [3, 5, 8, 17]
+    command_services: [3, 8]
 
   - id: LEOP-003
     name: "Initial Orbit Determination"
@@ -57,7 +78,7 @@ procedures:
       flight_director: "Approve orbit solution"
       aocs: "Process orbit data, update onboard ephemeris"
       ttc: "Provide range/Doppler data"
-    command_services: [8, 9]
+    command_services: [20]
 
   - id: LEOP-004
     name: "Solar Array Verification"
@@ -67,7 +88,7 @@ procedures:
     position_roles:
       flight_director: "Authorize deployment verification"
       eps_tcs: "Monitor solar array currents and voltages"
-    command_services: [8]
+    command_services: [3, 8, 20]
 
   - id: LEOP-005
     name: "Sun Acquisition"
@@ -77,7 +98,7 @@ procedures:
     position_roles:
       flight_director: "Authorize attitude maneuver"
       aocs: "Command AOCS mode transition, monitor rates"
-    command_services: [8]
+    command_services: [3, 8]
 
   - id: LEOP-006
     name: "Time Synchronisation"
@@ -86,7 +107,7 @@ procedures:
     required_positions: [flight_director]
     position_roles:
       flight_director: "Execute time sync, verify accuracy"
-    command_services: [9]
+    command_services: [3, 9]
 
   - id: LEOP-007
     name: "Sequential Power-On"
@@ -99,7 +120,7 @@ procedures:
       aocs: "Commission AOCS sensors and actuators"
       ttc: "Monitor link quality throughout"
       fdir_systems: "Monitor OBDH health, configure alarms"
-    command_services: [8, 3, 5]
+    command_services: [3, 8]
 
   # === Commissioning Procedures ===
   - id: COM-001
@@ -130,7 +151,7 @@ procedures:
     position_roles:
       flight_director: "Authorize calibration sequence"
       aocs: "Execute sensor calibration, validate output"
-    command_services: [3, 8, 20]
+    command_services: [3, 20]
 
   - id: COM-004
     name: "AOCS Actuator Checkout"
@@ -150,7 +171,7 @@ procedures:
     position_roles:
       flight_director: "Authorize mode changes"
       aocs: "Execute mode transitions, verify stability"
-    command_services: [3, 8, 20]
+    command_services: [3, 8]
 
   - id: COM-006
     name: "TTC Link Verification"
@@ -160,7 +181,7 @@ procedures:
     position_roles:
       flight_director: "Coordinate link test"
       ttc: "Verify uplink/downlink at all data rates"
-    command_services: [3, 8, 17, 20]
+    command_services: [3, 8, 20]
 
   - id: COM-007
     name: "OBDH Checkout"
@@ -170,7 +191,7 @@ procedures:
     position_roles:
       flight_director: "Authorize OBC tests"
       fdir_systems: "Verify OBC, CAN bus, memory subsystems"
-    command_services: [3, 6, 8, 20]
+    command_services: [3, 8, 20]
 
   - id: COM-008
     name: "FDIR Configuration"
@@ -180,7 +201,7 @@ procedures:
     position_roles:
       flight_director: "Approve FDIR configuration"
       fdir_systems: "Configure monitoring limits and event-actions"
-    command_services: [3, 5, 8, 12, 19, 20]
+    command_services: [3, 8, 20]
 
   - id: COM-009
     name: "Payload Power On"
@@ -191,7 +212,7 @@ procedures:
       flight_director: "Authorize payload activation"
       payload_ops: "Power on imager, verify telemetry"
       eps_tcs: "Monitor power budget impact"
-    command_services: [3, 8, 15, 20]
+    command_services: [3, 8, 20]
 
   - id: COM-010
     name: "FPA Cooler Activation"
@@ -212,7 +233,7 @@ procedures:
     position_roles:
       flight_director: "Authorize calibration"
       payload_ops: "Execute calibration sequence, verify image quality"
-    command_services: [3, 8, 15, 20]
+    command_services: [3, 8, 20]
 
   - id: COM-012
     name: "First Light"
@@ -223,7 +244,7 @@ procedures:
       flight_director: "Authorize first imaging"
       payload_ops: "Capture first image, assess quality"
       aocs: "Ensure pointing accuracy for imaging"
-    command_services: [3, 8, 11, 15, 20]
+    command_services: [3, 8, 20]
 
   - id: COM-013
     name: "ADCS Full Commissioning"
@@ -234,7 +255,7 @@ procedures:
       flight_director: "Authorize mode transitions"
       aocs: "Execute sensor checks, actuator verification, mode transitions"
       eps_tcs: "Monitor power during actuator testing"
-    command_services: [8]
+    command_services: [3, 8]
 
   # === Nominal Operations Procedures ===
   - id: NOM-001
@@ -245,7 +266,7 @@ procedures:
     position_roles:
       flight_director: "Authorize pass start, initial GO/NO-GO"
       ttc: "Verify link acquisition"
-    command_services: [3, 8, 17]
+    command_services: [3, 8]
 
   - id: NOM-002
     name: "Imaging Session"
@@ -255,7 +276,7 @@ procedures:
     position_roles:
       payload_ops: "Configure and execute imaging"
       aocs: "Ensure pointing for imaging windows"
-    command_services: [8, 11]
+    command_services: [3, 8]
     # Exemplar 1: the commanding half of this procedure is exactly the
     # imaging_pass activity's verified command sequence.
     runnable: {kind: activity_type, ref: imaging_pass}
@@ -268,7 +289,7 @@ procedures:
     position_roles:
       ttc: "Configure high-rate downlink"
       payload_ops: "Select and prioritize data for download"
-    command_services: [8, 15]
+    command_services: [3, 8, 13]
     # Exemplar 2: TTC high rate + S15 science-store dump = data_dump.
     runnable: {kind: activity_type, ref: data_dump}
 
@@ -283,7 +304,7 @@ procedures:
       flight_director: "Authorize manoeuvre vector and execution pass"
       aocs: "FDS: compute delta-V, burn epoch, predicted AOS shift"
       propulsion: "Verify propulsion health, load S11 sequence"
-    command_services: [3, 8, 11]
+    command_services: [3, 11]
     # Runnable exemplar: the planner's orbit_manoeuvre activity is this
     # procedure's command sequence (preheat -> set burn -> arm -> execute).
     runnable: {kind: activity_type, ref: orbit_manoeuvre}
@@ -305,7 +326,7 @@ procedures:
     position_roles:
       flight_director: "Authorize upload, GO/NO-GO at each stage"
       fdir_systems: "Execute memory load and verify"
-    command_services: [6, 8]
+    command_services: [3, 6, 8, 11]
 
   - id: NOM-007
     name: "Momentum Management"
@@ -314,7 +335,7 @@ procedures:
     required_positions: [aocs]
     position_roles:
       aocs: "Execute momentum desaturation"
-    command_services: [8]
+    command_services: [3, 8, 20]
 
   - id: NOM-008
     name: "Clock Synchronisation"
@@ -324,7 +345,7 @@ procedures:
     position_roles:
       flight_director: "Verify time delta threshold"
       fdir_systems: "Execute time update command"
-    command_services: [9]
+    command_services: [3, 9]
     # Exemplar 4 — the `markdown` adapter: the commanding skeleton is derived
     # from this document's own **TC:** annotations, with no separate
     # definition to keep in step. Prose, verification text and GO/NO-GO
@@ -339,7 +360,7 @@ procedures:
     required_positions: [flight_director]
     position_roles:
       flight_director: "Review all subsystem parameters"
-    command_services: [3, 5]
+    command_services: [3]
     # Exemplar 3: a single S3.27 HK request.
     runnable: {kind: activity_type, ref: housekeeping_collection}
 
@@ -360,8 +381,15 @@ procedures:
     required_positions: [ttc]
     position_roles:
       ttc: "Configure and verify new data rate"
-    command_services: [8]
+    command_services: [3, 8]
 
+  # NOM-012 is NOT advisory, against the initial expectation. It was proposed
+  # as a "briefing checklist", but its Step 1 is a six-structure housekeeping
+  # sweep (SIDs 1-6) and its Step 4 requests the on-board schedule with
+  # S11.17 — those are real telecommands, and they were invisible only because
+  # they were written as an `**Action:**` bullet list, which the extractor
+  # cannot read. Declaring `advisory: true` here would have declared a property
+  # the document does not have, which is the opposite of what the flag is for.
   - id: NOM-012
     name: "Shift Handover"
     file: "nominal/shift_handover.md"
@@ -369,7 +397,7 @@ procedures:
     required_positions: [flight_director]
     position_roles:
       flight_director: "Conduct handover briefing and log"
-    command_services: []
+    command_services: [3, 11]
 
   # Phase D: the book's execution card is NOM-005; sim NOM-005 was already
   # HK Configuration, so execution is NOM-013 (book carries an editor's note).
@@ -382,9 +410,14 @@ procedures:
       flight_director: "GO/NO-GO at arm, standing abort authority delegated"
       aocs: "Hold burn attitude, monitor att_error, post-burn momentum"
       propulsion: "Preheat, arm, execute, monitor thrust, post-burn OD"
-    command_services: [3, 8, 11]
+    command_services: [8]
 
   # === Contingency Procedures ===
+  # Runnable from 2026-08b. A five-rung escalation ladder whose decision
+  # variable is a single telemetry parameter (`eps.bus_voltage`, 0x0105), which
+  # is the ideal case for the branch format. Flat, the runner would shed the
+  # payload, the cooler, the transmitter AND the reaction wheels — and then
+  # command OBC EMERGENCY — on a spacecraft the first shed had already saved.
   - id: CTG-001
     name: "Under-Voltage Load Shed"
     file: "contingency/undervoltage_loadshed.md"
@@ -393,7 +426,8 @@ procedures:
     position_roles:
       flight_director: "Authorize load shedding sequence"
       eps_tcs: "Execute power line disconnections"
-    command_services: [3, 5, 8, 20]
+    command_services: [3, 8]
+    runnable: {kind: markdown}
 
   - id: CTG-002
     name: "AOCS Anomaly Recovery"
@@ -403,7 +437,7 @@ procedures:
     position_roles:
       flight_director: "Authorize recovery actions"
       aocs: "Diagnose and recover AOCS"
-    command_services: [3, 5, 8, 20]
+    command_services: [3, 8, 20]
 
   - id: CTG-003
     name: "TTC Link Loss Recovery"
@@ -413,7 +447,7 @@ procedures:
     position_roles:
       flight_director: "Coordinate link recovery"
       ttc: "Reconfigure RF chain and ground station"
-    command_services: [3, 5, 8, 17, 20]
+    command_services: [3, 8]
 
   - id: CTG-004
     name: "Thermal Exceedance"
@@ -424,7 +458,7 @@ procedures:
       flight_director: "Authorize thermal response"
       payload_ops: "Safe payload if affected"
       eps_tcs: "Adjust heaters and power"
-    command_services: [3, 5, 8, 20]
+    command_services: [3, 8]
 
   - id: CTG-005
     name: "EPS Safe Mode"
@@ -434,7 +468,7 @@ procedures:
     position_roles:
       flight_director: "Authorize EPS recovery"
       eps_tcs: "Execute EPS safe mode recovery"
-    command_services: [3, 5, 8, 20]
+    command_services: [3, 8]
 
   - id: CTG-006
     name: "Payload Anomaly"
@@ -444,7 +478,7 @@ procedures:
     position_roles:
       flight_director: "Authorize payload response"
       payload_ops: "Diagnose and safe payload"
-    command_services: [3, 5, 8, 20]
+    command_services: [3, 8]
 
   - id: CTG-007
     name: "Reaction Wheel Anomaly"
@@ -454,8 +488,13 @@ procedures:
     position_roles:
       flight_director: "Authorize RW recovery"
       aocs: "Diagnose RW issue, switch to backup"
-    command_services: [3, 5, 8, 20]
+    command_services: [3, 8, 20]
 
+  # Runnable from 2026-08b. A redundancy switchover with a genuine telemetry
+  # predicate (`aocs.st2_status`, 0x0243). Flat, the runner would select a star
+  # tracker that is not tracking, power off the only other one, and then
+  # command the degraded COARSE_SUN fallback — all three, in that order, on a
+  # spacecraft that had just lost its attitude reference.
   - id: CTG-008
     name: "Star Tracker Failure"
     file: "contingency/star_tracker_failure.md"
@@ -464,7 +503,8 @@ procedures:
     position_roles:
       flight_director: "Authorize ST recovery"
       aocs: "Switch to backup ST, recalibrate"
-    command_services: [3, 5, 8, 20]
+    command_services: [3, 8]
+    runnable: {kind: markdown}
 
   - id: CTG-009
     name: "Solar Array Degradation"
@@ -474,7 +514,7 @@ procedures:
     position_roles:
       flight_director: "Authorize power budget adjustment"
       eps_tcs: "Assess degradation, adjust power profile"
-    command_services: [3, 5, 8, 20]
+    command_services: [3, 8, 20]
 
   - id: CTG-010
     name: "OBDH Watchdog Recovery"
@@ -484,7 +524,7 @@ procedures:
     position_roles:
       flight_director: "Authorize OBC recovery actions"
       fdir_systems: "Assess watchdog event, verify OBC state"
-    command_services: [3, 5, 8, 20]
+    command_services: [3, 8]
 
   - id: CTG-011
     name: "OBC Redundancy Switchover"
@@ -494,7 +534,7 @@ procedures:
     position_roles:
       flight_director: "Authorize OBC switchover"
       fdir_systems: "Execute switchover, verify new OBC"
-    command_services: [3, 5, 8, 20]
+    command_services: [3, 8]
 
   - id: CTG-012
     name: "Overcurrent Response"
@@ -504,7 +544,7 @@ procedures:
     position_roles:
       flight_director: "Authorize power line reset"
       eps_tcs: "Isolate and reset overcurrent line"
-    command_services: [3, 5, 8, 20]
+    command_services: [3, 8]
 
   - id: CTG-013
     name: "Battery Cell Failure"
@@ -514,7 +554,7 @@ procedures:
     position_roles:
       flight_director: "Authorize battery management"
       eps_tcs: "Assess cell failure, adjust charge limits"
-    command_services: [3, 5, 8, 20]
+    command_services: [3, 8]
 
   - id: CTG-014
     name: "BER Anomaly"
@@ -524,7 +564,7 @@ procedures:
     position_roles:
       flight_director: "Authorize link reconfiguration"
       ttc: "Diagnose BER issue, adjust modulation/rate"
-    command_services: [3, 5, 8, 17, 20]
+    command_services: [3, 8]
 
   - id: CTG-015
     name: "Corrupted Image Recovery"
@@ -533,7 +573,7 @@ procedures:
     required_positions: [payload_ops]
     position_roles:
       payload_ops: "Assess corruption, retake if possible"
-    command_services: [3, 8, 15]
+    command_services: [3, 8]
 
   - id: CTG-016
     name: "Memory Segment Failure"
@@ -543,7 +583,7 @@ procedures:
     position_roles:
       flight_director: "Authorize memory management"
       fdir_systems: "Isolate bad segment, remap storage"
-    command_services: [3, 5, 6, 8, 20]
+    command_services: [3, 6, 8]
 
   - id: CTG-017
     name: "Bus Failure Switchover"
@@ -553,7 +593,7 @@ procedures:
     position_roles:
       flight_director: "Authorize bus switchover"
       fdir_systems: "Switch CAN bus, verify communication"
-    command_services: [3, 5, 8, 20]
+    command_services: [3, 8]
 
   - id: CTG-018
     name: "Boot Loader Recovery"
@@ -563,7 +603,7 @@ procedures:
     position_roles:
       flight_director: "Authorize boot recovery"
       fdir_systems: "Execute boot loader recovery sequence"
-    command_services: [3, 5, 6, 8, 20]
+    command_services: [3, 6, 8]
 
   - id: CTG-019
     name: "No Telemetry at Pass Start"
@@ -573,7 +613,7 @@ procedures:
     position_roles:
       flight_director: "Coordinate RF chain diagnostics"
       ttc: "Diagnose transponder/antenna/GS issues"
-    command_services: [8, 17]
+    command_services: [3, 8]
 
   - id: CTG-020
     name: "Ground Station Antenna Failure"
@@ -583,7 +623,27 @@ procedures:
     position_roles:
       flight_director: "Authorize station switchover"
       ttc: "Diagnose GS equipment, switch to backup station"
-    command_services: [8, 17]
+    command_services: []
+    # DECLARED as commanding nothing. The literal `advisory: true` /
+    # `advisory_reason:` keys the ruling asked for would need two additive
+    # fields on `ProcedureIndexEntry` in
+    # `packages/smo-common/src/smo_common/config/schemas.py`, which is a
+    # StrictModel and is NOT a Phase-5-owned file — see the phase report. The
+    # same declared property is carried by the `runnable:` mapping, which is
+    # already in the schema and which `smo_mcs.server._resolve_runnable`
+    # already treats as not-runnable for any kind it does not know.
+    runnable: {kind: advisory, reason: "Pure ground-segment: every action is
+      taken on the ground and the spacecraft is unreachable throughout"}
+    # Full rationale (rendered next to the card in the MCS procedure browser):
+    # Pure ground-segment. Every action in this card is taken on the GROUND —
+    # inspect the antenna controller, check the LNA and receive chain, call the
+    # alternate station, replan the pass. The spacecraft is unreachable for the
+    # whole of it, which is the point: it is the one contingency where sending a
+    # telecommand is impossible by definition. It previously declared
+    # `command_services: [8, 17]` while carrying no commanding at all, so
+    # "zero commands" looked like a defect. It is now a DECLARED property, and
+    # `tools/procedure_audit.py`'s ZERO_COMMAND_PROCEDURE check fails the build
+    # for any other card that extracts nothing without saying so.
 
   - id: CTG-021
     name: "OBC Bootloader Recovery"
@@ -593,7 +653,7 @@ procedures:
     position_roles:
       flight_director: "Authorize OBC recovery sequence"
       fdir_systems: "Execute bootloader recovery, verify app boot"
-    command_services: [6, 8]
+    command_services: [3, 6, 8, 9]
 
   - id: CTG-022
     name: "CAN Bus Failure Isolation"
@@ -603,7 +663,7 @@ procedures:
     position_roles:
       flight_director: "Authorize bus isolation"
       fdir_systems: "Isolate failed CAN bus, verify backup bus"
-    command_services: [8]
+    command_services: [3, 8]
 
   - id: CTG-023
     name: "Progressive Load Shed"
@@ -613,7 +673,7 @@ procedures:
     position_roles:
       flight_director: "Authorize progressive load shedding"
       eps_tcs: "Execute staged load shed by SoC threshold"
-    command_services: [3, 5, 8]
+    command_services: [3, 8]
 
   - id: CTG-024
     name: "Solar Panel Loss Response"
@@ -624,7 +684,7 @@ procedures:
       flight_director: "Authorize power budget revision"
       eps_tcs: "Assess panel loss impact, adjust power profile"
       aocs: "Adjust attitude for optimal remaining panel illumination"
-    command_services: [3, 5, 8]
+    command_services: [3, 8]
 
   - id: CTG-025
     name: "AOCS Sensor Loss Recovery"
@@ -634,7 +694,7 @@ procedures:
     position_roles:
       flight_director: "Authorize sensor switchover"
       aocs: "Switch to backup sensor, reconfigure ADCS"
-    command_services: [8]
+    command_services: [3, 8]
 
   - id: CTG-026
     name: "AOCS Actuator Stuck Recovery"
@@ -645,7 +705,7 @@ procedures:
       flight_director: "Authorize actuator recovery"
       aocs: "Power-cycle actuator, switch to 3-wheel mode if needed"
       eps_tcs: "Cycle actuator power line"
-    command_services: [8]
+    command_services: [3, 8, 20]
 
   - id: CTG-027
     name: "GPS Time Synchronisation and AOCS Recovery"
@@ -656,7 +716,7 @@ procedures:
       flight_director: "Authorize GPS time sync"
       aocs: "Monitor AOCS mode, re-commission if SAFE_BOOT triggered"
       fdir_systems: "Verify OBC time updated, monitor events"
-    command_services: [8, 9]
+    command_services: [3, 8]
 
   # Phase D: the book numbers this CTG-006; sim CTG-006 was already Payload
   # Anomaly, so the propulsion card is CTG-028 (book carries an editor's note).
@@ -679,7 +739,7 @@ procedures:
     required_positions: [flight_director]
     position_roles:
       flight_director: "Command immediate safe mode entry"
-    command_services: [8]
+    command_services: [3, 8]
 
   - id: EMG-002
     name: "Total Power Failure"
@@ -689,7 +749,7 @@ procedures:
     position_roles:
       flight_director: "Coordinate emergency response"
       eps_tcs: "Manage emergency power restoration"
-    command_services: [8]
+    command_services: [3, 8]
 
   - id: EMG-003
     name: "OBC Reboot"
@@ -699,7 +759,7 @@ procedures:
     position_roles:
       flight_director: "Authorize emergency reboot"
       fdir_systems: "Execute reboot, verify recovery"
-    command_services: [8]
+    command_services: [3, 8]
 
   - id: EMG-004
     name: "Loss of Communication"
@@ -709,7 +769,7 @@ procedures:
     position_roles:
       flight_director: "Coordinate comms recovery"
       ttc: "Execute blind commanding, reconfigure RF"
-    command_services: [8, 17]
+    command_services: [3, 8]
 
   - id: EMG-005
     name: "Loss of Attitude"
@@ -719,8 +779,14 @@ procedures:
     position_roles:
       flight_director: "Authorize emergency attitude recovery"
       aocs: "Execute detumble and reacquisition"
-    command_services: [8]
+    command_services: [3, 8]
 
+  # Runnable from 2026-08b. The card was an EMERGENCY procedure with ZERO
+  # machine-readable commanding: every telecommand in it was written as
+  # `**Action:**` prose. It now carries 24 canonical steps INCLUDING a real
+  # branch structure, which is what makes it safe to run: flat, the runner
+  # would shed the heater power line (Step 4) even when the heater had already
+  # obeyed the OFF command in Step 2.
   - id: EMG-006
     name: "Thermal Runaway"
     file: "emergency/thermal_runaway.md"
@@ -730,4 +796,5 @@ procedures:
       flight_director: "Coordinate thermal emergency"
       eps_tcs: "Emergency heater shutdown"
       payload_ops: "Emergency payload power off"
-    command_services: [8]
+    command_services: [3, 8]
+    runnable: {kind: markdown}

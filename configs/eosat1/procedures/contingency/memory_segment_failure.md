@@ -13,7 +13,7 @@ storage capacity.
 
 ## Prerequisites
 - [ ] Increase in bad memory segment count detected — `payload.mem_segments_bad` (0x0612) > 0
-- [ ] TT&C link active — `ttc.link_status` (0x0501) = 1
+- [ ] TT&C link active — `ttc.link_status` (0x0501) = 2 (LOCKED)
 - [ ] Payload in STANDBY mode — `payload.mode` (0x0600) = 1
 - [ ] No active imaging session (abort imaging before executing this procedure)
 
@@ -40,7 +40,7 @@ storage capacity.
 ## Procedure Steps
 
 ### Step 1: Detect Memory Segment Failure
-**Action:** Request payload housekeeping: `HK_REQUEST(sid=6)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 27) — Request payload housekeeping
 **Verify:** `payload.mem_segments_bad` (0x0612) — record current value and compare with
 previous known value. Calculate the number of newly failed segments.
 **Verify:** `payload.mem_total_mb` (0x060A) — record total capacity
@@ -52,33 +52,33 @@ A single bad segment reduces capacity by approximately 1.25%.
 **GO/NO-GO:** Segment failure confirmed — proceed to identification.
 
 ### Step 2: Identify Failed Segment
-**Action:** Request image catalog to determine which segment(s) may be affected:
-`PAYLOAD_GET_IMAGE_CATALOG` (func_id 32)
+**Note:** Request image catalog to determine which segment(s) may be affected:
+**TC:** `PAYLOAD_GET_IMAGE_CATALOG` (Service 8, Subtype 1, func_id 32)
 **Action:** Review the catalog for images that reported checksum errors. The segment
 hosting the corrupted image is the likely failed segment.
-**Action:** If the failed segment cannot be determined from the catalog, perform a
-memory CRC check: `MEM_CHECK(memory_id=0, address=SEGMENT_START, length=SEGMENT_SIZE)`
-(Service 6, Subtype 9) for each suspect segment.
+**Note:** If the failed segment cannot be determined from the catalog, perform a
+**TC:** `MEM_CHECK(memory_id=0, address=SEGMENT_START, length=SEGMENT_SIZE)` (Service 6, Subtype 9) — memory CRC check
+**Note:** (Service 6, Subtype 9) for each suspect segment.
 **Verify:** CRC check result — segments with CRC mismatch are confirmed bad.
 **Note:** Segment index ranges from 0 to 79. If the specific segment index is known
 from onboard diagnostics, skip the manual CRC check.
 **GO/NO-GO:** Failed segment(s) identified — proceed to marking.
 
 ### Step 3: Mark Bad Segment
-**Action:** Mark the failed segment as unusable:
-`PAYLOAD_MARK_BAD_SEGMENT(segment_id=N)` (func_id 31) where N is the segment index (**0-7**;
-`num_memory_segments: 8` in `subsystems/payload.yaml` — the model REJECTS an index >= 8. The
-old '0-79' figure was never executable).  
+**Note:** Mark the failed segment as unusable:
+**TC:** `PAYLOAD_MARK_BAD_SEGMENT(segment_id=N)` (Service 8, Subtype 1, func_id 31) — where N is the segment index (**0-7**;
+**Note:** `num_memory_segments: 8` in `subsystems/payload.yaml` — the model REJECTS an index >= 8. The
+**Note:** old '0-79' figure was never executable).
 **Wire:** `1F 0N` — e.g. segment 3 = `1F 03`
-**Verify:** Request payload housekeeping: `HK_REQUEST(sid=6)` (Service 3, Subtype 27)
+**Verify:** Request payload housekeeping: `HK_REQUEST(sid=5)` (Service 3, Subtype 27)
 **Verify:** `payload.mem_segments_bad` (0x0612) — confirm count reflects the newly marked segment
 **Note:** If multiple segments are bad, repeat this step for each identified segment.
-**Action:** If any images were stored in the bad segment, delete them:
-`PAYLOAD_DELETE_IMAGE(scene_id=X)` (func_id 30) for each affected scene.
+**Note:** If any images were stored in the bad segment, delete them:
+**TC:** `PAYLOAD_DELETE_IMAGE(scene_id=X)` (Service 8, Subtype 1, func_id 30) — for each affected scene.
 **GO/NO-GO:** Bad segment(s) marked and affected images cleaned up — proceed.
 
 ### Step 4: Verify Reduced Capacity
-**Action:** Request payload housekeeping: `HK_REQUEST(sid=6)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 27) — Request payload housekeeping
 **Verify:** `payload.mem_total_mb` (0x060A) — confirm total reported capacity reflects
 reduction (expected decrease of ~250 MB per bad segment)
 **Verify:** `payload.store_used` (0x0604) — recalculate percentage based on new total capacity

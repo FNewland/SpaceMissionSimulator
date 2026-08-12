@@ -24,19 +24,22 @@ associated harness.
 | Configuration        | 5 body-mounted panels + 2 deployable wings (+/-Y) on a single-axis solar array drive |
 | Cell Technology      | Triple-junction GaAs (29.5 % cell efficiency) |
 | Body-mounted area    | 0.198 m2 total (stowed configuration) |
-| Deployed total area  | 0.558 m2 (body panels + both wings) |
-| Wing area            | 0.18 m2 per wing (+Y and -Y, 3 folding segments) |
-| Peak Power (BOL)     | ~110 W (wings sun-tracking at low beta, fully deployed) |
-| EOL performance      | K = 267.9 W/m2 of projected area (full loss stack, 3-year EOL) |
+| Deployed total area  | 0.438 m2 (body panels + both wings) |
+| Wing area            | 0.12 m2 of cells per wing (+Y and -Y, 2 folding panels of 209 x 342 mm) |
+| Wing assembly mass   | ~1.07 kg per wing incl. hinges and HDRM |
+| Peak Power (BOL)     | ~89 W instantaneous, wings sun-tracking at beta = 0, fully deployed (wings alone 70 W, matching the MMA eHaWK 6U class rating) |
+| Orbit-average (BOL, nadir) | ~55 W at beta = 24 deg, ~42 W at beta = 50 deg (incl. eclipse) |
+| EOL performance      | K = 267.2 W/m2 of projected area (full loss stack, 3-year EOL, sa_age_factor 0.9175) |
 | Operating Voltage    | 28 V (regulated bus)       |
 | Wing deploy time     | ~30 s per wing (burn wire release) |
 
 Five spacecraft faces carry body-mounted solar panels (the -Z face carries the
 imager aperture and radiator and has no cells). Deployable solar wings are
 mounted on the +Y and -Y faces on a shared single-axis solar array drive
-(SADA) whose rotation axis is body Z — the orbit normal. When stowed, the
+(SADA) whose rotation axis is body Y — the orbit normal in the LVLH
+nadir-pointing frame (z = nadir, y = -orbit normal). When stowed, the
 total solar collection area is 0.198 m2 (body panels only). After wing
-deployment the total area is 0.558 m2 (0.18 m2 per wing added). Power
+deployment the total area is 0.438 m2 (0.12 m2 per wing added). Power
 generation per body panel depends on the cosine projection of the Sun vector
 onto the panel normal; the wing pair, when the SADA is tracking, follows the
 Sun's projection perpendicular to the drive axis continuously (a cos-beta
@@ -60,20 +63,35 @@ P_panel = A_panel * K * max(0, cos(angle_to_sun)) * degradation_factor
 where `K` is the effective plane-of-array constant including the full loss
 stack (inherent degradation/packing 0.85, temperature at 65 C, MPPT 0.97,
 harness 0.95, and aging), and `degradation_factor` accounts for panel damage.
-If the SADA is stopped (device 0x0101 OFF, or `sada_tracking` disabled via a
-stuck drive), the wings fall back to the fixed-wing |sin(orbit phase)| duty —
-roughly a 36 % orbit-average generation loss, a first-class failure case.
+Two distinct SADA fault cases, both real and both diagnosable:
+
+* **Drive powered OFF** (S2 device 0x0101). The wings stop contributing, but
+  the five BODY-mounted panels are bonded to the structure and wired straight
+  to the MPPT — they need no drive and keep producing (~15-18 W sunlit).
+  Generation collapsing to *exactly zero* would mean a total array loss, not a
+  drive fault; the residual body generation is what tells the two apart.
+* **Drive STUCK** (`sada_stuck` failure injection, or `sada_tracking`
+  disabled). The shaft freezes where it is, so `solar_array_drive_angle`
+  (0x0133) goes flat while the Sun walks away from the frozen normal. The
+  wings revert to the fixed-wing |sin(orbit phase)| duty — roughly a 36 %
+  orbit-average generation loss, with a characteristic once-per-orbit ripple
+  on the per-wing currents 0x0146 / 0x0147.
+
+The drive is rate-limited to `sada_max_rate_deg_s` (1.0 deg/s). Sun tracking
+needs one revolution per orbit = 0.064 deg/s, so there is ~15x margin in
+nominal ops; a commanded reposition of 90 deg takes ~90 s and is visible as a
+ramp on 0x0133.
 
 ### 2.1.1 Deployable Solar Wings
 
 The spacecraft carries two deployable solar wings, one on each of the +Y and -Y faces.
-Each wing adds 0.18 m2 of solar collection area and is held in the stowed position by a
+Each wing adds 0.12 m2 of solar collection area and is held in the stowed position by a
 burn wire restraint mechanism. Deployment is commanded via S8 function management:
 
 | Parameter            | Value                      |
 |----------------------|----------------------------|
 | Wing location        | +Y face and -Y face (shared SADA shaft) |
-| Area per wing        | 0.18 m2                    |
+| Area per wing        | 0.12 m2 of cells (0.143 m2 geometric, ~84 % packing) |
 | Deploy mechanism     | Burn wire (resistive heating) |
 | Deploy time          | ~30 seconds per wing       |
 | Deploy command       | EPS_DEPLOY_WING (func_id 81) |
@@ -103,6 +121,7 @@ burn wire restraint mechanism. Deployment is commanded via S8 function managemen
 | Chemistry            | Lithium-Ion (Li-Ion)       |
 | Nominal Voltage      | 28 V                       |
 | Capacity             | 100 Wh (3.6 Ah at 28 V)    |
+| Reference part       | GomSpace NanoPower BPX, 8S-1P: 100 Wh, 3 Ah, 28.8 V nominal, ~500 g, 18650 cells |
 | Coulombic efficiency | 0.94 (charge acceptance)   |
 | Depth of Discharge   | Max 35% (nominal ops)      |
 | Charge Method        | CC/CV taper above 90 % SoC, thermal cutoff |
@@ -171,24 +190,62 @@ period after launcher separation:
 
 | Mode       | Loads Powered                                  | Typical Consumption |
 |------------|------------------------------------------------|---------------------|
-| NOMINAL    | All subsystems, payload active                 | ~80 W               |
-| SAFE       | OBC, TTC, TCS heaters, AOCS (safe point)      | ~45 W               |
-| EMERGENCY  | OBC, TTC essential only                        | ~25 W               |
-| ECLIPSE    | Battery-only supply, non-essential loads shed   | ~60 W               |
+| NOMINAL    | All subsystems, payload standby                | ~29 W orbit-average |
+| NOMINAL+IMAGING | As above plus imager and FPA cooler on duty | ~33 W orbit-average |
+| SAFE       | OBC, TTC, TCS heaters, AOCS (safe point)       | ~20 W               |
+| EMERGENCY  | OBC, TTC essential only                        | ~11 W               |
+| ECLIPSE    | Battery-only supply, non-essential loads shed  | ~25 W               |
 
 ### 3.1 Power Budget Breakdown (Nominal Subsystem Consumption)
+
+Every wattage below is the value `subsystems/eps.yaml` bills and is derived
+from a named flight part — see `docs/plan_2026-08b/POWER_SIZING.md` for the
+research, citations and the "part class -> flight heritage -> value adopted"
+table. Ruling R1: *"a CubeSat would generally not have a 20 W transmitter and
+would struggle to generate 114 W peak"* — correct on both counts, and this
+table is what was wrong, not the model.
 
 | Subsystem          | Typical Power | Notes                             |
 |--------------------|---------------|-----------------------------------|
 | OBC (primary)      | 6 W           | OBC 3 W + PDU/EPS housekeeping 3 W |
-| TTC receiver (RX)  | 1.5 W         | Always on (unswitchable)          |
-| TTC transmitter+PA | 12 W LOW / 20 W HIGH tier | On during contacts only |
-| AOCS suite         | 12 W          | 4 RW idle + ST + IMU + GPS + MTQ/electronics |
-| Payload (imaging)  | 45 W          | Active during imaging passes only |
-| Payload (standby)  | 6 W           | Electronics on                    |
-| FPA cooler         | 15 W          | Stirling cooler, own power line   |
+| TTC receiver (RX)  | 1.5 W         | Always on (unswitchable). Endurosat S-band idle/Rx 1.2 W + ~0.3 W UHF beacon Rx |
+| TTC transmitter+PA | 5 W LOW / 11 W HIGH tier | On during contacts only. 2 W RF (33 dBm) at the HIGH tier — Endurosat S-band transceiver, 11 W DC at 33 dBm, 1.2 W idle |
+| AOCS suite         | 12 W line rating; 4 / 9 / 15 W billed by mode (COARSE / NOMINAL / FINE) | Billed from the AOCS model's live draw at 0x02C8, not the line rating |
+| Payload (imaging)  | 5.5 W         | Simera Sense TriScape100 imaging mode, 1100 mA at 5 V |
+| Payload (standby)  | 2.4 W         | TriScape100 idle/readout, 470 mA at 5 V |
+| FPA cooler         | 15 W          | Thermo-electric (Peltier) stack, own power line |
 | Battery heater     | 8 W           | Thermostat ON +5 C / OFF +10 C    |
 | OBC heater         | 4 W           | Manual control                    |
+| Propulsion         | 12 W catbed + 2 W valves, when armed | Line OFF outside manoeuvre preparation |
+
+**Standby must be below imaging.** Until 2026-08b this table and eps.yaml
+disagreed with each other and with physics: standby was billed at 6 W against
+5 W for imaging, i.e. the imager drew *less* while imaging. Both ends are now
+a TriScape100 datasheet figure, and
+`tests/test_content/test_eps_config_manual_consistency.py` asserts the
+ordering as well as the values.
+
+### 3.2 Orbit-Average Budget (worst beta, EOL)
+
+Produced by `tools/power_budget.py`, which ticks the production EPS and TCS
+models over the real propagated orbit — not a spreadsheet.
+
+| Profile | Generation | Load | Margin | Ratio |
+|---------|-----------|------|--------|-------|
+| quiescent        | 38.0 W | 25.5 W | +12.5 W | 1.49 |
+| nominal          | 38.0 W | 28.7 W | +9.3 W  | 1.33 |
+| nominal + imaging| 38.0 W | 32.5 W | +5.5 W  | 1.17 |
+| manoeuvre        | 38.0 W | 32.0 W | +6.0 W  | 1.19 |
+
+The acceptance criterion — orbit-average generation exceeds orbit-average load
+with ALL nominal systems on, including ADCS — closes at 1.33x in NOMINAL nadir
+pointing at the worst beta angle of the year (49.8 deg) at 3-year EOL.
+
+**Imaging is duty-cycled, not continuous.** The budget above assumes three
+90-second captures per orbit with the FPA cooler running for ~20 minutes
+around them. Holding FINE pointing and the cooler for a whole orbit
+(the `worst` profile) is power-NEGATIVE by design: it is the exercise, not a
+sizing failure.
 
 During eclipse transitions, the PCDU autonomously switches from solar array to battery
 supply. The `eclipse_flag` telemetry parameter (0x0108) indicates the current illumination

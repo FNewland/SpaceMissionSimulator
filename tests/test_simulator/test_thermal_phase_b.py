@@ -294,23 +294,30 @@ class TestBillingEqualsActuators:
         pl.handle_command({"command": "set_mode", "mode": 1})
         _co_tick(eps, tcs, pl, params, orbit, 30.0, eclipse_profile=False)
         bus = max(eps._state.bus_voltage, 20.0)
+        # 2026-08b R1: standby is 2.4 W (Simera Sense TriScape100 idle,
+        # 470 mA at 5 V). It used to be 6.0 W — i.e. MORE than the 5.0 W
+        # imaging figure, which is physically impossible.
         assert eps._state.line_currents["payload"] * bus == pytest.approx(
-            6.0, abs=0.3), "payload standby not billed from actual state"
+            2.4, abs=0.3), "payload standby not billed from actual state"
 
     def test_tx_power_is_tier_dependent(self):
-        """Brief 01 WP-12: HIGH tier bills transponder_hi_power_w (20 W),
-        LOW bills 12 W."""
+        """Brief 01 WP-12: HIGH tier bills transponder_hi_power_w, LOW bills
+        transponder_power_w. 2026-08b R1: those are 11 W and 5 W — the
+        Endurosat S-band transceiver's DC draw at 33 dBm (2 W RF) and at the
+        LOW-tier setting. The old 20 W / 12 W were not a CubeSat radio."""
         eps, tcs, pl = _models()
         eps._state.power_lines["ttc_tx"] = True
         orbit = _Orbit()
         params = {0x0506: 16000.0}
         eps.tick(1.0, orbit, params)
         bus = max(eps._state.bus_voltage, 20.0)
-        assert eps._state.line_currents["ttc_tx"] * bus == pytest.approx(12.0, abs=0.3)
+        # 2026-08b R1: LOW tier is 5 W DC (Endurosat S-band at ~27 dBm).
+        # This line said 12.0 while eps.yaml has said 5.0 since Phase B.
+        assert eps._state.line_currents["ttc_tx"] * bus == pytest.approx(5.0, abs=0.3)
         params[0x0506] = 128000.0
         eps.tick(1.0, orbit, params)
         bus = max(eps._state.bus_voltage, 20.0)
-        assert eps._state.line_currents["ttc_tx"] * bus == pytest.approx(20.0, abs=0.3)
+        assert eps._state.line_currents["ttc_tx"] * bus == pytest.approx(11.0, abs=0.3)
 
 
 class TestMonitors:

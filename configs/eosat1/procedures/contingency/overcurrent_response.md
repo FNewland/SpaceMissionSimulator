@@ -13,7 +13,7 @@ the affected power line, and verifies nominal operation of the downstream subsys
 
 ## Prerequisites
 - [ ] Overcurrent event detected via telemetry or alarm
-- [ ] TT&C link active — `ttc.link_status` (0x0501) = 1
+- [ ] TT&C link active — `ttc.link_status` (0x0501) = 2 (LOCKED)
 - [ ] EPS operator on console or Flight Director aware
 - [ ] Spacecraft is not in EMERGENCY mode — `obdh.mode` (0x0300) != 2
 
@@ -48,7 +48,7 @@ the affected power line, and verifies nominal operation of the downstream subsys
 ## Procedure Steps
 
 ### Step 1: Identify Tripped Power Line(s)
-**Action:** Request EPS housekeeping: `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — Request EPS housekeeping
 **Verify:** `eps.oc_trip_flags` (0x010D) — decode bitmask to identify tripped line(s):
 - Bit 0: OBC (line 0) — non-switchable, critical
 - Bit 1: TTC RX (line 1) — non-switchable, critical
@@ -62,7 +62,7 @@ the affected power line, and verifies nominal operation of the downstream subsys
 **GO/NO-GO:** Tripped line(s) identified — proceed to current assessment.
 
 ### Step 2: Check Per-Line Current for Fault Assessment
-**Action:** Request EPS housekeeping: `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — Request EPS housekeeping
 **Verify:** Check the per-line current for the tripped line (0x0118 through 0x011F):
 - If current is near 0 A: Line has been disconnected by the LCL (expected after trip).
 - If current is still elevated: Persistent fault — do NOT re-enable. Isolate and
@@ -90,14 +90,17 @@ whether inrush current may have caused a transient trip.
 damage suspected, HOLD and escalate.
 
 ### Step 4: Reset Overcurrent Flag
-**Action:** Reset the overcurrent trip flag for the affected line:
-`EPS_RESET_OC_FLAG(line_index=N)` (func_id 21) where N is the tripped line index (0-7).
+**Note:** Reset the overcurrent trip flag for the affected line:
+**TC:** `EPS_RESET_OC_FLAG(line_index=N)` (Service 8, Subtype 1, func_id 21) — where N is the tripped line index (0-7).
 **Verify:** `eps.oc_trip_flags` (0x010D) — confirm the bit for the affected line has cleared.
 **Verify:** Wait 5 s and re-check `eps.oc_trip_flags` to confirm flag remains cleared.
 **GO/NO-GO:** OC flag cleared — proceed to re-enable.
 
 ### Step 5: Re-Enable Power Line
-**Action:** Re-enable the power line: `EPS_POWER_ON(line_index=N)` (func_id 19)
+**Note:** N is the line that tripped: 2 ttc_tx, 3 payload, 4 fpa_cooler,
+5 htr_bat, 6 htr_obc, 7 aocs_wheels. Lines 0 (obc) and 1 (ttc_rx) are
+non-switchable and cannot trip this way.
+**TC:** `EPS_POWER_ON(line_index=3)` (Service 8, Subtype 1, func_id 19) — example: the payload line
 **Verify:** Power line status register (0x0110 + N) = 1 (ON) within 5 s
 **Verify:** Per-line current (0x0118 + N) returns to expected nominal value
 **Verify:** `eps.oc_trip_flags` (0x010D) remains clear (no re-trip)
@@ -105,11 +108,13 @@ damage suspected, HOLD and escalate.
 **GO/NO-GO:** Line re-enabled and stable — proceed to verification.
 
 ### Step 6: Verify Downstream Subsystem Recovery
-**Action:** Request housekeeping for the affected subsystem:
-- AOCS wheels: `HK_REQUEST(sid=2)` — verify `aocs.mode` (0x020F), wheel speeds
-- Payload: `HK_REQUEST(sid=6)` — verify `payload.mode` (0x0600)
-- TTC TX: `HK_REQUEST(sid=5)` — verify `ttc.link_status` (0x0501)
+**Note:** Request housekeeping for the affected subsystem:
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — AOCS wheels:   — verify `aocs.mode` (0x020F), wheel speeds
+**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 27) — Payload:   — verify `payload.mode` (0x0600)
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) — TTC TX:   — verify `ttc.link_status` (0x0501) = 2 (LOCKED).
+  SID 6 is the TT&C structure; SID 5 is the payload.
 - Heaters: `HK_REQUEST(sid=3)` — verify heater status and temperatures
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — EPS housekeeping
 **Verify:** Downstream subsystem is functioning nominally.
 **Verify:** `eps.power_cons` (0x0106) reflects the re-added load.
 **Verify:** `eps.bus_voltage` (0x0105) > 27.0 V with load restored.

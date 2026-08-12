@@ -47,8 +47,15 @@ def engine():
         ttc._state.pa_on = True
         ttc._state.antenna_deployed = True
         ttc._state._lock_timer = 60.0
+        # The first tick sees `_was_in_contact == False`, treats it as AOS and
+        # zeroes `_lock_timer` again, so the 60.0 above buys nothing. Tell the
+        # model the contact was already established so the pre-set lock state
+        # survives — otherwise this "link active" fixture only ever reaches
+        # ACQUIRING, and since 2026-08b `uplink_active` requires LOCKED(2)
+        # rather than accepting carrier lock without frame sync.
+        ttc._was_in_contact = True
 
-    _tick(eng, 5)
+    _tick(eng, 12)   # > the 10 s frame-sync delay, so the link really locks
     return eng
 
 

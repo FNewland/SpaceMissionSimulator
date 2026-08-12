@@ -23,7 +23,24 @@ activity_types:
     # Func IDs verified against smo_simulator/service_dispatch.py S8 routing:
     # 26 (0x1A) = payload set_mode (payload range 26-39), 28 (0x1C) = capture.
     # The old 0x14/0x16 landed in the EPS range (16-25) and were no-ops.
+    #
+    # 2026-08b PL-a (fourth root cause of "cannot do a capture"): the sequence
+    # never commanded FINE_POINT at all, so every planner-scheduled capture was
+    # refused by the payload's own gate ("Capture refused: AOCS not in
+    # FINE_POINT"). AOCS_SET_MODE is func 1 (0x01) and FINE_POINT is mode 5;
+    # the wait_for holds until the mode machine has actually settled there
+    # rather than assuming the transition is instantaneous. 120 s is generous
+    # against the measured slew-and-settle for a nadir-to-target manoeuvre.
     command_sequence:
+      - service: 8
+        subtype: 1
+        func_id: 0x01
+        params: [5]            # mode 5 = FINE_POINT
+        description: "AOCS_SET_MODE_FINE_POINT"
+      - wait_for:
+          parameter: aocs.mode
+          value: 5
+          timeout_s: 120
       - service: 8
         subtype: 1
         func_id: 0x1A
@@ -51,7 +68,12 @@ activity_types:
     pre_conditions:
       - "payload.fpa_temp_c < -3.0"
       - "eps.bus_voltage > 24.0"
-      - "aocs.mode == 1"
+      # 2026-08b PL-a: was `aocs.mode == 1`, i.e. SAFE_BOOT — a mode in which
+      # the spacecraft is not pointing at anything and the payload's capture
+      # gate refuses every image. 5 = FINE_POINT, which is what the gate
+      # demands and what the sequence above now commands.
+      # (configs/eosat1/aocs/aocs_mode_codes.yaml is the enum.)
+      - "aocs.mode == 5"
     thermal_constraints:
       max_continuous_minutes: 30
       max_per_orbit_minutes: 30
@@ -167,7 +189,11 @@ activity_types:
     conflicts_with:
       - imaging_pass
     pre_conditions:
-      - "aocs.mode == 1"
+      # 2026-08b PL-a: was `aocs.mode == 1` (SAFE_BOOT) here too. This activity
+      # runs AOCS_GYRO_CALIBRATION against a held attitude and declares
+      # `requires_attitude: nominal`, so the mode it needs is 4 = NOMINAL — not
+      # 5 (this is not an imaging activity and does not need fine pointing).
+      - "aocs.mode == 4"
       - "payload.fpa_temp_c < -3.0"
     thermal_constraints:
       max_continuous_minutes: 5

@@ -57,9 +57,15 @@ class TestSimulationConfigFile:
         assert eps._shed_voltage == 25.0
         assert eps._shed_order == ["payload", "fpa_cooler", "ttc_tx", "aocs_wheels", "prop"]
         assert eps._state.bat_soc_pct == 90.0
-        assert eps._transponder_w == 12.0          # eps.yaml hardware rating
-        # Phase B (brief 01 WP-3): 0.18 m2 per wing on the solar array drive.
-        assert eps._wing_py_area == pytest.approx(0.18)
+        # 2026-08b R1: the TX ratings are a real CubeSat radio's DC draw now
+        # (Endurosat S-band: 5 W at the LOW tier, 11 W at 33 dBm / 2 W RF for
+        # the HIGH-tier dump). This line asserted 12.0 while eps.yaml has said
+        # 5.0 since Phase B — it was RED before this batch, not broken by it.
+        assert eps._transponder_w == 5.0           # eps.yaml hardware rating
+        assert eps._transponder_hi_w == 11.0
+        # 2026-08b R1: 0.12 m2 of cells per wing (Endurosat 6U double
+        # deployable geometry), down from Phase B's 0.18 m2.
+        assert eps._wing_py_area == pytest.approx(0.12)
         # Phase B (brief 01 F22 / WP-3): full AOCS suite draw, sized for
         # Phase C's mode-dependent 4/9/15 W.
         assert eps._line_power_w["aocs_wheels"] == 12.0
@@ -95,7 +101,8 @@ class TestSimulationConfigFile:
         """eps.yaml solar_panels/power_lines used to be dropped by the schema."""
         from smo_common.config.loader import load_all_subsystem_configs
         cfg = load_all_subsystem_configs(CONFIG_DIR)["eps"].model_dump()
-        assert cfg["solar_panels"]["wing_py_area_m2"] == pytest.approx(0.18)
+        # 2026-08b R1: 0.12 m2 of cells per wing (see POWER_SIZING.md).
+        assert cfg["solar_panels"]["wing_py_area_m2"] == pytest.approx(0.12)
         assert cfg["power_lines"]["ttc_tx"] is False
 
     def test_load_shed_thresholds_pushed_to_manager(self, engine):

@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup C — Teaching Console — EOSAT-1 MCS</title>
+<style>
+/* ============================================================
+   MOCKUP C — TEACHING CONSOLE
+   Design thesis: the interface makes the CAUSAL CHAIN visible.
+       command → on-board state → telemetry → limit → alarm → procedure
+   Every screen is organised along that spine, and a GUIDED MODE
+   overlays numbered annotations that explain what the student is
+   looking at and why it is drawn the way it is.
+   Light, editorial, high-contrast — designed to be read on a
+   projector and screenshotted into a lab report.
+   Still obeys the grey-baseline rule: colour only marks deviation.
+   ============================================================ */
+:root{
+  --paper:#F4F5F7;
+  --card:#FFFFFF;
+  --card-2:#FAFBFC;
+  --line:#D9DDE3;
+  --line-2:#C3C9D2;
+  --ink:#12161C;
+  --ink-2:#4A5260;
+  --ink-3:#79828F;
+  --warn:#A66200;
+  --warn-bg:#FFF4E0;
+  --alarm:#B3261E;
+  --alarm-bg:#FDECEA;
+  --info:#14508C;
+  --info-bg:#E8F0FA;
+  --teach:#6B3FA0;          /* the annotation colour — never used for data */
+  --teach-bg:#F3EDFB;
+  --mono:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+  --sans:"Inter","Segoe UI",system-ui,-apple-system,sans-serif;
+  --serif:Georgia,"Iowan Old Style",serif;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:14.5px;line-height:1.5;
+  -webkit-font-smoothing:antialiased}
+button,select{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+:focus-visible{outline:2px solid var(--info);outline-offset:2px}
+.hide{display:none!important}
+code{font-family:var(--mono);font-size:.9em;background:#EDEFF3;padding:1px 5px;border-radius:3px}
+
+/* ================= HEADER ================= */
+header{position:sticky;top:0;z-index:40;background:var(--card);border-bottom:1px solid var(--line)}
+.hr{display:flex;align-items:center;gap:20px;padding:0 24px;height:60px;max-width:1680px;margin:0 auto}
+.brand b{font-size:16px;letter-spacing:.2px;display:block;line-height:1.15}
+.brand span{font-size:10.5px;letter-spacing:1.7px;color:var(--ink-3)}
+.hr .sp{flex:1}
+.clk{display:flex;flex-direction:column;line-height:1.15}
+.clk label{font-size:9.5px;letter-spacing:1.3px;color:var(--ink-3);text-transform:uppercase}
+.clk b{font-family:var(--mono);font-size:17px;font-weight:600}
+.pill{border:1px solid var(--line-2);border-radius:20px;padding:6px 14px;font-size:12.5px;color:var(--ink-2)}
+.pill:hover{background:var(--card-2)}
+.pill.on{background:var(--teach);border-color:var(--teach);color:#fff;font-weight:600}
+.pill.alm{border-color:var(--alarm);color:var(--alarm);background:var(--alarm-bg);font-weight:600}
+
+/* SA ribbon */
+.ribbon{background:var(--card-2);border-bottom:1px solid var(--line)}
+.ribbon .in{display:flex;gap:0;max-width:1680px;margin:0 auto;overflow-x:auto}
+.ribbon .i{padding:8px 20px;border-right:1px solid var(--line);white-space:nowrap;display:flex;align-items:baseline;gap:9px}
+.ribbon .i label{font-size:9.5px;letter-spacing:1.2px;color:var(--ink-3);text-transform:uppercase}
+.ribbon .i b{font-family:var(--mono);font-size:13.5px}
+.ribbon .i.w b{color:var(--warn)} .ribbon .i.a b{color:var(--alarm)}
+
+nav.tabs{background:var(--card);border-bottom:1px solid var(--line)}
+nav.tabs .in{display:flex;max-width:1680px;margin:0 auto;padding:0 24px;gap:4px}
+nav.tabs button{padding:11px 16px;font-size:13px;color:var(--ink-3);border-bottom:2px solid transparent}
+nav.tabs button:hover{color:var(--ink-2)}
+nav.tabs button.on{color:var(--ink);border-bottom-color:var(--ink);font-weight:600}
+
+main{max-width:1680px;margin:0 auto;padding:24px}
+h1{font-size:26px;font-weight:600;letter-spacing:-.4px}
+.lede{color:var(--ink-3);font-size:14px;margin:4px 0 22px;max-width:70ch}
+
+/* ================= THE CAUSAL SPINE ================= */
+.spine{display:grid;grid-template-columns:repeat(6,1fr);gap:0;margin-bottom:22px;
+  background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.stage{padding:14px 16px 16px;border-right:1px solid var(--line);position:relative;cursor:pointer;
+  transition:background .12s}
+.stage:last-child{border-right:none}
+.stage:hover{background:var(--card-2)}
+.stage.live{background:var(--info-bg)}
+.stage.trip{background:var(--alarm-bg)}
+.stage .n{font-family:var(--mono);font-size:10px;font-weight:700;color:var(--ink-3);letter-spacing:1.4px}
+.stage h3{font-size:13px;font-weight:700;letter-spacing:.2px;margin:3px 0 7px}
+.stage .d{font-size:12px;color:var(--ink-2);line-height:1.45}
+.stage .d b{font-family:var(--mono);font-size:12px}
+.stage.trip .d b{color:var(--alarm)}
+.stage::after{content:'';position:absolute;right:-7px;top:50%;width:12px;height:12px;
+  border-top:1.5px solid var(--line-2);border-right:1.5px solid var(--line-2);
+  transform:translateY(-50%) rotate(45deg);background:var(--paper);z-index:2}
+.stage:last-child::after{display:none}
+.stage .tick{position:absolute;top:10px;right:12px;font-family:var(--mono);font-size:10.5px;color:var(--ink-3)}
+.stage.trip .tick{color:var(--alarm);font-weight:700}
+
+/* ================= CARDS ================= */
+.grid{display:grid;gap:20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.card>h2{font-size:11.5px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink-3);
+  padding:13px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px}
+.card>h2 .r{margin-left:auto;font-weight:400;text-transform:none;letter-spacing:0;font-size:11.5px}
+.cb{padding:18px}
+
+/* ================= PARAMETER ROW — the teaching version ================= */
+.p{border-bottom:1px solid var(--line);padding:14px 0}
+.p:last-child{border-bottom:none}
+.p .top{display:flex;align-items:baseline;gap:12px}
+.p .lbl{font-size:14px;font-weight:600}
+.p .id{font-family:var(--mono);font-size:11px;color:var(--ink-3)}
+.p .rd{margin-left:auto;font-family:var(--mono);font-size:22px;font-weight:600;letter-spacing:-.4px}
+.p .rd u{text-decoration:none;font-size:12px;color:var(--ink-3);margin-left:3px}
+.p.w .rd{color:var(--warn)} .p.a .rd{color:var(--alarm)}
+.p.w{background:linear-gradient(90deg,var(--warn-bg),transparent 55%);box-shadow:inset 3px 0 0 var(--warn);padding-left:14px;margin-left:-18px;padding-right:18px}
+.p.a{background:linear-gradient(90deg,var(--alarm-bg),transparent 55%);box-shadow:inset 3px 0 0 var(--alarm);padding-left:14px;margin-left:-18px;padding-right:18px}
+
+/* the limit scale — this is the teaching component: it SHOWS the numbers */
+.scale{margin-top:11px;position:relative;height:44px}
+.scale .track{position:absolute;top:14px;left:0;right:0;height:14px;border-radius:7px;background:#EDEFF3;overflow:hidden}
+.scale .zone{position:absolute;top:0;bottom:0}
+.scale .zone.red{background:var(--alarm-bg)}
+.scale .zone.yel{background:var(--warn-bg)}
+.scale .zone.grn{background:#E9ECF0}
+.scale .nd{position:absolute;top:8px;width:3px;height:26px;background:var(--ink);border-radius:2px;z-index:3}
+.scale.w .nd{background:var(--warn)} .scale.a .nd{background:var(--alarm)}
+.scale .nd::after{content:attr(data-v);position:absolute;top:-16px;left:50%;transform:translateX(-50%);
+  font-family:var(--mono);font-size:11px;font-weight:700;white-space:nowrap;color:inherit}
+.scale .mk{position:absolute;top:30px;font-family:var(--mono);font-size:10px;color:var(--ink-3);
+  transform:translateX(-50%);white-space:nowrap}
+.scale .mk.y{color:var(--warn)} .scale .mk.r{color:var(--alarm)}
+.scale .gd{position:absolute;top:14px;height:14px;width:1.5px;background:rgba(0,0,0,.22);z-index:2}
+.p .src{margin-top:6px;font-size:11.5px;color:var(--ink-3);font-family:var(--mono)}
+
+/* ================= ANNOTATIONS (guided mode) ================= */
+.ann{display:none;position:relative;margin:10px 0 0;padding:11px 14px 11px 42px;
+  background:var(--teach-bg);border:1px solid #DCCFF0;border-left:3px solid var(--teach);border-radius:8px;
+  font-family:var(--serif);font-size:13.5px;line-height:1.55;color:#3C2A55}
+body.guided .ann{display:block}
+.ann .num{position:absolute;left:12px;top:11px;width:20px;height:20px;border-radius:50%;background:var(--teach);
+  color:#fff;font-family:var(--sans);font-size:11px;font-weight:700;display:grid;place-items:center}
+.ann b{font-family:var(--sans);font-weight:700}
+.ann code{background:#E7DCF6}
+body:not(.guided) .gonly{display:none}
+
+/* ================= ALARM ================= */
+.al{border-bottom:1px solid var(--line);padding:16px 18px}
+.al:last-child{border-bottom:none}
+.al.p2{box-shadow:inset 4px 0 0 var(--alarm);background:var(--alarm-bg)}
+.al.p3{box-shadow:inset 4px 0 0 var(--warn);background:var(--warn-bg)}
+.al.rtn{opacity:.7;box-shadow:inset 4px 0 0 var(--line-2)}
+.al .h{display:flex;align-items:baseline;gap:11px;margin-bottom:4px}
+.al .pri{font-family:var(--mono);font-size:11px;font-weight:700;border:1.5px solid currentColor;
+  border-radius:4px;padding:1px 7px}
+.al.p2 .pri{color:var(--alarm)} .al.p3 .pri{color:var(--warn)} .al.rtn .pri{color:var(--ink-3)}
+.al .h b{font-size:15px}
+.al .h .ts{margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--ink-3)}
+.al .sub{font-family:var(--mono);font-size:12px;color:var(--ink-2)}
+.rat{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;margin-top:12px;background:var(--line);
+  border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.rat div{background:var(--card);padding:10px 12px}
+.rat label{display:block;font-size:9.5px;letter-spacing:1.2px;text-transform:uppercase;color:var(--ink-3);margin-bottom:3px}
+.rat p{font-size:12.5px;line-height:1.45}
+.acts{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.btn{border:1px solid var(--line-2);border-radius:7px;padding:7px 14px;font-size:12.5px;background:var(--card)}
+.btn:hover{background:var(--card-2)}
+.btn.pri{background:var(--ink);border-color:var(--ink);color:#fff;font-weight:600}
+.btn.warn{border-color:var(--warn);color:var(--warn)}
+
+/* procedure */
+.step{display:grid;grid-template-columns:26px 1fr auto;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);align-items:start}
+.step:last-child{border-bottom:none}
+.step .n{width:22px;height:22px;border-radius:50%;border:1.5px solid var(--line-2);display:grid;place-items:center;
+  font-family:var(--mono);font-size:10.5px;color:var(--ink-3)}
+.step.done .n{background:var(--ink);border-color:var(--ink);color:#fff}
+.step.now .n{border-color:var(--info);color:var(--info);border-width:2.5px}
+.step .t{font-size:13.5px}
+.step .t code{font-size:11.5px}
+.step .t span{display:block;font-size:11.5px;color:var(--ink-3);margin-top:2px}
+.step.done .t{color:var(--ink-3)}
+.step .s{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);letter-spacing:.8px}
+
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:13px}
+.kv .k{color:var(--ink-3)} .kv .v{font-family:var(--mono);text-align:right;font-weight:600}
+.mimic{width:100%;display:block}
+.mimic .bx{fill:#F7F8FA;stroke:#B9C0CA;stroke-width:1.4}
+.mimic .bx.a{stroke:var(--alarm);stroke-width:2.4;fill:var(--alarm-bg)}
+.mimic .bx.w{stroke:var(--warn);stroke-width:2.4;fill:var(--warn-bg)}
+.mimic .w{stroke:#B9C0CA;stroke-width:1.5;fill:none}
+.mimic .t{font-family:var(--sans);font-size:11px;fill:var(--ink-2)}
+.mimic .v{font-family:var(--mono);font-size:13.5px;font-weight:600;fill:var(--ink)}
+.mimic .v.a{fill:var(--alarm)}
+.mimic .s{font-family:var(--mono);font-size:9.5px;fill:var(--ink-3)}
+.legend{display:flex;flex-wrap:wrap;gap:18px;font-size:12.5px;color:var(--ink-2)}
+.sw{display:inline-block;width:13px;height:13px;border-radius:3px;vertical-align:-2px;margin-right:6px;border:1px solid var(--line-2)}
+footer{border-top:1px solid var(--line);background:var(--card);padding:22px 24px;margin-top:28px}
+footer .in{max-width:1680px;margin:0 auto;font-size:12.5px;color:var(--ink-3);line-height:1.6}
+@media(max-width:1240px){.spine{grid-template-columns:repeat(3,1fr)}.g2{grid-template-columns:1fr!important}
+  .stage:nth-child(3)::after{display:none}}
+@media(max-width:760px){.spine{grid-template-columns:1fr}.stage::after{display:none}}
+</style>
+</head>
+<body class="guided">
+
+<header>
+  <div class="hr">
+    <div class="brand"><b>EOSAT-1 · Mission Control</b><span>TEACHING CONSOLE</span></div>
+    <div class="clk"><label>UTC</label><b id="utc">08:14:22</b></div>
+    <div class="clk"><label>MET</label><b>041:07:52:11</b></div>
+    <div class="sp"></div>
+    <span class="pill">Position · <b>Power &amp; Thermal</b></span>
+    <button class="pill alm" onclick="tab('alarms')">▲ 1 alarm · 1 warning</button>
+    <button class="pill on" id="gbtn" onclick="guide()">✦ Guided mode ON</button>
+    <button class="pill" onclick="gs()">Greyscale test</button>
+  </div>
+  <div class="ribbon"><div class="in">
+    <div class="i"><label>Link</label><b>LIVE 1.2 s</b></div>
+    <div class="i"><label>Station</label><b>KIRUNA</b></div>
+    <div class="i"><label>LOS in</label><b>04:38</b></div>
+    <div class="i w"><label>Illumination</label><b>ECLIPSE 12:07</b></div>
+    <div class="i"><label>TM tier</label><b>LOW 16 kbps</b></div>
+    <div class="i a"><label>Unack</label><b>2</b></div>
+    <div class="i"><label>Alarm rate</label><b>3 / 10 min</b></div>
+  </div></div>
+  <nav class="tabs"><div class="in">
+    <button class="on" data-t="chain" onclick="tab('chain')">Causal chain</button>
+    <button data-t="eps" onclick="tab('eps')">EPS</button>
+    <button data-t="alarms" onclick="tab('alarms')">Alarms &amp; limits</button>
+    <button data-t="proc" onclick="tab('proc')">Procedure</button>
+    <button data-t="why" onclick="tab('why')">Why this design?</button>
+  </div></nav>
+</header>
+
+<main>
+
+<!-- ==================== CAUSAL CHAIN ==================== -->
+<section id="t-chain">
+  <h1>What is happening, and why</h1>
+  <p class="lede">This console is organised along the chain that connects an operator action to a spacecraft consequence. Every stage below is live. Click a stage to jump to the screen that owns it.</p>
+
+  <div class="spine">
+    <div class="stage" onclick="tab('eps')">
+      <div class="n">STAGE 1</div><div class="tick">08:04:12</div>
+      <h3>Command</h3>
+      <div class="d"><b>PAYLOAD_IMAGING_START</b><br>S8,1 func 28 · sent by PAYLOAD OPS<br>
+        <span style="color:var(--ink-3)">accepted (1,1) · executed (1,7)</span></div>
+    </div>
+    <div class="stage" onclick="tab('eps')">
+      <div class="n">STAGE 2</div><div class="tick">08:04:14</div>
+      <h3>On-board state</h3>
+      <div class="d">payload.mode → <b>IMAGING</b><br>load switch 3 <b>ON</b><br>
+        <span style="color:var(--ink-3)">FPA cooler duty ↑</span></div>
+    </div>
+    <div class="stage" onclick="tab('eps')">
+      <div class="n">STAGE 3</div><div class="tick">08:11:40</div>
+      <h3>Telemetry</h3>
+      <div class="d">eps.line_current_3<br><b id="s-cur">2.31 A</b><br>
+        <span style="color:var(--ink-3)">HK SID 3 · 0x011B · 1 Hz</span></div>
+    </div>
+    <div class="stage trip" onclick="tab('alarms')">
+      <div class="n">STAGE 4</div><div class="tick">▲ TRIPPED</div>
+      <h3>Limit</h3>
+      <div class="d">yellow high <b>2.20 A</b><br>red high <b>2.00 A</b><br>
+        <span style="color:var(--ink-3)">mcs/limits.yaml</span></div>
+    </div>
+    <div class="stage trip" onclick="tab('alarms')">
+      <div class="n">STAGE 5</div><div class="tick">08:11:44</div>
+      <h3>Alarm</h3>
+      <div class="d"><b>P2 · UNACKNOWLEDGED</b><br>ground limit check<br>
+        <span style="color:var(--ink-3)">consequence in ~40 s</span></div>
+    </div>
+    <div class="stage" onclick="tab('proc')">
+      <div class="n">STAGE 6</div><div class="tick">READY</div>
+      <h3>Procedure</h3>
+      <div class="d"><b>eps_overcurrent</b><br>6 steps · 2 commands<br>
+        <span style="color:var(--ink-3)">not yet started</span></div>
+    </div>
+  </div>
+
+  <div class="ann"><div class="num">1</div>
+    <b>Why a spine?</b> In the old console these six things lived in five different tabs, so the connection between them had to be held in the student's head. Real flight controllers build that connection over years; a 12-week module has to <i>show</i> it. Every stage here is a real data source — nothing on this strip is a diagram.</div>
+
+  <div class="grid g2" style="grid-template-columns:1fr 420px;margin-top:22px">
+    <div class="card">
+      <h2>Where it is happening <span class="r">EPS power distribution</span></h2>
+      <div class="cb">
+        <svg viewBox="0 0 860 210" class="mimic">
+          <rect class="bx" x="14" y="20" width="104" height="60" rx="6"/>
+          <text x="66" y="44" class="t" text-anchor="middle">SA-A</text>
+          <text x="66" y="66" class="v" text-anchor="middle">1.84 A</text>
+          <rect class="bx" x="14" y="112" width="104" height="60" rx="6"/>
+          <text x="66" y="136" class="t" text-anchor="middle">SA-B</text>
+          <text x="66" y="158" class="v" text-anchor="middle">1.79 A</text>
+          <path class="w" d="M118 50 H154 V88 H184"/><path class="w" d="M118 142 H154 V104 H184"/>
+          <rect class="bx" x="184" y="62" width="116" height="68" rx="6"/>
+          <text x="242" y="88" class="t" text-anchor="middle">MPPT</text>
+          <text x="242" y="110" class="v" text-anchor="middle">104 W</text>
+          <path class="w" d="M300 96 H340"/>
+          <rect class="bx" x="340" y="34" width="132" height="60" rx="6"/>
+          <text x="406" y="58" class="t" text-anchor="middle">BUS 28 V</text>
+          <text x="406" y="80" class="v" text-anchor="middle">27.94 V</text>
+          <path class="w" d="M406 94 V124" stroke-dasharray="5 4"/>
+          <rect class="bx" x="340" y="124" width="132" height="60" rx="6"/>
+          <text x="406" y="148" class="t" text-anchor="middle">BATTERY</text>
+          <text x="406" y="170" class="v" text-anchor="middle" id="s-soc">61.4 %</text>
+          <path class="w" d="M472 64 H516"/><line class="w" x1="516" y1="14" x2="516" y2="196"/>
+          <g id="s-lines"></g>
+        </svg>
+        <div class="legend" style="margin-top:14px">
+          <span><i class="sw" style="background:#F7F8FA"></i>nominal — no colour</span>
+          <span><i class="sw" style="background:var(--warn-bg);border-color:var(--warn)"></i>▲ yellow limit</span>
+          <span><i class="sw" style="background:var(--alarm-bg);border-color:var(--alarm)"></i>▲ red limit</span>
+          <span><i class="sw" style="background:repeating-linear-gradient(45deg,#fff 0 3px,#DDD 3px 6px)"></i>⌀ stale</span>
+        </div>
+        <div class="ann"><div class="num">2</div>
+          <b>Notice how little colour there is.</b> Seven of the eight power lines are nominal, so they are drawn in plain grey. Only PL-3 is coloured. This is the ISA-101 rule: a healthy spacecraft produces a screen with almost no colour on it, so the eye is drawn to the one thing that matters. A console that colours everything is prettier in a screenshot and slower to read in an anomaly.</div>
+      </div>
+    </div>
+
+    <div class="grid" style="align-content:start">
+      <div class="card">
+        <h2>Projection <span class="r">Endsley level 3</span></h2>
+        <div class="cb">
+          <div class="kv">
+            <span class="k">PDM trip on line 3</span><span class="v" style="color:var(--alarm)">in ~40 s</span>
+            <span class="k">SoC at eclipse exit</span><span class="v" style="color:var(--warn)">47.1 %</span>
+            <span class="k">SoC → yellow (25 %)</span><span class="v">1 h 36 m</span>
+            <span class="k">Imaging pass at risk</span><span class="v">08:52</span>
+          </div>
+          <div class="ann"><div class="num">3</div>
+            <b>Level 3 situational awareness</b> is <i>projection</i> — where things are going, not where they are. Endsley's three levels are perception (read the number), comprehension (is it normal?) and projection (what happens next?). Flight controllers are assessed on the third. This panel is the only one on screen that answers a question about the future.</div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Who owns this</h2>
+        <div class="cb">
+          <div class="kv">
+            <span class="k">Parameter owner</span><span class="v">POWER &amp; THERMAL</span>
+            <span class="k">Command authority</span><span class="v">S8 func 16–25</span>
+            <span class="k">Coordination needed</span><span class="v">PAYLOAD OPS</span>
+            <span class="k">FD notification</span><span class="v">required</span>
+          </div>
+          <div class="ann"><div class="num">4</div>
+            <b>Authority is explicit.</b> <code>positions.yaml</code> already says which services and function IDs each position may send. Showing it turns an invisible permission failure ("the command isn't in my dropdown") into a lesson about console authority and coordination.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== EPS ==================== -->
+<section id="t-eps" class="hide">
+  <h1>Electrical power subsystem</h1>
+  <p class="lede">Every limit-checked parameter is shown with its <em>actual limit values</em>, drawn to scale. A student should never have to look up what "yellow" means.</p>
+
+  <div class="grid g2" style="grid-template-columns:1fr 420px">
+    <div class="card">
+      <h2>Limit-checked parameters <span class="r">joined from parameters.yaml + limits.yaml</span></h2>
+      <div class="cb" id="eps-params"></div>
+    </div>
+
+    <div class="grid" style="align-content:start">
+      <div class="card">
+        <h2>Reading a limit scale</h2>
+        <div class="cb">
+          <div style="font-size:13px;color:var(--ink-2);line-height:1.6">
+            <p style="margin-bottom:9px"><span class="sw" style="background:#E9ECF0"></span><b>Grey band</b> — the normal operating range, between the yellow limits.</p>
+            <p style="margin-bottom:9px"><span class="sw" style="background:var(--warn-bg);border-color:var(--warn)"></span><b>Amber band</b> — between yellow and red. Investigate, no immediate action.</p>
+            <p style="margin-bottom:9px"><span class="sw" style="background:var(--alarm-bg);border-color:var(--alarm)"></span><b>Red band</b> — beyond the red limit. Act now.</p>
+            <p><b>The needle</b> is the current value; the number above it is the reading, and the numbers below the track are the limits themselves, from <code>mcs/limits.yaml</code>.</p>
+          </div>
+          <div class="ann"><div class="num">5</div>
+            <b>This is the change that matters most.</b> Ground limit checking is the core concept of a mission control system. A console that turns a number amber without ever saying what amber means teaches the student a reflex instead of a principle. Here, the limit values are on screen, always, drawn to scale.</div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Command — in place</h2>
+        <div class="cb">
+          <div style="font-family:var(--mono);font-size:12.5px;color:var(--ink-2);margin-bottom:10px">S8,1 · FUNC 19 · EPS_LINE_OFF · line 3</div>
+          <div class="acts" style="margin-top:0">
+            <button class="btn warn" style="flex:1">1 · ARM</button>
+            <button class="btn" style="flex:1;opacity:.45">2 · EXECUTE</button>
+          </div>
+          <div class="ann"><div class="num">6</div>
+            <b>Arm then execute.</b> Real command systems separate the two so a slip cannot become a spacecraft event. It also gives the student a moment to read back the command — the ops habit this models is verbal readback before transmission.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== ALARMS ==================== -->
+<section id="t-alarms" class="hide">
+  <h1>Alarms and limits</h1>
+  <p class="lede">Alarms are prioritised by consequence and required response time (ISA-18.2), not by packet severity — and every alarm carries its cause, consequence and response.</p>
+
+  <div class="grid g2" style="grid-template-columns:1fr 400px">
+    <div class="card">
+      <h2>Active alarm list <span class="r">the single alarm authority</span></h2>
+
+      <div style="padding:14px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px">
+        <span style="font-size:10px;letter-spacing:1.3px;color:var(--ink-3)">RATE</span>
+        <div style="position:relative;flex:1;height:16px;background:#EDEFF3;border-radius:8px;overflow:hidden">
+          <div style="position:absolute;inset:0 auto 0 0;width:30%;background:#C3C9D2"></div>
+          <div style="position:absolute;top:0;bottom:0;left:100%;width:2px;background:var(--alarm)"></div>
+        </div>
+        <span style="font-family:var(--mono);font-size:12px">3 / 10 min</span>
+        <span style="font-size:11.5px;color:var(--ink-3)">EEMUA 191 flood threshold = 10</span>
+      </div>
+
+      <div class="al p2">
+        <div class="h"><span class="pri">P2</span><b>▲ Payload line overcurrent</b><span class="ts">08:11:44 · UNACK</span></div>
+        <div class="sub">eps.line_current_3 · 0x011B · 2.31 A &gt; red high 2.00 A</div>
+        <div class="rat">
+          <div><label>Cause</label><p>Payload load switch drawing above its rated current after IMAGING start.</p></div>
+          <div><label>Consequence</label><p>PDM overcurrent trip in ~40 s. Imaging pass lost; payload reboot required.</p></div>
+          <div><label>Response</label><p>Run <code>eps_overcurrent</code>, then <code>EPS_LINE_OFF</code> line 3. Coordinate with Payload Ops.</p></div>
+          <div><label>Priority basis</label><p>Consequence: mission data loss. Response window: minutes → <b>P2</b>.</p></div>
+        </div>
+        <div class="acts">
+          <button class="btn pri">Acknowledge</button>
+          <button class="btn" onclick="tab('proc')">Open procedure →</button>
+          <button class="btn" onclick="tab('eps')">Go to parameter</button>
+          <button class="btn" onclick="tab('chain')">Show causal chain</button>
+        </div>
+      </div>
+
+      <div class="al p3">
+        <div class="h"><span class="pri">P3</span><b>▼ Power margin negative</b><span class="ts">08:09:02 · UNACK</span></div>
+        <div class="sub">eps.power_margin_w · 0x0135 · −37.9 W</div>
+        <div class="rat">
+          <div><label>Cause</label><p>Eclipse entry with payload imaging active.</p></div>
+          <div><label>Consequence</label><p>SoC reaches yellow (25 %) in ~1 h 36 m if sustained.</p></div>
+          <div><label>Response</label><p>Monitor. Stage 1 load shed if SoC &lt; 40 %.</p></div>
+          <div><label>Priority basis</label><p>Response window: tens of minutes → <b>P3</b>. Shelvable.</p></div>
+        </div>
+        <div class="acts"><button class="btn pri">Acknowledge</button><button class="btn">Shelve 30 min…</button></div>
+      </div>
+
+      <div class="al rtn">
+        <div class="h"><span class="pri">P3</span><b>Gyro temperature returned to normal</b><span class="ts">07:58:31 · RTN</span></div>
+        <div class="sub">aocs.gyro_temp · 0x0273 · 48.2 °C (was &gt; 50.0 °C for 4 m 12 s)</div>
+        <div class="acts"><button class="btn">Clear from list</button></div>
+      </div>
+    </div>
+
+    <div class="grid" style="align-content:start">
+      <div class="card">
+        <h2>The alarm lifecycle <span class="r">ISA-18.2</span></h2>
+        <div class="cb">
+          <div class="step done"><div class="n">✓</div><div class="t">Normal<span>value inside limits</span></div><div class="s"></div></div>
+          <div class="step now"><div class="n">●</div><div class="t"><b>Unacknowledged</b><span>active, operator has not responded — the only state permitted to blink</span></div><div class="s">NOW</div></div>
+          <div class="step"><div class="n">3</div><div class="t">Acknowledged<span>active, operator is working it — blink stops</span></div><div class="s"></div></div>
+          <div class="step"><div class="n">4</div><div class="t">Return to normal<span>cleared but still in the list until dismissed</span></div><div class="s"></div></div>
+          <div class="step"><div class="n">S</div><div class="t">Shelved<span>operator-suppressed with a mandatory timer; auto-unshelves; logged against your position</span></div><div class="s">P3/P4</div></div>
+          <div class="step"><div class="n">D</div><div class="t">Suppressed by design<span>logic hides it where it is meaningless — e.g. payload thermal alarms when the payload is off</span></div><div class="s"></div></div>
+          <div class="ann"><div class="num">7</div>
+            <b>Shelving is not cheating.</b> Students often think suppressing an alarm is hiding a problem. Industry practice is the opposite: an unmanaged alarm list becomes noise, and noise is what operators learn to ignore. Shelving is bounded, timed, logged and attributed — the accountability <i>is</i> the discipline.</div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Alarm flood <span class="r">try scenario aocs_sensor_cascade</span></h2>
+        <div class="cb">
+          <p style="font-size:13px;color:var(--ink-2)">When more than 10 alarms arrive in 10 minutes, the list switches to <b>cause-grouped</b> mode using <code>fdir/fault_propagation.yaml</code>:</p>
+          <div style="margin-top:12px;border:1px solid var(--line);border-radius:8px;overflow:hidden">
+            <div style="padding:11px 13px;background:var(--alarm-bg);box-shadow:inset 4px 0 0 var(--alarm)">
+              <b style="font-size:13.5px">▲ ROOT · Star tracker 1 blinded</b>
+              <div style="font-family:var(--mono);font-size:11.5px;color:var(--ink-2)">aocs.st1_status = 3 · 08:14:02</div>
+            </div>
+            <div style="padding:9px 13px 9px 30px;font-size:12.5px;color:var(--ink-3);border-top:1px solid var(--line)">
+              ↳ 11 consequent alarms collapsed — attitude error, RW1–4 speed, momentum, mode demotion…
+              <button class="btn" style="padding:2px 9px;font-size:11.5px;margin-left:6px">Expand</button>
+            </div>
+          </div>
+          <div class="ann"><div class="num">8</div>
+            <b>One root cause, eleven symptoms.</b> Without grouping, the student sees twelve equal-looking red rows and starts at the top. EEMUA 191 calls this a flood; the correct response is to find the first-out event, and the display should do that arithmetic, not the student.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== PROCEDURE ==================== -->
+<section id="t-proc" class="hide">
+  <h1>Procedure · eps_overcurrent</h1>
+  <p class="lede">Opened from the P2 alarm. The procedure, the commands it sends and the telemetry it checks are on one screen — the last link in the causal chain.</p>
+  <div class="grid g2" style="grid-template-columns:1fr 420px">
+    <div class="card">
+      <h2>Steps <span class="r">2 of 6 complete</span></h2>
+      <div class="cb">
+        <div class="step done"><div class="n">✓</div><div class="t">Confirm the overcurrent is real<span>Check <code>eps.line_current_3</code> over 3 consecutive HK frames — reject a single-sample spike.</span></div><div class="s">TLM CHECK</div></div>
+        <div class="step done"><div class="n">✓</div><div class="t">Notify Flight Director and Payload Ops<span>Console log entry created automatically.</span></div><div class="s">COORD</div></div>
+        <div class="step now"><div class="n">3</div><div class="t"><b>Command payload to safe state</b><span><code>S8,1 func 29 · PAYLOAD_IMAGING_STOP</code> — stops the imaging chain before removing power.</span></div><div class="s">COMMAND</div></div>
+        <div class="step"><div class="n">4</div><div class="t">Verify current falls below 1.8 A<span>Wait up to 20 s for <code>eps.line_current_3</code>.</span></div><div class="s">TLM CHECK</div></div>
+        <div class="step"><div class="n">5</div><div class="t">If still high, remove the line<span><code>S8,1 func 19 · EPS_LINE_OFF line 3</code></span></div><div class="s">CONDITIONAL</div></div>
+        <div class="step"><div class="n">6</div><div class="t">Log outcome and hand over<span>Flight-note equivalent; goes into the shift handover record.</span></div><div class="s">LOG</div></div>
+        <div class="ann"><div class="num">9</div>
+          <b>Read step 3 and step 5 carefully.</b> The procedure commands the payload <i>off</i> before it removes the power line. That ordering is the engineering content — an ungraceful power removal risks a corrupt payload state. A console that puts procedures in a separate tab from the telemetry lets the student execute steps without ever reading why they are in that order.</div>
+      </div>
+    </div>
+    <div class="grid" style="align-content:start">
+      <div class="card"><h2>Live check for step 4</h2><div class="cb" id="proc-check"></div></div>
+      <div class="card"><h2>Command authority</h2><div class="cb">
+        <div class="kv">
+          <span class="k">Your position</span><span class="v">POWER &amp; THERMAL</span>
+          <span class="k">func 19 EPS_LINE_OFF</span><span class="v" style="color:var(--info)">PERMITTED</span>
+          <span class="k">func 29 PAYLOAD_STOP</span><span class="v" style="color:var(--alarm)">NOT PERMITTED</span>
+        </div>
+        <p style="margin-top:11px;font-size:12.5px;color:var(--ink-2)">Step 3 must be executed by <b>Payload Operations</b>. Request coordination →</p>
+        <div class="ann"><div class="num">10</div>
+          <b>The procedure crosses a console boundary.</b> This is real: no single position can run it alone. The old UI silently omitted the command from the dropdown; here the block is explicit and names who to ask. That is the shift from "the tool won't let me" to "this is a coordinated operation."</div>
+      </div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== WHY ==================== -->
+<section id="t-why" class="hide">
+  <h1>Why this console looks like this</h1>
+  <p class="lede">A design-rationale page, in the product. Students meet display standards here as well as in the lectures.</p>
+  <div class="grid" style="grid-template-columns:repeat(2,1fr)">
+    <div class="card"><h2>Why is it mostly grey?</h2><div class="cb">
+      <p style="font-size:13.5px;line-height:1.6">ISA-101 and the high-performance HMI movement reserve colour for abnormal conditions. A grey screen means a healthy spacecraft. Consoles that colour every subsystem look impressive and read slowly, because there is no colour left to signal with. Press <b>Greyscale test</b> in the header: this console remains fully operable with all colour removed, because every status also carries a glyph (▲ ▼ ⌀ ◇) and a border.</p></div></div>
+    <div class="card"><h2>Why are the limits printed?</h2><div class="cb">
+      <p style="font-size:13.5px;line-height:1.6">Limit checking is the core function of a mission control system. Values are compared against yellow and red bands defined in <code>configs/eosat1/mcs/limits.yaml</code>. Showing the numbers turns a colour reflex into an engineering judgement, and lets you argue about whether a limit is set correctly — which is itself an operations task.</p></div></div>
+    <div class="card"><h2>Why four alarm priorities?</h2><div class="cb">
+      <p style="font-size:13.5px;line-height:1.6">ISA-18.2 and EEMUA 191 assign priority by consequence × required response time: P1 under a minute, P2 minutes, P3 tens of minutes, P4 end of shift. Packet severity is a property of the message; priority is a property of what you must do about it. They are not the same thing, and conflating them is the most common alarm-system design error.</p></div></div>
+    <div class="card"><h2>Why no blinking?</h2><div class="cb">
+      <p style="font-size:13.5px;line-height:1.6">Only an unacknowledged P1 may blink, and it stops the moment you acknowledge it. Persistent animation on known conditions trains operators to ignore movement — the opposite of what it is for. Urgency here is carried by sort order, priority badge and the weight of the left edge.</p></div></div>
+    <div class="card"><h2>Why is the future on screen?</h2><div class="cb">
+      <p style="font-size:13.5px;line-height:1.6">Endsley's three levels of situation awareness are perception, comprehension and projection. Most telemetry displays stop at the first. Flight controllers are judged on the third — anticipating the eclipse, the buffer, the trip. Every subsystem screen here answers at least one question about the next thirty minutes.</p></div></div>
+    <div class="card"><h2>Why is commanding on the telemetry page?</h2><div class="cb">
+      <p style="font-size:13.5px;line-height:1.6">Because the point of the exercise is the loop: you command, the spacecraft changes, the telemetry moves, a limit is crossed, an alarm fires, a procedure responds. Splitting that loop across tabs hides the causality that the module exists to teach.</p></div></div>
+  </div>
+</section>
+
+</main>
+
+<footer><div class="in">
+  <b style="color:var(--ink-2)">Mockup C — Teaching console.</b>
+  Causal chain as the organising spine · limits shown numerically and to scale · ISA-18.2 rationalisation text on every alarm · guided annotations that can be switched off for assessment.
+  <span style="color:var(--warn)">Honest trade-off:</span> the annotation layer and rationale text cost screen space that a professional console would spend on parameters, and an experienced operator would find them patronising — which is exactly why guided mode is a toggle, and why an assessed run turns it off.
+</div></footer>
+
+<script>
+const EPS=[
+ ['eps.bat_soc','0x0101','Battery state of charge','%',61.4,25,95,15,100,1,0,100,'HK SID 3 · 1 Hz'],
+ ['eps.bus_voltage','0x0105','Bus voltage','V',27.94,27,29,26.5,29.5,2,26,30,'HK SID 3 · 1 Hz'],
+ ['eps.bat_voltage','0x0100','Battery voltage','V',26.42,23,29,22,29.5,2,21,30,'HK SID 3 · 0.25 Hz'],
+ ['eps.bat_temp','0x0102','Battery temperature','°C',14.8,2,40,0,45,1,-5,50,'HK SID 3 · 0.125 Hz'],
+ ['eps.line_current_3','0x011B','Power line 3 current (payload)','A',2.31,0,2.2,0,2.5,2,0,3.0,'HK SID 3 · 1 Hz'],
+ ['eps.bat_dod','0x0120','Battery depth of discharge','%',38.6,0,60,0,80,1,0,100,'HK SID 3 · 0.125 Hz']
+];
+const LINES=[[0,'PL-0','OBC',0.94,1.8,2.0],[1,'PL-1','TT&C RX',0.18,.25,.30],[2,'PL-2','TT&C TX',0.71,.9,1.0],
+ [3,'PL-3','PAYLOAD',2.31,2.2,2.5],[4,'PL-4','FPA COOL',0.64,.8,1.0],[5,'PL-5','HTR BAT',0.31,.4,.5],
+ [6,'PL-6','HTR OBC',0.00,.25,.30],[7,'PL-7','RW',0.52,.7,.8]];
+const pc=(v,lo,hi)=>Math.max(0,Math.min(100,(v-lo)/(hi-lo)*100));
+function stt(v,yl,yh,rl,rh){if(v<rl||v>rh)return['a',v>rh?'▲':'▼'];if(v<yl||v>yh)return['w',v>yh?'▲':'▼'];return['','']}
+
+function scale(v,yl,yh,rl,rh,dl,dh,c,u,dp){
+  const P=x=>pc(x,dl,dh);
+  return `<div class="scale ${c}">
+    <div class="track">
+      <div class="zone red" style="left:0;width:${P(rl)}%"></div>
+      <div class="zone yel" style="left:${P(rl)}%;width:${P(yl)-P(rl)}%"></div>
+      <div class="zone grn" style="left:${P(yl)}%;width:${P(yh)-P(yl)}%"></div>
+      <div class="zone yel" style="left:${P(yh)}%;width:${P(rh)-P(yh)}%"></div>
+      <div class="zone red" style="left:${P(rh)}%;right:0"></div>
+    </div>
+    <div class="gd" style="left:${P(rl)}%"></div><div class="gd" style="left:${P(yl)}%"></div>
+    <div class="gd" style="left:${P(yh)}%"></div><div class="gd" style="left:${P(rh)}%"></div>
+    <div class="nd" style="left:calc(${P(v)}% - 1.5px)" data-v="${v.toFixed(dp)}"></div>
+    <div class="mk r" style="left:${P(rl)}%">${rl}</div>
+    <div class="mk y" style="left:${P(yl)}%">${yl}</div>
+    <div class="mk y" style="left:${P(yh)}%">${yh}</div>
+    <div class="mk r" style="left:${P(rh)}%">${rh}</div>
+  </div>`;
+}
+function renderEps(){
+  document.getElementById('eps-params').innerHTML=EPS.map(p=>{
+    const [nm,id,lbl,u,v,yl,yh,rl,rh,dp,dl,dh,src]=p;
+    const [c,gl]=stt(v,yl,yh,rl,rh);
+    return `<div class="p ${c}">
+      <div class="top"><span class="lbl">${lbl}</span><span class="id">${nm} · ${id}</span>
+        <span class="rd">${gl?gl+' ':''}${v.toFixed(dp)}<u>${u}</u></span></div>
+      ${scale(v,yl,yh,rl,rh,dl,dh,c,u,dp)}
+      <div class="src">${src} · limits from mcs/limits.yaml · yellow ${yl}/${yh} ${u} · red ${rl}/${rh} ${u}</div>
+    </div>`;
+  }).join('');
+  const p=EPS[4],[c]=stt(p[4],p[5],p[6],p[7],p[8]);
+  document.getElementById('proc-check').innerHTML=
+    `<div class="p ${c}" style="border:none;padding-top:0">
+      <div class="top"><span class="lbl">Line 3 current</span><span class="id">0x011B</span>
+        <span class="rd">${c?'▲ ':''}${p[4].toFixed(2)}<u>A</u></span></div>
+      ${scale(p[4],p[5],p[6],p[7],p[8],p[10],p[11],c,'A',2)}
+      <div class="src">step 4 passes when &lt; 1.80 A · currently <b style="color:var(--alarm)">FAIL</b></div></div>`;
+  document.getElementById('s-cur').textContent=p[4].toFixed(2)+' A';
+  document.getElementById('s-soc').textContent=EPS[0][4].toFixed(1)+' %';
+  document.getElementById('s-lines').innerHTML=LINES.map((l,k)=>{
+    const [,tag,load,i,y,r]=l;const c=i>r?'a':(i>y?'w':'');const y0=16+k*23;
+    return `<line class="w" x1="516" y1="${y0+9}" x2="552" y2="${y0+9}"/>
+      <rect class="bx ${c}" x="552" y="${y0}" width="72" height="18" rx="4"/>
+      <text x="588" y="${y0+13}" class="t" text-anchor="middle" style="font-size:10px">${tag}</text>
+      <text x="640" y="${y0+13}" class="v ${c}" style="font-size:11.5px">${c?'▲ ':''}${i.toFixed(2)} A</text>
+      <text x="712" y="${y0+13}" class="s">${load}</text>`;
+  }).join('');
+}
+const TABS=['chain','eps','alarms','proc','why'];
+function tab(t){
+  TABS.forEach(x=>document.getElementById('t-'+x).classList.add('hide'));
+  document.getElementById('t-'+t).classList.remove('hide');
+  document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));
+  window.scrollTo(0,0);
+}
+function guide(){
+  const on=document.body.classList.toggle('guided');
+  const b=document.getElementById('gbtn');
+  b.classList.toggle('on',on);
+  b.textContent=on?'✦ Guided mode ON':'✦ Guided mode OFF';
+}
+function gs(){document.body.style.filter=document.body.style.filter?'':'grayscale(1)'}
+renderEps();
+setInterval(()=>{EPS.forEach(p=>p[4]+=(Math.random()-0.5)*Math.abs(p[4]||1)*0.005);renderEps()},1600);
+setInterval(()=>{document.getElementById('utc').textContent=new Date().toISOString().substr(11,8)},1000);
+</script>
+</body>
+</html>

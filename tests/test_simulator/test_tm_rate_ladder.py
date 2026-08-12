@@ -402,6 +402,17 @@ def engine(tmp_path):
     ttc = eng.subsystems["ttc"]
     ttc._state.beacon_mode = False
     ttc._state.antenna_deployed = True
+    # 2026-08b (finding T-a): this fixture claims a commissioned spacecraft
+    # (phase 6, application image, in contact) but left the S-band chain in
+    # its bootloader state — PA off, `ttc_tx` line unpowered. That was
+    # invisible while nothing in the TM path read the transmitter state; now
+    # that `downlink_active` gates on `ttc.tx_active` (0x0525) it means "no
+    # downlink at all", and a pacing test needs a transmitter. Switch it on.
+    ttc._state.pa_on = True
+    eps = eng.subsystems.get("eps")
+    if eps is not None and hasattr(eps, "_state"):
+        eps._state.power_lines["ttc_tx"] = True
+        eng.params[0x0112] = 1
     eng._force_rt_pacing = True
     eng._rt_pending.clear()
     eng._rt_byte_budget = 0.0

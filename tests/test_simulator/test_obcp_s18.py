@@ -335,7 +335,16 @@ class TestExampleProcedures:
         eng = make_engine()
         ttc = eng.subsystems["ttc"]._state
         eps = eng.subsystems["eps"]._state
-        assert ttc.pa_on is False   # bootloader entry forced PA off
+        # 2026-08b (finding 3): bootloader entry still forces the PA off, but
+        # `make_engine` boots the application (sw_image 0 -> 1) and the TT&C
+        # model now lifts the S-band inhibit on that edge — the missing
+        # reverse of `_enter_bootloader_mode`. Without it every commissioning
+        # sequence in the repo boots into silence, because `downlink_active`
+        # gates on the transmitter now. OBCP 1's own TTC_PA_ON step is still
+        # meaningful and still asserted below: it is idempotent here, and it
+        # is what recovers the link after an operator or FDIR PA-off.
+        assert ttc.pa_on is True    # inhibit lifted by the application boot
+        ttc.pa_on = False           # ...so put it back to make the OBCP earn it
 
         eng._dispatch_tc(s18_tc(3, struct.pack('>H', 1)))   # start OBCP 1
         for _ in range(15):

@@ -231,10 +231,22 @@ parameters:
   - { id: 0x02C2, name: aocs.est_innov_rej_count, subsystem: aocs, description: "Rejected ST fixes since boot (innovation gate)" }
   - { id: 0x02C3, name: aocs.rate_stability_3sig, subsystem: aocs, units: deg/s, description: "Rate-error jitter metric over the last 60 s" }
   - { id: 0x02C4, name: aocs.settle_time_s, subsystem: aocs, units: s, description: "Time since last mode/target change until inside the gate" }
-  - { id: 0x02C5, name: aocs.fine_ready, subsystem: aocs, description: "FINE-entry precondition bitmask (0 = ready): bit0 ST<5 stars, bit1 <4 wheels, bit2 MEKF unconverged, bit3 rates high, bit4 momentum >70%, bit5 propagate-only, bit6 slew not idle 60s" }
+  - { id: 0x02C5, name: aocs.fine_ready, subsystem: aocs, description: "FINE-entry precondition bitmask (0 = ready): bit0 ST<5 stars, bit1 <3 wheels (a 3-of-4 pyramid still spans R^3 and flies FINE degraded — see aocs.fine_degraded 0x0299; two wheels cannot), bit2 MEKF unconverged, bit3 rates high, bit4 momentum >70%, bit5 propagate-only, bit6 slew not idle 60s" }
   - { id: 0x02C6, name: aocs.fidelity_mode, subsystem: aocs, description: "0=full physics, 1=secular (accel bypass >60x)" }
   - { id: 0x02C7, name: aocs.geoloc_err_m, subsystem: aocs, units: m, description: "Altitude x total pointing error — ground geolocation error" }
   - { id: 0x02C8, name: aocs.power_w, subsystem: aocs, units: W, description: "AOCS suite power draw by mode (COARSE 4 / NOMINAL 9 / FINE 15 W); EPS bills the aocs_wheels line from this" }
+
+  # ----- 2026-08b AOCS batch: gyro wiring, mode management, desaturation -----
+  - { id: 0x0294, name: aocs.gyro_units_on, subsystem: aocs, description: "Number of gyro units powered (S2 devices 0x0206-0x0208). 0 = the MEKF has no rate reference and coasts on CSS+MAG only" }
+  - { id: 0x0295, name: aocs.gyro_saturated, subsystem: aocs, description: "1 = at least one gyro channel is at its measurement-range limit (rate knowledge lost on that axis)" }
+  - { id: 0x0296, name: aocs.gyro_bias_injected, subsystem: aocs, units: 'deg/s', description: "Magnitude of the injected gyro-bias fault (instructor visibility; 0 in a healthy spacecraft)" }
+  - { id: 0x0297, name: aocs.commanded_mode, subsystem: aocs, description: "Operational mode last commanded from ground. Every transient and every automatic demotion resolves its return path against this" }
+  - { id: 0x0298, name: aocs.mode_demoted, subsystem: aocs, description: "1 = the spacecraft is NOT in its commanded mode (transient or automatic demotion in progress)" }
+  - { id: 0x0299, name: aocs.fine_degraded, subsystem: aocs, description: "1 = FINE_POINT is running on a degraded 3-wheel set (permitted per R3, relaxed jitter/deadband spec)" }
+  - { id: 0x029A, name: aocs.desat_inhibit, subsystem: aocs, description: "1 = momentum dumps are inhibited (operator latch, or asserted automatically while the payload is imaging)" }
+  - { id: 0x029B, name: aocs.h_body_nms, subsystem: aocs, units: 'Nms', description: "Magnitude of the stored BODY momentum |A.h_wheel| — the quantity a magnetic dump actually removes" }
+  - { id: 0x029C, name: aocs.desat_ineffective, subsystem: aocs, description: "1 = the last desaturation timed out without converging (see event AOCS_DESAT_INEFFECTIVE 0x020E)" }
+  - { id: 0x029D, name: aocs.wheels_commissioned, subsystem: aocs, description: "Latched 1 once >=3 wheels have been simultaneously enabled; cleared by an AOCS power-down. Lets FDIR tell a double wheel failure apart from an uncommissioned bus" }
 
   # ===== OBDH =====
   - { id: 0x0300, name: obdh.mode, subsystem: obdh }
@@ -399,6 +411,32 @@ parameters:
   - { id: 0x0523, name: ttc.active_gs, subsystem: ttc, description: "Active ground station: 1-based index into orbit.yaml ground_stations, 0 = out of contact", on_demand: true }
   - { id: 0x0524, name: ttc.gs_equipment_status, subsystem: ttc, description: "GS equipment health bitmask, SET bit = healthy: bit0 antenna+tracking, bit1 LNA, bit2 uplink HPA, bit3 reference oscillator+feed. 15 = all healthy", on_demand: true }
 
+  # ── The S-band downlink gate (2026-08b, finding T-a) ──
+  # 0x0525 is THE parameter that says whether the prime transmitter is
+  # radiating, and it is what SimulationEngine.downlink_active gates every TM
+  # packet on. Until it existed, nothing anywhere in the TM chain read the
+  # transmitter state at all: the downlink gated on 0x0501 link_status, which
+  # is derived from frame_sync — the UPLINK RECEIVE chain — so telemetry
+  # flowed with the PA off and 0.0 W of forward power. 0x0525 is carried in
+  # periodic HK SID 6, not on_demand: an operator must be able to see it
+  # without asking, because it is the answer to "why is there no telemetry".
+  # 0x052B carries the WHY behind it in one byte.
+  - { id: 0x0525, name: ttc.tx_active, subsystem: ttc, description: "S-band prime downlink radiating (0=inhibited, 1=transmitting). AND of: PA on and not in thermal shutdown, transponder alive, EPS ttc_tx line on, station in view. This is the gate on every TM packet except the UHF beacon's SID 11" }
+  - { id: 0x052B, name: ttc.tx_gate_status, subsystem: ttc, description: "Downlink gate breakdown, SET bit = permissive: bit0 PA on, bit1 EPS ttc_tx line on, bit2 station in view, bit3 S-band radiating, bit4 UHF beacon TX commanded on, bit5 UHF beacon radiating, bit6 S-band antenna deployed, bit7 beacon MODE off. 0xDF = transmitting normally", on_demand: true }
+  - { id: 0x052C, name: ttc.eirp_dbw, subsystem: ttc, units: dBW, description: "Live S-band EIRP at the COMMANDED PA power = ttc.yaml eirp_dbw + 10*log10(P/pa_ref_power_w). Moves 3.01 dB down at LOW and 3.98 dB up at HIGH — the proof that TTC_SET_TX_POWER (S8 func 68) reaches the link and not just telemetry 0x050D", on_demand: true }
+
+  # ── UHF bootloader beacon TRANSMITTER (Franz's ruling R2, 2026-08b) ──
+  # A SECOND RADIO, not a mode of the S-band transponder and not the BEACON
+  # rung of the TM rate ladder (that is ttc.beacon_mode, 0x0521 — see
+  # docs/LINK_BUDGET_AND_RATES.md §9 for why the two are constantly confused).
+  # It carries HK SID 11 and nothing else, and it survives the S-band PA, the
+  # ttc_tx line, the transponder and the deployable patch all being dead.
+  - { id: 0x0526, name: ttc.beacon_tx_on, subsystem: ttc, description: "UHF beacon transmitter commanded on (TTC_BEACON_TX_ON/OFF, S8 funcs 97/98). 0=off, 1=on", on_demand: true }
+  - { id: 0x0527, name: ttc.beacon_active, subsystem: ttc, description: "UHF beacon actually radiating to a station now (commanded on AND in contact AND its link closes). Independent of ttc.tx_active by construction — that independence is the reason the beacon is a second box", on_demand: true }
+  - { id: 0x0528, name: ttc.beacon_link_margin, subsystem: ttc, units: dB, description: "UHF beacon link margin against its OWN budget: 437.5 MHz, 1 W into a 0 dBi dipole, 1 kbps, conv+RS, to a -8 dB/K Yagi station. Typically ~27 dB — compare with the S-band LOW rung's ~46 dB and read off where the difference comes from", on_demand: true }
+  - { id: 0x0529, name: ttc.beacon_dl_freq, subsystem: ttc, units: MHz, description: "UHF beacon downlink frequency (435-438 MHz amateur-satellite segment; 437.5 MHz as flown)", on_demand: true }
+  - { id: 0x052A, name: ttc.beacon_tx_power, subsystem: ttc, units: W, description: "UHF beacon RF output (1.0 W = 30 dBm, EnduroSat UHF Type II typical). 0 W when the beacon transmitter is commanded off", on_demand: true }
+
   # ===== Payload =====
   - { id: 0x0600, name: payload.mode, subsystem: payload }
   - { id: 0x0601, name: payload.fpa_temp, subsystem: payload, units: C }
@@ -520,3 +558,20 @@ parameters:
   - { id: 0x0640, name: payload.cal_flag, subsystem: payload, description: "Calibration active flag (mirror of 0x062A)", on_demand: true }
   - { id: 0x0642, name: payload.dark_frame_cnt, subsystem: payload, description: "Dark frames acquired in the current/last calibration", on_demand: true }
   - { id: 0x0643, name: payload.bias_frame_cnt, subsystem: payload, description: "Flat/bias frames acquired in the current/last calibration", on_demand: true }
+
+  # ===== Payload 2026-08b (PL-a / PL-c / PL-d) =====
+  # State the ground previously had no way to see: which calibration was asked
+  # for and whether it survived, what is actually IN the image store, whether a
+  # strip is being read out, and how much cooling authority is left.
+  - { id: 0x0644, name: payload.cal_mode, subsystem: payload, description: "Requested calibration phase set (0=DARK, 1=FLAT, 2=BOTH)" }
+  - { id: 0x0645, name: payload.cal_abort_reason, subsystem: payload, description: "Why the last calibration stopped (0=none/completed, 1=detector unpowered, 2=shutter moved, 3=lamp state changed, 4=FPA left its band, 5=operator abort)" }
+  - { id: 0x0646, name: payload.cal_valid_mask, subsystem: payload, description: "Bands with BOTH a bias and a gain coefficient (bits 0-3 blue/green/red/nir; 0x0F = fully calibrated)" }
+  - { id: 0x0647, name: payload.product_mb, subsystem: payload, units: MB, description: "Volume occupied by CATALOGUED image products (distinct from mem_used_mb, which includes the store's pre-existing fill)" }
+  - { id: 0x0648, name: payload.product_count, subsystem: payload, description: "Number of image products held in the catalogue" }
+  - { id: 0x0649, name: payload.readout_active, subsystem: payload, description: "1 while a commanded strip is being read out (imaging no longer produces data on its own)" }
+  # Cooler authority — the payload's mirror of TCS 0x0424 / 0x0425. The
+  # achievable floor falls as the sink warms and as the detector dissipates,
+  # so a negative margin is the honest, visible reason FPA READY will not come
+  # up (see tcs_basic._fpa_achievable_lift_k).
+  - { id: 0x064A, name: payload.cooler_floor_c, subsystem: payload, units: C, description: "Coldest FPA temperature the cooler can hold at the present sink and load" }
+  - { id: 0x064B, name: payload.cooler_margin_k, subsystem: payload, units: K, description: "Commanded setpoint minus achievable floor; <= 0 means the setpoint is out of reach" }

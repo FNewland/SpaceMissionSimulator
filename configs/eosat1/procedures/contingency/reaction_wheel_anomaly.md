@@ -21,7 +21,7 @@ plan for potential wheel recovery.
 ## Procedure Steps
 
 ### Step 1 — Identify the Affected Reaction Wheel
-**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 25)
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27)
 **Verify:** `aocs.rw1_speed` (0x0207) — record value and rate of change
 **Verify:** `aocs.rw2_speed` (0x0208) — record value and rate of change
 **Verify:** `aocs.rw3_speed` (0x0209) — record value and rate of change
@@ -52,7 +52,7 @@ plan for potential wheel recovery.
 **GO/NO-GO:** Momentum dumped successfully — all active wheels < 2000 rpm and rates < 0.2 deg/s
 
 ### Step 5 — Verify Stable Pointing in Three-Wheel Mode
-**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 25) — sample at 60s intervals for 5 minutes
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — sample at 60s intervals for 5 minutes
 **Verify:** `aocs.att_error` (0x0217) < 1.5 deg (relaxed from nominal 1.0 deg for three-wheel ops)
 **Verify:** `aocs.rate_roll` (0x0204) < 0.1 deg/s
 **Verify:** `aocs.rate_pitch` (0x0205) < 0.1 deg/s

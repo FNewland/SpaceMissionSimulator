@@ -19,9 +19,49 @@ from ..protocol.pus_services import EventData, VerificationData
 
 __all__ = [
     "decode_packet", "decode_hk_body", "decode_event", "decode_verification",
-    "decode_s12_transition", "decode_s15_store_status",
+    "decode_s12_transition", "decode_s12_definitions", "decode_s15_store_status",
     "S12_EVENT_MASK", "S12_CLEAR_EVENT_MASK", "s12_event_to_param_id",
+    "S12_CHECK_TYPES", "S12_SEVERITIES",
+    "s12_check_type_name", "s12_severity_name", "s12_limit_band",
 ]
+
+#: TM(12,x) ``check_type`` octet — see configs/<mission>/monitoring/
+#: s12_definitions.yaml ("check_type (0=absolute, 1=delta)").
+S12_CHECK_TYPES = {0: "absolute", 1: "delta"}
+
+#: TM(12,x) ``severity`` octet. The simulator maps the catalogue's severity
+#: word through ``{'INFO': 1, 'WARNING': 2, 'ALARM': 3, 'HIGH': 4}``
+#: (``service_dispatch.check_monitoring``) before packing it.
+S12_SEVERITIES = {1: "INFO", 2: "WARNING", 3: "ALARM", 4: "HIGH"}
+
+
+def s12_check_type_name(check_type: Optional[int]) -> str:
+    if check_type is None:
+        return ""
+    return S12_CHECK_TYPES.get(int(check_type), f"type {int(check_type)}")
+
+
+def s12_severity_name(severity: Optional[int]) -> str:
+    if severity is None:
+        return ""
+    return S12_SEVERITIES.get(int(severity), f"SEV {int(severity)}")
+
+
+def s12_limit_band(rec: dict) -> str:
+    """Render a transition's limit band as ``low .. high``.
+
+    The band is half of the operational meaning of an S12 report — "12.4 V"
+    says nothing without "against 27.0 .. 35.0" — and every ground-side S12
+    path except the report generator threw it away.
+    """
+    low, high = rec.get("low_limit"), rec.get("high_limit")
+    if low is None and high is None:
+        return ""
+
+    def _fmt(v):
+        return "--" if v is None else f"{v:g}"
+
+    return f"{_fmt(low)} .. {_fmt(high)}"
 
 # Synthetic S5 events the simulator emits for every S12 transition
 # (mirrors smo_mcs.pus_reports — see that module's docstring).
@@ -110,6 +150,42 @@ def decode_s12_transition(data_field: bytes, subtype: int) -> Optional[dict]:
         low, high = struct.unpack(">ff", data_field[10:18])
         out.update({"mon_id": mon_id, "check_type": check_type,
                     "severity": severity, "low_limit": low, "high_limit": high})
+    return out
+
+
+def decode_s12_definitions(data_field: bytes) -> list[dict]:
+    """Decode TM(12,13) — the on-board monitoring definition table.
+
+    Wire format (big-endian): ``count(u16)`` then ``count`` records of
+    ``mon_id(u16) param_id(u16) check_type(u8) enabled(u8) low(f32) high(f32)``
+    — 14 octets each.
+
+    This decoder used to live only in ``smo_mcs.pus_reports``, which meant the
+    dump store and the standalone viewer (both ``smo_common``, which must not
+    import the ground-segment package) could not read a definition table at
+    all. It lives here now and ``smo_mcs.pus_reports.parse_s12_definitions``
+    re-exports it, so there is exactly one implementation.
+    """
+    if len(data_field) < 2:
+        return []
+    count = struct.unpack(">H", data_field[:2])[0]
+    out: list[dict] = []
+    off = 2
+    for _ in range(count):
+        if off + 14 > len(data_field):
+            break
+        mon_id, param_id, check_type, enabled = struct.unpack(
+            ">HHBB", data_field[off:off + 6])
+        low, high = struct.unpack(">ff", data_field[off + 6:off + 14])
+        out.append({
+            "mon_id": mon_id,
+            "param_id": param_id,
+            "check_type": check_type,
+            "enabled": bool(enabled),
+            "low_limit": low,
+            "high_limit": high,
+        })
+        off += 14
     return out
 
 

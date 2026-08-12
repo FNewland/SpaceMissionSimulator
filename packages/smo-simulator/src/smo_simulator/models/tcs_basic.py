@@ -19,6 +19,11 @@ from dataclasses import dataclass, field
 from typing import Any
 from smo_common.config.fpa_envelope import FPAEnvelope
 from smo_common.models.subsystem import SubsystemModel
+# The FPA setpoint arrives on the same wire field (S8 func 36, uint16
+# centi-kelvin) whether it is routed to the payload or to TCS, so both sides
+# must apply the same decode tolerance or the two will disagree about which
+# setpoints are legal. One helper, imported.
+from smo_simulator.models.payload_basic import snap_to_envelope
 
 @dataclass
 class TCSState:
@@ -36,6 +41,11 @@ class TCSState:
     # and the one the thermal physics and EPS billing use.
     cooler_fpa: bool = False
     cooler_fpa_active: bool = False
+    # 2026-08b: coldest the cooler can hold at the present sink and load, and
+    # how much of that is left below the commanded setpoint. Negative margin =
+    # the setpoint is out of reach and FPA READY will not come up.
+    fpa_cooler_floor_c: float = 0.0
+    fpa_cooler_margin_k: float = 0.0
     htr_battery_failed: bool = False; htr_obc_failed: bool = False
     htr_thruster_failed: bool = False; cooler_failed: bool = False
     obc_internal_heat_w: float = 0.0
@@ -198,8 +208,83 @@ class TCSBasicModel(SubsystemModel):
             "panel_solar_heat_gain": 1.0,
         }
         # Bounded cooler heat lift (brief 05 WP-1): the FPA cannot be driven
-        # more than this many kelvin below its ambient sink.
+        # more than this many kelvin below its ambient sink. Retained as the
+        # ABSOLUTE ceiling on the machine; the achievable lift at any instant
+        # is now computed from the cooler's efficiency (see
+        # `_fpa_achievable_lift_k`) and is smaller than this almost everywhere.
         self._fpa_cooler_max_lift_k = 40.0
+        # ── Cooler efficiency model (2026-08b) — see `_fpa_achievable_lift_k`
+        self._fpa_cooler_power_w = 15.0
+        self._fpa_cooler_carnot_fraction = 0.23
+        self._fpa_imaging_load_w = 2.0
+
+    # ── FPA cooler authority (2026-08b) ─────────────────────────────────
+    #
+    # WHAT WAS WRONG. `fpa_cooler_max_lift_k` was a flat 40 K with no coupling
+    # whatever to `fpa_cooler_power_w`, so the cooler had exactly as much
+    # authority at a 39 K lift as at a 1 K lift and "the cooler is struggling"
+    # was not a state the model could enter. The number was also not
+    # achievable by the machine the envelope docstring named. Holding -15 C
+    # against the +12 C internal sink is a 27 K lift; the FPA node's UA is
+    # C/tau = 100/120 = 0.833 W/K, so the parasitic heat to be pumped is
+    # 0.833 x 27 = 22.5 W, from 15 W of input — a COP of 1.50. A single-stage
+    # Bi2Te3 thermoelectric cannot do that. At its optimum-COP current,
+    #
+    #     COP_max = (Tc/dT) . (g - Th/Tc)/(g + 1),  g = sqrt(1 + Z.Tm)
+    #
+    # (Goldsmid's standard result, reproduced in every TEC selection guide —
+    # e.g. Ferrotec, "Mathematical Modeling of Modules"), with Tc = 258.15 K,
+    # Th = 285.15 K and the ZT ~ 0.73 of commercial bismuth telluride at this
+    # mean temperature, gives COP_max = 0.88. The required 1.50 is 1.7x what
+    # the material allows, and at the 40 K flat lift the model claimed it is
+    # worse still: a single-stage module's dTmax is only ~70 K at zero heat
+    # load, where the COP is zero by definition.
+    #
+    # WHAT IT IS INSTEAD. 1.50 is 15.7 % of the Carnot COP at this lift
+    # (Tc/dT = 258.15/27 = 9.56). That is squarely inside the 10-25 % of
+    # Carnot that miniature Stirling / free-piston space coolers achieve at
+    # near-ambient lifts, and cooled small-satellite EO detectors use exactly
+    # that class of machine (the CubeSat cryocooler literature — Lockheed
+    # Martin Microcryocooler, AIM SX030/SF-100 — is all Stirling/pulse-tube,
+    # not thermoelectric). So the hardware is reclassified: this is a
+    # miniature Stirling-class cooler, `fpa_cooler_carnot_fraction` of Carnot,
+    # and the "Peltier envelope" wording in the refusal messages and in
+    # smo_common.config.fpa_envelope is what was wrong, not the mission.
+    #
+    # WHAT THE MODEL NOW DOES. Cooling authority is the steady state where the
+    # cooler's heat lift equals the heat arriving at the node:
+    #
+    #     Qc(dT) = eta . P . Tc/dT              (fraction of Carnot)
+    #     Qc(dT) = UA.dT + Q_load               (steady state, Tc = Th - dT)
+    #  => UA.dT^2 + (Q_load + eta.P).dT - eta.P.Th = 0
+    #
+    # solved for the positive root. Authority therefore FALLS as the sink
+    # warms and as the detector's own dissipation rises, which is what makes
+    # "the cooler is struggling under imaging load" — the thing COM-011's
+    # off-nominal section asks the trainee to diagnose — a real, reachable,
+    # measurable state instead of a story.
+    #
+    # Sized (fpa_cooler_carnot_fraction 0.23, 15 W, UA 0.833 W/K):
+    #   sink +12 C, idle       32.3 K of lift -> floor -20.3 C  (-20 C just holds)
+    #   sink +12 C, imaging    31.2 K         -> floor -19.2 C  (-20 C does NOT)
+    #   sink +20 C, idle       32.8 K         -> floor -12.8 C  (-15 C does NOT)
+    # The nominal -15 C setpoint keeps ~5 K of margin, so the shipped mission
+    # is unchanged; the margin is now finite, visible (0x0424/0x0425) and
+    # spendable, which is the teaching point.
+    def _fpa_achievable_lift_k(self, sink_c: float, q_load_w: float) -> float:
+        """Steady-state lift (K) the cooler can hold below `sink_c`."""
+        ua = self._CAP.get("fpa", 100.0) / max(self._TAU.get("fpa", 120.0), 1e-6)
+        eta_p = max(0.0, self._fpa_cooler_carnot_fraction
+                    * self._fpa_cooler_power_w)
+        if eta_p <= 0.0:
+            return 0.0
+        th = sink_c + 273.15
+        b = q_load_w + eta_p
+        disc = b * b + 4.0 * ua * eta_p * th
+        lift = (math.sqrt(max(0.0, disc)) - b) / (2.0 * ua)
+        # The absolute machine ceiling still applies: no working fluid, no
+        # regenerator and no number of stages here goes past it.
+        return max(0.0, min(lift, self._fpa_cooler_max_lift_k))
 
     @property
     def name(self) -> str: return "tcs"
@@ -250,6 +335,12 @@ class TCSBasicModel(SubsystemModel):
         self._fpa_cooler_target = config.get("fpa_cooler_target_c", -5.0)
         self._fpa_cooler_max_lift_k = float(
             config.get("fpa_cooler_max_lift_k", 40.0))
+        self._fpa_cooler_power_w = float(
+            config.get("fpa_cooler_power_w", 15.0))
+        self._fpa_cooler_carnot_fraction = float(
+            config.get("fpa_cooler_carnot_fraction", 0.23))
+        self._fpa_imaging_load_w = float(
+            config.get("fpa_imaging_load_w", 2.0))
         # FPA envelope — the single source for readiness and for the derived
         # limit bands (DECISIONS §3, ruled in G3-d).
         self._fpa_env = FPAEnvelope.from_config(config)
@@ -580,10 +671,19 @@ class TCSBasicModel(SubsystemModel):
                 + self.rng.gauss(0, 0.02) * math.sqrt(dt)
         else:
             if s.cooler_fpa_active:
-                fpa_target = max(self._fpa_cooler_target,
-                                 env_int - self._fpa_cooler_max_lift_k)
+                # 2026-08b: authority now falls with the lift the cooler is
+                # being asked for, and with the detector's own dissipation
+                # while it is reading out (payload.mode 0x0600 == 2 IMAGING).
+                q_load = (self._fpa_imaging_load_w
+                          if int(shared_params.get(0x0600, 0)) == 2 else 0.0)
+                s.fpa_cooler_floor_c = env_int - self._fpa_achievable_lift_k(
+                    env_int, q_load)
+                fpa_target = max(self._fpa_cooler_target, s.fpa_cooler_floor_c)
             else:
+                s.fpa_cooler_floor_c = env_int
                 fpa_target = env_int
+            s.fpa_cooler_margin_k = (self._fpa_cooler_target
+                                     - s.fpa_cooler_floor_c)
             s.temp_fpa += (fpa_target-s.temp_fpa)/self._TAU["fpa"]*dt+self.rng.gauss(0,0.02)*math.sqrt(dt)
 
         # --- Thruster (catalyst-bed) temp — Phase D, real heater ---
@@ -660,6 +760,10 @@ class TCSBasicModel(SubsystemModel):
         # ttc.pa_backup_temp — the Phase B collision is NOT reintroduced).
         # EPS bills the 12 W from this parameter via the prop line (0x0B1B).
         shared_params[p.get("htr_thruster", 0x041B)] = 1 if s.htr_thruster else 0
+        # 2026-08b cooler authority. Published in the TCS-owned 0x04xx range;
+        # the payload mirrors them at 0x064A/0x064B for its own HK structure.
+        shared_params[0x0424] = s.fpa_cooler_floor_c
+        shared_params[0x0425] = s.fpa_cooler_margin_k
         # Phase 4: Flight hardware params
         shared_params[0x040E] = s.htr_duty_battery
         shared_params[0x040F] = s.htr_duty_obc
@@ -792,7 +896,32 @@ class TCSBasicModel(SubsystemModel):
             return {"success": True}
         elif command == "fpa_cooler":
             on = bool(cmd.get("on", True))
-            if self._state.cooler_failed and on: return {"success": False}
+            if self._state.cooler_failed and on:
+                return {"success": False, "error_code": 0x0006,
+                        "message": "FPA cooler has failed — cannot be "
+                                   "commanded ON"}
+            # ── 2026-08b PL-a: fail loudly when the EPS line is dark ──
+            # This handler used to `return {"success": True}` unconditionally,
+            # so an operator commanding the cooler on TCS func 43 — the ONLY
+            # path COM-009, the mission's only cooler-activation procedure,
+            # uses — got a clean S1.7 "execution complete" while 0x040C stayed
+            # 0, the node stayed at +11.94 C and FPA READY stayed NO forever.
+            # The heater circuit right next door has implemented this exact
+            # "the command cannot take effect" refusal since brief 05 WP-4;
+            # the cooler is now consistent with it. Service dispatch also
+            # energises the line on every request path
+            # (`ServiceDispatcher._request_fpa_cooler`), so on the nominal
+            # ground path this refusal never fires — it catches the FDIR,
+            # procedure and OBCP paths that reach the model directly.
+            if on:
+                eng = getattr(self, "_engine", None)
+                if eng is not None and not bool(
+                        getattr(eng, "params", {}).get(0x0114, 0)):
+                    # 0x0004 = "Subsystem unpowered or unreachable"
+                    return {"success": False, "error_code": 0x0004,
+                            "message": "FPA cooler EPS power line 4 is OFF — "
+                                       "command cannot take effect "
+                                       "(EPS_FPA_COOLER / EPS_POWER_ON first)"}
             self._state.cooler_fpa = on
             return {"success": True}
         elif command == "set_fpa_setpoint":
@@ -803,6 +932,10 @@ class TCSBasicModel(SubsystemModel):
             # envelope as the payload model so both sides agree on rejection.
             env = self._fpa_env
             setpoint = float(cmd.get("setpoint_c", env.setpoint_default_c))
+            # Same wire-decode epsilon as the payload side: raw 27315 cK
+            # decodes to +5.68e-14 degC, which is > 0.0 and was refused.
+            setpoint = snap_to_envelope(setpoint, env.setpoint_min_c,
+                                        env.setpoint_max_c)
             if not (env.setpoint_min_c <= setpoint <= env.setpoint_max_c):
                 return {"success": False, "error_code": 0x0003,
                         "message": f"FPA setpoint {setpoint:.2f} C outside "

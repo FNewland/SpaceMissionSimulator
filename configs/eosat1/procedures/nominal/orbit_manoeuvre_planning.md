@@ -44,7 +44,7 @@ reference SMA (da = 2a*dv/v: 1.79 km per 1.0 m/s).
 predicted burn duration and predicted AOS shift at the next pass.
 
 ### Step 2 --- Propulsion Health Check
-**TC:** `HK_ENABLE` SID=9 (Service 3, Subtype 5) --- enable the PROP housekeeping structure
+**TC:** `HK_ENABLE(sid=9)` (Service 3, Subtype 5) --- enable the PROP housekeeping structure
 **Verify:** `prop.state` (0x0B00) = 0, `prop.tank_pressure` (0x0B01) in band,
 `prop.propellant_mass` (0x0B02) consistent with the book-kept load,
 `prop.dv_remaining` (0x0B0C) covers the plan, `prop.arm_inhibit_mask` (0x0B15)
@@ -59,9 +59,12 @@ conflicts). Confirm power: preheat + burn inside daylight.
 **GO/NO-GO:** FD authorises the manoeuvre vector and the execution pass.
 
 ### Step 4 --- S11 Time-Tagged Upload
-**TC:** `SCHEDULE_TC` (Service 11, Subtype 4) --- time-tag `PROP_SET_BURN` at T-5 min
-**TC:** `SCHEDULE_TC` (Service 11, Subtype 4) --- time-tag `PROP_ARM` at T-2 min
-**TC:** `SCHEDULE_TC` (Service 11, Subtype 4) --- time-tag `PROP_EXECUTE` at T-0
+**TC:** `SCHEDULE_TC(exec_time_cuc=T, tc_data=TC)` (Service 11, Subtype 4) --- time-tag `PROP_SET_BURN` at T-5 min
+**Note:** `tc_data` is the COMPLETE inner telecommand packet, not a mnemonic: build `PROP_SET_BURN` first and embed its bytes.
+**TC:** `SCHEDULE_TC(exec_time_cuc=T, tc_data=TC)` (Service 11, Subtype 4) --- time-tag `PROP_ARM` at T-2 min
+**Note:** `tc_data` is the COMPLETE inner telecommand packet, not a mnemonic: build `PROP_ARM` first and embed its bytes.
+**TC:** `SCHEDULE_TC(exec_time_cuc=T, tc_data=TC)` (Service 11, Subtype 4) --- time-tag `PROP_EXECUTE` at T-0
+**Note:** `tc_data` is the COMPLETE inner telecommand packet, not a mnemonic: build `PROP_EXECUTE` first and embed its bytes.
 **Note:** PROP_ARM must land within 300 s of PROP_SET_BURN (the arm window)
 and after the catbed preheat completes — schedule HEATER_THRUSTER ON at
 T-25 min via the same S11 sequence or execute NOM-013 manually in-pass.

@@ -13,14 +13,15 @@ above 40% SoC.
 
 ## Prerequisites
 - [ ] Spacecraft has entered OBC safe mode or operator has confirmed EPS anomaly via telemetry
-- [ ] TT&C link is active — `ttc.link_status` (0x0501) = 1
+- [ ] TT&C link is active — `ttc.link_status` (0x0501) = 2 (LOCKED)
 - [ ] Current orbit prediction available — next sunlit/eclipse transition times known
 - [ ] Power budget spreadsheet (ref: EOSAT1-PWR-BUD-001) accessible on console
 
 ## Procedure Steps
 
 ### Step 1 — Verify Safe Mode Entry and EPS State
-**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 25)
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) — Platform/OBDH housekeeping
 **Verify:** `obdh.mode` (0x0300) = 1 (SAFE) within 5s
 **Verify:** `eps.bat_soc` (0x0101) — record current value (expected < 20%)
 **Verify:** `eps.bus_voltage` (0x0105) — record current value (expected < 26.5V)
@@ -34,20 +35,20 @@ above 40% SoC.
 **GO/NO-GO:** Payload confirmed OFF and power consumption reduced — proceed
 
 ### Step 3 — Verify AOCS Is in Minimum Power Configuration
-**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 25)
-**Verify:** `aocs.mode` (0x020F) = 2 (SAFE_POINT) — sun-pointing for maximum array illumination
-**Note:** If AOCS is not in SAFE_POINT, command `AOCS_SET_MODE(mode=2)` and verify transition within 30s
-**GO/NO-GO:** AOCS in SAFE_POINT ensuring optimal solar array orientation — proceed
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27)
+**Verify:** `aocs.mode` (0x020F) = 2 (COARSE_SUN) — sun-pointing for maximum array illumination
+**Note:** If AOCS is not in COARSE_SUN, command `AOCS_SET_MODE(mode=2)` and verify transition within 30s
+**GO/NO-GO:** AOCS in COARSE_SUN ensuring optimal solar array orientation — proceed
 
 ### Step 4 — Assess Solar Array Performance
-**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 25)
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
 **Verify:** `eps.sa_a_current` (0x0103) — record value (expected > 0.5A in sunlight)
 **Verify:** `eps.sa_b_current` (0x0104) — record value (expected > 0.5A in sunlight)
 **Verify:** `eps.power_gen` (0x0107) — record value (expected > 25W in sunlight, > 45W at optimal incidence)
 **GO/NO-GO:** If both SA currents are < 0.2A during confirmed sunlit phase, suspect array failure — escalate to CTG-009. Otherwise proceed.
 
 ### Step 5 — Monitor Battery Recovery During Sunlit Phase
-**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 25) — repeat every 60s
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — repeat every 60s
 **Verify:** `eps.bat_soc` (0x0101) trending upward (minimum +1% per 10 minutes in sunlight)
 **Verify:** `eps.bus_voltage` (0x0105) recovering above 27.0V
 **Verify:** `eps.bat_temp` (0x0102) remains within 0 to 40 deg-C during charge
@@ -62,7 +63,7 @@ above 40% SoC.
 
 ### Step 7 — Restore Nominal AOCS Mode
 **TC:** `AOCS_SET_MODE(mode=3)` (Service 8, Subtype 1)
-**Verify:** `aocs.mode` (0x020F) = 3 (NADIR_POINT) within 30s
+**Verify:** `aocs.mode` (0x020F) = 3 (NOMINAL) within 30s
 **Verify:** `eps.bat_soc` (0x0101) remains > 30% after AOCS transition
 **GO/NO-GO:** Attitude nominal and SoC stable — proceed to restore OBC mode
 
@@ -75,7 +76,7 @@ above 40% SoC.
 
 ## Off-Nominal Handling
 - If SoC drops below 10% at any step: Command `OBC_SET_MODE(mode=2)` for EMERGENCY, execute EMG-002
-- If battery temperature exceeds 45 deg-C during charge: Command `HEATER_CONTROL(circuit=battery, on=false)` and reduce charge rate via `SET_PARAM(param_id=eps.charge_limit, value=0.5)`
+- If battery temperature exceeds 45 deg-C during charge: Command `HEATER_BATTERY(on=0)` and reduce charge rate via `SET_PARAM(param_id=eps.charge_limit, value=0.5)`
 - If solar array output remains < 0.2A for full sunlit pass: Execute CTG-009 (Solar Array Degradation)
 - If bus voltage drops below 25.0V: Execute EMG-002 immediately
 

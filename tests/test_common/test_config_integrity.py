@@ -26,6 +26,7 @@ VALID_TAB_IDS = {
     "overview", "eps", "aocs", "tcs", "obdh", "ttc",
     "payload", "commanding", "pus", "procedures", "manual",
     "trends",   # Phase G WP-4 parameter-history / trending page
+    "prop",     # 2026-08b propulsion tab (28 params, SID 9, 11 commands)
 }
 
 VALID_SUBSYSTEM_NAMES = {"eps", "aocs", "tcs", "obdh", "ttc", "payload",

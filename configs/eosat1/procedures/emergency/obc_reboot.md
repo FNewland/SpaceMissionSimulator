@@ -26,14 +26,14 @@ all non-critical operations have been suspended.
   - Payload OFF: `payload.mode` (0x0600) = 0
   - No time-tagged command sequences pending
   - No memory upload in progress
-- [ ] TTC link active: `ttc.link_status` (0x0501) = 1 (LOCKED)
+- [ ] TTC link active: `ttc.link_status` (0x0501) = 2 (LOCKED)
 - [ ] Battery SoC > 30 %: `eps.bat_soc` (0x0101) > 30 (margin for boot sequence)
 - [ ] Flight Director and FDIR/Systems operators at console
 
 ## Procedure Steps
 
 ### Step 1 --- Pre-Reboot State Capture
-**TC:** `HK_REQUEST` SID=4 (Service 3, Subtype 25) --- request OBDH housekeeping (if responsive)
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) --- request OBDH housekeeping (if responsive)
 **Action:** Record all available OBDH parameters for post-reboot comparison:
   - `obdh.mode` (0x0300): current mode
   - `obdh.cpu_load` (0x0302): CPU utilisation
@@ -45,7 +45,7 @@ all non-critical operations have been suspended.
   - `obdh.last_reboot_cause` (0x0316): previous reboot cause
   - `obdh.seu_count` (0x0319): single-event upset counter
   - `obdh.mem_errors` (0x031E): memory error count
-**TC:** `HK_REQUEST` SID=1 (Service 3, Subtype 25) --- request EPS housekeeping
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) --- request EPS housekeeping
 **Verify:** `eps.bat_soc` (0x0101) > 30 %
 **Note:** If OBC is completely unresponsive (no HK received), record "NO RESPONSE" and
 proceed directly to Step 2. The reboot command may still be accepted at the hardware
@@ -53,16 +53,19 @@ command decoder level even if the application software is hung.
 **GO/NO-GO:** Pre-reboot state captured (or confirmed unresponsive). Flight Director approves reboot.
 
 ### Step 2 --- Suspend Payload and Shed Non-Critical Loads
-**TC:** `PAYLOAD_SET_MODE` mode=0 (Service 8, Subtype 5) --- payload OFF
+**TC:** `PAYLOAD_SET_MODE(mode=0)` (Service 8, Subtype 1, func_id 26) --- payload OFF
 **Verify:** `payload.mode` (0x0600) = 0 (OFF) within 10 s (if OBC responsive)
-**TC:** `HEATER_CONTROL(circuit=obc, on=false)` (Service 8, Subtype 7) --- OBC heater OFF
+**TC:** `HEATER_OBC(on=0)` (Service 8, Subtype 1, func_id 41) --- OBC heater OFF
 **Note:** The OBC heater will be re-enabled after reboot once thermal state is assessed.
 **Action:** If OBC is not accepting commands, these loads will remain in their current
 state through the reboot. The boot loader will apply safe defaults on restart.
 **GO/NO-GO:** Non-critical loads shed (or OBC confirmed non-responsive).
 
 ### Step 3 --- Send Commanded Reboot
-**TC:** `FUNC_PERFORM` func_id=42 (Service 8, Subtype 1) --- command OBC reboot
+**TC:** `OBC_REBOOT` (Service 8, Subtype 1, func_id 52) --- command an OBC reboot
+**Note:** Was `FUNC_PERFORM func_id=42`. S8 func 42 is `HEATER_THRUSTER` — the
+"reboot the OBC" step of the OBC REBOOT emergency card would have toggled the
+thruster catbed heater and left the OBC running.
 **Action:** The OBC will immediately halt the running application, reset the processor,
 and enter the boot loader. All volatile memory is cleared. The boot loader will perform
 a power-on self-test (POST) and then load the application image from the designated
@@ -88,13 +91,17 @@ or may have failed to boot entirely. Proceed to Recovery Action 1.
 
 ### Step 4b --- Boot OBC into Application Image
 **TC:** `OBC_BOOT_APP` (Service 8, Subtype 1, func_id 55)
-**Action:** After reboot the OBC comes up in the bootloader (`obdh.sw_image` = 0) and only accepts the bootloader-allowed command set (boot/maintenance funcs + EPS power-line on/off). Issue OBC_BOOT_APP to start the 10 s CRC verification of the application image. Until this completes, every application TC below (HK_ENABLE, OBC_SET_MODE, etc.) will be rejected with error 0x0004.
+**Note:** After reboot the OBC comes up in the bootloader (`obdh.sw_image`
+(0x0311) = 0) and only accepts the bootloader-allowed command set (boot and
+maintenance funcs plus EPS power-line on/off). The `OBC_BOOT_APP` step above
+starts the 10 s CRC verification of the application image. Until it completes,
+every application telecommand later in this card is rejected with error 0x0004.
 **Verify:** S1.1 acceptance + S1.7 execution complete received within 15 s
 **Verify:** `obdh.sw_image` (0x0311) = 1 (APPLICATION) within 15 s
 **GO/NO-GO:** Application image running, full PUS service set available.
 
 ### Step 5 --- Verify OBC Heartbeat and Mode
-**TC:** `HK_REQUEST` SID=4 (Service 3, Subtype 25) --- request OBDH housekeeping
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) --- request OBDH housekeeping
 **Verify:** `obdh.mode` (0x0300) = 1 (SAFE) within 10 s --- OBC boots into SAFE mode after reboot
 **Verify:** `obdh.sw_image` (0x0311) = 1 (application) --- running from application image, not bootloader
 **Verify:** `obdh.reboot_count` (0x030A) = previous_count + 1 --- exactly one reboot occurred
@@ -116,26 +123,26 @@ unit. Escalate to OBDH engineer for investigation.
 **GO/NO-GO:** Boot source and OBC identity confirmed. No unexpected switchover.
 
 ### Step 7 --- Re-Enable HK Reporting and Verify Subsystem Communication
-**TC:** `HK_ENABLE` SID=1 (Service 3, Subtype 5) --- enable EPS periodic reporting
-**TC:** `HK_ENABLE` SID=2 (Service 3, Subtype 5) --- enable AOCS periodic reporting
-**TC:** `HK_ENABLE` SID=3 (Service 3, Subtype 5) --- enable TCS periodic reporting
-**TC:** `HK_ENABLE` SID=5 (Service 3, Subtype 5) --- enable TTC periodic reporting
+**TC:** `HK_ENABLE(sid=1)` (Service 3, Subtype 5) --- enable EPS periodic reporting
+**TC:** `HK_ENABLE(sid=2)` (Service 3, Subtype 5) --- enable AOCS periodic reporting
+**TC:** `HK_ENABLE(sid=3)` (Service 3, Subtype 5) --- enable TCS periodic reporting
+**TC:** `HK_ENABLE(sid=5)` (Service 3, Subtype 5) --- enable TTC periodic reporting
 **Verify:** Periodic HK packets from all enabled SIDs arriving within 30 s
-**TC:** `HK_REQUEST` SID=1 (Service 3, Subtype 25) --- request EPS housekeeping
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) --- request EPS housekeeping
 **Verify:** `eps.bus_voltage` (0x0105) > 28.0 V --- power bus nominal
 **Verify:** `eps.bat_soc` (0x0101) > 25 % --- sufficient charge
-**TC:** `HK_REQUEST` SID=2 (Service 3, Subtype 25) --- request AOCS housekeeping
-**Verify:** `aocs.mode` (0x020F) --- record current AOCS mode (may have defaulted to SAFE_POINT or DETUMBLE)
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) --- request AOCS housekeeping
+**Verify:** `aocs.mode` (0x020F) --- record current AOCS mode (may have defaulted to COARSE_SUN or DETUMBLE)
 **Verify:** `aocs.att_error` (0x0217) --- record current attitude error
-**TC:** `HK_REQUEST` SID=3 (Service 3, Subtype 25) --- request TCS housekeeping
+**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 27) --- request TCS housekeeping
 **Verify:** `tcs.temp_obc` (0x0406) in range [-10 C, +50 C] --- OBC temperature within limits
 **Verify:** `tcs.temp_battery` (0x0407) in range [-10 C, +45 C]
 **GO/NO-GO:** All subsystems responding via CAN bus. Telemetry nominal.
 
 ### Step 8 --- Restore Operational Mode and Log Results
-**TC:** `OBC_SET_MODE` mode=0 (Service 8, Subtype 3) --- transition OBC to NOMINAL mode
+**TC:** `OBC_SET_MODE(mode=0)` (Service 8, Subtype 1, func_id 50) --- transition OBC to NOMINAL mode
 **Verify:** `obdh.mode` (0x0300) = 0 (NOMINAL) within 5 s
-**TC:** `HEATER_CONTROL(circuit=obc, on=true)` (Service 8, Subtype 7) --- restore OBC heater
+**TC:** `HEATER_OBC(on=1)` (Service 8, Subtype 1, func_id 41) --- restore OBC heater
 **Verify:** `tcs.htr_obc` (0x040B) = 1 (active)
 **Action:** Log reboot results:
   - Reboot cause (anomaly description)
@@ -153,13 +160,14 @@ and monitor for recurrence.
 ## Recovery Actions
 
 ### Recovery Action 1 --- OBC Fails to Boot (No Telemetry After 120 s)
-1. Verify TTC link is still active: `ttc.link_status` (0x0501) should still be LOCKED
+1. Verify TTC link is still active: `ttc.link_status` (0x0501) should still be 2 (LOCKED)
    (TTC operates independently of OBC boot state).
 2. Wait one additional orbit (95 min) --- the hardware watchdog may trigger a second
    reboot attempt.
 3. If still no response: the OBC may be stuck in bootloader or hardware fault.
 4. Attempt OBC redundancy switch:
-   **TC:** `FUNC_PERFORM` func_id=43 (Service 8, Subtype 1) --- switch to backup OBC
+   **TC:** `OBC_SWITCH_UNIT` (Service 8, Subtype 1, func_id 53) --- switch to the backup OBC
+   (was `FUNC_PERFORM func_id=43`, which is `FPA_COOLER`).
    (This command is routed via the EPS power distribution unit, which is independent of
    the OBC application software.)
 5. Wait 90 s for backup OBC to boot.
@@ -169,8 +177,12 @@ and monitor for recurrence.
 
 ### Recovery Action 2 --- OBC Boots Into Bootloader Only
 1. If `obdh.sw_image` (0x0311) = 0 (bootloader): the application image may be corrupted.
-2. **TC:** `FUNC_PERFORM` func_id=21 (Service 8, Subtype 1) --- select alternate memory bank.
-3. **TC:** `FUNC_PERFORM` func_id=42 (Service 8, Subtype 1) --- reboot from alternate bank.
+2. **Note:** There is no "select alternate memory bank" command; the old card
+   sent `FUNC_PERFORM func_id=21`, which is `EPS_RESET_OC_FLAG`. Use
+   `OBC_SELECT_BUS` (func 54) for the CAN bus and `OBC_SWITCH_UNIT` (func 53)
+   for the redundant OBC; a corrupt application image is recovered by
+   re-uploading it (CTG-018).
+3. **TC:** `OBC_REBOOT` (Service 8, Subtype 1, func_id 52) --- reboot.
 4. Wait 90 s and verify `obdh.sw_image` (0x0311) = 1 (application).
 5. If successful: the primary image bank is likely corrupted. Schedule a software re-upload
    to the failed bank via NOM-006 when conditions permit.
@@ -186,7 +198,7 @@ and monitor for recurrence.
   occurred. The primary OBC may have a hardware fault. Log the event and proceed with
   the backup unit. Schedule investigation of the primary unit.
 - If AOCS is in DETUMBLE after reboot: The AOCS has defaulted to safe mode. This is
-  expected behaviour. Monitor rates and transition to SAFE_POINT then NADIR_POINT once
+  expected behaviour. Monitor rates and transition to COARSE_SUN then NOMINAL once
   rates are < 0.1 deg/s.
 - If `eps.bat_soc` drops below 20 % after reboot: The boot sequence power draw may have
   been excessive. Shed all non-essential loads immediately. Maintain OBC in SAFE mode

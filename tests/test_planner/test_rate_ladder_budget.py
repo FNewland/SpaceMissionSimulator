@@ -138,12 +138,20 @@ class TestPerActivityRateSplit:
         # TTC HK SID (brief 08 finding 13) — 7 bytes every 8 s = +8 bps of
         # channel, which is the price of the console being able to show
         # ACTIVE vs COMMANDED tier from routine housekeeping.
-        assert hk_bps == pytest.approx(1567.0, abs=2.0)
+        # 2026-08b (payload PL-a/PL-c/PL-d) added eight parameters to payload
+        # HK SID 5 (8 s): 0x0644-0x0649 calibration and image-store state, plus
+        # 0x064A/0x064B cooler floor and margin. 11 bytes every 8 s = +54 bps
+        # of channel — 3.5 % of the HK stream, and the price of an operator
+        # being able to see WHY the FPA will not come ready and what is
+        # actually in the image store. Still ~10 % of the 16 kbps LOW tier, so
+        # the rate-ladder argument this test exists for is unchanged.
+        assert hk_bps == pytest.approx(1621.0, abs=2.0)
         contacts = _contacts([("Svalbard", 20 + 45 * i, 445, 25.0)
                               for i in range(24)])
         b = BudgetTracker.from_config(CONFIG_DIR, contacts=contacts
                                       ).compute_data_budget()
-        assert b["hk_stream_mb_per_day"] == pytest.approx(16.1, abs=0.3)
+        # 16.1 -> 16.7 MB/day for the same reason as the +54 bps above.
+        assert b["hk_stream_mb_per_day"] == pytest.approx(16.7, abs=0.3)
         frac = b["hk_contact_fraction_percent"]
         assert frac["LOW"] == pytest.approx(8 * frac["HIGH"], rel=0.02)
         assert frac["LOW"] > 8 * frac["HIGH"] / 1.01     # LOW is the expensive one

@@ -6,33 +6,63 @@ name: "TTC Emergency Shutdown"
 category: "fdir_response"
 description: "Level 3 recovery: TTC emergency shutdown"
 
+# ── 2026-08b correction: this card used to TURN THE TRANSMITTER ON ──────
+#
+# Step 1 was labelled "Disable TX" and sent `func_id: 66` with `data: [0x00]`.
+# Func 66 is TTC_PA_**ON**, and its handler
+# (service_dispatch._route_ttc_cmd) ignores the data byte entirely — there is
+# no "off" argument to give it. So the level-3 emergency shutdown, the last
+# automatic action before the spacecraft gives up on its own radio,
+# ENERGISED the power amplifier.
+#
+# It was harmless only because PA state did nothing on the TM path. The
+# moment `tx_active` became the real downlink gate (finding T-a, same batch)
+# it would have turned into a live critical fault: an FDIR level-3 response
+# that re-opens the transmitter it exists to shut down, on a fault it by
+# definition does not understand. Two individually minor findings composing
+# into a new critical defect is exactly what the coherence review existed to
+# catch.
+#
+# Steps 2 and 3 had the same shape — funcs 63/64 with `data: [0x00]` /
+# `[0x01]` and comments claiming "off" and "rx only". Those handlers also
+# ignore their data bytes: 63 and 64 SELECT which transponder is active, they
+# do not power anything off, and there is no RX-only state in the model. The
+# bytes are gone and the step names now say what the commands actually do.
 steps:
   - step_id: 1
     name: "Disable TX"
-    description: "Disable TTC transmitter"
+    description: "Disable the S-band power amplifier (TTC_PA_OFF)"
     delay_s: 0.0
     command: "s8_command"
     params:
-      func_id: 66  # TTC_PA_ON
-      data: [0x00]  # turn off
+      func_id: 67  # TTC_PA_OFF — was 66 (TTC_PA_ON), which did the opposite
+      data: []     # this handler takes no argument
 
   - step_id: 2
-    name: "Disable Primary Transponder"
-    description: "Switch off primary transponder"
+    name: "Select Primary Transponder"
+    description: >-
+      Select the primary transponder. This SWITCHES the active unit; it does
+      not power one off. With the PA already disabled by step 1 the chain is
+      silent either way, and starting recovery from a known unit is the point.
     delay_s: 1.0
     command: "s8_command"
     params:
-      func_id: 63  # TTC_SWITCH_PRIMARY
-      data: [0x00]  # off
+      func_id: 63  # TTC_SWITCH_PRIMARY — selects, does not power down
+      data: []
 
   - step_id: 3
-    name: "Switch to Redundant (RX Only)"
-    description: "Enable redundant for RX only"
+    name: "Select Redundant Transponder"
+    description: >-
+      Fall through to the redundant transponder. Its receiver stays live on
+      the non-switchable ttc_rx line, so the spacecraft remains commandable
+      after this card runs — and the UHF beacon transmitter is untouched by
+      every step above, so HK SID 11 keeps arriving and the ground can SEE
+      that the shutdown happened rather than inferring it from silence.
     delay_s: 2.0
     command: "s8_command"
     params:
-      func_id: 64  # TTC_SWITCH_REDUNDANT
-      data: [0x01]  # rx only
+      func_id: 64  # TTC_SWITCH_REDUNDANT — selects, does not power down
+      data: []
 
 timeout_s: 15.0
 max_retries: 0

@@ -27,7 +27,7 @@ for hot cases), and monitors the temperature trend until the zone returns within
 ## Procedure Steps
 
 ### Step 1 — Identify Affected Thermal Zone
-**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 25)
+**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 27)
 **Verify:** `tcs.temp_obc` (0x0406) — record value, check against limits
 **Verify:** `tcs.temp_battery` (0x0407) — record value, check against limits
 **Verify:** `tcs.temp_fpa` (0x0408) — record value, check against limits
@@ -36,9 +36,9 @@ for hot cases), and monitors the temperature trend until the zone returns within
 
 ### Step 2A — Cold Case: Enable Heater for Affected Zone
 **Condition:** Zone temperature is below cold yellow limit
-**TC (Battery cold):** `HEATER_CONTROL(circuit=battery, on=true)` (Service 8, Subtype 1)
+**TC (Battery cold):** `HEATER_BATTERY(on=1)` (Service 8, Subtype 1, func_id 40)
 **Verify:** `tcs.htr_battery` (0x040A) = 1 (ON) within 5s
-**TC (OBC cold):** `HEATER_CONTROL(circuit=obc, on=true)` (Service 8, Subtype 1)
+**TC (OBC cold):** `HEATER_OBC(on=1)` (Service 8, Subtype 1, func_id 41)
 **Verify:** `tcs.htr_obc` (0x040B) = 1 (ON) within 5s
 **Verify:** `eps.power_cons` (0x0106) increases by expected heater draw (3-7W per circuit)
 **GO/NO-GO:** Heater confirmed active and power budget can sustain — proceed to monitoring
@@ -49,11 +49,11 @@ for hot cases), and monitors the temperature trend until the zone returns within
 **Verify:** `payload.mode` (0x0600) = 0 (OFF) within 10s
 **TC (OBC hot):** `SET_PARAM(param_id=obdh.task_shed, value=1)` — reduce CPU load to lower dissipation
 **Verify:** `obdh.cpu_load` (0x0302) decreases within 30s
-**Action (Battery hot):** Verify `tcs.htr_battery` (0x040A) = 0 (OFF); if ON, command `HEATER_CONTROL(circuit=battery, on=false)`
+**Action (Battery hot):** Verify `tcs.htr_battery` (0x040A) = 0 (OFF); if ON, command `HEATER_BATTERY(on=0)`
 **GO/NO-GO:** Load reduction actions confirmed — proceed to monitoring
 
 ### Step 3 — Monitor Temperature Trend
-**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 25) — repeat every 60s for 15 minutes
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — repeat every 60s for 15 minutes
 **Verify:** Affected zone temperature trending toward nominal range at >= 0.2 deg-C/min
 **Verify:** No other zones drifting into yellow limits as a secondary effect
 **Verify:** `eps.bat_soc` (0x0101) > 20% — heater operation is not depleting battery excessively
@@ -64,14 +64,16 @@ for hot cases), and monitors the temperature trend until the zone returns within
 **Wire:** `2C <circuit:uint8> <on_temp:float32> <off_temp:float32>` — e.g. circuit 0, on 5.0 / off 10.0 C = `2C 00 40 A0 00 00 41 20 00 00`
 **Note:** There is no `tcs.htr_<zone>_setpoint` parameter — heater thermostats are reconfigured by S8 func 44, not by S20 parameter write.
 **Verify:** Heater duty cycle increases (more frequent ON cycles observed in telemetry)
-**TC (Hot case):** If temperature still rising, command `AOCS_SET_MODE(mode=2)` for SAFE_POINT to optimise spacecraft attitude for thermal dissipation
+**TC (Hot case):** If temperature still rising, command `AOCS_SET_MODE(mode=2)` for COARSE_SUN to optimise spacecraft attitude for thermal dissipation
 **Verify:** `aocs.mode` (0x020F) = 2 within 15s
 **GO/NO-GO:** If temperature stabilises within additional 15 min, proceed to Step 5. If red limit approached, escalate to EMG-002.
 
 ### Step 5 — Confirm Recovery and Restore Operations
-**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 25)
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27)
 **Verify:** All zone temperatures within nominal (green) range
-**Action:** If heaters were enabled for the cold case, return them to autonomous thermostat control with `HEATER_AUTO_MODE(circuit=<0|1|2>)` (Service 8, Subtype 1, func_id 45) — wire `2D 00` for the battery circuit.
+**Note:** Only if heaters were enabled for the cold case. Circuits: 0 battery,
+1 obc, 2 thruster. Wire bytes for the battery circuit are `2D 00`.
+**TC:** `HEATER_AUTO_MODE(circuit=0)` (Service 8, Subtype 1, func_id 45) — battery circuit back to thermostat
 **Action:** If loads were shed for hot case, re-enable per CTG-005 load restoration sequence
 **GO/NO-GO:** All temperatures nominal and operations restored — recovery complete
 

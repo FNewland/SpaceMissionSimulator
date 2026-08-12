@@ -72,17 +72,47 @@ class TestCreateTransfer:
         assert DEFAULT_IMAGE_SIZE_MB == 4
         assert service_dispatcher._s13_transfers[tid]["size_mb"] == 4
 
-    def test_zero_size_reads_the_configured_payload_image_size(
+    def test_uncatalogued_scene_is_refused_when_a_payload_is_attached(
             self, service_dispatcher, mock_engine):
-        """When a real payload model is attached, S13 tracks
-        subsystems/payload.yaml image_size_mb rather than a constant."""
+        """2026-08b PL-c: S13.1 binds to a REAL product.
+
+        This test used to assert that a transfer opened successfully for
+        scene 1 against a freshly-configured (therefore EMPTY) catalogue, and
+        was sized from `image_size_mb`. That was the defect: a transfer could
+        be created, run and completed for an image that had never been taken.
+        With a real payload in the loop the session is now refused and NAKed.
+        """
         from smo_simulator.models.payload_basic import PayloadBasicModel
 
         payload = PayloadBasicModel()
         payload.configure({"image_size_mb": 12.0, "total_storage_mb": 20000.0})
         mock_engine.subsystems["payload"] = payload
-        tid = _create(service_dispatcher, scene_id=1, size_mb=0)
-        assert service_dispatcher._s13_transfers[tid]["size_mb"] == 12
+        service_dispatcher._handle_s13(1, struct.pack(">HH", 1, 0))
+        assert service_dispatcher._s13_transfers == {}
+        assert _last_pack(mock_engine)[:2] == (13, 4), "expected a TM(13,4) NAK"
+
+    def test_catalogued_scene_is_sized_from_the_product(
+            self, service_dispatcher, mock_engine):
+        """The session takes its size from the product, not from the wire."""
+        from smo_simulator.models.payload_basic import PayloadBasicModel
+
+        payload = PayloadBasicModel()
+        payload.configure({"image_size_mb": 12.0, "total_storage_mb": 20000.0})
+        payload._state.mode = 2
+        payload._state.fpa_ready = True
+        cap = payload.handle_command({"command": "capture", "scene_id": 77,
+                                      "lines": 2048})
+        assert cap["success"], cap
+        mock_engine.subsystems["payload"] = payload
+        # `size_mb` on the wire is deliberately wrong — it must be ignored.
+        service_dispatcher._handle_s13(1, struct.pack(">HH", 77, 999))
+        tid = max(service_dispatcher._s13_transfers)
+        xfer = service_dispatcher._s13_transfers[tid]
+        assert xfer["size_bytes"] == payload.image_size_bytes(
+            payload.find_image(77))
+        assert xfer["total_blocks"] == payload.image_block_count(
+            payload.find_image(77))
+        assert xfer["size_mb"] != 999
 
     def test_configured_image_size_matches_the_mission_config(self):
         """The mission config is the single source of the image size."""
@@ -275,13 +305,14 @@ class TestConcurrentTransfers:
         assert service_dispatcher._s13_transfers[b]["status"] == "ACTIVE"
         assert service_dispatcher._s13_transfers[b]["scene_id"] == 2
 
-    def test_blocks_are_scene_independent_but_segment_derived(self, service_dispatcher,
-                                                              mock_engine):
-        """Two transfers asking for the same segment get identical blocks.
+    def test_blocks_are_segment_derived_without_a_payload_model(
+            self, service_dispatcher, mock_engine):
+        """With no real payload attached, the legacy ramp is still served.
 
-        Pins the simulated-payload behaviour: block content is a function of the
-        segment number only, not of the scene. Worth knowing if a test ever
-        tries to tell two dumps apart by their payload bytes.
+        Two transfers asking for the same segment get identical blocks because
+        there is no product to derive them from. This is the UNIT-harness
+        fallback only; `test_blocks_come_from_the_product` pins the real
+        behaviour, where the bytes differ per scene.
         """
         a = _create(service_dispatcher, scene_id=1)
         b = _create(service_dispatcher, scene_id=2)
@@ -290,6 +321,41 @@ class TestConcurrentTransfers:
         service_dispatcher._handle_s13(3, struct.pack(">HH", b, 4))
         block_b = _last_pack(mock_engine)[2][4:]
         assert block_a == block_b
+
+    def test_blocks_come_from_the_product(self, service_dispatcher, mock_engine):
+        """2026-08b PL-c: with a real payload the bytes ARE the product.
+
+        Two different scenes served the same segment index must differ, and the
+        bytes must equal what the payload model derives for that product — the
+        old handler answered `(segment_num + i) % 256` for every scene, so no
+        downlink could be checksummed and no corruption was visible.
+        """
+        from smo_simulator.models.payload_basic import PayloadBasicModel
+
+        payload = PayloadBasicModel()
+        payload.configure({"image_size_mb": 4.0, "total_storage_mb": 20000.0})
+        payload._state.mode = 2
+        payload._state.fpa_ready = True
+        payload.handle_command({"command": "capture", "scene_id": 11,
+                                "lines": 2048})
+        payload.handle_command({"command": "capture", "scene_id": 12,
+                                "lines": 2048})
+        mock_engine.subsystems["payload"] = payload
+
+        service_dispatcher._handle_s13(1, struct.pack(">HH", 11, 0))
+        a = max(service_dispatcher._s13_transfers)
+        service_dispatcher._handle_s13(1, struct.pack(">HH", 12, 0))
+        b = max(service_dispatcher._s13_transfers)
+
+        service_dispatcher._handle_s13(3, struct.pack(">HH", a, 4))
+        block_a = _last_pack(mock_engine)[2][4:]
+        service_dispatcher._handle_s13(3, struct.pack(">HH", b, 4))
+        block_b = _last_pack(mock_engine)[2][4:]
+
+        assert len(block_a) == BLOCK_BYTES
+        assert block_a != block_b, "two scenes served identical bytes"
+        assert block_a == payload.image_block(11, 4)
+        assert block_b == payload.image_block(12, 4)
 
 
 class TestUnsupportedRequests:

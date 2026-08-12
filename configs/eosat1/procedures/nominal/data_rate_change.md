@@ -25,7 +25,7 @@ This procedure verifies adequate link margin before commanding a rate change and
 confirms that the new bit error rate remains acceptable after the transition.
 
 ## Prerequisites
-- [ ] TT&C link active — `ttc.link_status` (0x0501) = 1
+- [ ] TT&C link active — `ttc.link_status` (0x0501) = 2 (LOCKED)
 - [ ] Carrier lock established — `ttc.carrier_lock` (0x0510) = 1
 - [ ] Ground station contact in progress with sufficient remaining contact time (> 2 min)
 - [ ] Ground station modem configured for the target tier's symbol rate and modulation
@@ -34,7 +34,7 @@ confirms that the new bit error rate remains acceptable after the transition.
 ## Required Telemetry
 | Parameter | ID | Expected Value |
 |---|---|---|
-| ttc.link_status | 0x0501 | 1 (active) |
+| ttc.link_status | 0x0501 | 2 (LOCKED) |
 | ttc.link_margin | 0x0503 | > 3.0 dB for HIGH, > 0 dB minimum |
 | ttc.tm_data_rate | 0x0506 | Active information rate (1000 / 16000 / 128000 bps) |
 | ttc.tm_tier | 0x0539 | ACTIVE tier index (0=BEACON, 1=LOW, 2=HIGH) |
@@ -60,8 +60,8 @@ confirms that the new bit error rate remains acceptable after the transition.
 ## Procedure Steps
 
 ### Step 1 --- Assess Current Link Conditions
-**TC:** `HK_REQUEST` SID=6 (Service 3, Subtype 27) --- request TT&C housekeeping
-**Verify:** `ttc.link_status` (0x0501) = 1
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) --- request TT&C housekeeping
+**Verify:** `ttc.link_status` (0x0501) = 2 (LOCKED)
 **Verify:** `ttc.carrier_lock` (0x0510) = 1
 **Verify:** `ttc.bit_sync` (0x0511) = 1
 **Verify:** `ttc.tm_tier` (0x0539) --- record the ACTIVE tier
@@ -92,7 +92,7 @@ geometry — see `docs/LINK_BUDGET_AND_RATES.md` for the per-station table.
 Consider waiting for higher elevation before retrying.
 
 ### Step 3 --- Enter DOWNLINK Mode (HIGH only)
-**TC:** `TTC_SET_DOWNLINK_MODE` on=1 (Service 8, Subtype 1, func_id 79)
+**TC:** `TTC_SET_DOWNLINK_MODE(on=1)` (Service 8, Subtype 1, func_id 79)
 **Verify:** `ttc.downlink_mode` (0x053C) = 1 within 5 s
 **Note:** DOWNLINK mode is the deliberate act that makes a bulk dump a planned pass
 activity rather than something the spacecraft drifts into. It does not by itself change
@@ -100,8 +100,8 @@ the rate.
 **GO/NO-GO:** DOWNLINK mode confirmed --- proceed.
 
 ### Step 4 --- Command the Tier Change
-**TC:** `TTC_SET_DATA_RATE` rate=1 (Service 8, Subtype 1, func_id 65) --- select HIGH
-**TC:** `TTC_SET_DATA_RATE` rate=0 (Service 8, Subtype 1, func_id 65) --- select LOW
+**TC:** `TTC_SET_DATA_RATE(rate=1)` (Service 8, Subtype 1, func_id 65) --- select HIGH
+**TC:** `TTC_SET_DATA_RATE(rate=0)` (Service 8, Subtype 1, func_id 65) --- select LOW
 **Note:** Send ONE of the two above. The legacy encoding is preserved verbatim:
 rate=0 has always meant "the low rate" and rate=1 "the high rate". They now land on the
 LOW and HIGH rungs of the ladder — usable operational rates — rather than on the two
@@ -121,7 +121,7 @@ open gate. Do not retry blindly.
 to the BER check.
 
 ### Step 5 --- Verify the New BER Is Acceptable
-**TC:** `HK_REQUEST` SID=6 (Service 3, Subtype 27) --- request TT&C housekeeping after
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) --- request TT&C housekeeping after
 allowing 30 s for BER to stabilize
 **Verify:** `ttc.ber` (0x050C) < -5 (BER better than 1e-5)
 **Verify:** `ttc.link_margin` (0x0503) > 1.0 dB at the new tier
@@ -130,8 +130,8 @@ allowing 30 s for BER to stabilize
 **GO/NO-GO:** BER acceptable at the new tier --- rate change complete.
 
 ### Step 6 --- Release HIGH After the Dump (HIGH only)
-**TC:** `TTC_SET_DATA_RATE` rate=0 (Service 8, Subtype 1, func_id 65) --- back to LOW
-**TC:** `TTC_SET_DOWNLINK_MODE` on=0 (Service 8, Subtype 1, func_id 79)
+**TC:** `TTC_SET_DATA_RATE(rate=0)` (Service 8, Subtype 1, func_id 65) --- back to LOW
+**TC:** `TTC_SET_DOWNLINK_MODE(on=0)` (Service 8, Subtype 1, func_id 79)
 **Verify:** `ttc.tm_data_rate` (0x0506) = 16000 bps within 10 s
 **Verify:** `ttc.downlink_mode` (0x053C) = 0
 **Note:** HIGH is released as deliberately as it was taken. Leaving DOWNLINK mode does

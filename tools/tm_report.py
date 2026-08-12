@@ -38,6 +38,16 @@ sys.path.insert(0, str(REPO / "packages" / "smo-common" / "src"))
 try:
     import yaml
     from smo_common.protocol.ecss_packet import decommutate_packet
+    # One decoder set for S12, shared with the MCS, the dump store and the
+    # report generator (`smo_common.reporting.decode`). Reimplementing the
+    # wire format here is how the three ground paths drifted apart before.
+    from smo_common.reporting.decode import (
+        decode_s12_definitions,
+        decode_s12_transition,
+        s12_check_type_name,
+        s12_limit_band,
+        s12_severity_name,
+    )
 except Exception as e:  # pragma: no cover
     print(f"import error: {e}", file=sys.stderr)
     sys.exit(1)
@@ -134,6 +144,15 @@ class PassAnalysis:
         self.hk_counts: dict[int, int] = defaultdict(int)
         self.first_time: int | None = None
         self.last_time: int | None = None
+        # S12 on-board monitoring. Franz: "We cannot see the contents of the
+        # S12s in delayed TM dumps." This analyser handled S3.25 and S5 and had
+        # no `elif svc == 12` branch at all, so a dump of the Alarm store —
+        # which is exactly where S12 now lands (tm_storage.SERVICE_TO_STORE
+        # routes service 12 to store 4) — reduced to one row in the
+        # packet-count table. The decoders have lived in
+        # `smo_common.reporting.decode` the whole time.
+        self.s12_transitions: list[dict] = []
+        self.s12_definitions: list[dict] = []
 
     def ingest_packet(self, raw: bytes, params_by_id: dict, hk_plist: dict) -> None:
         try:
@@ -177,6 +196,30 @@ class PassAnalysis:
                 "cuc": cuc, "subtype": sub, "event_id": event_id,
                 "severity": sub, "description": desc,
             })
+        elif svc == 12 and sub in (9, 10):
+            tr = decode_s12_transition(pkt.data_field, sub)
+            if tr:
+                meta = params_by_id.get(tr["param_id"], {})
+                tr.update({
+                    "cuc": cuc,
+                    "param_hex": f"0x{tr['param_id']:04X}",
+                    "param_name": meta.get("name", ""),
+                    "units": meta.get("units", ""),
+                    "check_type_name": s12_check_type_name(tr.get("check_type")),
+                    "severity_name": s12_severity_name(tr.get("severity")),
+                    "band": s12_limit_band(tr),
+                })
+                self.s12_transitions.append(tr)
+        elif svc == 12 and sub == 13:
+            for d in decode_s12_definitions(pkt.data_field):
+                meta = params_by_id.get(d["param_id"], {})
+                d.update({
+                    "cuc": cuc,
+                    "param_hex": f"0x{d['param_id']:04X}",
+                    "param_name": meta.get("name", ""),
+                    "check_type_name": s12_check_type_name(d.get("check_type")),
+                })
+                self.s12_definitions.append(d)
 
 
 # ---------- render ----------
@@ -199,6 +242,73 @@ def _svg_spark(points: list[tuple[int, float]], w=220, h=32) -> str:
 
 
 SEVERITY_COLOURS = {1: "#888", 2: "#0a0", 3: "#b70", 4: "#c00"}
+S12_SEVERITY_COLOURS = {"INFO": "#888", "WARNING": "#b70",
+                        "ALARM": "#c00", "HIGH": "#c00"}
+
+
+def _fmt_cuc(cuc: int | None) -> str:
+    """CUC seconds as UTC, falling back to the raw count."""
+    if not cuc:
+        return "--"
+    try:
+        from smo_common.protocol.ecss_packet import parse_cuc_time
+        return parse_cuc_time(int(cuc)).isoformat(sep=" ", timespec="seconds") + "Z"
+    except Exception:  # pragma: no cover - defensive
+        return str(cuc)
+
+
+def _render_s12(an: "PassAnalysis") -> str:
+    """The S12 section: check transitions, then the definition table.
+
+    A limit violation is only legible with all six fields together — which
+    parameter, which way it went, the value, the check type, the severity and
+    the band it left. The real-time MCS path threw four of the six away and
+    this offline path decoded none of them.
+    """
+    if not an.s12_transitions and not an.s12_definitions:
+        return ""
+    out = ["<h2>On-board monitoring (S12)</h2>"]
+    if an.s12_transitions:
+        entered = sum(1 for t in an.s12_transitions if t.get("entered"))
+        rows = []
+        for t in an.s12_transitions:
+            sev = t.get("severity_name") or ""
+            colour = S12_SEVERITY_COLOURS.get(sev, "#333")
+            direction = ("<b style='color:#c00;'>OUT OF LIMITS</b>" if t.get("entered")
+                         else "<span style='color:#0a0;'>back to nominal</span>")
+            band = t.get("band") or "<i style='color:#888;'>not reported</i>"
+            name = t.get("param_name") or ""
+            units = t.get("units") or ""
+            rows.append(
+                f"<tr><td>{_fmt_cuc(t.get('cuc'))}</td>"
+                f"<td>{t.get('mon_id', '--')}</td>"
+                f"<td>{t['param_hex']} {html.escape(name)}</td>"
+                f"<td>{direction}</td>"
+                f"<td style='text-align:right;'>{t['value']:.3f} {html.escape(units)}</td>"
+                f"<td>{html.escape(t.get('check_type_name') or '--')}</td>"
+                f"<td style='color:{colour};'>{html.escape(sev or '--')}</td>"
+                f"<td style='text-align:right;'>{band}</td></tr>")
+        out.append(
+            f"<p>{len(an.s12_transitions)} check transition(s): {entered} "
+            f"out-of-limits, {len(an.s12_transitions) - entered} return(s) to nominal.</p>"
+            "<table><thead><tr><th>UTC</th><th>Mon</th><th>Parameter</th>"
+            "<th>Transition</th><th>Value</th><th>Check</th><th>Severity</th>"
+            "<th>Limit band</th></tr></thead><tbody>"
+            + "".join(rows) + "</tbody></table>")
+    if an.s12_definitions:
+        rows = "".join(
+            f"<tr><td>{d['mon_id']}</td>"
+            f"<td>{d['param_hex']} {html.escape(d.get('param_name') or '')}</td>"
+            f"<td>{html.escape(d.get('check_type_name') or '--')}</td>"
+            f"<td>{'enabled' if d['enabled'] else 'disabled'}</td>"
+            f"<td style='text-align:right;'>{d['low_limit']:.3f}</td>"
+            f"<td style='text-align:right;'>{d['high_limit']:.3f}</td></tr>"
+            for d in an.s12_definitions)
+        out.append("<h3>Monitoring definitions (TM 12,13)</h3>"
+                   "<table><thead><tr><th>Mon</th><th>Parameter</th><th>Check</th>"
+                   "<th>State</th><th>Low</th><th>High</th></tr></thead><tbody>"
+                   + rows + "</tbody></table>")
+    return "".join(out)
 
 
 def render_report(path: Path, an: PassAnalysis, params_by_id: dict) -> str:
@@ -265,6 +375,8 @@ def render_report(path: Path, an: PassAnalysis, params_by_id: dict) -> str:
     anomalies_html = "".join(f"<li>{html.escape(a)}</li>" for a in anomalies) \
                      or "<li>None</li>"
 
+    s12_html = _render_s12(an)
+
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>TM Dump Report — {path.name}</title>
 <style>
@@ -292,6 +404,8 @@ th {{ background: #f0f0f0; text-align: left; }}
 <h2>Events</h2>
 <table><thead><tr><th>CUC</th><th>Subtype</th><th>Event ID</th><th>Description</th></tr></thead>
 <tbody>{rows_events}</tbody></table>
+
+{s12_html}
 
 <h2>Anomalies flagged</h2>
 <ul>{anomalies_html}</ul>

@@ -606,10 +606,56 @@ positions:
             label: "Execution Log"
 
 
-  # Phase D: propulsion display (tank/valves, burn, dV budget)
+  # ── PROPULSION ──
+  # RECONCILED 2026-08b with the PROP tab now built in
+  # packages/smo-mcs/src/smo_mcs/static/index.html (`pane-prop`). Before this
+  # batch this block described a three-page propulsion display that was served
+  # by /api/displays and consumed by NOTHING — index.html is hand-built and
+  # never fetches it — while the console's entire propulsion display was one
+  # entry in the TRENDS dropdown. The config now describes what the console
+  # actually shows, so the two no longer contradict each other.
+  #
+  # NOTE: this file is still not what drives the UI. Making the console
+  # config-driven is the design study's job and Franz has asked for interface
+  # work to wait until this version is stable (COHERENCE_REVIEW §5). The
+  # divergence is recorded in docs/plan_2026-08b/MCS_REQUESTS.md.
+  #
+  # Everything below is HK SID 9 (8 s) except where marked on-demand. SID 9 is
+  # deliberately NOT in simulation.yaml's `default_enabled_sids: [1, 11]`, so
+  # the tab opens with the "SID 9 not enabled — send TC(3,5)" banner.
   propulsion:
     label: "Propulsion"
     pages:
+      - name: "Status & Interlocks"
+        widgets:
+          - type: status_indicator
+            parameter: prop.state
+            label: "State (SAFED / ARMED / FIRING / INHIBIT)"
+          - type: status_indicator
+            parameter: prop.burn_status
+            label: "Burn Status"
+          - type: status_indicator
+            parameter: prop.abort_reason
+            label: "Last Abort Reason"
+          # The operationally critical widget: PROP_ARM is refused whenever any
+          # bit is set, and the bit is the only thing that says why. Rendered
+          # as ELEVEN NAMED INDICATORS, never as a hex number.
+          - type: status_indicator
+            parameter: prop.arm_inhibit_mask
+            label: "Arm Interlocks (11 named bits)"
+          - type: gauge
+            parameter: prop.propellant_pct
+            label: "Propellant"
+            range: [0, 100]
+            units: "%"
+          - type: gauge
+            parameter: prop.dv_remaining
+            label: "dV Remaining"
+            units: "m/s"
+            limits_ref: "0x0B0C"
+          - type: status_indicator
+            parameter: eps.pl_prop
+            label: "EPS prop line (on-demand 0x014A)"
       - name: "Tank & Valves"
         widgets:
           - type: gauge
@@ -617,16 +663,35 @@ positions:
             label: "Tank Pressure"
             range: [0, 26]
             units: "bar"
+            limits_ref: "0x0B01"
           - type: gauge
-            parameter: prop.propellant_pct
-            label: "Propellant"
-            range: [0, 100]
-            units: "%"
+            parameter: prop.propellant_mass
+            label: "Propellant Remaining"
+            units: "g"
+            limits_ref: "0x0B02"
+          - type: gauge
+            parameter: prop.tank_temp
+            label: "Tank Temp"
+            units: "C"
           - type: gauge
             parameter: prop.catbed_temp
-            label: "Catbed Temp"
+            label: "Catbed Temp (arm interlock >= 180 C)"
             range: [-30, 350]
             units: "C"
+            limits_ref: "0x0B05"
+          - type: gauge
+            parameter: prop.thrust_est
+            label: "Thrust Estimate"
+            units: "mN"
+            limits_ref: "0x0B09"
+          - type: gauge
+            parameter: prop.isp_est
+            label: "Isp"
+            units: "s"
+          - type: gauge
+            parameter: prop.leak_rate
+            label: "Leak Rate"
+            units: "mg/s"
           - type: status_indicator
             parameter: prop.latch_a_state
             label: "Latch A"
@@ -635,15 +700,13 @@ positions:
             label: "Latch B"
           - type: status_indicator
             parameter: prop.fcv_state
-            label: "FCV"
+            label: "Flow-Control Valve"
+          - type: line_chart
+            parameters: [prop.tank_pressure, prop.propellant_pct]
+            label: "Tank Pressure / Propellant"
+            window_s: 600
       - name: "Burn"
         widgets:
-          - type: status_indicator
-            parameter: prop.state
-            label: "Prop State"
-          - type: status_indicator
-            parameter: prop.burn_status
-            label: "Burn Status"
           - type: gauge
             parameter: prop.burn_dv_cmd
             label: "dV Commanded"
@@ -653,8 +716,17 @@ positions:
             label: "dV Achieved"
             units: "m/s"
           - type: gauge
-            parameter: prop.arm_inhibit_mask
-            label: "Arm Inhibit Mask"
+            parameter: prop.burn_time_cmd
+            label: "Predicted Burn Duration"
+            units: "s"
+          - type: gauge
+            parameter: prop.burn_time_elapsed
+            label: "Elapsed Burn Time"
+            units: "s"
+          - type: gauge
+            parameter: aocs.att_error
+            label: "Attitude Error (burn abort threshold)"
+            units: "deg"
           - type: line_chart
             parameters: [prop.thrust_est, aocs.att_error]
             label: "Thrust vs Attitude Error"
@@ -663,7 +735,7 @@ positions:
         widgets:
           - type: gauge
             parameter: prop.dv_accum
-            label: "dV Used"
+            label: "dV Used (lifetime)"
             units: "m/s"
           - type: gauge
             parameter: prop.dv_remaining
@@ -673,6 +745,19 @@ positions:
             parameter: prop.burn_count
             label: "Burn Count"
           - type: gauge
+            parameter: prop.total_on_time
+            label: "Cumulative Thruster On-Time"
+            units: "s"
+          - type: gauge
+            parameter: prop.sc_mass
+            label: "Spacecraft Mass"
+            units: "kg"
+          - type: gauge
             parameter: prop.sma_km
             label: "Semi-Major Axis"
             units: "km"
+          - type: gauge
+            parameter: prop.orbit_epoch_version
+            label: "Element-Set Version"
+          - type: event_log
+            label: "Propulsion Events (0x0800-0x0812)"

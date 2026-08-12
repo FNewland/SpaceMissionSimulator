@@ -63,7 +63,12 @@ def _func_id(step: dict) -> int:
 # tm rate=65, auto mode=45, load shed=25, aocs set-mode=0, desat=1,
 # eps set-mode=83).
 EXPECTED_S8_FUNCS = {
-    "imaging_pass": [26, 28],
+    # 2026-08b PL-a: AOCS_SET_MODE (func 1) now leads, commanding FINE_POINT.
+    # Without it the payload's own capture gate refused every planner-scheduled
+    # image ("Capture refused: AOCS not in FINE_POINT") — the sequence never
+    # commanded FINE at all, and the activity's precondition asked for AOCS
+    # mode 1 = SAFE_BOOT, a mode in which nothing is pointing at anything.
+    "imaging_pass": [1, 26, 28],
     # The HIGH tier is gated: enter DOWNLINK mode (79), raise the rate (65),
     # dump, then leave DOWNLINK mode so the active tier falls back to LOW.
     "data_dump": [79, 65, 79],

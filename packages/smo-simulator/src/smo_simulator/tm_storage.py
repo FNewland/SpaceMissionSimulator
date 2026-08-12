@@ -37,11 +37,36 @@ DEFAULT_STORES = {
     4: {'name': 'Alarm_Store', 'capacity': 500, 'circular': False},
 }
 
-# Service type to store ID routing
+# Service type to store ID routing.
+#
+# 2026-08b PL-c: this map only had S3 and S5 in it, and *everything else* fell
+# through to store 3. The Science_Store therefore filled with S1 command
+# acknowledgements and S8 function reports, and the scheduled
+# S15_DUMP_SCIENCE_STORE — the one scheduled activity whose purpose is to
+# return the mission's science — dumped acks. Imagery was not in it because no
+# imagery existed anywhere (see service_dispatch `_handle_s13` and
+# payload_basic `image_block`); now that products are real the store has to be
+# routed for them.
+#
+# S1 verification and S8 function reports are spacecraft housekeeping, so they
+# are named explicitly and land in the HK store. S13 blocks are deliberately
+# NOT stored: the bulk pixels live in the payload's own mass memory
+# (image_catalog / mem_used_mb) and S13 streams them to the ground on request —
+# copying one 4 MB image into a 10 000-packet store as 4096 packets would evict
+# everything else to hold a second copy of something already on board. What
+# DOES reach store 3 is the 20-octet product record written by PAYLOAD_CAPTURE
+# (service_dispatch `_image_record_tm`), which is what makes a science dump
+# legible.
 SERVICE_TO_STORE = {
+    1: 1,   # Command verification → HK_Store  (was: fell through to Science)
     3: 1,   # HK → HK_Store
     5: 2,   # Events → Event_Store
+    8: 1,   # Function-management reports → HK_Store  (was: ditto)
+    12: 4,  # On-board monitoring limit checks → Alarm_Store  (was: ditto)
 }
+
+#: Services whose packets are never put in an onboard store (see above).
+NOT_STORED = frozenset({13})
 
 # Stores that use circular buffer behaviour
 CIRCULAR_STORES = {1}
@@ -80,6 +105,8 @@ class OnboardTMStorage:
 
         Returns True if stored, False if store is full (linear) or disabled.
         """
+        if service_type in NOT_STORED:
+            return False
         store_id = SERVICE_TO_STORE.get(service_type)
         if store_id is None:
             # Science data (anything not HK or events) goes to science store

@@ -29,9 +29,9 @@ pressure (0.85 m/s ~ 32 s at beginning of life).
 ## Procedure Steps
 
 ### Step 1 --- Power and Catbed Preheat (T-25 min)
-**TC:** `EPS_POWER_ON` line_index=8 (Service 8, Subtype 1) func_id = 19 --- energise the propulsion line
+**TC:** `EPS_POWER_ON(line_index=8)` (Service 8, Subtype 1) func_id = 19 --- energise the propulsion line
 **Verify:** `eps.pl_prop` (0x014A) = 1
-**TC:** `HEATER_THRUSTER` on=1 (Service 8, Subtype 1) func_id = 42 --- catbed preheat, 12 W
+**TC:** `HEATER_THRUSTER(on=1)` (Service 8, Subtype 1) func_id = 42 --- catbed preheat, 12 W
 **Verify:** `tcs.htr_thruster` (0x041B) = 1; `tcs.temp_thruster` (0x0409)
 rising (~10 C/min initially)
 **Note:** Preheat to the 180 C arm interlock takes ~18-20 min (4 Wh). A
@@ -47,13 +47,13 @@ burn. Every degree of attitude error costs cos(theta) of along-track dV and
 leaks sin(theta) into a lateral (orbit-normal) component.
 
 ### Step 3 --- Load and Arm
-**TC:** `PROP_SET_BURN` dv, direction, mode (Service 8, Subtype 1) func_id = 110 --- load the manoeuvre
+**TC:** `PROP_SET_BURN(dv_m_s=DV, direction=DIR, mode=MODE, t_start_cuc=0)` (Service 8, Subtype 1, func_id 110) --- load the manoeuvre
 **Verify:** `prop.burn_dv_cmd` (0x0B0E) = planned dV; `prop.burn_time_cmd`
 (0x0B10) within 10 % of the FDS prediction — a disagreement means the ground
 model and the spacecraft disagree about tank state: STOP and resolve.
 **Verify:** `tcs.temp_thruster` (0x0409) >= 180; `prop.arm_inhibit_mask`
 (0x0B15) = 0
-**TC:** `PROP_ARM` arm_code=0xA5C3 (Service 8, Subtype 1) func_id = 108 --- arm (within 300 s of SET_BURN)
+**TC:** `PROP_ARM(arm_code=0xA5C3)` (Service 8, Subtype 1) func_id = 108 --- arm (within 300 s of SET_BURN)
 **Verify:** `prop.state` (0x0B00) = 1 (ARMED); event PROP_ARMED (0x0800)
 **Note:** A rejection returns a distinct code per interlock and sets the
 blocking bit in 0x0B15 — read the mask before re-trying anything.
@@ -93,8 +93,8 @@ raise a ticket (possible catbed degradation — see CTG-028).
 
 ### Step 7 --- Safing and Closeout
 **TC:** `PROP_DISARM` (Service 8, Subtype 1) func_id = 109 --- ARMED -> SAFED
-**TC:** `HEATER_THRUSTER` on=0 (Service 8, Subtype 1) func_id = 42 --- catbed heater off
-**TC:** `EPS_POWER_OFF` line_index=8 (Service 8, Subtype 1) func_id = 20 --- de-energise the propulsion line
+**TC:** `HEATER_THRUSTER(on=0)` (Service 8, Subtype 1) func_id = 42 --- catbed heater off
+**TC:** `EPS_POWER_OFF(line_index=8)` (Service 8, Subtype 1) func_id = 20 --- de-energise the propulsion line
 **Verify:** `prop.state` (0x0B00) = 0; `eps.pl_prop` (0x014A) = 0
 **Verify:** `aocs.total_momentum` (0x025B) < 0.02 N m s. The thrust-offset
 torque loads the wheels during a burn — if momentum approached the envelope,

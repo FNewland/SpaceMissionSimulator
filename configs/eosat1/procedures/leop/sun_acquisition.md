@@ -61,9 +61,9 @@ maintain sun-pointing attitude for positive power balance and thermal stability.
 
 ### Step 6 — Transition to Safe Point Mode
 **TC:** `AOCS_SET_MODE(mode=2)` (Service 8, Subtype 1)
-**Verify:** `aocs.mode` (0x020F) = 2 (SAFE_POINT) within 30s
+**Verify:** `aocs.mode` (0x020F) = 2 (COARSE_SUN) within 30s
 **Action:** Safe_point mode commands reaction wheels to orient +Z axis toward the sun using coarse sun sensor data. Monitor attitude convergence.
-**GO/NO-GO:** Mode transition accepted, AOCS reports SAFE_POINT
+**GO/NO-GO:** Mode transition accepted, AOCS reports COARSE_SUN
 
 ### Step 7 — Monitor Sun Acquisition Convergence
 **TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — repeat every 60s for 5 minutes
@@ -86,15 +86,15 @@ maintain sun-pointing attitude for positive power balance and thermal stability.
 **GO/NO-GO:** Stable sun-pointing confirmed — LEOP-004 complete
 
 ## Off-Nominal Handling
-- If body rates not decreasing after 15 min: Verify magnetorquer operation via `GET_PARAM(0x0220)`. Check magnetic field model validity for current orbit position. If magnetorquers non-responsive, attempt `AOCS_SET_MODE(mode=1)` reset. Escalate to AOCS engineer.
+- If body rates not decreasing after 15 min: Verify magnetorquer operation via `GET_PARAM(param_id=0x0220)`. Check magnetic field model validity for current orbit position. If magnetorquers non-responsive, attempt `AOCS_SET_MODE(mode=1)` reset. Escalate to AOCS engineer.
 - If rates below threshold but safe_point transition fails: Re-check reaction wheel telemetry. If any wheel faulted, attempt `AOCS_SET_MODE(mode=2)` again. If persistent failure, remain in detumble and assess three-wheel contingency.
-- If attitude error not converging in safe_point: Verify coarse sun sensor data via `GET_PARAM(0x0215)`. If sun sensor readings invalid (spacecraft in eclipse), wait for next sunlit phase and retry.
+- If attitude error not converging in safe_point: Verify coarse sun sensor data via `GET_PARAM(param_id=0x0215)`. If sun sensor readings invalid (spacecraft in eclipse), wait for next sunlit phase and retry.
 - If power generation < 50W after sun-pointing: Check array deployment status (LEOP-003). Verify attitude — may need star tracker commissioning for more precise pointing. Acceptable for LEOP phase if battery SOC maintained above 40%.
 - If single reaction wheel anomaly: AOCS can operate on three wheels. Log failure, continue sun acquisition. Schedule detailed wheel checkout during commissioning (COM-006).
 
 ## Post-Conditions
 - [ ] Body rates damped to < 0.1 deg/s on all axes
-- [ ] AOCS in SAFE_POINT mode (mode 2)
+- [ ] AOCS in COARSE_SUN mode (mode 2)
 - [ ] Sun-pointing achieved with attitude error < 10 degrees
 - [ ] Power generation > 40W confirming positive energy balance
 - [ ] Battery SOC stable or increasing

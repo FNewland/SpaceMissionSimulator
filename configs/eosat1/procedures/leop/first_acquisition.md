@@ -43,20 +43,20 @@ application-running platform.
 **Action:** Service 17 ping is on the bootloader allow-list, so it is accepted by the OBC even before the application image is loaded. On acceptance, the platform's **auto-TX hold-down** kicks in: any accepted TC autonomously powers `ttc_tx` ON for 15 minutes, energising the downlink without further commanding.
 **Verify:** S1.1 (Service 1, Subtype 1) acceptance received within 10s
 **Verify:** S17.2 connection test report received within 10s
-**Verify:** `eps.power_lines["ttc_tx"]` = 1 (auto-armed)
+**Verify:** `eps.pl_ttc_tx == 1` (0x0112, timeout 10 s) — auto-armed
 **GO/NO-GO:** Bidirectional link established, downlink visible to operator
 
 ### Step 3 — Verify Carrier Lock and Link Quality
 **Action:** Confirm ground station receiver has achieved carrier lock. Record measured Doppler offset for Flight Dynamics.
-**Verify:** `ttc.link_status` (0x0501) = 1 (LOCKED) within 30s
+**Verify:** `ttc.link_status` (0x0501) = 2 (LOCKED) within 30s
 **Verify:** `ttc.rssi` (0x0502) > -110 dBm within 30s
 **Verify:** `ttc.link_margin` (0x0503) > 3.0 dB
 **GO/NO-GO:** Stable carrier lock with positive link margin
 
 ### Step 4 — Confirm OBC is in Bootloader
-**TC:** `HK_REQUEST(sid=11)` (Service 3, Subtype 27) — Beacon SID
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) — Beacon SID
 **Verify:** Beacon packet received (the bootloader only emits SID 11)
-**Verify:** `obdh.sw_image` (0x0303) = 0 (BOOTLOADER) within 10s
+**Verify:** `obdh.sw_image` (0x0311) = 0 (BOOTLOADER) within 10s
 **Note:** SIDs 1–6 are not yet emitted: under cold boot the AOCS / payload / TTC lines are not all hot, so the periodic HK power gate suppresses them. This is expected.
 **GO/NO-GO:** Bootloader confirmed; ready for application boot
 
@@ -64,17 +64,17 @@ application-running platform.
 **TC:** `OBC_BOOT_APP` (Service 8, Subtype 1, func_id 55)
 **Action:** Issue the boot-app command. The OBDH model verifies the application CRC over a 10s window then transitions `sw_image` to APPLICATION (1). Until that transition completes, only the bootloader command set is accepted.
 **Verify:** S1.1 acceptance + S1.7 execution complete received within 5s
-**Verify:** `obdh.sw_image` (0x0303) = 1 (APPLICATION) within 15s
+**Verify:** `obdh.sw_image` (0x0311) = 1 (APPLICATION) within 15s
 **Verify:** Periodic HK SIDs 1, 3, 4, 6 begin appearing on the downlink (EPS, TCS, OBDH, TT&C — these have no line owner). SIDs 2 (AOCS) and 5 (Payload) remain absent until LEOP-007 powers their owning lines.
 **Note:** Booting the application does **NOT** clear beacon mode. `ttc.beacon_mode` (0x0521) stays 1 and the spacecraft stays on the BEACON rung until it is cleared explicitly in Step 5a. Until then every `TTC_SET_DATA_RATE` is REFUSED with S1.8 error `0x0007` and the failure notice "TM rate is forced to the beacon tier in beacon mode (LOW refused)".
 **GO/NO-GO:** Application image running, full PUS service set available — proceed to Step 5a before changing rate
 
 ### Step 5a — Clear Beacon Mode and Move to the LOW Rung
-**TC:** `TTC_SET_BEACON_MODE` (Service 8, Subtype 1, func_id 70), `on = 0`
+**TC:** `TTC_SET_BEACON_MODE(on=0)` (Service 8, Subtype 1, func_id 70)
 **Action:** Clear beacon mode. This is the gate on the whole rate ladder: while beacon mode is latched, BEACON is the ONLY permitted tier and both LOW and HIGH are refused. It is a separate, deliberate step because the beacon rung is the lifeline — the spacecraft never leaves it by accident.
 **Verify:** S1.1 acceptance + S1.7 execution complete received within 5s
 **Verify:** `ttc.beacon_mode` (0x0521) = 0 within 10s
-**TC:** `TTC_SET_DATA_RATE` (Service 8, Subtype 1, func_id 65), `rate = 0` (LOW)
+**TC:** `TTC_SET_DATA_RATE(rate=0)` (Service 8, Subtype 1, func_id 65) (LOW)
 **Action:** Select the ladder's `default_tier` — **LOW, 16 000 bps, BPSK conv(7,1/2)+RS, 16 kBd**. Re-configure the ground demodulator to 16 kBd BEFORE expecting SIDs 1-6: the beacon demodulator will not lock 16 kbps.
 **Verify:** S1.1 acceptance + S1.7 execution complete (NOT an S1.8) within 5s
 **Verify:** `ttc.tm_data_rate` (0x0506) = 16000 bps and `ttc.tm_tier` (0x0539) = 1 (LOW)
@@ -84,7 +84,7 @@ application-running platform.
 **GO/NO-GO:** Beacon mode cleared, downlink at LOW, ground demodulator reconfigured to 16 kBd
 
 ### Step 6 — Synchronise On-Board Time
-**TC:** `SET_TIME(cuc_seconds)` (Service 9, Subtype 1)
+**TC:** `SET_TIME(cuc_seconds=T_corrected)` (Service 9, Subtype 1)
 **Action:** Upload current UTC epoch as CUC seconds. Now that the application image is running, S9.1 is no longer rejected by the bootloader filter. Use ground-station-stamped uplink time and add the one-way light time correction (~2–8 ms for LEO, negligible at this stage).
 **Verify:** S1.1 acceptance and S1.7 execution complete received within 5s
 **TC:** `TIME_REPORT_REQUEST` (Service 9, Subtype 2)

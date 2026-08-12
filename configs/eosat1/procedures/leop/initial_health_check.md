@@ -50,8 +50,8 @@ values for the mission.
 **GO/NO-GO:** OBDH operating within nominal parameters
 
 ### Step 5 — Request TT&C Housekeeping
-**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 27)
-**Verify:** `ttc.link_status` (0x0501) = 1 (LOCKED) within 10s
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27)
+**Verify:** `ttc.link_status` (0x0501) = 2 (LOCKED) within 10s
 **Verify:** `ttc.rssi` (0x0502) > -105 dBm within 10s
 **Verify:** `ttc.link_margin` (0x0503) > 3.0 dB within 10s
 **GO/NO-GO:** TT&C link nominal with adequate margin
@@ -65,7 +65,7 @@ values for the mission.
 
 ### Step 7 — Verify Battery Heater Operation
 **Action:** If `tcs.temp_battery` (0x0407) < +5C, enable battery heater.
-**TC:** `HEATER_CONTROL(circuit=1, on=1)` (Service 8, Subtype 1) — conditional
+**TC:** `HEATER_OBC(on=1)` (Service 8, Subtype 1, func_id 41) — conditional
 **Verify:** `tcs.temp_battery` (0x0407) trending upward within 120s if heater commanded
 **GO/NO-GO:** Battery temperature managed within operational range [+5C, +35C]
 
@@ -83,8 +83,8 @@ values for the mission.
 
 ## Off-Nominal Handling
 - If `eps.bat_soc` < 50%: Defer non-essential operations. Prioritize sun acquisition (LEOP-004). Reduce TM rate to conserve power.
-- If any body rate > 10 deg/s: Confirm detumble mode active. If rates not decreasing, verify magnetorquer operation via `GET_PARAM(0x020F)`. Escalate to AOCS engineer.
-- If `tcs.temp_battery` < 0C: Immediately command `HEATER_CONTROL(circuit=1, on=1)`. Monitor for temperature rise. If no response, switch to redundant heater circuit.
+- If any body rate > 10 deg/s: Confirm detumble mode active. If rates not decreasing, verify magnetorquer operation via `GET_PARAM(param_id=0x020F)`. Escalate to AOCS engineer.
+- If `tcs.temp_battery` < 0C: Immediately command `HEATER_OBC(on=1)`. Monitor for temperature rise. If no response, switch to redundant heater circuit.
 - If `obdh.cpu_load` > 80%: Check for anomalous task scheduling. Consider reboot via `OBC_SET_MODE(mode=0)` only with Flight Director approval.
 - If any HK SID fails to respond: Retry request twice. If still no response, check TM link quality. Log as anomaly for investigation.
 - If `payload.mode` != 0 (OFF): Do not attempt to reconfigure payload during LEOP. Log anomaly and continue with platform health checks.

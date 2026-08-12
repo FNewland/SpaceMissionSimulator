@@ -40,6 +40,8 @@ from __future__ import annotations
 import struct
 from typing import Any, Optional
 
+from smo_common.reporting.decode import decode_s12_definitions
+
 __all__ = [
     "TRIGGER_KIND_EVENT",
     "TRIGGER_KIND_PARAM",
@@ -112,29 +114,12 @@ def parse_s12_transition(data: bytes, subtype: int) -> Optional[dict]:
     return out
 
 
-def parse_s12_definitions(data: bytes) -> list[dict]:
-    """Decode TM(12,13) — the full on-board monitoring definition table."""
-    if len(data) < 2:
-        return []
-    count = struct.unpack(">H", data[:2])[0]
-    out = []
-    off = 2
-    for _ in range(count):
-        if off + 14 > len(data):
-            break
-        mon_id, param_id, check_type, enabled = struct.unpack(
-            ">HHBB", data[off:off + 6])
-        low, high = struct.unpack(">ff", data[off + 6:off + 14])
-        out.append({
-            "mon_id": mon_id,
-            "param_id": param_id,
-            "check_type": check_type,
-            "enabled": bool(enabled),
-            "low_limit": low,
-            "high_limit": high,
-        })
-        off += 14
-    return out
+# TM(12,13) is decoded in `smo_common.reporting.decode`, because the dump
+# store, the standalone delayed-TM viewer and the report generator all need it
+# and `smo_common` must not import the ground-segment package (layering). This
+# name is kept so every existing MCS call site and test keeps working, and so
+# there is exactly one implementation of the wire format.
+parse_s12_definitions = decode_s12_definitions
 
 
 def parse_s19_definitions(data: bytes) -> list[dict]:

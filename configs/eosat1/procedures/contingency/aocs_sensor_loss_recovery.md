@@ -20,7 +20,7 @@ must be evaluated after each recovery action.
 
 ## Prerequisites
 - [ ] AOCS telemetry (SID 2) is being received at >= 1 Hz
-- [ ] TT&C link active — `ttc.link_status` (0x0501) = 1
+- [ ] TT&C link active — `ttc.link_status` (0x0501) = 2 (LOCKED)
 - [ ] Flight Director notified of attitude sensor anomaly
 - [ ] Spacecraft bus power is nominal — `eps.bus_voltage` (0x0105) > 27.0 V
 - [ ] Procedure CTG-005 (AOCS Anomaly Recovery) has been reviewed for escalation paths
@@ -70,7 +70,7 @@ must be evaluated after each recovery action.
 ## Procedure Steps
 
 ### Step 1: Initial Sensor Health Assessment
-**Action:** Request AOCS housekeeping: `HK_REQUEST(sid=2)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — Request AOCS housekeeping
 **Verify:** `aocs.st1_status` (0x0240) — record status (0=OFF, 1=BOOT, 2=TRACKING, 3=BLIND, 4=FAILED)
 **Verify:** `aocs.st1_num_stars` (0x0241) — record tracked star count
 **Verify:** `aocs.st2_status` (0x0243) — record status
@@ -93,15 +93,17 @@ which have failed or are degraded.
 - If ST2 = 4 (FAILED): Both STs failed. Skip to Step 5.
 
 **Step 2b — Power On and Select ST2:**
-**Action:** Command ST2 power on: `ST2_POWER(on=1)` (func_id 5)
+**TC:** `ST2_POWER(on=1)` (Service 8, Subtype 1, func_id 5) — Command ST2 power on
 **Action:** Wait 60 s for boot sequence.
-**Action:** Request AOCS housekeeping: `HK_REQUEST(sid=2)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — Request AOCS housekeeping
 **Verify:** `aocs.st2_status` (0x0243) transitions to 2 (TRACKING) within 120 s
-**Action:** If TRACKING confirmed, select ST2 as primary: `ST_SELECT(unit=1)` (func_id 6)
+**Note:** Only if the previous check confirmed TRACKING. If ST2 did not reach
+TRACKING, do NOT send this — go to the Off-Nominal section instead.
+**TC:** `ST_SELECT(unit=1)` (Service 8, Subtype 1, func_id 6) — select ST2 as primary
 **Verify:** `aocs.att_error` (0x0217) begins decreasing within 30 s
 
 **Step 2c — Isolate Failed ST1:**
-**Action:** Power off ST1: `ST1_POWER(on=0)` (func_id 4)
+**TC:** `ST1_POWER(on=0)` (Service 8, Subtype 1, func_id 4) — Power off ST1
 **Verify:** `aocs.st1_status` (0x0240) = 0 (OFF) within 5 s
 **Verify:** `aocs.att_error` (0x0217) < 1.0 deg with ST2 providing attitude
 **Action:** Log: "ST1 FAILED — operating on ST2 only. No star tracker redundancy."
@@ -111,7 +113,7 @@ failure if applicable. If ST2 did not reach TRACKING, proceed to Step 5.
 ### Step 3: CSS Head Failure Response
 **Condition:** One or more CSS heads showing anomalous readings
 
-**Action:** Request AOCS housekeeping: `HK_REQUEST(sid=2)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — Request AOCS housekeeping
 **Verify:** Check each CSS head illumination value:
 - `aocs.css_px` (0x027A) — +X face
 - `aocs.css_mx` (0x027B) — -X face
@@ -146,7 +148,7 @@ and both STs are failed, proceed to Step 5.
 **Condition:** `aocs.mag_valid` (0x0230) = 0 or magnetometer readings are invalid
 
 **Step 4a — Identify Failed Magnetometer:**
-**Action:** Request AOCS housekeeping: `HK_REQUEST(sid=2)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — Request AOCS housekeeping
 **Verify:** `aocs.mag_select` (0x0229) — identify which magnetometer is currently active
 **Verify:** `aocs.mag_a_x` (0x0223), `aocs.mag_a_y` (0x0224), `aocs.mag_a_z` (0x0225)
 — check MAG-A readings. If all near zero or NaN, MAG-A has failed.
@@ -159,11 +161,11 @@ for LEO. If near zero, the active magnetometer has failed.
 - If active is B (select=1) and readings invalid: MAG-B failed, switch to MAG-A
 
 **Step 4b — Switch to Redundant Magnetometer:**
-**Action:** Command magnetometer switch: `MAG_SELECT(select=1)` (func_id 7) for MAG-B,
-or `MAG_SELECT(select=0)` for MAG-A.
+**TC:** `MAG_SELECT(unit=1)` (Service 8, Subtype 1, func_id 7) — Command magnetometer switch — for MAG-B,
+or `MAG_SELECT(unit=0)` for MAG-A.
 **Verify:** `aocs.mag_select` (0x0229) reflects the new selection within 5 s
 **Action:** Wait 10 s for new magnetometer readings to stabilise.
-**Action:** Request AOCS housekeeping: `HK_REQUEST(sid=2)`
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — Request AOCS housekeeping
 **Verify:** `aocs.mag_valid` (0x0230) = 1 — magnetometer is now providing valid data
 **Verify:** `aocs.mag_field_total` (0x0277) — in expected range (25000-65000 nT)
 **Action:** Log: "MAG-[A/B] FAILED — switched to MAG-[B/A]. No magnetometer redundancy."
@@ -177,7 +179,7 @@ or `MAG_SELECT(select=0)` for MAG-A.
 cumulative assessment.
 
 ### Step 5: Cumulative Sensor Assessment and Mode Decision
-**Action:** Request AOCS housekeeping: `HK_REQUEST(sid=2)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — Request AOCS housekeeping
 **Action:** Evaluate the remaining sensor suite against mode requirements:
 
 **Fine Pointing (NOMINAL mode=4, nadir pointing) requires:**
@@ -195,10 +197,10 @@ cumulative assessment.
 - Magnetometer valid (for B-dot control law)
 - If met: Rate damping is possible. No pointing capability.
 
-**Action:** Based on remaining sensors, select the best available mode:
-1. If ST available: Maintain or return to NOMINAL — `AOCS_SET_MODE(mode=4)`
-2. If no ST but CSS valid: Transition to COARSE_SUN — `AOCS_SET_MODE(mode=3)`
-3. If no ST and CSS invalid: Transition to DETUMBLE — `AOCS_SET_MODE(mode=2)`
+**Note:** Based on remaining sensors, select the best available mode:
+**TC:** `AOCS_SET_MODE(mode=4)` (Service 8, Subtype 1, func_id 0) — If ST available: Maintain or return to NOMINAL
+**TC:** `AOCS_SET_MODE(mode=3)` (Service 8, Subtype 1, func_id 0) — If no ST but CSS valid: Transition to COARSE_SUN
+**TC:** `AOCS_SET_MODE(mode=2)` (Service 8, Subtype 1, func_id 0) — If no ST and CSS invalid: Transition to DETUMBLE
 
 **Verify:** `aocs.mode` (0x020F) = commanded mode within 15 s
 **Verify:** `aocs.att_error` (0x0217) — acceptable for selected mode:
@@ -206,14 +208,14 @@ cumulative assessment.
 - COARSE_SUN: < 5.0 deg
 - DETUMBLE: rates < 1.0 deg/s
 
-**Action:** If degraded to COARSE_SUN or DETUMBLE, disable payload:
-`PAYLOAD_SET_MODE(mode=0)` (Service 8, Subtype 1, func_id 20)
+**Note:** If degraded to COARSE_SUN or DETUMBLE, disable payload:
+**TC:** `PAYLOAD_SET_MODE(mode=0)` (Service 8, Subtype 1, func_id 26)
 
 **GO/NO-GO:** Best available mode established and stable. If degraded below
 NOMINAL, notify Flight Director and mission planning of reduced capability.
 
 ### Step 6: Post-Recovery Monitoring
-**Action:** Monitor AOCS telemetry at 60 s intervals for 10 minutes: `HK_REQUEST(sid=2)`
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — Monitor AOCS telemetry at 60 s intervals for 10 minutes
 **Verify:** `aocs.att_error` (0x0217) — stable or improving
 **Verify:** `aocs.rate_roll` (0x0204) < 0.1 deg/s (for pointing modes)
 **Verify:** `aocs.rate_pitch` (0x0205) < 0.1 deg/s

@@ -44,7 +44,7 @@ verification, PA commanding, antenna deployment checks, and transponder switchov
 | EPS_POWER_ON | 8 | 1 | 19 | Switch power line ON |
 | TTC_PA_ON | 8 | 1 | 66 | Enable power amplifier |
 | TTC_PA_OFF | 8 | 1 | 67 | Disable power amplifier |
-| TTC_DEPLOY_ANTENNAS | 8 | 1 | 56 | Fire burn-wire antenna deployment |
+| TTC_DEPLOY_ANTENNA | 8 | 1 | 69 | Fire burn-wire antenna deployment |
 | TTC_SWITCH_REDUNDANT | 8 | 1 | 64 | Switch to redundant transponder |
 | TTC_SWITCH_PRIMARY | 8 | 1 | 63 | Switch to primary transponder |
 | TTC_SET_TX_POWER | 8 | 1 | 68 | Set transmit power level |
@@ -64,7 +64,7 @@ is confirmed nominal.
 **GO/NO-GO:** Ground station confirmed nominal — proceed with spacecraft-side diagnosis.
 
 ### Step 2: Check TTC TX Power Line Status
-**Action:** Send blind HK request: `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — EPS
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — Send blind HK request — EPS
 **Note:** This is a blind command — no telemetry return is expected if downlink is dead.
 The purpose is to trigger downlink activity and check for faint signal.
 **Action:** Wait 30 s and check ground station receiver for any signal indication.
@@ -73,31 +73,32 @@ The purpose is to trigger downlink activity and check for faint signal.
 **Note:** The `eps.pl_ttc_tx` (0x0112) parameter indicates TX power line state, but this
 requires a working downlink to read. If the TX power line was tripped by an overcurrent
 event, the transponder has no power to transmit.
-**Action:** Send blind power-on command: `EPS_POWER_ON(line_index=2)` (func_id 19) —
+**TC:** `EPS_POWER_ON(line_index=2)` (Service 8, Subtype 1, func_id 19) — Send blind power-on command
 this commands the TTC TX power line ON.
 **Verify:** Wait 30 s for transponder to power up and re-acquire.
 **Verify:** Check ground station receiver for downlink carrier.
 **GO/NO-GO:** If signal appears, proceed to Step 6 (link verification). If still no signal, proceed to Step 3.
 
 ### Step 3: Command Transponder Switch (Blind)
-**Action:** The primary transponder may have failed. Attempt blind switchover:
-`TTC_SWITCH_REDUNDANT` (func_id 64) — blind command
+**Note:** The primary transponder may have failed. Attempt blind switchover:
+**TC:** `TTC_SWITCH_REDUNDANT` (Service 8, Subtype 1, func_id 64) — blind command
 **Verify:** Wait 45 s for redundant transponder power-up and frequency lock.
 **Verify:** Check ground station receiver for downlink carrier on redundant transponder frequency.
 **Action:** If signal detected on redundant: proceed to Step 6 (link verification).
-**Action:** If still no signal: revert to primary: `TTC_SWITCH_PRIMARY` (func_id 63).
-Wait 30 s.
+**Note:** Only if the redundant transponder produced no signal either.
+**TC:** `TTC_SWITCH_PRIMARY` (Service 8, Subtype 1, func_id 63) — revert to the primary transponder
+**Action:** Wait 30 s.
 **GO/NO-GO:** If neither transponder produces signal, proceed to Step 4 (PA check).
 
 ### Step 4: Command PA ON (Blind)
-**Action:** The PA may be disabled. Send blind PA enable command:
-`TTC_PA_ON` (func_id 66)
+**Note:** The PA may be disabled. Send blind PA enable command:
+**TC:** `TTC_PA_ON` (Service 8, Subtype 1, func_id 66)
 **Verify:** Wait 15 s for PA power-up.
 **Verify:** Check ground station receiver for downlink carrier.
 **Action:** If signal detected: proceed to Step 6 (link verification).
-**Action:** If no signal: the PA enable may not have taken effect. Try cycling the PA:
-- `TTC_PA_OFF` (func_id 67) — wait 10 s
-- `TTC_PA_ON` (func_id 66) — wait 15 s
+**Note:** If no signal: the PA enable may not have taken effect. Try cycling the PA:
+**TC:** `TTC_PA_OFF` (Service 8, Subtype 1, func_id 67) — wait 10 s
+**TC:** `TTC_PA_ON` (Service 8, Subtype 1, func_id 66) — wait 15 s
 **Verify:** Check ground station receiver for downlink carrier.
 **GO/NO-GO:** If signal detected, proceed to Step 6. If still no signal, proceed to Step 5.
 
@@ -105,18 +106,30 @@ Wait 30 s.
 **Action:** If the spacecraft is in early mission (post-separation) or the antenna
 deployment status is uncertain, the antennas may still be stowed. A stowed antenna
 will produce a severely attenuated signal (>20 dB loss).
-**Action:** Send blind antenna deployment command:
-`TTC_DEPLOY_ANTENNAS` (func_id 56) — fires burn-wire for antenna release
+**Note:** Send the blind antenna deployment command. The mnemonic is
+`TTC_DEPLOY_ANTENNA` (singular) and the function is **69**.
+**DANGER — corrected 2026-08b:** this card previously named `func_id 56`.
+Func 56 is `OBC_BOOT_INHIBIT`, whose data byte makes the OBC stay in the
+bootloader. Sent blind, on a spacecraft that already has no telemetry, on the
+hypothesis that its antenna is stowed, it would have INHIBITED AUTO-BOOT — the
+one action that turns a recoverable RF problem into a spacecraft that comes up
+in the bootloader with the S-band PA inhibited and only HK SID 11 on the UHF
+beacon. It was also blind, so nobody would have known.
+**TC:** `TTC_DEPLOY_ANTENNA` (Service 8, Subtype 1, func_id 69) — fires the burn-wire for antenna release
 **CAUTION:** This is an irreversible, one-shot pyrotechnic command. Only execute if
 antenna deployment status is genuinely uncertain or known to be stowed.
-**Verify:** Wait 30 s for deployment mechanism to actuate and antennas to extend.
+**Verify:** Wait 30 s for the deployment mechanism to actuate and the antenna to
+extend. If any telemetry is being received, `ttc.antenna_deployed` (0x0520)
+goes to 1 and `ttc.antenna_deployment_sensor` (0x0536) reads 2 (DEPLOYED);
+`ttc.antenna_deployment_ready` (0x0535) = 0 before the attempt would mean
+the pyro continuity is already faulty and the command will not fire.
 **Verify:** Check ground station receiver for downlink carrier. Antenna deployment should
 produce a dramatic improvement in signal level (15-25 dB gain increase).
 **GO/NO-GO:** If signal detected, proceed to Step 6 (link verification). If still no
 signal after all RF chain checks, proceed to Step 7 (escalation).
 
 ### Step 6: Verify Link Quality and Subsystem Health
-**Action:** Request TTC housekeeping: `HK_REQUEST(sid=5)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) — Request TTC housekeeping
 **Verify:** `ttc.link_status` (0x0501) = 2 (LOCKED)
 **Verify:** `ttc.rssi` (0x0502) > -90 dBm (nominal signal strength)
 **Verify:** `ttc.link_margin` (0x0503) > 3.0 dB
@@ -126,10 +139,10 @@ signal after all RF chain checks, proceed to Step 7 (escalation).
 **Verify:** `ttc.carrier_lock` (0x0510) = 1
 **Verify:** `ttc.bit_sync` (0x0511) = 1
 **Verify:** `ttc.eb_n0` (0x0519) > 10 dB
-**Action:** Request EPS housekeeping: `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — Request EPS housekeeping
 **Verify:** `eps.bus_voltage` (0x0105) > 27.0 V — confirm no EPS anomaly
 **Verify:** `eps.pl_ttc_tx` (0x0112) = 1 — TX power line confirmed ON
-**Action:** Request OBDH housekeeping: `HK_REQUEST(sid=4)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) — Request OBDH housekeeping
 **Verify:** `obdh.mode` (0x0300) — confirm OBC did not enter safe/emergency mode
 **Action:** Log which recovery step restored the link:
 - Step 2: TX power line was off
@@ -143,7 +156,7 @@ signal after all RF chain checks, proceed to Step 7 (escalation).
 **Action:** Notify Flight Director and Mission Director of sustained no-TM condition.
 **Action:** Confirm spacecraft autonomous safe mode timer is active (24h no-contact trigger).
 **Action:** Schedule next available ground station pass for re-acquisition attempt.
-**Action:** Consider increasing TX power for next attempt: prepare `TTC_SET_TX_POWER(level=2)` (func_id 68) — high power mode for improved link budget.
+**TC:** `TTC_SET_TX_POWER(level=2)` (Service 8, Subtype 1, func_id 68) — Consider increasing TX power for next attempt: prepare — high power mode for improved link budget.
 **GO/NO-GO:** If no link after two consecutive pass attempts, escalate to EMG-004
 (Loss of Communication Emergency).
 

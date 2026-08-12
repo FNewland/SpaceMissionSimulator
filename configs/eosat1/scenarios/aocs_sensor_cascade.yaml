@@ -9,6 +9,14 @@ briefing: |
   operator to manually switch to magnetometer B. The operator must track each failure,
   assess cumulative impact on attitude determination, and decide whether the remaining
   sensor suite is adequate for mission operations or requires fallback to safe mode.
+  At T+600s the IMU starts to drift: a 0.05 deg/s bias appears on all three gyro
+  channels — ~1800x the 0.1 deg/h bias instability the MEKF is built from. The
+  teaching point is that this is SURVIVABLE while the star tracker is healthy: the
+  filter's bias state absorbs a constant offset, and the operator sees the fault
+  only as a step in the innovation-rejection counter (0x02C2) and as gyro_bias_x/y/z
+  (0x0270-0x0272) diverging from the estimate. It becomes mission-ending the moment
+  the tracker is also lost before the filter has re-converged, because ECLIPSE and
+  every propagate-only phase then drift at 0.05 deg/s = 3 deg/min.
 events:
   - time_offset_s: 60
     action: inject
@@ -33,9 +41,24 @@ events:
       failure: mag_a_fail
       magnitude: 1.0
       onset: step
+  # The instructor book advertises this scenario as including "IMU drifts", but
+  # no gyro fault was ever injected. `gyro_bias` writes the PERSISTENT injected
+  # offset (aocs.gyro_bias_injected, 0x0296) rather than the Gauss-Markov truth
+  # state, so it does not quietly heal itself over the 1800 s bias time constant.
+  - time_offset_s: 600
+    action: inject
+    params:
+      subsystem: aocs
+      failure: gyro_bias
+      magnitude: 1.0
+      onset: step
+      axis: all
+      bias: 0.05
 expected_responses:
   - { category: detect, description: "Detect ST1 failure (status=4) and verify ST2 acquisition" }
   - { category: detect, description: "Detect CSS +X head failure from per-head illumination telemetry" }
   - { category: detect, description: "Detect MAG-A failure from magnetometer readings going invalid" }
+  - { category: detect, description: "Detect the IMU bias from gyro_bias_x/y/z (0x0270-0x0272) diverging from the MEKF estimate, and from the rising ST innovation-rejection count (0x02C2)" }
   - { category: isolate, description: "Diagnose each failure independently and assess cumulative impact" }
   - { category: recover, description: "Switch to MAG-B, verify adequate sensor suite, or transition to safe mode" }
+  - { category: recover, description: "Recover gyro knowledge: AOCS_EST_RESET warm (S8 func 91) once the bias is bounded, or accept ST-only determination" }

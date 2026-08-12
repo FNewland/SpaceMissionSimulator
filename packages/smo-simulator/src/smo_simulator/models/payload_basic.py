@@ -6,14 +6,74 @@ handling, comprehensive failure injection, and ocean current multispectral
 imaging with per-band SNR, attitude-quality coupling, and scene-dependent
 compression.
 """
+import hashlib
 import math
 import random
+import struct
 import time
+import zlib
 from dataclasses import dataclass, field
 from typing import Any
 
 from smo_common.config.fpa_envelope import FPAEnvelope
 from smo_common.models.subsystem import SubsystemModel
+
+# ── Wire-decode epsilon for the FPA setpoint envelope (2026-08b) ──
+# PAYLOAD_COOLER_SETPOINT (S8 func 36) carries the setpoint as unsigned
+# CENTI-KELVIN, and the dispatcher decodes it as `raw * 0.01 - 273.15`. The
+# documented top of the envelope, raw 27315 = 0.00 degC, comes out of that
+# expression as +5.684341886080802e-14 — genuinely greater than the 0.0 upper
+# bound, so the ONE value the catalogue prints as the maximum was rejected with
+# "0.00 C outside the envelope (-20 C to 0 C)": a refusal whose own message
+# says the value is legal. The same 1e-6 K tolerance is applied in
+# tcs_basic.set_fpa_setpoint, which decodes the identical field.
+SETPOINT_EPSILON_C = 1e-6
+
+# ── Payload event table (0x0600-0x06FF) ──
+# ONE table, id -> (name, severity), and it must agree line-for-line with
+# configs/eosat1/events/event_catalog.yaml. Before 2026-08b the model carried
+# two separate literal dicts that stopped at 0x060D, so 0x060E
+# SHUTTER_TEST_COMPLETE and 0x060F FILTER_ROTATION_COMPLETE — both of which the
+# model already emitted — downlinked to the ground as "UNKNOWN", and 0x0611
+# TRANSFER_COMPLETE did too. 0x0610 TRANSFER_START was promised by a code
+# comment ("will be emitted in next tick") and sent by nothing at all.
+PAYLOAD_EVENTS: dict[int, tuple[str, str]] = {
+    0x0600: ("IMAGING_START", "INFO"),
+    0x0601: ("IMAGING_STOP", "INFO"),
+    0x0602: ("PAYLOAD_MODE_CHANGE", "INFO"),
+    0x0603: ("STORAGE_WARNING", "LOW"),
+    0x0604: ("FPA_OVERTEMP", "MEDIUM"),
+    0x0605: ("FPA_UNDERTEMP", "MEDIUM"),
+    0x0606: ("COOLER_FAILURE", "HIGH"),
+    0x0607: ("IMAGE_CHECKSUM_ERROR", "MEDIUM"),
+    0x0608: ("SNR_DEGRADED", "LOW"),
+    0x0609: ("STORAGE_FULL", "HIGH"),
+    0x060A: ("BAD_SEGMENT_DETECTED", "MEDIUM"),
+    0x060B: ("CALIBRATION_COMPLETE", "INFO"),
+    0x060C: ("STORAGE_CRITICAL", "HIGH"),
+    0x060D: ("COMPRESSION_ERROR", "MEDIUM"),
+    0x060E: ("SHUTTER_TEST_COMPLETE", "INFO"),
+    0x060F: ("FILTER_ROTATION_COMPLETE", "INFO"),
+    0x0610: ("TRANSFER_START", "INFO"),
+    0x0611: ("TRANSFER_COMPLETE", "INFO"),
+    0x0612: ("CALIBRATION_ABORTED", "MEDIUM"),
+    0x0613: ("IMAGE_CAPTURED", "INFO"),
+    0x0614: ("IMAGE_RELEASED", "INFO"),
+}
+
+
+def snap_to_envelope(value: float, low: float, high: float,
+                     eps: float = SETPOINT_EPSILON_C) -> float:
+    """Snap a wire-decoded temperature onto an envelope bound within `eps`.
+
+    Nothing a 0.01 K/LSB field can express is finer than 1e-6 K, so a value
+    that close to a bound IS that bound; snapping is exact, not lenient.
+    """
+    if low - eps <= value < low:
+        return low
+    if high < value <= high + eps:
+        return high
+    return value
 
 # ── Spectral band definitions for multispectral imaging ──
 SPECTRAL_BANDS = [
@@ -39,7 +99,18 @@ class ImageMetadata:
 
 @dataclass
 class PayloadState:
-    mode: int = 0  # 0=OFF, 1=STANDBY(cooler on), 2=IMAGING
+    # 0=OFF, 1=STANDBY (cooler on), 2=IMAGING, 3=CALIBRATION.
+    #
+    # 2026-08b PL-d: mode 3 CALIBRATION is new. Radiometric calibration is a
+    # shutter-closed / lamp-lit activity that a real EO payload performs in its
+    # OWN mode — it is not a kind of imaging, and the old gate ("must be in
+    # IMAGING") forced the operator to open the shutter and start integrating
+    # the scene before asking for a dark frame, which is the one thing a dark
+    # frame must not have. The value 2 is deliberately UNCHANGED: AOCS keys its
+    # automatic desaturation inhibit on `payload.mode == 2` meaning IMAGING
+    # (DISPLAY_REQUESTS_AOCS.md section 3, item 3), so CALIBRATION had to be a
+    # NEW value, not a renumbering.
+    mode: int = 0
     fpa_temp: float = 5.0
     cooler_active: bool = False
     imager_temp: float = 5.0
@@ -102,6 +173,9 @@ class PayloadState:
     aocs_total_err_seen: float = 0.0
     aocs_rate_stab_seen: float = 0.0
     aocs_settled_seen: bool = True
+    # 0x0299 aocs.fine_degraded — FINE_POINT being flown on a 3-wheel set
+    # (2026-08b R3). Recorded, not gated on; see the note in `capture`.
+    aocs_fine_degraded_seen: bool = False
     # Strip-acquisition monitor: while > 0 the last capture is still being
     # scanned; losing FINE (or the error gate) mid-strip marks it PARTIAL
     # with the worst actual pointing error stamped into the catalog entry.
@@ -129,6 +203,11 @@ class PayloadState:
     calibration_valid_mask: int = 0x00  # Bitwise flags for 4 bands
     dark_frame_count: int = 0
     flat_frame_count: int = 0
+    # 2026-08b PL-d: why the last calibration stopped. 0 = ran to completion or
+    # never started; non-zero = a precondition was violated mid-sequence and the
+    # products were discarded. Downlinked at 0x0645 so "my calibration silently
+    # produced nothing" is diagnosable from the ground.
+    cal_abort_reason: int = 0   # 0=none 1=power 2=shutter 3=lamp 4=thermal 5=operator
 
     # ── Calibration state machine ──
     calibration_active: bool = False  # Currently calibrating
@@ -166,6 +245,22 @@ class PayloadState:
     transfer_bytes_sent: int = 0
     transfer_rate_mbps: float = 10.0  # TT&C downlink rate
     transfer_progress: float = 0.0  # 0-100%
+
+    # ── Image data path (2026-08b PL-c) ──
+    # Every stored product carries a `data_seed`; the bytes S13.3 serves are
+    # DERIVED from it (see `image_block`), so the ground can checksum what it
+    # received without the simulator holding megabytes of pixels in RAM. The
+    # counter is part of the dataclass so it survives a breakpoint — a restored
+    # spacecraft must not re-issue a seed a downlinked product already used.
+    next_data_seed: int = 1
+    # Bytes actually occupied by CATALOGUED products, tracked separately from
+    # mem_used_mb (which also carries the store's pre-existing fill). Published
+    # at 0x0647 so "what is in the store" and "what can I downlink" agree.
+    product_bytes: int = 0
+    # Achievable FPA floor and margin, sampled from the TCS cooler-authority
+    # model each tick (2026-08b: cooling authority is no longer a flat 40 K).
+    cooler_floor_c: float = 0.0
+    cooler_margin_k: float = 0.0
 
     # ── Shutter & Filter Wheel (Defect 4 — payload.md §3.3) ──
     shutter_position: int = 1  # 0=CLOSED, 1=OPEN
@@ -212,7 +307,16 @@ class PayloadBasicModel(SubsystemModel):
         # replaces this with a Random derived from simulation.yaml `seed`.
         import random as _random
         self.rng = _random.Random(20260731)  # deterministic standalone fallback; engine overrides via derive_rng
-        self._fpa_target = -15.0
+        # NOTE (2026-08b, defect #132's payload twin): there is deliberately no
+        # `self._fpa_target` here any more. It was a SECOND copy of the active
+        # cooler setpoint that lived outside the dataclass, so `get_state()`
+        # never captured it: after a breakpoint load with a non-default
+        # setpoint, TCS regulated to the restored -20.5 C while the payload's
+        # readiness window was still centred on the constructor's -15 C, and
+        # 0x0610 FPA READY read NO forever with 0x0631 still showing the
+        # commanded value. The active setpoint is `_state.cooler_setpoint_c`,
+        # which is already in the dataclass, already persisted and already
+        # published at 0x0631 — one setpoint, one copy.
         self._fpa_ambient = 5.0
         self._tau_cool = 100.0
         self._tau_warm = 120.0
@@ -234,7 +338,10 @@ class PayloadBasicModel(SubsystemModel):
         return "payload"
 
     def configure(self, config: dict[str, Any]) -> None:
-        self._fpa_target = config.get("fpa_cooler_target_c", -15.0)
+        # The ACTIVE setpoint lives in the dataclass (see __init__) so that a
+        # breakpoint round-trip restores it. configure() seeds it; every later
+        # write goes through `set_cooler_setpoint`.
+        self._state.cooler_setpoint_c = config.get("fpa_cooler_target_c", -15.0)
         self._fpa_ambient = config.get("fpa_ambient_c", 5.0)
         self._tau_cool = config.get("fpa_tau_cooling_s", 100.0)
         self._tau_warm = config.get("fpa_tau_warming_s", 120.0)
@@ -332,6 +439,275 @@ class PayloadBasicModel(SubsystemModel):
         if not ds.get(0x0604, True):  # Compression unit
             s.compression_ratio = 1.0
 
+    def _event_description(self, evt_id: int, name: str) -> str:
+        """Event text. A few events carry the number the operator needs."""
+        s = self._state
+        if evt_id == 0x0612:
+            why = self._CAL_ABORT_NAMES.get(s.cal_abort_reason, "unknown")
+            return f"{name}: {why}"
+        if evt_id in (0x0610, 0x0611):
+            return (f"{name}: scene {s.transfer_scene_id}, "
+                    f"{s.transfer_bytes_total} bytes")
+        if evt_id in (0x0613, 0x0614):
+            return f"{name}: scene {s.last_scene_id}"
+        return name
+
+    # ── Image products: bytes without megabytes (2026-08b PL-c) ──────────
+    #
+    # "Where do the image packets go?" — before this, nowhere: `capture` built
+    # a metadata dict and no bytes existed anywhere, so S13.3 answered every
+    # segment request with `bytes([(segment_num + i) % 256 ...])`, a ramp whose
+    # own source comment admitted it was fake. The ground could not checksum a
+    # downlink, and a CORRUPT product looked byte-for-byte identical to a good
+    # one.
+    #
+    # Holding real pixels is not an option — a 20 GB store would be 20 GB of
+    # RAM, and breakpoints serialise the model. So each product carries a
+    # `data_seed` and its bytes are DERIVED from it: block N is a keyed BLAKE2b
+    # stream over (seed, block index). That is deterministic (the same block
+    # requested twice is identical, across restarts and breakpoint restores),
+    # O(1) in memory, and seekable — S13.3 can serve block 900 without
+    # generating blocks 0-899.
+    BLOCK_BYTES = 1024
+
+    @staticmethod
+    def _derive_block(data_seed: int, block_index: int,
+                      block_bytes: int = BLOCK_BYTES) -> bytes:
+        """Deterministic pseudo-random block for (product seed, block index)."""
+        out = bytearray()
+        counter = 0
+        key = struct.pack('>Q', data_seed & 0xFFFFFFFFFFFFFFFF)
+        while len(out) < block_bytes:
+            h = hashlib.blake2b(struct.pack('>II', block_index, counter),
+                                key=key, digest_size=64)
+            out += h.digest()
+            counter += 1
+        return bytes(out[:block_bytes])
+
+    def image_block(self, scene_id: int, block_index: int) -> bytes | None:
+        """Bytes of one 1024-byte block of a stored product, or None.
+
+        A CORRUPT product (status 2) serves DAMAGED bytes: every 37th block is
+        XORed with 0xFF. The catalogue's `checksum` is the one the instrument
+        computed over the CLEAN stream at capture, so a ground CRC of what was
+        received disagrees — a corrupted image now actually looks corrupted,
+        which is the point of the corrupt-image failure injection.
+        """
+        img = self.find_image(scene_id)
+        if img is None:
+            return None
+        total = self.image_block_count(img)
+        if not (0 <= block_index < total):
+            return None
+        blk = self._derive_block(int(img.get("data_seed", 0)), block_index)
+        if int(img.get("status", 0)) == 2 and block_index % 37 == 0:
+            blk = bytes(b ^ 0xFF for b in blk)
+        return blk
+
+    def find_image(self, scene_id: int) -> dict | None:
+        for img in self._state.image_catalog:
+            if img.get("scene_id") == scene_id:
+                return img
+        return None
+
+    @classmethod
+    def image_size_bytes(cls, img: dict) -> int:
+        return max(1, int(round(float(img.get("size_mb", 0.0)) * 1e6)))
+
+    @classmethod
+    def image_block_count(cls, img: dict) -> int:
+        return (cls.image_size_bytes(img) + cls.BLOCK_BYTES - 1) \
+            // cls.BLOCK_BYTES
+
+    def image_checksum(self, scene_id: int) -> int | None:
+        """CRC-32 over the product's CLEAN byte stream, cached in the entry.
+
+        Computed lazily (a 1.14 MB product is ~1120 blocks) so a capture stays
+        cheap; the ground asks for it once, when it opens the transfer.
+        """
+        img = self.find_image(scene_id)
+        if img is None:
+            return None
+        cached = img.get("checksum")
+        if cached is not None:
+            return int(cached)
+        seed = int(img.get("data_seed", 0))
+        crc = 0
+        for i in range(self.image_block_count(img)):
+            crc = zlib.crc32(self._derive_block(seed, i), crc)
+        img["checksum"] = crc & 0xFFFFFFFF
+        return img["checksum"]
+
+    def release_image(self, scene_id: int) -> dict:
+        """Delete a product and give its storage back (S13.5 completion).
+
+        The old S13.5 popped a dictionary out of the dispatcher and freed
+        nothing: `mem_used_mb` was measured unchanged after ending a transfer,
+        so a spacecraft could downlink its entire store and still report it
+        full. Downlinking is not deleting on a real spacecraft either — but
+        S13.5 is "complete transfer session AND FREE RESOURCES" in this
+        mission's own catalogue, so it is the delete point.
+        """
+        s = self._state
+        img = self.find_image(scene_id)
+        if img is None:
+            return {"success": False, "error_code": 0x0003,
+                    "message": f"Scene {scene_id} not in the image catalogue"}
+        freed_mb = float(img.get("size_mb", 0.0))
+        s.image_catalog.remove(img)
+        s.mem_used_mb = max(0.0, s.mem_used_mb - freed_mb)
+        s.product_bytes = max(0, s.product_bytes - self.image_size_bytes(img))
+        s.store_used_pct = max(0.0, s.mem_used_mb / s.mem_total_mb * 100.0)
+        s.image_count = max(0, s.image_count - 1)
+        s.last_scene_id = scene_id
+        self._queue_event(0x0614)   # IMAGE_RELEASED
+        return {"success": True, "scene_id": scene_id, "freed_mb": freed_mb}
+
+    def _queue_event(self, evt_id: int) -> None:
+        """Emit one event immediately (command paths, outside the tick loop)."""
+        eng = getattr(self, "_engine", None)
+        if eng is None:
+            return
+        name, severity = PAYLOAD_EVENTS.get(evt_id, ("UNKNOWN", "INFO"))
+        try:
+            eng._model_event_queue.put_nowait({
+                'event_id': evt_id, 'severity': severity,
+                'subsystem': 'payload',
+                'description': self._event_description(evt_id, name),
+            })
+        except Exception:
+            pass
+
+    # ── Calibration preconditions (2026-08b PL-d) ────────────────────────
+    #
+    # A radiometric calibration frame is defined by the optical path it is
+    # taken through, so the model gates on that path rather than on a mode
+    # word. The three phases need mutually exclusive optics:
+    #
+    #   DARK  shutter CLOSED, lamp OFF   — measures the detector's own dark
+    #                                      current and offset, so ANY photon
+    #                                      reaching the array invalidates it.
+    #   FLAT  shutter OPEN,   lamp ON    — measures per-pixel gain against a
+    #                                      uniform source, so it needs the
+    #                                      lamp lit and the light path open.
+    #   BOTH  starts in the DARK configuration; the on-board sequencer opens
+    #         the shutter and lights the lamp at the DARK -> FLAT transition,
+    #         because no ground step can land between two phases 15 s apart.
+    #
+    # All three additionally need the FPA at its operating temperature: dark
+    # current roughly doubles every 6-8 K, so coefficients taken at the wrong
+    # temperature describe a detector the mission does not have.
+    _CAL_ABORT_NAMES = {
+        0: "none", 1: "detector unpowered", 2: "shutter moved",
+        3: "calibration lamp state changed", 4: "FPA left its regulation band",
+        5: "operator abort",
+    }
+
+    def _calibration_precondition_error(self, cal_mode: int):
+        """Return an error dict if `cal_mode` cannot start now, else None."""
+        s = self._state
+        if s.mode == 0:
+            return {"success": False, "error_code": 0x0004,
+                    "message": "Payload is OFF — calibration needs the "
+                               "detector powered (PAYLOAD_SET_MODE 1 or 3)"}
+        if s.mode == 2:
+            # Never from IMAGING: the scene is on the detector.
+            # Generic codes, not new ones: 0x0021-0x0023 already mean the
+            # three CAPTURE pointing refusals in
+            # smo_common.protocol.pus_services.FAILURE_CODES, and reusing them
+            # would make the console print the wrong sentence. The specific
+            # reason travels in `code` and in the message. Four dedicated
+            # codes are requested in DISPLAY_REQUESTS_PAYLOAD.md (smo-common
+            # is not the payload owner's file).
+            return {"success": False, "code": "CAL_REFUSED_IMAGING",
+                    "error_code": 0x0005,
+                    "message": "Calibration refused in IMAGING — a calibration "
+                               "frame must not see the scene. Command "
+                               "PAYLOAD_SET_MODE 1 (STANDBY) or 3 "
+                               "(CALIBRATION) first"}
+        if not s.device_states.get(0x0600, True):
+            return {"success": False, "error_code": 0x0007,
+                    "message": "Focal plane array device (0x0600) is powered "
+                               "off"}
+        if not s.fpa_ready:
+            return {"success": False, "code": "CAL_FPA_NOT_READY",
+                    "error_code": 0x0007,
+                    "message": (
+                        "Calibration refused: FPA not thermally ready "
+                        f"({s.fpa_temp:.1f} C, setpoint "
+                        f"{s.cooler_setpoint_c:.1f} C). Dark current is "
+                        "temperature-dependent — coefficients taken off "
+                        "setpoint describe a different detector")}
+        wants_dark = cal_mode in (0, 2)
+        wants_flat = cal_mode in (1, 2)
+        if wants_dark:
+            if not s.device_states.get(0x0603, True):
+                return {"success": False, "error_code": 0x0007,
+                        "message": "Shutter mechanism device (0x0603) is "
+                                   "powered off — cannot verify the dark path"}
+            if s.shutter_position != 0:
+                return {"success": False, "code": "CAL_SHUTTER_OPEN",
+                        "error_code": 0x0007,
+                        "message": "Calibration refused: shutter is OPEN. A "
+                                   "dark frame is a shutter-closed acquisition "
+                                   "— PAYLOAD_SET_SHUTTER 0 first"}
+            if s.cal_lamp_on:
+                return {"success": False, "code": "CAL_LAMP_ON",
+                        "error_code": 0x0007,
+                        "message": "Calibration refused: calibration lamp is "
+                                   "ON during the dark phase — "
+                                   "PAYLOAD_CAL_LAMP 0 first"}
+        if wants_flat and not s.device_states.get(0x0602, True):
+            return {"success": False, "error_code": 0x0007,
+                    "message": "Calibration lamp device (0x0602) is powered "
+                               "off — the flat-field phase has no source"}
+        if cal_mode == 1:
+            # FLAT-only: the ground sets the optics up itself.
+            if s.shutter_position != 1:
+                return {"success": False, "code": "CAL_SHUTTER_CLOSED",
+                        "error_code": 0x0007,
+                        "message": "Calibration refused: flat field needs the "
+                                   "shutter OPEN (PAYLOAD_SET_SHUTTER 1)"}
+            if not s.cal_lamp_on:
+                return {"success": False, "code": "CAL_LAMP_OFF",
+                        "error_code": 0x0007,
+                        "message": "Calibration refused: flat field needs the "
+                                   "calibration lamp ON (PAYLOAD_CAL_LAMP 1)"}
+        return None
+
+    def _abort_calibration(self, reason: int) -> None:
+        """Stop a running calibration and discard its half-made products."""
+        s = self._state
+        s.calibration_active = False
+        s.calibration_state = 0
+        s.calibration_progress = 0.0
+        s.calibration_timer = 0.0
+        s.dark_frame_count = 0
+        s.flat_frame_count = 0
+        s.cal_abort_reason = reason
+        if s.mode == 3:
+            s.mode = 1   # fall back to STANDBY; the cooler stays commanded
+
+    def _refresh_calibration_valid_mask(self) -> None:
+        """A band is calibrated when it has BOTH a bias and a gain coefficient.
+
+        2026-08b PL-d: the old code set the mask to 0x0F only on the `mode == 2`
+        (BOTH) completion path, so a DARK-only or FLAT-only run — the route
+        COM-011 actually recommends — completed with the mask still 0x00 and
+        the spacecraft could never reach a valid-calibration state. Deriving
+        the mask from the coefficients instead of from the run type means a
+        DARK run that completes an earlier FLAT run validates the pair, which
+        is how radiometric calibration actually accumulates.
+        """
+        s = self._state
+        mask = 0
+        for band in SPECTRAL_BANDS:
+            bid = band['id']
+            if s.bias_coeff.get(bid) is not None \
+                    and s.gain_coeff.get(bid) is not None:
+                mask |= (1 << band['bit'])
+        s.calibration_valid_mask = mask
+
     def tick(self, dt: float, orbit_state: Any,
              shared_params: dict[int, float]) -> None:
         s = self._state
@@ -363,11 +739,28 @@ class PayloadBasicModel(SubsystemModel):
         # drops to OFF (line trip, OBC command, load shed) the dark/flat
         # acquisition must abort — the detector is no longer integrating.
         if s.calibration_active and s.mode <= 0:
-            s.calibration_active = False
-            s.calibration_state = 0
-            s.calibration_progress = 0.0
-            s.dark_frame_count = 0
-            s.flat_frame_count = 0
+            self._abort_calibration(1)   # detector unpowered
+        # ── 2026-08b PL-d: hold the optical preconditions for the WHOLE run ──
+        # Checking them only at start would let an operator (or a procedure)
+        # open the shutter or light the lamp half way through a dark phase and
+        # still get a "CALIBRATION_COMPLETE" and a valid mask over frames that
+        # saw the scene. The sequencer owns the optics only across the DARK ->
+        # FLAT transition of a BOTH run; outside that, any change aborts.
+        if s.calibration_active:
+            if s.calibration_state == 1:      # DARK: closed and dark
+                if s.shutter_position != 0:
+                    self._abort_calibration(2)
+                elif s.cal_lamp_on:
+                    self._abort_calibration(3)
+            elif s.calibration_state == 2 and s.calibration_mode != 0:
+                if s.shutter_position != 1:   # FLAT: open and lit
+                    self._abort_calibration(2)
+                elif not s.cal_lamp_on:
+                    self._abort_calibration(3)
+            if s.calibration_active and not s.fpa_ready:
+                self._abort_calibration(4)
+            if not s.calibration_active:
+                events_to_emit.append(0x0612)  # CALIBRATION_ABORTED
         if s.calibration_active:
             s.calibration_timer -= dt
             half_duration = s.calibration_duration_s / 2
@@ -391,17 +784,41 @@ class PayloadBasicModel(SubsystemModel):
                         s.dark_frame_count = 10
                         for band_id in ['blue', 'green', 'red', 'nir']:
                             s.bias_coeff[band_id] = 0.0
+                        self._refresh_calibration_valid_mask()
                         s.calibration_active = False
                         s.calibration_state = 3  # COMPLETE (dark set only)
                         s.calibration_progress = 100.0
                         s.last_calibration_time = self._now()
+                        if s.mode == 3:
+                            s.mode = 1   # CALIBRATION -> STANDBY
                         events_to_emit.append(0x060B)  # CALIBRATION_COMPLETE
                 else:
-                    s.calibration_progress = 100.0 * (half_duration - s.calibration_timer) / half_duration
-                    if s.calibration_timer <= half_duration:
+                    s.calibration_progress = 50.0 * (half_duration - s.calibration_timer) / half_duration
+                    # 2026-08b PL-d: `<= 0`, not `<= half_duration`. The phase
+                    # is entered with `calibration_timer = half_duration`, so
+                    # the old comparison was true on the FIRST tick and a BOTH
+                    # run skipped its entire dark phase in one step: 15 s of
+                    # dark integration collapsed to one dt, and the dark
+                    # coefficients were fabricated rather than accumulated.
+                    if s.calibration_timer <= 0:
+                        for band_id in ['blue', 'green', 'red', 'nir']:
+                            s.bias_coeff[band_id] = 0.0
                         s.calibration_state = 2  # FLAT_FIELD
                         s.calibration_timer = half_duration
                         s.dark_frame_count = 10  # Ensure at least 10
+                        # The on-board sequencer owns the optics across the
+                        # phase boundary — no ground step can land between two
+                        # phases 15 s apart. Honour the S2 device gates: an
+                        # unpowered shutter or lamp aborts instead of pretending.
+                        if not s.device_states.get(0x0603, True):
+                            self._abort_calibration(2)
+                            events_to_emit.append(0x0612)
+                        elif not s.device_states.get(0x0602, True):
+                            self._abort_calibration(3)
+                            events_to_emit.append(0x0612)
+                        else:
+                            s.shutter_position = 1   # open the light path
+                            s.cal_lamp_on = True     # light the flat-field lamp
             elif s.calibration_state == 2:  # FLAT_FIELD
                 # Accumulate flat frames: ~10 frames over half duration
                 if s.calibration_timer <= 0:
@@ -416,16 +833,23 @@ class PayloadBasicModel(SubsystemModel):
                 else:
                     s.calibration_progress = 50.0 + 50.0 * (half_duration - s.calibration_timer) / half_duration
                 if s.calibration_timer <= 0:
-                    # Compute gain/bias coefficients
+                    # Compute the FLAT product: per-band gain. The dark phase
+                    # (BOTH) or an earlier DARK run supplies the bias half.
                     for band_id in ['blue', 'green', 'red', 'nir']:
-                        s.bias_coeff[band_id] = 0.0  # Simplified: would normally compute from dark_frame_buffer
                         s.gain_coeff[band_id] = 1.0  # Simplified: would normally compute from flat_frame_buffer
-                    if s.calibration_mode == 2:
-                        s.calibration_valid_mask = 0x0F  # All bands valid
+                    # Derived from the coefficients that now exist, not from
+                    # which run type produced them (see the helper).
+                    self._refresh_calibration_valid_mask()
                     s.calibration_active = False
                     s.calibration_state = 3  # COMPLETE
                     s.calibration_progress = 100.0
                     s.last_calibration_time = self._now()
+                    if s.calibration_mode == 2:
+                        # The sequencer lit the lamp at the phase boundary; it
+                        # owns switching it off again.
+                        s.cal_lamp_on = False
+                    if s.mode == 3:
+                        s.mode = 1   # CALIBRATION -> STANDBY
                     events_to_emit.append(0x060B)  # CALIBRATION_COMPLETE
 
         # ── Shutter cycle test (Defect 4 — payload.md §3.3) ──
@@ -468,7 +892,7 @@ class PayloadBasicModel(SubsystemModel):
                 s.cooler_on_time_s = 0.0
         elif s.cooler_active and not s.cooler_failed:
             # Standalone fallback (no TCS in the loop): legacy self-integration
-            target, tau = self._fpa_target, self._tau_cool
+            target, tau = s.cooler_setpoint_c, self._tau_cool
             s.cooler_on_time_s += dt
         else:
             target, tau = self._fpa_ambient, self._tau_warm
@@ -491,7 +915,8 @@ class PayloadBasicModel(SubsystemModel):
         # settled about the ACTIVE setpoint AND cold enough to image — so TCS
         # (0x040A/0x040B) and the payload (0x0610) can no longer disagree
         # about whether the same detector is ready.
-        temp_in_range = self._fpa_env.is_ready(s.fpa_temp, self._fpa_target)
+        temp_in_range = self._fpa_env.is_ready(s.fpa_temp,
+                                               s.cooler_setpoint_c)
         cooler_ok = not s.cooler_failed
         if temp_in_range and cooler_ok:
             s.fpa_ready_timer += dt
@@ -511,23 +936,37 @@ class PayloadBasicModel(SubsystemModel):
             s.line_rate = 0.0
             s.data_rate_mbps = 0.0
             s.duty_cycle_pct = 0.0
-        elif s.mode == 1:  # STANDBY (cooler on)
+        elif s.mode in (1, 3):  # STANDBY / CALIBRATION (cooler on, no scene)
+            # CALIBRATION is thermally and electrically a STANDBY: the cooler
+            # runs and the detector is powered, but nothing is being read out
+            # to the mass memory — the frames are consumed on board into
+            # coefficients, they are not products.
             if not _tcs_in_loop:
                 s.cooler_active = True
             s.line_rate = 0.0
             s.data_rate_mbps = 0.0
             s.duty_cycle_pct = 0.0
         elif s.mode == 2:  # IMAGING
-            if s.fpa_ready and not s.cooler_failed:
+            # ── 2026-08b PL-b: readout ONLY during a commanded strip ──
+            # This block used to run whenever the payload was in IMAGING with a
+            # ready FPA, and it accreted `data_rate_mbps` worth of volume every
+            # tick with no capture, no catalogue entry and no product: measured
+            # 9.735 MB/s, which fills the 20 GB store in ~33 minutes from empty
+            # with ZERO PAYLOAD_CAPTURE commands. One real capture stores
+            # 1.14 MB, so the phantom stream outran real products ~9000:1, and
+            # it contradicted NOM-002's teaching note ("images do NOT appear on
+            # their own"), subsystems/payload.yaml's own design rationale and
+            # the pass-planning arithmetic the link-rate ladder was built on.
+            #
+            # A push-broom imager reads out while it is scanning a commanded
+            # strip and is otherwise idle. `strip_remaining_s` is exactly that
+            # window (set by `capture` from lines / line_rate_hz), and the
+            # volume is booked ONCE, by `capture`, from the frame it actually
+            # produced. Nothing is accreted here.
+            reading_out = s.strip_remaining_s > 0.0
+            if reading_out and s.fpa_ready and not s.cooler_failed:
                 s.line_rate = self._line_rate_hz + self.rng.gauss(0, 2.0)
                 s.data_rate_mbps = self._data_rate_mbps + self.rng.gauss(0, 0.5)
-                data_mb = s.data_rate_mbps * 1e6 / 8 / 1e6 * dt
-                s.mem_used_mb = min(
-                    s.mem_total_mb, s.mem_used_mb + data_mb
-                )
-                s.store_used_pct = min(
-                    100.0, s.mem_used_mb / s.mem_total_mb * 100.0
-                )
                 # Checksum errors
                 # Rate per unit sim time, not per tick (plan A-3)
                 error_prob = 0.0001 * dt * (2 if s.fpa_degraded else 1)
@@ -535,13 +974,17 @@ class PayloadBasicModel(SubsystemModel):
                     error_prob *= 3
                 if self.rng.random() < error_prob:
                     s.checksum_errors += 1
+            else:
+                s.line_rate = 0.0
+                s.data_rate_mbps = 0.0
+            # Duty cycle is "how hard has the instrument been worked", which is
+            # a property of being in IMAGING (thermal load, TEC demand), not of
+            # reading out — it keeps its previous meaning.
+            if s.fpa_ready and not s.cooler_failed:
                 s.duty_cycle_pct = min(
                     100.0,
                     s.duty_cycle_pct + dt / 60.0 * 10.0,
                 )
-            else:
-                s.line_rate = 0.0
-                s.data_rate_mbps = 0.0
 
         # ── Attitude-quality coupling ──
         # Phase C (brief 02 WP-6): curve rescaled to the REAL error
@@ -572,6 +1015,8 @@ class PayloadBasicModel(SubsystemModel):
             s.aocs_rate_stab_seen = float(shared_params.get(0x02C3, 0.0))
             s.aocs_settled_seen = bool(
                 shared_params.get(0x0292, 0.0) < 0.5)   # slew idle
+            s.aocs_fine_degraded_seen = bool(
+                shared_params.get(0x0299, 0.0))         # 3-wheel FINE
 
         # ── Strip-acquisition monitor (WP-6): PARTIAL on FINE loss ──
         if s.strip_remaining_s > 0.0:
@@ -690,9 +1135,25 @@ class PayloadBasicModel(SubsystemModel):
         s.detector_temp_c = s.fpa_temp + 0.5 + self.rng.gauss(0, 0.05)
 
         # ── Downlink progress (Defect 5 — payload.md §3.7) ──
+        # 2026-08b PL-c: the transfer used to drain its byte counter at a
+        # hard-coded 10 Mbps with no reference to contact, to the transmitter,
+        # or to the TT&C rate tier — an on-board "downlink" that ran through
+        # eclipse, out of contact, with the PA off, at 78x the spacecraft's own
+        # top tier (128 kbps). It now moves bytes at the ACTIVE information
+        # rate (0x0506) and only while the downlink is really up (0x0501 link
+        # status), so a transfer stalls when the pass ends and resumes on the
+        # next one — which is the whole pass-planning lesson.
         if s.transfer_active and s.transfer_bytes_total > 0:
-            # Downlink rate: bytes per second
-            bytes_per_sec = s.transfer_rate_mbps * 1e6 / 8
+            rate_bps = shared_params.get(0x0506)
+            link_up = shared_params.get(0x0501)
+            if rate_bps is None:
+                # No TT&C in the loop (unit harness): keep the configured rate.
+                bytes_per_sec = s.transfer_rate_mbps * 1e6 / 8
+            elif not link_up:
+                bytes_per_sec = 0.0
+            else:
+                bytes_per_sec = float(rate_bps) / 8.0
+            s.transfer_rate_mbps = bytes_per_sec * 8.0 / 1e6
             bytes_this_tick = bytes_per_sec * dt
             s.transfer_bytes_sent = min(s.transfer_bytes_total, s.transfer_bytes_sent + bytes_this_tick)
             s.transfer_progress = 100.0 * s.transfer_bytes_sent / s.transfer_bytes_total
@@ -790,30 +1251,13 @@ class PayloadBasicModel(SubsystemModel):
         if hasattr(self, '_engine') and self._engine:
             for evt_id in events_to_emit:
                 try:
-                    # Map event IDs to severity levels
-                    severity_map = {
-                        0x0600: "INFO", 0x0601: "INFO", 0x0602: "INFO",
-                        0x0603: "LOW", 0x0604: "MEDIUM", 0x0605: "MEDIUM",
-                        0x0606: "HIGH", 0x0607: "MEDIUM", 0x0608: "LOW",
-                        0x0609: "HIGH", 0x060A: "MEDIUM", 0x060B: "INFO",
-                        0x060C: "HIGH", 0x060D: "MEDIUM"
-                    }
-                    severity = severity_map.get(evt_id, "INFO")
-                    event_names = {
-                        0x0600: "IMAGING_START", 0x0601: "IMAGING_STOP", 
-                        0x0602: "PAYLOAD_MODE_CHANGE", 0x0603: "STORAGE_WARNING",
-                        0x0604: "FPA_OVERTEMP", 0x0605: "FPA_UNDERTEMP",
-                        0x0606: "COOLER_FAILURE", 0x0607: "IMAGE_CHECKSUM_ERROR",
-                        0x0608: "SNR_DEGRADED", 0x0609: "STORAGE_FULL",
-                        0x060A: "BAD_SEGMENT_DETECTED", 0x060B: "CALIBRATION_COMPLETE",
-                        0x060C: "STORAGE_CRITICAL", 0x060D: "COMPRESSION_ERROR"
-                    }
-                    name = event_names.get(evt_id, "UNKNOWN")
+                    name, severity = PAYLOAD_EVENTS.get(evt_id,
+                                                        ("UNKNOWN", "INFO"))
                     self._engine._model_event_queue.put_nowait({
                         'event_id': evt_id,
                         'severity': severity,
                         'subsystem': 'payload',
-                        'description': name
+                        'description': self._event_description(evt_id, name),
                     })
                 except Exception:
                     pass  # event queue full or format error
@@ -904,6 +1348,24 @@ class PayloadBasicModel(SubsystemModel):
         shared_params[0x0642] = float(s.dark_frame_count)  # payload.dark_frame_cnt
         shared_params[0x0643] = float(s.flat_frame_count)  # payload.bias_frame_cnt
 
+        # ── 2026-08b: the payload state the ground could not see ──
+        shared_params[0x0644] = float(s.calibration_mode)      # cal_mode
+        shared_params[0x0645] = float(s.cal_abort_reason)      # cal_abort_reason
+        shared_params[0x0646] = float(s.calibration_valid_mask)  # cal_valid_mask
+        shared_params[0x0647] = float(s.product_bytes) / 1e6   # product volume MB
+        shared_params[0x0648] = float(len(s.image_catalog))    # products held
+        shared_params[0x0649] = 1.0 if s.strip_remaining_s > 0.0 else 0.0
+        # Cooler authority, read back from the TCS model (0x0424/0x0425) so the
+        # operator can see how much lift is LEFT rather than only whether the
+        # setpoint is currently held. Falls back to the setpoint when no TCS is
+        # in the loop, i.e. margin 0 rather than a fabricated number.
+        _floor = shared_params.get(0x0424)
+        s.cooler_floor_c = float(_floor) if _floor is not None \
+            else s.cooler_setpoint_c
+        s.cooler_margin_k = s.cooler_setpoint_c - s.cooler_floor_c
+        shared_params[0x064A] = s.cooler_floor_c
+        shared_params[0x064B] = s.cooler_margin_k
+
     def _now(self) -> float:
         """Mission time: engine sim time when hosted (deterministic under a
         pinned t0_epoch, plan A-2), wall clock when standalone."""
@@ -922,9 +1384,17 @@ class PayloadBasicModel(SubsystemModel):
 
         if command == "set_mode":
             m = int(cmd.get("mode", 0))
-            if m in (0, 1, 2):
+            # 3 = CALIBRATION (2026-08b PL-d). Leaving CALIBRATION while a
+            # sequence is running aborts it rather than orphaning it.
+            if m in (0, 1, 2, 3):
+                if s.calibration_active and m != 3:
+                    self._abort_calibration(5)   # operator abort
+                    self._queue_event(0x0612)
                 s.mode = m
                 return {"success": True}
+            return {"success": False, "error_code": 0x0003,
+                    "message": f"Payload mode {m} outside 0-3 (0=OFF, "
+                               "1=STANDBY, 2=IMAGING, 3=CALIBRATION)"}
 
         elif command == "set_scene":
             s.current_scene_id = int(cmd.get("scene_id", 0))
@@ -939,6 +1409,20 @@ class PayloadBasicModel(SubsystemModel):
                 }
             if not s.fpa_ready:
                 return {"success": False, "message": "FPA not ready"}
+            # ── 2026-08b PL-d: the shutter is part of the optical path ──
+            # `capture` never read `shutter_position` at all, so an image could
+            # be acquired with the shutter CLOSED and the catalogue would carry
+            # a 100 %-quality product of the back of the shutter blade.
+            if s.shutter_position != 1:
+                return {"success": False,
+                        "code": "SHUTTER_CLOSED",
+                        "error_code": 0x0007,
+                        "message": "Capture refused: shutter is CLOSED "
+                                   "(PAYLOAD_SET_SHUTTER 1 to open)"}
+            if not s.device_states.get(0x0600, True):
+                return {"success": False, "error_code": 0x0007,
+                        "message": "Focal plane array device (0x0600) is "
+                                   "powered off"}
             # ── Phase C WP-6: fine-pointing gate ──
             # Capture requires AOCS FINE_POINT held with total pointing error
             # < 0.05° and rate stability < 0.005 °/s. Distinct failure codes
@@ -1049,8 +1533,26 @@ class PayloadBasicModel(SubsystemModel):
                 "pointing_err_deg": round(s.aocs_total_err_seen, 4)
                     if s.aocs_seen else None,
                 "aocs_mode": s.aocs_mode_seen if s.aocs_seen else None,
+                # 2026-08b: the AOCS owner has made FINE_POINT legal on a
+                # 3-wheel set with a relaxed jitter spec (0x0299
+                # aocs.fine_degraded). A degraded FINE set IS permitted to
+                # capture — the gate above already enforces the numbers that
+                # matter (0.05 deg total error, 0.005 deg/s rate stability),
+                # and a wheel count is not a pointing spec. It IS product
+                # provenance, so it is stamped into the catalogue entry: a
+                # reprocessing campaign can find every strip flown on three
+                # wheels without re-deriving it from the AOCS history.
+                "fine_degraded": bool(s.aocs_fine_degraded_seen)
+                    if s.aocs_seen else None,
+                # 2026-08b PL-c: the product's byte identity. The bytes S13.3
+                # serves are derived from this seed (see `image_block`), so a
+                # downlink can be checksummed against `checksum`.
+                "data_seed": s.next_data_seed,
+                "checksum": None,     # filled lazily by image_checksum()
             }
+            s.next_data_seed += 1
             s.image_catalog.append(img)
+            s.product_bytes += self.image_size_bytes(img)
             # Start the strip-acquisition monitor over the COMMANDED strip
             # length (lines / line_rate; 2048 @ 500 Hz = 4.1 s)
             line_rate = max(1.0, self._line_rate_hz)
@@ -1058,9 +1560,19 @@ class PayloadBasicModel(SubsystemModel):
             s.strip_worst_err_deg = (s.aocs_total_err_seen
                                      if s.aocs_seen else 0.0)
             s.strip_scene_id = scene_id
-            # Cap catalog to prevent unbounded memory growth
+            # Catalogue cap. The old code popped the oldest entry SILENTLY, so
+            # a product the ground had already been told about vanished with no
+            # event and no storage accounting. Refusing is the honest answer:
+            # the store is a finite resource and "delete something first" is a
+            # real operational constraint. (The cap is never reached in normal
+            # use — at 1.14 MB a product, 1000 products is 1.14 GB of a 20 GB
+            # store; it exists to bound memory, not to manage capacity.)
             if len(s.image_catalog) > 1000:
-                s.image_catalog.pop(0)  # evict oldest
+                s.image_catalog.remove(img)
+                s.product_bytes -= self.image_size_bytes(img)
+                return {"success": False, "error_code": 0x0003,
+                        "message": "Image catalogue full (1000 products) — "
+                                   "delete or downlink a product first"}
             s.image_count += 1
             s.mem_used_mb += stored_size
             s.store_used_pct = min(
@@ -1069,6 +1581,7 @@ class PayloadBasicModel(SubsystemModel):
             s.current_scene_id = scene_id
             s.last_scene_id = scene_id
             s.last_scene_quality = quality
+            self._queue_event(0x0613)   # IMAGE_CAPTURED
 
             return {
                 "success": True,
@@ -1080,6 +1593,7 @@ class PayloadBasicModel(SubsystemModel):
                 "status": status,
                 "stored_size_mb": stored_size,
                 "compression_ratio": s.compression_ratio,
+                "image": img,
             }
 
         elif command == "download_image":
@@ -1105,8 +1619,10 @@ class PayloadBasicModel(SubsystemModel):
                             0.0, s.mem_used_mb / s.mem_total_mb * 100.0
                         )
                         s.image_count = max(0, s.image_count - 1)
+                        s.product_bytes = max(
+                            0, s.product_bytes - self.image_size_bytes(img))
                         s.image_catalog.pop(i)
-                        return {"success": True}
+                        return {"success": True, "freed_mb": freed}
                 return {"success": False, "message": "Image not found"}
             else:
                 # Legacy: delete by count
@@ -1121,6 +1637,8 @@ class PayloadBasicModel(SubsystemModel):
                         s.mem_used_mb = max(
                             0.0, s.mem_used_mb - img["size_mb"]
                         )
+                        s.product_bytes = max(
+                            0, s.product_bytes - self.image_size_bytes(img))
                 return {"success": True}
 
         elif command == "mark_bad_segment":
@@ -1135,11 +1653,17 @@ class PayloadBasicModel(SubsystemModel):
                 return {"success": True}
             return {"success": False, "message": "Invalid segment index"}
 
+        elif command == "release_image":
+            # S13.5 completion path (2026-08b PL-c).
+            return self.release_image(int(cmd.get("scene_id", 0)))
+
         elif command == "get_image_catalog":
             return {
                 "success": True,
                 "catalog": list(s.image_catalog),
                 "count": len(s.image_catalog),
+                "product_mb": s.product_bytes / 1e6,
+                "free_mb": self._available_storage_mb(),
             }
 
         elif command == "set_band_config":
@@ -1191,8 +1715,9 @@ class PayloadBasicModel(SubsystemModel):
             # Adjust cooler temperature target
             env = self._fpa_env
             target = float(cmd.get("setpoint", env.setpoint_default_c))
+            target = snap_to_envelope(target, env.setpoint_min_c,
+                                      env.setpoint_max_c)
             if env.setpoint_min_c <= target <= env.setpoint_max_c:
-                self._fpa_target = target
                 s.cooler_setpoint_c = target
                 return {"success": True}
             return {"success": False, "error_code": 0x0003,
@@ -1206,20 +1731,39 @@ class PayloadBasicModel(SubsystemModel):
             # 2 = BOTH (legacy dark-then-flat sequence).
             if s.calibration_active:
                 return {"success": False, "message": "Calibration already in progress"}
-            if s.mode != 2:
-                return {"success": False, "message": "Must be in IMAGING mode"}
             cal_mode = int(cmd.get("mode", 2))
             if cal_mode not in (0, 1, 2):
                 return {"success": False, "error_code": 0x0003,
                         "message": f"Unknown calibration mode {cal_mode} "
                                    "(0=DARK, 1=FLAT, 2=BOTH)"}
+            # ── 2026-08b PL-d: gate on the physics, not on the mode word ──
+            # The old gate was `s.mode != 2` — calibration REQUIRED IMAGING —
+            # and it checked none of the four things that actually decide
+            # whether a calibration frame is worth anything: the shutter, the
+            # lamp, the lamp's device power and the detector temperature. So
+            # the shipped COM-011 card had to command PAYLOAD_SET_MODE(2)
+            # immediately before START_CALIBRATION(DARK), i.e. open the shutter
+            # onto the scene to take a dark frame.
+            err = self._calibration_precondition_error(cal_mode)
+            if err is not None:
+                return err
             s.calibration_active = True
             s.calibration_mode = cal_mode
             s.calibration_state = 2 if cal_mode == 1 else 1
             s.calibration_progress = 0.0
-            s.calibration_timer = s.calibration_duration_s / 2  # Half duration per phase (Defect 1)
+            # Half the duration per PHASE; a single-phase run (DARK-only /
+            # FLAT-only) therefore takes half as long as BOTH, which is what
+            # "half duration per phase" has always meant.
+            s.calibration_timer = s.calibration_duration_s / 2
             s.dark_frame_count = 0  # Initialize frame counters
             s.flat_frame_count = 0
+            s.cal_abort_reason = 0
+            # A calibration is its own instrument mode. Promoting STANDBY ->
+            # CALIBRATION makes 0x0600 tell the truth about what the payload is
+            # doing, and keeps `mode == 2` meaning IMAGING for the AOCS desat
+            # inhibit (DISPLAY_REQUESTS_AOCS.md section 3).
+            if s.mode == 1:
+                s.mode = 3
             return {"success": True, "message": "Calibration started"}
 
         elif command == "set_cal_lamp":
@@ -1266,15 +1810,49 @@ class PayloadBasicModel(SubsystemModel):
             return {"success": True}
 
         # ── Shutter commands (Defect 4 — payload.md §3.3) ──
+        elif command == "set_shutter":
+            # 2026-08b PL-d: ABSOLUTE shutter commanding. There was none —
+            # `cycle_shutter` was the only shutter command in the whole
+            # catalogue, and a relative toggle cannot be used to reach a known
+            # state, which is exactly what a dark frame needs. Idempotent by
+            # construction: commanding CLOSED twice leaves it CLOSED.
+            position = int(cmd.get("position", 1))
+            if position not in (0, 1):
+                return {"success": False, "error_code": 0x0003,
+                        "message": f"Shutter position {position} invalid "
+                                   "(0=CLOSED, 1=OPEN)"}
+            if not s.device_states.get(0x0603, True):
+                return {"success": False, "error_code": 0x0007,
+                        "message": "Shutter mechanism device (0x0603) is "
+                                   "powered off"}
+            if s.shutter_test_active:
+                return {"success": False, "error_code": 0x0005,
+                        "message": "Shutter cycle test in progress — "
+                                   "position is not commandable"}
+            s.shutter_position = position
+            return {"success": True, "position": position,
+                    "message": "Shutter CLOSED" if position == 0
+                               else "Shutter OPEN"}
+
         elif command == "cycle_shutter":
             cycles = int(cmd.get("cycles", 1))
-            if not s.shutter_test_active:
-                s.shutter_test_active = True
-                s.shutter_test_cycles_remaining = cycles
-                s.shutter_position = 0 if s.shutter_position == 1 else 1  # Toggle
-                return {"success": True, "message": f"Starting shutter cycle {cycles}"}
-            else:
+            if s.shutter_test_active:
                 return {"success": False, "message": "Shutter test already in progress"}
+            if not s.device_states.get(0x0603, True):
+                return {"success": False, "error_code": 0x0007,
+                        "message": "Shutter mechanism device (0x0603) is "
+                                   "powered off"}
+            s.shutter_test_active = True
+            s.shutter_test_cycles_remaining = cycles
+            # 2026-08b PL-d: the toggle that used to be HERE is gone. It made
+            # every cycle count off by one — `handle_command` toggled once and
+            # then `tick` toggled once per remaining count, so cycles=1 moved
+            # the blade TWICE and the shutter always ended where it started.
+            # The shutter could therefore never be commanded closed, and
+            # COM-011 step 2 ("cycle to CLOSED, verify 0x063C == 0 within
+            # 10 s") could never pass. `tick` owns the mechanism; one
+            # transition per tick, `cycles` transitions in total.
+            return {"success": True, "message": f"Starting shutter cycle {cycles}"}
 
         elif command == "get_shutter_status":
             return {
@@ -1307,18 +1885,29 @@ class PayloadBasicModel(SubsystemModel):
         # ── Downlink commands (Defect 5 — payload.md §3.7) ──
         elif command == "initiate_transfer":
             scene_id = int(cmd.get("scene_id", 0))
-            # Find image in catalog
-            for img in s.image_catalog:
-                if img["scene_id"] == scene_id:
-                    s.transfer_scene_id = scene_id
-                    s.transfer_bytes_total = int(img["size_mb"] * 1e6)
-                    s.transfer_bytes_sent = 0
-                    s.transfer_active = True
-                    s.transfer_progress = 0.0
-                    # Event 0x0610 (TRANSFER_START) will be emitted in next tick
-                    return {"success": True, "message": f"Transfer {scene_id} initiated",
-                            "bytes_total": s.transfer_bytes_total}
-            return {"success": False, "message": f"Image {scene_id} not found"}
+            img = self.find_image(scene_id)
+            if img is None:
+                return {"success": False, "error_code": 0x0003,
+                        "message": f"Image {scene_id} not found in the "
+                                   "catalogue"}
+            if s.transfer_active:
+                return {"success": False, "error_code": 0x0005,
+                        "message": (f"Transfer of scene {s.transfer_scene_id} "
+                                    f"already in progress "
+                                    f"({s.transfer_progress:.0f} %)")}
+            s.transfer_scene_id = scene_id
+            s.transfer_bytes_total = self.image_size_bytes(img)
+            s.transfer_bytes_sent = 0
+            s.transfer_active = True
+            s.transfer_progress = 0.0
+            # 0x0610 TRANSFER_START. The old comment promised "will be emitted
+            # in next tick" and nothing anywhere sent it; the event is raised
+            # HERE, on the command that starts the transfer.
+            self._queue_event(0x0610)
+            return {"success": True, "message": f"Transfer {scene_id} initiated",
+                    "bytes_total": s.transfer_bytes_total,
+                    "blocks": self.image_block_count(img),
+                    "checksum": self.image_checksum(scene_id)}
 
         elif command == "get_transfer_status":
             return {

@@ -20,7 +20,7 @@ decisions about the pace and depth of load shedding.
 ## Prerequisites
 - [ ] Battery SoC declining — `eps.bat_soc` (0x0101) trending downward
 - [ ] Eclipse phase confirmed — `eps.eclipse_flag` (0x0108) = 1
-- [ ] TT&C link active — `ttc.link_status` (0x0501) = 1
+- [ ] TT&C link active — `ttc.link_status` (0x0501) = 2 (LOCKED)
 - [ ] Flight Director notified and aware of extended eclipse scenario
 - [ ] Current orbit prediction available — eclipse exit time known
 - [ ] Power budget (generation vs consumption) calculated and negative
@@ -57,7 +57,7 @@ decisions about the pace and depth of load shedding.
 ## Procedure Steps
 
 ### Step 1: Confirm Extended Eclipse and Establish Baseline
-**Action:** Request EPS housekeeping: `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — Request EPS housekeeping
 **Verify:** `eps.eclipse_flag` (0x0108) = 1 — spacecraft is in eclipse
 **Verify:** `eps.bat_soc` (0x0101) — record current value (expected ~70% at start)
 **Verify:** `eps.bus_voltage` (0x0105) — record baseline
@@ -73,13 +73,14 @@ monitoring" on the operations loop.
 to threshold monitoring.
 
 ### Step 2: SoC < 50% — Shed Load Priority 1 (Payload OFF)
-**Action:** Monitor `eps.bat_soc` (0x0101) at 60 s intervals via `HK_REQUEST(sid=1)`
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — Monitor `eps.bat_soc` (0x0101) at 60 s intervals via
 **Trigger:** When `eps.bat_soc` < 50%:
 **Action:** Announce "SoC below 50% — shedding payload" on the operations loop.
-**Action:** Command payload to OFF: `PAYLOAD_SET_MODE(mode=0)` (func_id 26)
+**TC:** `PAYLOAD_SET_MODE(mode=0)` (Service 8, Subtype 1, func_id 26) — Command payload to OFF
 **Verify:** `payload.mode` (0x0600) = 0 (OFF) within 10 s
 **Verify:** `eps.power_cons` (0x0106) decreases (expected -45 W if imaging, -8 W if standby)
-**Action:** Wait 30 s and re-check: `HK_REQUEST(sid=1)`
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — Wait 30 s and re-check
+**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 27) — Payload housekeeping
 **Verify:** `eps.bat_soc` (0x0101) — record new value
 **Verify:** `eps.bus_voltage` (0x0105) — record new value
 **Action:** Recalculate discharge rate with reduced consumption.
@@ -90,12 +91,13 @@ prepare for next shed level.
 ### Step 3: SoC < 35% — Shed Load Priority 2 (FPA Cooler OFF)
 **Trigger:** When `eps.bat_soc` (0x0101) < 35%:
 **Action:** Announce "SoC below 35% — shedding FPA cooler" on the operations loop.
-**Action:** Disable FPA cooler: `FPA_COOLER(on=0)` (func_id 43)
+**TC:** `FPA_COOLER(on=0)` (Service 8, Subtype 1, func_id 43) — Disable FPA cooler
 **Verify:** `tcs.cooler_fpa` (0x040C) = 0 (OFF) within 5 s
 **Verify:** `eps.power_cons` (0x0106) decreases by ~15 W
 **Note:** FPA detector temperature will begin to rise. Record current FPA temperature
 for post-recovery assessment. Cooler restart will require gradual cool-down.
-**Action:** Wait 30 s and re-check: `HK_REQUEST(sid=1)`
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — Wait 30 s and re-check
+**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 27) — TCS housekeeping
 **Verify:** `eps.bat_soc` (0x0101) — record new value
 **Verify:** `eps.bus_voltage` (0x0105) — record new value
 **Action:** Recalculate discharge rate.
@@ -106,14 +108,15 @@ HOLD and monitor. If SoC will reach 25% before eclipse exit, prepare for next le
 **Trigger:** When `eps.bat_soc` (0x0101) < 25%:
 **Action:** Announce "SoC below 25% — shedding TTC transmitter. DOWNLINK WILL BE
 LOST. Spacecraft will receive commands only." on the operations loop.
-**Action:** Disable power amplifier: `TTC_PA_OFF` (func_id 67)
+**TC:** `TTC_PA_OFF` (Service 8, Subtype 1, func_id 67) — Disable power amplifier
 **Verify:** `ttc.pa_on` (0x0516) = 0 within 5 s
 **Verify:** `eps.power_cons` (0x0106) decreases by ~20 W
 **Note:** WARNING — Telemetry downlink is now OFF. The spacecraft can still receive
 commands (RX is on unswitchable power) but cannot send telemetry. All subsequent
 verification must rely on command acceptance (service 1 verification reports will
 be queued but not transmitted).
-**Action:** Wait 30 s and send `HK_REQUEST(sid=1)` — response will be queued onboard.
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — Wait 30 s and send — response will be queued onboard.
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) — TT&C housekeeping
 **GO/NO-GO:** TX shed. Bus voltage should stabilise. If SoC continues to decline
 below 15%, proceed to emergency level. Flight Director must authorise next step.
 
@@ -121,13 +124,15 @@ below 15%, proceed to emergency level. Flight Director must authorise next step.
 **Trigger:** When `eps.bat_soc` (0x0101) < 15% (estimated from pre-TX-shed rate):
 **Action:** Announce "SoC below 15% — EMERGENCY — shedding AOCS reaction wheels.
 Spacecraft will LOSE active attitude control." on the operations loop.
-**Action:** Power off AOCS wheels: `EPS_POWER_OFF(line_index=7)` (func_id 20)
+**TC:** `EPS_POWER_OFF(line_index=7)` (Service 8, Subtype 1, func_id 20) — Power off AOCS wheels
 **Note:** WARNING — The spacecraft will lose active three-axis attitude control.
 Residual angular momentum will cause slow tumbling. Passive magnetic detumbling
 (if available) provides only coarse stabilisation. Solar arrays may not be optimally
 pointed at eclipse exit, delaying power recovery.
-**Action:** If available, command `AOCS_SET_MODE(mode=1)` (DETUMBLE) to engage
-magnetorquer-only stabilisation before wheels power down.
+**Note:** Only if the AOCS is still commandable. Mode 2 is DETUMBLE, the
+magnetorquer-only rate damper — mode 1 is SAFE_BOOT, which actuates nothing.
+**TC:** `AOCS_SET_MODE(mode=2)` (Service 8, Subtype 1, func_id 0) — DETUMBLE, magnetorquer-only
+stabilisation before the wheels power down
 **GO/NO-GO:** All non-essential loads shed. Monitor bus voltage for stabilisation.
 If bus voltage drops below 25.0 V despite all loads shed, command
 `OBC_SET_MODE(mode=2)` for EMERGENCY mode as last resort.
@@ -136,9 +141,11 @@ If bus voltage drops below 25.0 V despite all loads shed, command
 **Action:** Monitor `eps.eclipse_flag` (0x0108) — wait for transition to 0 (sunlit).
 **Note:** If TX is off, operator cannot receive telemetry. Use predicted eclipse exit
 time from flight dynamics. After predicted exit + 60 s, attempt to re-enable TX:
-**Action:** (If TX was shed) Re-enable power amplifier: `TTC_PA_ON` (func_id 66)
+**Note:** Only if the TX was shed in Step 4.
+**TC:** `TTC_PA_ON` (Service 8, Subtype 1, func_id 66) — re-enable the power amplifier
 **Verify:** `ttc.pa_on` (0x0516) = 1 within 10 s (if telemetry resumes)
-**Action:** Request EPS housekeeping: `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — Request EPS housekeeping
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) — TT&C housekeeping
 **Verify:** `eps.eclipse_flag` (0x0108) = 0 — sunlit confirmed
 **Verify:** `eps.power_gen` (0x0107) > 0 W — solar generation active
 **Verify:** `eps.bat_current` (0x0109) — positive (charging)
@@ -152,8 +159,8 @@ to verify power budget stability. Only restore when SoC is above the shed
 threshold + 10% margin.
 
 **Step 7a — Restore AOCS Wheels (if shed) — when SoC > 25%:**
-**Action:** `EPS_POWER_ON(line_index=7)` (func_id 19)
-**Action:** Command `AOCS_SET_MODE(mode=2)` (COARSE_SUN) to begin attitude recovery.
+**TC:** `EPS_POWER_ON(line_index=7)` (Service 8, Subtype 1, func_id 19)
+**TC:** `AOCS_SET_MODE(mode=2)` (Service 8, Subtype 1, func_id 0) — Command — (COARSE_SUN) to begin attitude recovery.
 **Verify:** `aocs.mode` (0x020F) responds within 15 s
 **Verify:** Body rates `aocs.rate_roll` (0x0204), `aocs.rate_pitch` (0x0205),
 `aocs.rate_yaw` (0x0206) — decreasing toward zero
@@ -162,14 +169,14 @@ threshold + 10% margin.
 **GO/NO-GO:** AOCS wheels restored and attitude recovering — proceed.
 
 **Step 7b — Restore TTC TX (if shed) — when SoC > 35%:**
-**Action:** `TTC_PA_ON` (func_id 66)
+**TC:** `TTC_PA_ON` (Service 8, Subtype 1, func_id 66)
 **Verify:** `ttc.pa_on` (0x0516) = 1 within 5 s
 **Verify:** `eps.bus_voltage` (0x0105) remains > 26.5 V
 **Action:** Wait 5 minutes and confirm SoC still trending upward.
 **GO/NO-GO:** TX restored and telemetry flowing — proceed.
 
 **Step 7c — Restore FPA Cooler — when SoC > 45%:**
-**Action:** `FPA_COOLER(on=1)` (func_id 43)
+**TC:** `FPA_COOLER(on=1)` (Service 8, Subtype 1, func_id 43)
 **Verify:** `tcs.cooler_fpa` (0x040C) = 1 within 5 s
 **Note:** FPA cool-down from ambient to operating temperature takes approximately
 20 minutes. Payload imaging should not resume until FPA reaches operating temperature.
@@ -178,18 +185,21 @@ threshold + 10% margin.
 **GO/NO-GO:** FPA cooler restored — proceed.
 
 **Step 7d — Restore Payload to STANDBY — when SoC > 60%:**
-**Action:** `PAYLOAD_SET_MODE(mode=1)` (func_id 26)
+**TC:** `PAYLOAD_SET_MODE(mode=1)` (Service 8, Subtype 1, func_id 26)
 **Verify:** `payload.mode` (0x0600) = 1 (STANDBY) within 10 s
 **Verify:** `eps.bus_voltage` (0x0105) remains > 27.5 V
 **Verify:** `eps.bat_soc` (0x0101) remains > 55%
 **GO/NO-GO:** All loads restored. Power budget is positive — procedure complete.
 
 ### Step 8: Post-Recovery Verification
-**Action:** Request full housekeeping: `HK_REQUEST(sid=1)` and `HK_REQUEST(sid=2)`
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — EPS housekeeping
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — AOCS housekeeping
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — AOCS housekeeping
+**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 27) — Payload housekeeping
 **Verify:** `eps.bus_voltage` (0x0105) > 28.0 V
 **Verify:** `eps.bat_soc` (0x0101) > 55% and trending upward
 **Verify:** `eps.power_gen` (0x0107) > `eps.power_cons` (0x0106) — positive margin
-**Verify:** `aocs.mode` (0x020F) = nominal mode (3 = NADIR_POINT if restored)
+**Verify:** `aocs.mode` (0x020F) = nominal mode (3 = NOMINAL if restored)
 **Verify:** `payload.mode` (0x0600) = 1 (STANDBY)
 **Verify:** All subsystem temperatures within nominal ranges
 **GO/NO-GO:** All systems restored and nominal — procedure complete.

@@ -13,7 +13,7 @@ memory reload to restore the application.
 
 ## Prerequisites
 - [ ] OBC detected in bootloader — `obdh.sw_image` (0x0311) = 0
-- [ ] TT&C link active — `ttc.link_status` (0x0501) = 1
+- [ ] TT&C link active — `ttc.link_status` (0x0501) = 2 (LOCKED)
 - [ ] Flight Director notified
 - [ ] Bootloader is responsive to commands (HK requests return data)
 
@@ -30,7 +30,7 @@ memory reload to restore the application.
 | obdh.boot_count_a | 0x0317 | OBC-A total boot count |
 | obdh.boot_count_b | 0x0318 | OBC-B total boot count |
 | eps.bus_voltage | 0x0105 | > 27.0 V |
-| ttc.link_status | 0x0501 | 1 (active) |
+| ttc.link_status | 0x0501 | 2 (LOCKED) |
 
 ## Required Commands
 | Command | Service | Subtype | Func ID | Description |
@@ -45,7 +45,7 @@ memory reload to restore the application.
 ## Procedure Steps
 
 ### Step 1: Detect Bootloader State
-**Action:** Request OBDH housekeeping: `HK_REQUEST(sid=4)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) — Request OBDH housekeeping
 **Verify:** `obdh.sw_image` (0x0311) = 0 (bootloader, application not running)
 **Verify:** `obdh.last_reboot_cause` (0x0316) — record the cause:
 - 0 = none (unexpected — should not be in bootloader without cause)
@@ -80,9 +80,9 @@ If cause = 1 (watchdog), the application may have crashed but the image could be
 **GO/NO-GO:** Assessment complete — follow appropriate path.
 
 ### Step 3: Attempt Application Boot
-**Action:** Command application boot: `OBC_BOOT_APP` (func_id 55)
+**TC:** `OBC_BOOT_APP` (Service 8, Subtype 1, func_id 55) — Command application boot
 **Verify:** Wait 30 s for application to initialize.
-**Action:** Request OBDH housekeeping: `HK_REQUEST(sid=4)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) — Request OBDH housekeeping
 **Verify:** `obdh.sw_image` (0x0311) = 1 (application running)
 **Verify:** `obdh.sw_version` (0x030B) — correct application version
 **Verify:** `obdh.mode` (0x0300) — OBC enters SAFE or NOMINAL
@@ -100,10 +100,10 @@ running. While it is latched, BEACON (1 000 bps) is the ONLY permitted tier and 
 `TTC_SET_DATA_RATE` comes back as an S1.8 execution failure, error `0x0007`, with the
 failure notice "TM rate is forced to the beacon tier in beacon mode (LOW refused)" —
 also raised as S5 event `0x030B COMMAND_REJECTED`.
-**Action:** Clear beacon mode: `TTC_SET_BEACON_MODE(on=0)` (Service 8, Subtype 1, func_id 70)
+**TC:** `TTC_SET_BEACON_MODE(on=0)` (Service 8, Subtype 1, func_id 70) — Clear beacon mode
 **Verify:** S1.1 acceptance + S1.7 execution complete within 5 s
 **Verify:** `ttc.beacon_mode` (0x0521) = 0 within 10 s
-**Action:** Select the routine operations rung: `TTC_SET_DATA_RATE(rate=0)` (func_id 65)
+**TC:** `TTC_SET_DATA_RATE(rate=0)` (Service 8, Subtype 1, func_id 65) — Select the routine operations rung
 **Verify:** S1.7 execution complete — NOT an S1.8
 **Verify:** `ttc.tm_data_rate` (0x0506) = 16000 and `ttc.tm_tier` (0x0539) = 1 (LOW)
 **Action:** Re-configure the ground demodulator from 1 kBd to 16 kBd.
@@ -114,10 +114,10 @@ code. Full list in `docs/LINK_BUDGET_AND_RATES.md` section 6.3.
 **GO/NO-GO:** Beacon mode cleared and downlink at LOW — proceed to Step 7.
 
 ### Step 4: Enable Boot Inhibit and Check Memory
-**Action:** Inhibit auto-boot to prevent boot loop: `OBC_BOOT_INHIBIT(inhibit=1)` (func_id 56)
+**TC:** `OBC_BOOT_INHIBIT(inhibit=1)` (Service 8, Subtype 1, func_id 56) — Inhibit auto-boot to prevent boot loop
 **Verify:** OBC remains in bootloader (no automatic boot attempts)
-**Action:** Perform memory CRC check on the application image region:
-`MEM_CHECK(memory_id=1, address=0x00000000, length=0x00100000)` (Service 6, Subtype 9)
+**Note:** Perform memory CRC check on the application image region:
+**TC:** `MEM_CHECK(memory_id=1, address=0x00000000, length=0x00100000)` (Service 6, Subtype 9)
 **Note:** Address and length values are for the application image stored in EEPROM.
 Adjust based on the actual memory map if different.
 **Verify:** Wait for memory check result report.
@@ -128,39 +128,40 @@ Adjust based on the actual memory map if different.
 **GO/NO-GO:** Memory check complete — follow appropriate path.
 
 ### Step 5: Retry Application Boot After Memory Check
-**Action:** Disable boot inhibit: `OBC_BOOT_INHIBIT(inhibit=0)` (func_id 56)
-**Action:** Command application boot: `OBC_BOOT_APP` (func_id 55)
+**TC:** `OBC_BOOT_INHIBIT(inhibit=0)` (Service 8, Subtype 1, func_id 56) — Disable boot inhibit
+**TC:** `OBC_BOOT_APP` (Service 8, Subtype 1, func_id 55) — Command application boot
 **Verify:** Wait 30 s for application to initialize.
-**Action:** Request OBDH housekeeping: `HK_REQUEST(sid=4)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) — Request OBDH housekeeping
 **Verify:** `obdh.sw_image` (0x0311) = 1 (application running)
 **Verify:** `obdh.sw_version` (0x030B) — correct version
 **Action:** If boot succeeds, proceed to Step 3a (clear beacon mode) then Step 7. If boot fails again, proceed to Step 6.
 **GO/NO-GO:** Boot succeeded — go to Step 3a, then Step 7. Or boot failed again — proceed to Step 6.
 
 ### Step 6: Attempt Memory Reload
-**Action:** Ensure boot inhibit is active: `OBC_BOOT_INHIBIT(inhibit=1)` (func_id 56)
-**Action:** Upload application software image to EEPROM via memory load commands:
-`MEM_LOAD(memory_id=1, address=ADDR, data=BLOCK)` (Service 6, Subtype 2)
+**TC:** `OBC_BOOT_INHIBIT(inhibit=1)` (Service 8, Subtype 1, func_id 56) — Ensure boot inhibit is active
+**Note:** Upload application software image to EEPROM via memory load commands:
+**TC:** `MEM_LOAD(memory_id=1, address=ADDR, data=BLOCK)` (Service 6, Subtype 2)
 **Note:** This requires uploading the full application image in blocks via telecommand.
 This is a lengthy process (may take multiple ground station contacts depending on
 image size and uplink data rate).
-**Action:** After upload complete, verify the image:
-`MEM_CHECK(memory_id=1, address=0x00000000, length=0x00100000)` (Service 6, Subtype 9)
+**Note:** After upload complete, verify the image:
+**TC:** `MEM_CHECK(memory_id=1, address=0x00000000, length=0x00100000)` (Service 6, Subtype 9)
 **Verify:** CRC matches the expected value for the uploaded image.
-**Action:** If CRC matches, disable boot inhibit and boot:
-`OBC_BOOT_INHIBIT(inhibit=0)` (func_id 56)
-`OBC_BOOT_APP` (func_id 55)
+**Note:** If CRC matches, disable boot inhibit and boot:
+**TC:** `OBC_BOOT_INHIBIT(inhibit=0)` (Service 8, Subtype 1, func_id 56)
+**TC:** `OBC_BOOT_APP` (Service 8, Subtype 1, func_id 55)
 **Verify:** `obdh.sw_image` (0x0311) = 1 within 30 s
 **Action:** If boot succeeds, proceed to Step 3a (clear beacon mode) then Step 7. If boot fails, proceed to Contingency.
 **GO/NO-GO:** Memory reload and boot attempted — proceed to verification if successful.
 
 ### Step 7: Verify All Subsystems Nominal
-**Action:** Request HK from all subsystems:
-- `HK_REQUEST(sid=1)` — EPS
-- `HK_REQUEST(sid=2)` — AOCS
-- `HK_REQUEST(sid=3)` — TCS
-- `HK_REQUEST(sid=5)` — TTC
-- `HK_REQUEST(sid=6)` — Payload
+**Note:** Request HK from all subsystems:
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — EPS
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — AOCS
+**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 27) — TCS
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) — TTC
+**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 27) — Payload
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) — Platform/OBDH housekeeping
 **Verify:** All HK responses received.
 **Verify:** `eps.bus_voltage` (0x0105) > 27.0 V
 **Verify:** `aocs.mode` (0x020F) — record and restore if needed

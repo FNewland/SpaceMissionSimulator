@@ -58,11 +58,41 @@ TC_CATALOG = CFG / "commands" / "tc_catalog.yaml"
 PARAMS = CFG / "telemetry" / "parameters.yaml"
 HK = CFG / "telemetry" / "hk_structures.yaml"
 EVENTS = CFG / "events" / "event_catalog.yaml"
+INDEX = PROC_DIR / "procedure_index.yaml"
 
 OUT_DIR = REPO / "workspace" / "audit"
 
+# The canonical extractor. The auditor used to have its own idea of what a
+# procedure "contains", which is how a document with ZERO `**TC:**` lines
+# passed every category vacuously: nothing to check meant nothing wrong. It now
+# asks `smo_common.procedures` the same question the procedure runner asks, so
+# "this document commands nothing" is a finding rather than a clean sheet.
+_COMMON_SRC = REPO / "packages" / "smo-common" / "src"
+if str(_COMMON_SRC) not in sys.path:
+    sys.path.insert(0, str(_COMMON_SRC))
+from smo_common.procedures import markdown_steps, mnemonic_head  # noqa: E402
+
 # ---------- regex ----------
 RE_TC_LINE = re.compile(r"\*\*TC:\*\*\s*`?([A-Z][A-Z0-9_]+)", re.IGNORECASE)
+
+#: `**Action:** ... `EPS_POWER_OFF(line_index=5)` ...` — a catalogued command
+#: written where the extractor cannot see it. THIS is the root cause of the 21
+#: inert procedures: every one of them wrote its whole commanding this way, and
+#: because `RE_TC_LINE` only matches `**TC:**`, the 21 worst documents in the
+#: tree were the ones the gate could not see at all.
+RE_ACTION_LINE = re.compile(r"(?m)^[ \t]*(?:[-*+]\s+|>\s*)?\*\*Action:?\*\*:?([^\n]*)")
+RE_BARE_MNEMONIC = re.compile(r"\b([A-Z][A-Z0-9_]{3,})\b")
+
+#: `eps.bat_soc` (0x0101) — the NAME and the ID must agree. Both halves are
+#: individually valid, so neither the TC check nor the parameter check could
+#: ever notice `tcs.htr_thruster` (0x040D) when 0x040D is `ttc.pa_backup_temp`.
+RE_NAME_WITH_ID = re.compile(
+    r"`?\b([a-z]{2,8}\.[a-z][a-z0-9_]*)`?\s*\(\s*(0x[0-9A-Fa-f]{3,4})\s*\)")
+
+#: `HK_REQUEST(sid=N)` and the `**Verify:**` lines in the same step.
+RE_HK_REQUEST = re.compile(r"HK_REQUEST\(sid=(\d+)\)")
+RE_VERIFY_PARAM = re.compile(r"`([a-z]{2,8}\.[a-z][a-z0-9_]*)`")
+RE_STEP_BREAK = re.compile(r"(?m)^#{2,}\s")
 
 # Generic service-family labels that aren't specific TCs and should not be
 # flagged as unknown commands.
@@ -101,9 +131,16 @@ S20_SUBTYPE = {"GET_PARAM": 3, "SET_PARAM": 1}
 # battery_cell_failure.md's "HEATER_SET_SETPOINT ... func 34" — 19 procedure
 # files carried a whole stale numbering scheme in which every S8 annotation
 # named the wrong function.
+#
+# 2026-08b: the closing `\)` was preceded by a literal `\(`, so this only ever
+# matched a bare `(func 43)` and NOT the canonical annotation shape
+# `(Service 8, Subtype 1, func_id 36)` — which is how LEOP-007 could annotate
+# SET_FPA_COOLER (an alias of EPS_FPA_COOLER, func 17) with func_id 36
+# (PAYLOAD_COOLER_SETPOINT, a uint16 centi-kelvin setpoint) and pass the gate.
+# The `(` is now optional and `func_id` may be preceded by a comma.
 RE_FUNC_ANNOT = re.compile(
     r"`?([A-Z][A-Z0-9_]{2,})(?:\([^`\n]*\))?`?[^\n]{0,80}?"
-    r"\(func(?:_id)?\s+(\d+)\)")
+    r"[(,]\s*func(?:_id)?\s*[= ]\s*(\d+)\s*[),]")
 RE_FUNC_TABLE_ROW = re.compile(
     r"^\|\s*([A-Z][A-Z0-9_]{2,})\s*\|\s*8\s*\|\s*1\s*\|\s*(\d+)\s*\|", re.M)
 
@@ -120,7 +157,15 @@ class Catalog:
     param_by_name: dict[str, dict] = field(default_factory=dict)
     hk_param_ids: set[int] = field(default_factory=set)
     hk_sids_for_param: dict[int, list[int]] = field(default_factory=dict)
+    #: SID -> the parameter ids that structure actually carries. Needed for the
+    #: HK_SID_MISMATCH check: a step that requests SID 5 and then verifies
+    #: `ttc.link_status` is asking for a reading the packet does not contain.
+    hk_params_by_sid: dict[int, set[int]] = field(default_factory=dict)
     on_demand_ids: set[int] = field(default_factory=set)
+    #: mnemonic -> the full tc_catalog entry, for the extractor.
+    tc_entries: dict[str, dict] = field(default_factory=dict)
+    #: procedure id -> index entry, for the advisory / command_services checks.
+    index_by_file: dict[str, dict] = field(default_factory=dict)
     #: Event id -> name. A procedure legitimately cites event ids in the same
     #: `(0x0803)` shape as parameter ids — the auditor used to report all nine
     #: Phase D propulsion event references as PARAM_UNKNOWN, which is a false
@@ -136,6 +181,7 @@ class Catalog:
             if not name:
                 continue
             self.tc_names.add(name.upper())
+            self.tc_entries[name.upper()] = cmd
             try:
                 self.tc_services[name.upper()] = (
                     int(cmd.get("service", 0)), int(cmd.get("subtype", 0)))
@@ -149,6 +195,7 @@ class Catalog:
             for alias_key in ("aliases", "short_names"):
                 for a in cmd.get(alias_key, []) or []:
                     self.tc_names.add(str(a).upper())
+                    self.tc_entries.setdefault(str(a).upper(), cmd)
                     if cmd.get("func_id") is not None:
                         self.tc_func_ids.setdefault(str(a).upper(),
                                                     int(cmd["func_id"]))
@@ -193,6 +240,14 @@ class Catalog:
                     continue
                 self.hk_param_ids.add(pid)
                 self.hk_sids_for_param.setdefault(pid, []).append(sid)
+                self.hk_params_by_sid.setdefault(sid, set()).add(pid)
+
+        if INDEX.exists():
+            with INDEX.open() as f:
+                idx = yaml.safe_load(f) or {}
+            for entry in idx.get("procedures", []) or []:
+                if entry.get("file"):
+                    self.index_by_file[str(entry["file"])] = entry
 
 
 # ---------- audit ----------
@@ -200,7 +255,9 @@ class Catalog:
 class Finding:
     procedure: str
     #: TC_UNKNOWN, FUNC_ID_MISMATCH, PARAM_UNKNOWN, PARAM_NOT_REACHABLE,
-    #: EVENT_NAME_MISMATCH, SUBTYPE_INVERTED
+    #: EVENT_NAME_MISMATCH, SUBTYPE_INVERTED, ACTION_COMMAND,
+    #: TC_NOT_EXTRACTED, PARAM_NAME_ID_MISMATCH, HK_SID_MISMATCH,
+    #: ZERO_COMMAND_PROCEDURE
     category: str
     detail: str
     context: str = ""
@@ -219,6 +276,29 @@ class ProcedureReport:
     event_refs: list[str] = field(default_factory=list)
     event_mismatch: list[str] = field(default_factory=list)
     subtype_inverted: list[str] = field(default_factory=list)
+    #: 2026-08b Phase 5 additions.
+    action_command: list[str] = field(default_factory=list)
+    tc_not_extracted: list[str] = field(default_factory=list)
+    param_name_id_mismatch: list[str] = field(default_factory=list)
+    hk_sid_mismatch: list[str] = field(default_factory=list)
+    zero_command: list[str] = field(default_factory=list)
+    #: How many executable command steps the canonical extractor gets out of
+    #: this document. The number the old auditor never asked for.
+    command_steps: int = 0
+    advisory: bool = False
+    indexed: bool = True
+
+
+def _action_bullet_block(text: str, start: int) -> str:
+    """The bullet list that belongs to an ``**Action:**`` line (see the
+    matching helper in ``smo_common.procedures.schema``)."""
+    out: list[str] = []
+    for line in text[start:].splitlines()[1:]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("**"):
+            break
+        out.append(stripped)
+    return "\n" + "\n".join(out) if out else ""
 
 
 def audit_procedures(cat: Catalog) -> tuple[list[ProcedureReport], list[Finding]]:
@@ -230,6 +310,120 @@ def audit_procedures(cat: Catalog) -> tuple[list[ProcedureReport], list[Finding]
         text = md.read_text(encoding="utf-8", errors="replace")
 
         rep = ProcedureReport(rel_path=rel, category=category)
+        entry = cat.index_by_file.get(rel, {})
+        # A card that DECLARES it commands nothing, via
+        # `runnable: {kind: advisory, reason: ...}`. See the header of
+        # procedures/procedure_index.yaml for why the property lives in the
+        # `runnable` mapping rather than in a dedicated `advisory:` key.
+        rep.advisory = (entry.get("runnable") or {}).get("kind") == "advisory"
+        # A document with no index entry is not audited for the zero-command
+        # invariant: it has nothing declaring what it should command, and the
+        # index/tree agreement is asserted separately in test_procedure_gates.
+        rep.indexed = bool(entry)
+
+        # ── 2026-08b Phase 5: what does the EXTRACTOR get out of this? ──
+        #
+        # Everything below this point used to be checked only against the text
+        # the auditor could see. A document with no `**TC:**` line therefore
+        # scored zero findings in every category while commanding nothing —
+        # 21 documents, including an EMERGENCY card, passed that way.
+        steps, problems = markdown_steps(text, cat.tc_entries)
+        rep.command_steps = sum(1 for s in steps if s.get("type") == "command")
+
+        for problem in problems:
+            if problem.category == "TC_DROPPED":
+                detail = f"line {problem.line}: {problem.message}"
+                rep.tc_not_extracted.append(detail)
+                findings.append(Finding(rel, "TC_NOT_EXTRACTED", detail))
+            elif problem.category == "BAD_BRANCH":
+                detail = f"line {problem.line}: {problem.message}"
+                rep.tc_not_extracted.append(detail)
+                findings.append(Finding(rel, "TC_NOT_EXTRACTED", detail))
+
+        # A catalogued command hiding behind `**Action:**` — including the
+        # bullet block underneath it, which is where NOM-012 kept an entire
+        # six-structure housekeeping sweep.
+        for m in RE_ACTION_LINE.finditer(text):
+            body = m.group(1) + _action_bullet_block(text, m.end())
+            hidden = sorted({tok for tok in RE_BARE_MNEMONIC.findall(body)
+                             if tok in cat.tc_names
+                             and tok not in GENERIC_TC_LABELS})
+            for mnemonic in hidden:
+                detail = (f"{mnemonic} is commanded from an **Action:** line; "
+                          f"only **TC:** is extracted, so this is INERT")
+                if detail not in rep.action_command:
+                    rep.action_command.append(detail)
+                    findings.append(Finding(
+                        rel, "ACTION_COMMAND", detail,
+                        context=m.group(0)[:120]))
+
+        # A procedure that yields no commands at all. Advisory cards declare
+        # that they are documents; everything else claiming `command_services`
+        # while extracting nothing is the defect stated as an invariant.
+        if rep.command_steps == 0 and not rep.advisory and rep.indexed:
+            services = entry.get("command_services")
+            detail = (f"extracts ZERO command steps"
+                      + (f" while procedure_index.yaml declares "
+                         f"command_services: {services}" if services else "")
+                      + " — mark it `advisory: true` with an `advisory_reason`, "
+                        "or give it real **TC:** annotations")
+            rep.zero_command.append(detail)
+            findings.append(Finding(rel, "ZERO_COMMAND_PROCEDURE", detail))
+        elif rep.command_steps > 0 and rep.advisory:
+            detail = (f"declared `advisory: true` but extracts "
+                      f"{rep.command_steps} command step(s)")
+            rep.zero_command.append(detail)
+            findings.append(Finding(rel, "ZERO_COMMAND_PROCEDURE", detail))
+
+        # `name (0xNNNN)` where the name and the id name different parameters.
+        for m in RE_NAME_WITH_ID.finditer(text):
+            name, hexid = m.group(1).lower(), m.group(2)
+            entry_p = cat.param_by_name.get(name)
+            if entry_p is None:
+                continue
+            try:
+                pid = int(hexid, 16)
+                want = (entry_p["id"] if isinstance(entry_p["id"], int)
+                        else int(str(entry_p["id"]), 0))
+            except (ValueError, KeyError):
+                continue
+            if pid == want:
+                continue
+            other = cat.param_by_id.get(pid, {}).get("name", "UNDEFINED")
+            detail = (f"{name} cited as {hexid}, but {name} is 0x{want:04X} "
+                      f"and {hexid} is {other}")
+            if detail not in rep.param_name_id_mismatch:
+                rep.param_name_id_mismatch.append(detail)
+                findings.append(Finding(rel, "PARAM_NAME_ID_MISMATCH", detail))
+
+        # A step that requests one HK structure and verifies a parameter that
+        # lives in another. Both halves are individually valid, which is why
+        # nothing caught it: the check the card asks for simply cannot pass.
+        for block in RE_STEP_BREAK.split(text):
+            requested = {int(x) for x in RE_HK_REQUEST.findall(block)}
+            if not requested:
+                continue
+            available: set[int] = set()
+            for sid in requested:
+                available |= cat.hk_params_by_sid.get(sid, set())
+            for line in block.splitlines():
+                if not line.lstrip().startswith("**Verify:**"):
+                    continue
+                for name in RE_VERIFY_PARAM.findall(line):
+                    entry_p = cat.param_by_name.get(name.lower())
+                    if entry_p is None:
+                        continue
+                    pid = (entry_p["id"] if isinstance(entry_p["id"], int)
+                           else int(str(entry_p["id"]), 0))
+                    if pid in available or pid in cat.on_demand_ids:
+                        continue
+                    homes = sorted(cat.hk_sids_for_param.get(pid, []))
+                    detail = (f"step requests HK SID {sorted(requested)} but "
+                              f"verifies {name} (0x{pid:04X}), which is in "
+                              f"SID {homes or 'no structure'}")
+                    if detail not in rep.hk_sid_mismatch:
+                        rep.hk_sid_mismatch.append(detail)
+                        findings.append(Finding(rel, "HK_SID_MISMATCH", detail))
 
         # TCs
         for m in RE_TC_LINE.finditer(text):
@@ -408,15 +602,33 @@ def render(reports: list[ProcedureReport], findings: list[Finding]) -> str:
     for r in reports:
         bad = (len(r.tc_unknown) + len(r.param_unknown)
                + len(r.param_not_reachable) + len(r.func_id_mismatch)
-               + len(r.event_mismatch) + len(r.subtype_inverted))
+               + len(r.event_mismatch) + len(r.subtype_inverted)
+               + len(r.action_command) + len(r.tc_not_extracted)
+               + len(r.param_name_id_mismatch) + len(r.hk_sid_mismatch)
+               + len(r.zero_command))
         cls = "err" if bad else "ok"
         per_proc_html.append(
             f"<details><summary class='{cls}'>"
             f"<span class='cat'>{r.category}</span> {r.rel_path} — "
-            f"{len(r.tc_refs)} TCs, {len(r.param_refs)} TMs, "
+            f"{len(r.tc_refs)} TCs, <b>{r.command_steps}</b> extracted command "
+            f"steps{' (ADVISORY)' if r.advisory else ''}, "
+            f"{len(r.param_refs)} TMs, "
             f"{len(r.event_refs)} events, "
             f"<b>{bad}</b> issues</summary>"
             f"<ul>"
+            + (f"<li class='err'>Commanding hidden behind **Action:**: "
+               f"{'; '.join(r.action_command)}</li>" if r.action_command else "")
+            + (f"<li class='err'>**TC:** annotations that do not survive "
+               f"extraction: {'; '.join(r.tc_not_extracted)}</li>"
+               if r.tc_not_extracted else "")
+            + (f"<li class='err'>Zero-command procedure: "
+               f"{'; '.join(r.zero_command)}</li>" if r.zero_command else "")
+            + (f"<li class='err'>Parameter name/id disagreement: "
+               f"{'; '.join(r.param_name_id_mismatch)}</li>"
+               if r.param_name_id_mismatch else "")
+            + (f"<li class='err'>HK structure does not carry the verified "
+               f"parameter: {'; '.join(r.hk_sid_mismatch)}</li>"
+               if r.hk_sid_mismatch else "")
             + (f"<li class='err'>Unknown TCs: {', '.join(r.tc_unknown)}</li>"
                if r.tc_unknown else "")
             + (f"<li class='err'>func_id annotations contradicting the catalogue: "
@@ -475,9 +687,16 @@ def main() -> int:
     # Console summary
     print(f"Scanned {len(reports)} procedures")
     print(f"Findings: {len(findings)}")
-    for cat_name in ("TC_UNKNOWN", "PARAM_UNKNOWN", "PARAM_NOT_REACHABLE"):
+    for cat_name in ("TC_UNKNOWN", "FUNC_ID_MISMATCH", "PARAM_UNKNOWN",
+                     "PARAM_NOT_REACHABLE", "EVENT_NAME_MISMATCH",
+                     "SUBTYPE_INVERTED", "ACTION_COMMAND", "TC_NOT_EXTRACTED",
+                     "PARAM_NAME_ID_MISMATCH", "HK_SID_MISMATCH",
+                     "ZERO_COMMAND_PROCEDURE"):
         n = sum(1 for f in findings if f.category == cat_name)
         print(f"  {cat_name}: {n}")
+    inert = [r.rel_path for r in reports
+             if r.command_steps == 0 and not r.advisory]
+    print(f"Procedures extracting zero commands (non-advisory): {len(inert)}")
     print(f"Report: {OUT_DIR/'procedure_audit.html'}")
     return 0
 

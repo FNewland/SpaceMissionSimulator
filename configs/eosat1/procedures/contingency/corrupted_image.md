@@ -13,7 +13,7 @@ action including aborting imaging if necessary and re-capturing the scene.
 
 ## Prerequisites
 - [ ] Checksum errors detected — `payload.checksum_errors` (0x0609) has increased
-- [ ] TT&C link active — `ttc.link_status` (0x0501) = 1
+- [ ] TT&C link active — `ttc.link_status` (0x0501) = 2 (LOCKED)
 - [ ] Payload in STANDBY or IMAGING mode — `payload.mode` (0x0600) >= 1
 - [ ] Payload operator on console
 
@@ -46,7 +46,7 @@ action including aborting imaging if necessary and re-capturing the scene.
 ## Procedure Steps
 
 ### Step 1: Detect and Quantify Checksum Errors
-**Action:** Request payload housekeeping: `HK_REQUEST(sid=6)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 27) — Request payload housekeeping
 **Verify:** `payload.checksum_errors` (0x0609) — record current value and compare with
 previous baseline. Calculate delta (number of new errors).
 **Verify:** `payload.last_scene_id` (0x060C) — record the scene that may be affected
@@ -57,9 +57,9 @@ same scene suggest a systematic issue.
 **GO/NO-GO:** Checksum errors confirmed — proceed to root cause investigation.
 
 ### Step 2: Check FPA Temperature
-**Action:** Request payload and TCS housekeeping:
-- `HK_REQUEST(sid=6)` — payload HK
-- `HK_REQUEST(sid=3)` — TCS HK
+**Note:** Request payload and TCS housekeeping:
+**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 27) — payload HK
+**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 27) — TCS HK
 **Verify:** `payload.fpa_temp` (0x0601) — record value
 **Verify:** `tcs.temp_fpa` (0x0408) — cross-check with TCS sensor
 **Verify:** `payload.fpa_ready` (0x0610) — check if FPA is in operational range
@@ -72,12 +72,16 @@ same scene suggest a systematic issue.
 **GO/NO-GO:** FPA assessment complete — follow appropriate branch.
 
 ### Step 3: FPA Warm — Abort Imaging and Cool Down
-**Action:** If payload is in IMAGING mode, abort: `PAYLOAD_SET_MODE(mode=1)` (func_id 26)
+**Note:** Only if `payload.mode` (0x0600) = 2 (IMAGING). Mode 3 is CALIBRATION
+and is aborted by the same command; mode 1 is already STANDBY and needs nothing.
+**TC:** `PAYLOAD_SET_MODE(mode=1)` (Service 8, Subtype 1, func_id 26) — abort to STANDBY
 **Verify:** `payload.mode` (0x0600) = 1 (STANDBY) within 10 s
-**Action:** Verify cooler is active: If `tcs.cooler_fpa` (0x040C) = 0, enable:
-`FPA_COOLER(on=1)` (func_id 43)
+**Note:** Verify cooler is active: If `tcs.cooler_fpa` (0x040C) = 0, enable:
+**TC:** `FPA_COOLER(on=1)` (Service 8, Subtype 1, func_id 43)
 **Verify:** `tcs.cooler_fpa` (0x040C) = 1 within 5 s
-**Action:** Monitor FPA temperature cooldown at 60 s intervals: `HK_REQUEST(sid=6)`
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) — Monitor FPA temperature cooldown at 60 s intervals
+**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 27) — TCS housekeeping
+**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 27) — Payload housekeeping
 **Verify:** `payload.fpa_temp` (0x0601) trending downward toward target (-5 C cooler
 setpoint, operational threshold -25 C)
 **Note:** Cooldown from ambient (~5 C) to operational (< -25 C) takes approximately
@@ -86,7 +90,7 @@ setpoint, operational threshold -25 C)
 **GO/NO-GO:** FPA cooled to operational temperature — proceed to Step 5 (re-capture).
 
 ### Step 4: Check Memory Segments
-**Action:** Request payload housekeeping: `HK_REQUEST(sid=6)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 27) — Request payload housekeeping
 **Verify:** `payload.mem_segments_bad` (0x0612) — record current value
 **Verify:** `payload.store_used` (0x0604) — record storage usage
 **Action:** If `payload.mem_segments_bad` > 0:
@@ -99,7 +103,7 @@ setpoint, operational threshold -25 C)
 **GO/NO-GO:** Memory assessment complete — proceed to re-capture if appropriate.
 
 ### Step 5: Delete Corrupted Image and Re-Capture
-**Action:** Delete the corrupted image: `PAYLOAD_DELETE_IMAGE(scene_id=N)` (func_id 30)
+**TC:** `PAYLOAD_DELETE_IMAGE(scene_id=N)` (Service 8, Subtype 1, func_id 30) — Delete the corrupted image
 where N is the affected scene ID from Step 1.
 **Verify:** `payload.store_used` (0x0604) decreases (storage freed)
 **Verify:** `payload.image_count` (0x0605) decreases by 1
@@ -108,7 +112,7 @@ where N is the affected scene ID from Step 1.
 - `payload.fpa_ready` (0x0610) = 1
 - `payload.mem_segments_bad` (0x0612) = 0 (or bad segments marked)
 - `aocs.att_error` (0x0217) < 0.1 deg
-**Action:** Re-capture the scene: `PAYLOAD_CAPTURE(scene_id=N, lines=L)` (func_id 28)  
+**TC:** `PAYLOAD_CAPTURE(scene_id=N, lines=L)` (Service 8, Subtype 1, func_id 28) — Re-capture the scene
 **Wire:** `1C <scene_id:uint16> <lines:uint16>` — e.g. scene 1042, 2048 lines = `1C 04 12 08 00`.
 `scene_id` 0 lets the payload auto-assign the next free id; `lines` is 256-20000 along-track
 detector lines (2048 = the 4-band 4.0 MB reference frame). Geolocation is NOT an argument —
@@ -119,7 +123,7 @@ it is stamped on board from the propagated sub-satellite point at shutter open.
 **GO/NO-GO:** Re-capture successful with no new errors — procedure complete.
 
 ### Step 6: Post-Capture Verification
-**Action:** Request final payload housekeeping: `HK_REQUEST(sid=6)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 27) — Request final payload housekeeping
 **Verify:** `payload.checksum_errors` (0x0609) — no further increase
 **Verify:** `payload.last_scene_quality` (0x060D) — acceptable quality
 **Verify:** `payload.store_used` (0x0604) — within capacity

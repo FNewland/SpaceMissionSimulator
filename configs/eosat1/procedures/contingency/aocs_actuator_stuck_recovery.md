@@ -21,7 +21,7 @@ control with any three operational wheels at slightly relaxed pointing accuracy.
 ## Prerequisites
 - [ ] AOCS telemetry (SID 2) is being received at >= 1 Hz
 - [ ] At least three reaction wheels were functional prior to the seizure event
-- [ ] TT&C link active — `ttc.link_status` (0x0501) = 1
+- [ ] TT&C link active — `ttc.link_status` (0x0501) = 2 (LOCKED)
 - [ ] Flight Director notified of AOCS anomaly
 - [ ] Procedure CTG-007 (Reaction Wheel Anomaly) reviewed for reference
 
@@ -58,13 +58,13 @@ control with any three operational wheels at slightly relaxed pointing accuracy.
 ## Procedure Steps
 
 ### Step 1: Detect and Identify the Stuck Wheel
-**Action:** Request AOCS housekeeping: `HK_REQUEST(sid=2)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — Request AOCS housekeeping
 **Verify:** Record all wheel speeds:
 - `aocs.rw1_speed` (0x0207) — RW-1 speed in RPM
 - `aocs.rw2_speed` (0x0208) — RW-2 speed in RPM
 - `aocs.rw3_speed` (0x0209) — RW-3 speed in RPM
 - `aocs.rw4_speed` (0x020A) — RW-4 speed in RPM
-**Action:** Wait 30 s and request a second sample: `HK_REQUEST(sid=2)`
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — Wait 30 s and request a second sample
 **Action:** Compare the two samples. A stuck wheel will show:
 - Speed that does not change between samples (frozen at the seizure speed)
 - OR speed that dropped to 0 RPM suddenly
@@ -82,9 +82,9 @@ rising). Note the wheel index (0-3 = RW-1 through RW-4). If multiple wheels are
 stuck, escalate to CTG-005 Step 7 (multi-wheel failure).
 
 ### Step 2: Disable the Stuck Wheel
-**Action:** Disable the seized wheel to remove it from the control loop:
-`AOCS_DISABLE_WHEEL(wheel_idx=N)` (Service 8, Subtype 1, func_id 2)
-where N is the stuck wheel index (0-3).
+**Note:** Disable the seized wheel to remove it from the control loop:
+**TC:** `AOCS_DISABLE_WHEEL(wheel_idx=N)` (Service 8, Subtype 1, func_id 2)
+**Note:** where N is the stuck wheel index (0-3).
 **Verify:** Wait 10 s, then request AOCS housekeeping: `HK_REQUEST(sid=2)`
 **Verify:** The disabled wheel's speed should begin to decay (friction will slow it
 down since no torque is being applied). Note: for a fully seized bearing, speed may
@@ -103,7 +103,7 @@ to three-wheel reconfiguration.
 `AOCS_3W_MODE(exclude_wheel=<N>)` (Service 8, Subtype 1, func_id 5)
 where N is the disabled wheel index (0-3).
 **Verify:** Wait 15 s for the control loop to reconfigure.
-**Action:** Request AOCS housekeeping: `HK_REQUEST(sid=2)`
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — Request AOCS housekeeping
 **Verify:** `aocs.att_error` (0x0217) — should begin converging. Target < 2.0 deg
 within 60 s of reconfiguration.
 **Verify:** Three remaining wheel speeds are adjusting — momentum is being
@@ -115,12 +115,12 @@ redistributed across the three operational wheels.
 proceed to momentum management.
 
 ### Step 4: Perform Momentum Dump with Magnetorquers
-**Action:** Check momentum state of remaining wheels: `HK_REQUEST(sid=2)`
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — Check momentum state of remaining wheels
 **Verify:** `aocs.rw1_speed` through `aocs.rw4_speed` (active wheels only) — if any
 active wheel exceeds 3000 RPM, desaturation is required.
 **Verify:** `aocs.mag_valid` (0x0230) = 1 — magnetometer must be operational for
 magnetorquer-based momentum dumping.
-**Action:** Command momentum dump: `AOCS_DESATURATE` (Service 8, Subtype 1, func_id 3)
+**TC:** `AOCS_DESATURATE` (Service 8, Subtype 1, func_id 1) — Command momentum dump
 **Verify:** Active wheel speeds trending toward 0 RPM over 120-300 s
 **Verify:** `aocs.mtq_x` (0x020B), `aocs.mtq_y` (0x020C), `aocs.mtq_z` (0x020D)
 — magnetorquers are generating dipole moments (non-zero values during dump)
@@ -135,7 +135,7 @@ every 6-8 orbits in four-wheel mode).
 rates < 0.2 deg/s — proceed.
 
 ### Step 5: Verify Stable Pointing in Three-Wheel Mode
-**Action:** Request AOCS housekeeping: `HK_REQUEST(sid=2)` — sample every 60 s for
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — Request AOCS housekeeping — sample every 60 s for
 5 minutes.
 **Verify:** `aocs.att_error` (0x0217) < 1.5 deg sustained (relaxed from nominal
 1.0 deg tolerance for three-wheel operations)
@@ -144,8 +144,8 @@ rates < 0.2 deg/s — proceed.
 **Verify:** `aocs.rate_yaw` (0x0206) < 0.1 deg/s
 **Verify:** All active wheel temperatures < 55 deg-C
 **Verify:** All active wheel speeds < 4000 RPM and stable
-**Action:** If currently in DETUMBLE mode, attempt transition to NOMINAL (nadir):
-`AOCS_SET_MODE(mode=4)` (Service 8, Subtype 1, func_id 0)
+**Note:** If currently in DETUMBLE mode, attempt transition to NOMINAL (nadir):
+**TC:** `AOCS_SET_MODE(mode=4)` (Service 8, Subtype 1, func_id 0)
 **Verify:** `aocs.mode` (0x020F) = 4 (NOMINAL) within 15 s
 **Verify:** `aocs.att_error` (0x0217) converges < 1.5 deg within 120 s
 **GO/NO-GO:** Pointing performance acceptable for three-wheel mission operations —
@@ -175,19 +175,19 @@ below 45 deg-C, flag for potential recovery assessment.
 ground engineering team and at least 2 orbits of stable three-wheel operations.
 **Condition:** Disabled wheel temperature has returned to < 45 deg-C, suggesting
 the bearing may not be permanently seized.
-**Action:** Re-enable the wheel at low speed: `AOCS_ENABLE_WHEEL(wheel_idx=N)` (Service 8, Subtype 1, func_id 3)
+**TC:** `AOCS_ENABLE_WHEEL(wheel_idx=N)` (Service 8, Subtype 1, func_id 3) — Re-enable the wheel at low speed
 **Verify:** Wheel begins spinning up within 10 s
 **Verify:** Wheel speed reaches commanded value smoothly (no oscillation, no stalling)
 **Verify:** Wheel temperature does not rise more than 5 deg-C during spin-up
 **Action:** Monitor for 5 minutes at commanded speed.
 **Verify:** Speed is stable (no jitter > +/- 100 RPM)
 **Verify:** Temperature is stable and < 50 deg-C
-**Action:** If recovery successful, restore four-wheel configuration:
-`SET_PARAM(param_id=aocs.wheel_config, value=4)` (Service 20, Subtype 1)
+**Note:** If recovery successful, restore four-wheel configuration:
+**TC:** `SET_PARAM(param_id=aocs.wheel_config, value=4)` (Service 20, Subtype 1)
 **Verify:** `aocs.att_error` (0x0217) improves to < 1.0 deg within 120 s
-**Action:** If recovery fails (speed stalls, temperature spikes, oscillation):
-Immediately disable wheel again: `AOCS_DISABLE_WHEEL(wheel_idx=N)` (Service 8, Subtype 1, func_id 2)
-Maintain three-wheel operations permanently.
+**Note:** If recovery fails (speed stalls, temperature spikes, oscillation):
+**TC:** `AOCS_DISABLE_WHEEL(wheel_idx=N)` (Service 8, Subtype 1, func_id 2) — Immediately disable wheel again
+**Note:** Maintain three-wheel operations permanently.
 **GO/NO-GO:** If recovery successful — four-wheel ops restored. If failed — three-wheel
 ops confirmed as permanent configuration.
 
@@ -195,7 +195,7 @@ ops confirmed as permanent configuration.
 - [ ] Stuck/seized wheel identified (RW-1/2/3/4) and documented
 - [ ] Failed wheel disabled and removed from control loop
 - [ ] Three-wheel control mode confirmed active and stable
-- [ ] `aocs.att_error` (0x0217) < 1.5 deg in NADIR_POINT (three-wheel)
+- [ ] `aocs.att_error` (0x0217) < 1.5 deg in NOMINAL (three-wheel)
 - [ ] All active wheel speeds < 4000 RPM after desaturation
 - [ ] All active wheel temperatures < 55 deg-C
 - [ ] Momentum dump completed successfully

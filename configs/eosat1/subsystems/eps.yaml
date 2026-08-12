@@ -9,10 +9,11 @@ technology: triple_junction_gaas
 
 battery:
   type: li_ion
-  # Phase B rebalance (brief 01 WP-3): 120 -> 100 Wh (3.6 Ah @ 28 V, ~0.9 kg).
-  # Squarely inside the commercial 6U range (GomSpace BPX 77 Wh, ISISpace
-  # 85 Wh, AAC Clyde Optimus 160 Wh) and restores per-orbit DoD to a value
-  # where eclipse management is a real operational decision.
+  # 2026-08b R1 re-derivation: HELD at 100 Wh, now against a named flight part
+  # rather than a range. GomSpace NanoPower BPX, 8S-1P: 100 Wh, 3 Ah,
+  # 28.8 V nominal, 93x86x41 mm, ~500 g, 18650 Li-ion cells. That is the
+  # single-pack configuration a 6U flies; nothing here needed to change.
+  # (docs/plan_2026-08b/POWER_SIZING.md, row "battery".)
   capacity_wh: 100.0
   voltage_nom: 26.4
   soc_100_v: 29.2
@@ -40,11 +41,21 @@ array_losses:
   temp_ref_c: 28.0
   array_temp_sunlit_c: 65.0    # until wired to the TCS panel zones
   harness_efficiency: 0.95
-  annual_degradation: 0.0275   # matches the live sa_age_factor rate
-  design_life_years: 3.0       # sizing case = EOL
+  # 2026-08b: 0.00275 -> 0.0275. The old value was 0.275 %/yr — a factor of
+  # ten below the 2.75 %/yr its own comment, the K figure above (0.92 at
+  # 3-year EOL) and the generation tests all assumed, and the model ignored it
+  # entirely in favour of a hard-coded per-hour constant. eps_basic now
+  # DERIVES its live per-sunlit-hour rate from this key, so it is load-bearing
+  # rather than decorative: 0.0275 / (8760 x 0.65 sunlit) = 4.83e-6 /h.
+  annual_degradation: 0.0275   # 2.75 %/yr, TJ GaAs in LEO
+  design_life_years: 3.0       # sizing case = EOL (sa_age_factor 0.9175)
 
 # Phase B rebalance (brief 01 WP-3): OBC 15 -> 6 W. 15 W of always-on OBC on a
 # 6U was fiction; 6 W = OBC 3 W + PDU/EPS housekeeping 3 W.
+# NOTE (2026-08b): the per-subsystem power breakdown splits this line 3 W
+# OBDH / 3 W PDU-EPS housekeeping when attributing 0x0141 vs 0x013C. The
+# split lives in eps_basic.EPSBasicModel.EPS_HOUSEKEEPING_SHARE_W because the
+# smo-common EPSConfig schema forbids extra keys here.
 obc_power_w: 6.0
 
 # Body-mounted panels + deployable wings on the +/-Y faces, single-axis solar
@@ -58,15 +69,26 @@ solar_panels:
   my_area_m2: 0.030
   pz_area_m2: 0.018    # 226x100 face, 80% packing
   mz_area_m2: 0.000    # imager aperture + radiator — no cells
-  # Phase B (brief 01 F12 / WP-2 / WP-3): 0.300 -> 0.180 m2 per wing on a
-  # solar-array drive. 0.300 m2/wing was ten folded 3U segments — not a
-  # buildable part. 0.180 m2 = 3 folding segments of 366x164 mm, ~0.6 kg per
-  # wing with hinge and HDRM (MMA eHaWK / DHV 6U class, upper end). Sized so
-  # that the orbit-average margin at the WORST beta (49.8 deg), with the full
-  # EOL loss stack and the Phase-C AOCS suite draw (12 W), stays >= +10 W /
-  # >= 1.25x ratio in nominal ops — verified by tools/power_budget.py.
-  wing_py_area_m2: 0.180
-  wing_my_area_m2: 0.180
+  # 2026-08b R1 ("a 6U ... would struggle to generate 114 W peak"): 0.180 ->
+  # 0.120 m2 of CELLS per wing, sized off a named flight product instead of a
+  # margin target. Endurosat 6U Deployable Solar Array, double-deployable
+  # configuration: 2 folding panels of 209x342 mm per wing = 0.143 m2
+  # geometric, ~84 % cell packing => 0.120 m2 of cells; ~1.07 kg per wing
+  # assembly including hinges and HDRM.
+  #
+  # Cross-check against the two independent published ratings for this class:
+  #   * MMA eHaWK (6U+) "starts at 72 W" (NASA SoA of Small Spacecraft Tech,
+  #     ch. 3). Ours: 2 x 0.120 m2 x 292 W/m2 = 70.1 W BOL at beta = 0. Match.
+  #   * Endurosat quote 19.2 W in LEO from one 0.0715 m2 panel = 268 W/m2
+  #     delivered — which is this file's own EOL K (267.9). The loss stack was
+  #     already right; only the AREA was fictional.
+  # Peak whole-spacecraft generation drops 123.8 -> 88.6 W, orbit-average at
+  # the worst beta (49.8 deg, EOL) 54.5 -> 39.6 W, against a 27.7 W nominal
+  # orbit-average load: R1's acceptance criterion (gen > load with ALL
+  # nominal systems on including ADCS) still closes at 1.43x.
+  # Derivation and citations: docs/plan_2026-08b/POWER_SIZING.md.
+  wing_py_area_m2: 0.120
+  wing_my_area_m2: 0.120
   wing_deploy_time_s: 30.0 # Burn wire release + spring deployment
   # Single-axis solar array drive (brief 01 F4/F5 / WP-2). The command
   # (EPS set_solar_array_drive), device gate (0x0101) and telemetry (0x0133)
@@ -81,16 +103,38 @@ solar_panels:
   sada_axis: y             # rotation axis = body Y = orbit normal (LVLH)
   sada_tracking: true      # false => wings frozen at solar_array_drive_angle
   sada_max_rate_deg_s: 1.0
-payload_power_w: 45.0
-# Phase B rebalance (brief 01 WP-3): payload standby 8 -> 6 W.
-payload_standby_power_w: 6.0
+# ── Payload (2026-08b R1) ──────────────────────────────────────────────
+# Reference part: Simera Sense TriScape100 (a real 6U-class EO imager,
+# 98x98x176 mm, 1.1 kg, 4.75 m GSD at 500 km). Datasheet, 5.0 V rail:
+#   imaging   1100 mA = 5.50 W
+#   idle      470 mA  = 2.35 W   (readout mode is also 470 mA)
+# The old pair was physically impossible — standby (6.0 W) drew MORE than
+# imaging (5.0 W). It is now ordered, and both ends are a datasheet number.
+payload_power_w: 5.5           # TriScape100 imaging mode
+payload_standby_power_w: 2.4   # TriScape100 idle mode
+# FPA thermo-electric cooler. RESTORED 10.0 -> 15.0: payload.yaml, tcs.yaml,
+# the flight manual, the textbook and the commissioning procedure all say
+# 15 W; eps.yaml alone had drifted down, so the EPS books under-billed the
+# cooler by 5 W whenever it ran.
 fpa_cooler_power_w: 15.0
-# TX line loads by TM tier (brief 01 F20 / WP-12): LOW (16 kbps BPSK) 12 W;
-# HIGH (128 kbps QPSK dump) 20 W — 8x the information rate with worse PA
-# backoff. Makes "book a dump on every pass" cost real energy.
-transponder_power_w: 12.0
-transponder_hi_power_w: 20.0
-# Phase B rebalance (brief 01 WP-3): RX 5 -> 1.5 W (S-band receiver).
+# ── S-band transponder (2026-08b R1) ───────────────────────────────────
+# R1: "a CubeSat would generally not have a 20 W transmitter". Correct — the
+# 20 W figure was a whole-line DC draw invented for the manual, and no
+# CubeSat radio draws it. Reference part: Endurosat S-band Transceiver
+# (246 g, 11-28 V):
+#   output power range      24-33 dBm  (0.25-2.0 W RF)
+#   idle / Rx only          1.2 W @ 12 V
+#   max transmit (33 dBm)   11 W @ 12 V
+# So the RF output is 2 W, not 20 W, and the DC draw while transmitting is
+# 5-11 W depending on commanded EIRP.
+#   LOW  tier (16 kbps, ~27 dBm / 0.5 W RF)   -> 5 W DC   (unchanged)
+#   HIGH tier (128 kbps dump, 33 dBm / 2 W RF) -> 11 W DC  (was 10)
+# NOTE for Phase 3 (TT&C owner): ttc.yaml's EIRP must be DERIVED from these,
+# or the link budget and the power budget describe different radios (T-b).
+transponder_power_w: 5.0
+transponder_hi_power_w: 11.0
+# Non-switchable receive chain: Endurosat S-band idle/Rx-only 1.2 W, plus
+# ~0.3 W for the UHF beacon receiver R2 adds in Phase 3.
 transponder_rx_power_w: 1.5
 # NOTE: protection levels (load-shed voltage/order, UV/OV, overcurrent trips),
 # initial SoC, event thresholds and the htr_bat/htr_obc/aocs_wheels line loads

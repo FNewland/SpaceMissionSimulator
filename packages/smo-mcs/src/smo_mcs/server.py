@@ -316,6 +316,53 @@ class MCSServer:
         except Exception as e:
             logger.warning("Failed to load parameters.yaml for param meta: %s", e)
 
+        # ── The cadence join (Franz: "stale on the cadence x 1.5") ──────────
+        # `/api/hk-structures` publishes `interval_s` per SID and
+        # `/api/param-catalog` publishes in_hk / on_demand, but NOTHING said
+        # which parameters ride in which structure, so the browser could not
+        # derive a per-parameter staleness threshold from the real downlink
+        # cadence and fell back to one hard-coded number for the whole
+        # spacecraft. Join the two here, once, and serve the result.
+        #
+        # `_param_cadence`     pid -> {"interval_s": fastest, "sids": [...] }
+        # `_subsystem_cadence` subsystem -> {"interval_s": fastest, "sids": [...]}
+        #
+        # "Fastest" is the right reduction: a parameter carried by both SID 1
+        # (1 s) and SID 8 (8 s) is expected once a second whenever both are
+        # enabled, and the disabled-SID state (see `_staleness_policy`) is what
+        # covers the case where only the slow one is on.
+        self._param_cadence: dict[int, dict] = {}
+        self._subsystem_cadence: dict[str, dict] = {}
+        for hk in hk_defs:
+            interval = float(getattr(hk, "interval_s", 0.0) or 0.0)
+            if interval <= 0:
+                continue
+            sid = int(hk.sid)
+            for hp in hk.parameters:
+                pid = int(hp.param_id)
+                ent = self._param_cadence.setdefault(
+                    pid, {"interval_s": interval, "sids": []})
+                ent["interval_s"] = min(ent["interval_s"], interval)
+                if sid not in ent["sids"]:
+                    ent["sids"].append(sid)
+                sub = (self._param_meta.get(pid, {}).get("subsystem") or "").strip()
+                if not sub:
+                    continue
+                sent = self._subsystem_cadence.setdefault(
+                    sub, {"interval_s": interval, "sids": []})
+                sent["interval_s"] = min(sent["interval_s"], interval)
+                if sid not in sent["sids"]:
+                    sent["sids"].append(sid)
+        for ent in self._param_cadence.values():
+            ent["sids"].sort()
+        for ent in self._subsystem_cadence.values():
+            ent["sids"].sort()
+
+        # Staleness factors/floors come from configuration, not from a JS
+        # literal, so an instructor can retune the console without editing a
+        # 10 000-line HTML file. See configs/<mission>/mcs/staleness.yaml.
+        self._staleness_policy = self._load_staleness_policy()
+
         # Position access control
         self._positions = load_positions(self.config_dir)
 
@@ -1105,7 +1152,10 @@ class MCSServer:
         # MCS origin so any student browser on the network can retrieve
         # downlinked stored telemetry without a shared filesystem (defect #90).
         from smo_common.dump_store import register_dump_routes
-        register_dump_routes(app, lambda: self._dump_dir, owner="MCS")
+        # `config_dir` puts parameter NAMES on the decoded S12 tables the
+        # summary now returns — `eps.bat_soc`, not a bare `0x0101`.
+        register_dump_routes(app, lambda: self._dump_dir, owner="MCS",
+                             config_dir=self.config_dir)
 
         # Delayed-TM report generator (Phase F, brief 06 §A): template-driven
         # self-contained HTML reports over the dump archive. Same
@@ -2536,6 +2586,7 @@ class MCSServer:
                     pid = int(p["id"]) if isinstance(p["id"], int) else int(str(p["id"]), 0)
                 except Exception:
                     continue
+                cad = self._param_cadence.get(pid)
                 out.append({
                     "id": pid,
                     "hex": f"0x{pid:04X}",
@@ -2546,6 +2597,13 @@ class MCSServer:
                     "in_hk": pid in hk_ids,
                     "on_demand": bool(p.get("on_demand", False)),
                     "stub": bool(p.get("stub", False)),
+                    # The cadence join: which HK structures carry this
+                    # parameter and how often the fastest of them is sent.
+                    # `None` means aperiodic — no structure carries it, so its
+                    # only source is an on-demand TC(20,3) fetch and it must
+                    # not be judged against any HK interval.
+                    "hk_sids": list(cad["sids"]) if cad else [],
+                    "hk_interval_s": cad["interval_s"] if cad else None,
                 })
             return web.json_response({"parameters": out})
         except Exception as e:
@@ -3634,10 +3692,70 @@ class MCSServer:
 
     # ── Client config (distributed deployment) ──────────────────────
 
+    #: Fallback staleness policy, used when mcs/staleness.yaml is absent or
+    #: unreadable. Identical to the shipped file so a missing config degrades
+    #: to the documented behaviour rather than to the old hard-coded 5/15 s.
+    DEFAULT_STALENESS_POLICY = {
+        "stale_factor": 1.5,
+        "fresh_factor": 0.9,
+        "floor_fresh_s": 10.0,
+        "floor_stale_s": 20.0,
+        "aperiodic_fresh_s": 300.0,
+        "aperiodic_stale_s": 900.0,
+    }
+
+    def _load_staleness_policy(self) -> dict:
+        """Load the display staleness policy from mcs/staleness.yaml."""
+        policy = dict(self.DEFAULT_STALENESS_POLICY)
+        try:
+            import yaml as _yaml
+            path = self.config_dir / "mcs" / "staleness.yaml"
+            with open(path) as f:
+                data = _yaml.safe_load(f) or {}
+            block = data.get("staleness") or {}
+            for key in policy:
+                if block.get(key) is not None:
+                    policy[key] = float(block[key])
+        except FileNotFoundError:
+            logger.info("mcs/staleness.yaml absent — using built-in display "
+                        "staleness policy %s", policy)
+        except Exception as e:  # noqa: BLE001 — never block start-up on it
+            logger.warning("Failed to load mcs/staleness.yaml (%s); "
+                           "using built-in display staleness policy", e)
+        return policy
+
     async def _handle_client_config(self, request):
-        """Return runtime config for the browser client."""
+        """Return runtime config for the browser client.
+
+        Carries the display **staleness policy** and the **cadence join** the
+        browser needs to derive a per-parameter freshness threshold from the
+        real downlink cadence (Franz: "can the stale data flag be set on the
+        cadence of the telemetry times 1.5"). Before this, the page carried
+        `TM_FRESH_S = 5` / `TM_STALE_S = 15` and `_STALE_DEFAULT_S = 8.0` as JS
+        literals and applied them to a 60 s structure.
+
+        `param_cadence` is deliberately compact — ``hex -> [interval_s, sid…]``
+        — because it covers every HK parameter on the spacecraft.
+        """
         return web.json_response({
             "planner_url": self._planner_api_base,
+            "staleness": dict(self._staleness_policy),
+            "param_cadence": {
+                f"0x{pid:04X}": [ent["interval_s"], *ent["sids"]]
+                for pid, ent in sorted(self._param_cadence.items())
+            },
+            "subsystem_cadence": {
+                sub: {"interval_s": ent["interval_s"], "sids": ent["sids"]}
+                for sub, ent in sorted(self._subsystem_cadence.items())
+            },
+            "sid_intervals": {
+                str(sid): meta.get("interval_s")
+                for sid, meta in sorted(self._hk_sid_meta.items())
+            },
+            "sid_names": {
+                str(sid): meta.get("name")
+                for sid, meta in sorted(self._hk_sid_meta.items())
+            },
         })
 
     # ── Contact window timeline proxy (Feature 1) ────────────────────

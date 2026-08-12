@@ -15,7 +15,7 @@ can safely complete an eclipse with the degraded battery.
 ## Prerequisites
 - [ ] Battery voltage anomaly detected — `eps.bat_voltage` (0x0100) lower than expected
   for the current state of charge, or sudden voltage drop observed
-- [ ] TT&C link active — `ttc.link_status` (0x0501) = 1
+- [ ] TT&C link active — `ttc.link_status` (0x0501) = 2 (LOCKED)
 - [ ] Flight Director notified of battery anomaly
 - [ ] Current orbit prediction available (eclipse duration and timing)
 
@@ -48,7 +48,7 @@ can safely complete an eclipse with the degraded battery.
 ## Procedure Steps
 
 ### Step 1: Detect and Characterize Battery Voltage Anomaly
-**Action:** Request EPS housekeeping: `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — Request EPS housekeeping
 **Verify:** `eps.bat_voltage` (0x0100) — record current value
 **Verify:** `eps.bat_soc` (0x0101) — record current value
 **Verify:** `eps.bat_capacity_wh` (0x010A) — record value (nominal = 120 Wh)
@@ -64,25 +64,26 @@ cell voltage (~3.6 V nominal for Li-ion).
 **GO/NO-GO:** Voltage anomaly confirmed (> 1.0 V deviation) — proceed to thermal assessment.
 
 ### Step 2: Check Battery Temperature
-**Action:** Request TCS housekeeping: `HK_REQUEST(sid=3)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 27) — Request TCS housekeeping
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — EPS housekeeping
 **Verify:** `eps.bat_temp` (0x0102) — record value
 **Verify:** `tcs.temp_battery` (0x0407) — cross-check with TCS sensor
-**Action:** Assess battery thermal condition:
-- If battery temperature > 40 C: Anomalous heating. Possible internal short in failed
-  cell. This is DANGEROUS — risk of thermal runaway.
-  - Immediately reduce charge/discharge current by shedding loads.
-  - Disable battery heater: `HEATER_BATTERY(on=0)` (func_id 40)
-  - Monitor temperature closely (every 30 s).
-  - If temperature exceeds 50 C, execute EMERGENCY mode per EMG-006.
-- If battery temperature is within 0 to 35 C: Thermal condition is currently safe.
-  Continue with capacity assessment.
+**Note:** Assess battery thermal condition:
+**Note:** - If battery temperature > 40 C: Anomalous heating. Possible internal short in failed
+**Note:** cell. This is DANGEROUS — risk of thermal runaway.
+**Note:** - Immediately reduce charge/discharge current by shedding loads.
+**TC:** `HEATER_BATTERY(on=0)` (Service 8, Subtype 1, func_id 40) — Disable battery heater
+**Note:** - Monitor temperature closely (every 30 s).
+**Note:** - If temperature exceeds 50 C, execute EMERGENCY mode per EMG-006.
+**Note:** - If battery temperature is within 0 to 35 C: Thermal condition is currently safe.
+**Note:** Continue with capacity assessment.
 **Verify:** `tcs.htr_battery` (0x040A) — if heater is ON and battery is warm, disable it
 to reduce unnecessary heating.
 **GO/NO-GO:** Battery temperature safe — proceed. If overheating, address thermal
 issue first before continuing.
 
 ### Step 3: Assess Remaining Battery Capacity
-**Action:** Request EPS housekeeping: `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — Request EPS housekeeping
 **Verify:** `eps.bat_capacity_wh` (0x010A) — record reported capacity
 **Action:** If capacity reporting is available, use the reported value. Otherwise,
 estimate remaining capacity:
@@ -102,8 +103,8 @@ estimate remaining capacity:
 Load reduction required. Proceed to Step 4.
 
 ### Step 4: Reduce Loads If Needed
-**Action:** If eclipse survival margin is negative, reduce loads in priority order:
-1. Payload OFF (saves ~8-45 W): `PAYLOAD_SET_MODE(mode=0)` (func_id 26)
+**Note:** If eclipse survival margin is negative, reduce loads in priority order:
+**TC:** `PAYLOAD_SET_MODE(mode=0)` (Service 8, Subtype 1, func_id 26) — Payload OFF (saves ~8-45 W)
    **Verify:** `payload.mode` (0x0600) = 0 within 10 s
 2. FPA cooler OFF (saves ~15 W): `FPA_COOLER(on=0)` (func_id 43)
    **Verify:** `tcs.cooler_fpa` (0x040C) = 0 within 5 s
@@ -112,15 +113,15 @@ Load reduction required. Proceed to Step 4.
    **Verify:** `ttc.pa_on` (0x0516) = 0 within 5 s
 **Action:** After each load shed, recalculate eclipse survival margin.
 **Verify:** `eps.power_cons` (0x0106) — confirm reduced power consumption
-**Action:** Adjust battery heater setpoints to reduce heater duty cycle during eclipse:
-`HEATER_SET_SETPOINT(circuit=0, on_temp=-2.0, off_temp=2.0)` (func_id 44)
+**Note:** Adjust battery heater setpoints to reduce heater duty cycle during eclipse:
+**TC:** `HEATER_SET_SETPOINT(circuit=0, on_temp=-2.0, off_temp=2.0)` (Service 8, Subtype 1, func_id 44)
 **Note:** This allows the battery to get slightly colder during eclipse to save energy,
 but still protects against dangerously low temperatures.
 **GO/NO-GO:** Eclipse survival margin is now positive — proceed to monitoring.
 
 ### Step 5: Monitor Battery Through Eclipse (If Applicable)
-**Action:** If an eclipse is approaching or in progress, monitor battery at 60 s intervals:
-`HK_REQUEST(sid=1)` (Service 3, Subtype 27)
+**Note:** If an eclipse is approaching or in progress, monitor battery at 60 s intervals:
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
 **Verify:** `eps.bat_voltage` (0x0100) — does NOT drop below 24.0 V
 **Verify:** `eps.bat_soc` (0x0101) — does NOT drop below 20%
 **Verify:** `eps.bat_temp` (0x0102) — remains within 0 to 40 C

@@ -262,6 +262,12 @@ def analyse_dumps(paths: Iterable[Path], params_by_id: dict, hk_plist: dict) -> 
         "events": events,
         "hk": hk,
         "anomalies": anomalies,
+        # S12 on-board monitoring — the contents Franz could not see. Decoded
+        # by `PassAnalysis` (tm_report), which now has the `svc == 12` branch
+        # it never had. S12 packets are routed to the Alarm store (store 4),
+        # so an alarm dump is mostly this.
+        "s12_transitions": an.s12_transitions,
+        "s12_definitions": an.s12_definitions,
     }
 
 
@@ -440,6 +446,9 @@ td.num { text-align: right; }
   <div class="section"><h2>S5 Events</h2>
     <div class="body" id="events">No data.</div></div>
 
+  <div class="section"><h2>On-board monitoring (S12)</h2>
+    <div class="body" id="s12">No data.</div></div>
+
   <div class="section"><h2>HK time series by SID</h2>
     <div class="body" id="hk">No data.</div></div>
 
@@ -557,6 +566,48 @@ function render(j) {
       + j.events.map(e => `<tr class='sev-${e.severity}'><td>${e.cuc}</td><td>S5.${e.subtype}</td><td>0x${e.event_id.toString(16).padStart(4,"0").toUpperCase()}</td><td>${escapeHtml(e.description)}</td></tr>`).join("")
       + "</tbody></table>"
     : "No events.";
+
+  // S12 on-board monitoring — the decoded contents of an alarm dump.
+  // Before this the viewer had no `svc == 12` branch at all, so four limit
+  // violations showed up as one row in the packet-count table and nothing
+  // anywhere said which parameter, which way it went, or against what band.
+  const tr = j.s12_transitions || [];
+  const defs = j.s12_definitions || [];
+  const sevColour = {INFO:"#888", WARNING:"#f59e0b", ALARM:"#ff6b6b", HIGH:"#ff6b6b"};
+  let s12html = "";
+  if (tr.length) {
+    const entered = tr.filter(t => t.entered).length;
+    s12html += `<div style="color:var(--dim);margin-bottom:6px;">${tr.length} check transition(s): `
+      + `${entered} out-of-limits, ${tr.length - entered} return(s) to nominal.</div>`
+      + "<table><thead><tr><th>CUC</th><th>Mon</th><th>Parameter</th><th>Transition</th>"
+      + "<th class='num'>Value</th><th>Check</th><th>Severity</th><th class='num'>Limit band</th>"
+      + "</tr></thead><tbody>"
+      + tr.map(t => `<tr>
+          <td>${t.cuc == null ? "—" : t.cuc}</td>
+          <td class='num'>${t.mon_id == null ? "—" : t.mon_id}</td>
+          <td>${escapeHtml(t.param_hex || "")} ${escapeHtml(t.param_name || "")}</td>
+          <td>${t.entered ? "<b style='color:#ff6b6b'>OUT OF LIMITS</b>"
+                          : "<span style='color:#3fca8a'>back to nominal</span>"}</td>
+          <td class='num'>${fmtNum(t.value)} ${escapeHtml(t.units || "")}</td>
+          <td>${escapeHtml(t.check_type_name || "—")}</td>
+          <td style="color:${sevColour[t.severity_name] || "inherit"}">${escapeHtml(t.severity_name || "—")}</td>
+          <td class='num'>${escapeHtml(t.band || "not reported")}</td></tr>`).join("")
+      + "</tbody></table>";
+  }
+  if (defs.length) {
+    s12html += "<h3 style='font-size:11px;color:var(--accent);margin:10px 0 4px;'>"
+      + "Monitoring definitions (TM 12,13)</h3>"
+      + "<table><thead><tr><th>Mon</th><th>Parameter</th><th>Check</th><th>State</th>"
+      + "<th class='num'>Low</th><th class='num'>High</th></tr></thead><tbody>"
+      + defs.map(d => `<tr><td class='num'>${d.mon_id}</td>
+          <td>${escapeHtml(d.param_hex || "")} ${escapeHtml(d.param_name || "")}</td>
+          <td>${escapeHtml(d.check_type_name || "—")}</td>
+          <td>${d.enabled ? "enabled" : "disabled"}</td>
+          <td class='num'>${fmtNum(d.low_limit)}</td>
+          <td class='num'>${fmtNum(d.high_limit)}</td></tr>`).join("")
+      + "</tbody></table>";
+  }
+  $("s12").innerHTML = s12html || "No S12 monitoring packets in this dump.";
 
   // HK
   $("hk").innerHTML = j.hk.length

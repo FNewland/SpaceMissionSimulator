@@ -14,7 +14,7 @@ temperature is then monitored to confirm the runaway has been arrested.
 
 ## Prerequisites
 - [ ] Rising temperature detected on a thermal zone with heater showing ON continuously
-- [ ] TT&C link active — `ttc.link_status` (0x0501) = 1
+- [ ] TT&C link active — `ttc.link_status` (0x0501) = 2 (LOCKED)
 - [ ] Flight Director notified — this is an EMERGENCY procedure
 - [ ] EPS operator available to shed power lines if needed
 
@@ -26,7 +26,7 @@ temperature is then monitored to confirm the runaway has been arrested.
 | tcs.temp_thruster | 0x0409 | Monitor if thruster heater affected |
 | tcs.htr_battery | 0x040A | Heater status (0=off, 1=on) |
 | tcs.htr_obc | 0x040B | Heater status |
-| tcs.htr_thruster | 0x040D | Heater status |
+| tcs.htr_thruster | 0x041B | Heater status |
 | tcs.temp_panel_px | 0x0400 | Panel temperatures for context |
 | tcs.temp_panel_mx | 0x0401 | Panel temperatures for context |
 | eps.pl_htr_bat | 0x0115 | Power line status — battery heater |
@@ -45,113 +45,125 @@ temperature is then monitored to confirm the runaway has been arrested.
 | HEATER_THRUSTER | 8 | 1 | 42 | Thruster heater on/off |
 | HEATER_SET_SETPOINT | 8 | 1 | 44 | Modify heater thermostat setpoints |
 | HEATER_AUTO_MODE | 8 | 1 | 45 | Return to autonomous thermostat |
+| EPS_POWER_ON | 8 | 1 | 19 | Restore heater power line |
 | EPS_POWER_OFF | 8 | 1 | 20 | Shed heater power line |
 
 ## Procedure Steps
 
+**Runnability note.** This card is `runnable: {kind: markdown}` and its
+machine-readable arm is the **battery** heater (EPS line 5, circuit 0) — the
+zone where a runaway is genuinely dangerous, because a lithium cell above
+50 C is a chemical hazard rather than an inconvenience. The OBC (line 6,
+circuit 1) and thruster (circuit 2) variants are given as notes beside each
+step; to run those, substitute the command arguments shown and follow the same
+branch structure. Making one zone executable and naming the substitutions is
+honest; parameterising a `**TC:**` line on "the affected zone" would produce a
+card that looks runnable and sends nothing.
+
 ### Step 1: Detect Temperature Rise and Identify Affected Zone
-**Action:** Request TCS housekeeping: `HK_REQUEST(sid=3)` (Service 3, Subtype 27)
+**LABEL:** `STEP-1`
+**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 27) — TCS housekeeping
 **Verify:** Identify which temperature is rising anomalously:
 - `tcs.temp_battery` (0x0407) — if rising above 40 C with `tcs.htr_battery` (0x040A) = 1
 - `tcs.temp_obc` (0x0406) — if rising above 55 C with `tcs.htr_obc` (0x040B) = 1
-- `tcs.temp_thruster` (0x0409) — if rising with `tcs.htr_thruster` (0x040D) = 1
-**Verify:** Confirm the heater for the affected zone is showing ON status.
+- `tcs.temp_thruster` (0x0409) — if rising with `tcs.htr_thruster` (0x041B) = 1
+**Verify:** `tcs.htr_battery == 1` (0x040A, timeout 70 s) — the runaway
+signature: the heater is reporting ON. HK SID 3 is a 60 s structure, so the
+timeout has to exceed one collection interval or the check races the downlink.
 **Verify:** Record temperature and confirm it is above the heater OFF setpoint
 (the heater should have turned off by now).
-**Note:** Battery heater: OFF setpoint = 5 C, OBC heater: OFF setpoint = 10 C,
-Thruster heater: OFF setpoint = 8 C. If temperature is well above these values and
-heater is still ON, the thermostat has failed.
-**GO/NO-GO:** Thermal runaway confirmed — proceed to command heater OFF.
+**Note:** Setpoints from `subsystems/tcs.yaml`: battery ON +5 C / OFF +10 C
+(8 W), OBC ON +5 C / OFF +10 C (4 W), thruster catbed ON +190 C / OFF +230 C
+(12 W). If temperature is well above these values
+and the heater is still ON, the thermostat has failed.
+**GO/NO-GO:** Thermal runaway confirmed — proceed to command the heater OFF
 
 ### Step 2: Command Heater OFF via Normal Command
-**Note:** For battery heater, verify that the EPS power line 5 (`eps.pl_htr_bat`, 0x0115) is ON.
-The battery heater thermostat requires this power line to operate. If the power line is OFF,
-the thermostat will not function and the heater cannot respond to commands.
-**Action:** If addressing battery heater: verify `eps.pl_htr_bat` (0x0115) = 1 (ON).
-If the power line is OFF, first send: `EPS_POWER_ON(line_index=5)` (func_id 19) — battery heater power line.
-**Action:** Command the affected heater OFF:
-- Battery heater: `HEATER_BATTERY(on=0)` (func_id 40)
-- OBC heater: `HEATER_OBC(on=0)` (func_id 41)
-- Thruster heater: `HEATER_THRUSTER(on=0)` (func_id 42)
-**Verify:** Wait 10 s, then request TCS housekeeping: `HK_REQUEST(sid=3)`
-**Verify:** Check heater status register:
-- `tcs.htr_battery` (0x040A) should = 0 if battery heater commanded OFF
-- `tcs.htr_obc` (0x040B) should = 0 if OBC heater commanded OFF
-- `tcs.htr_thruster` (0x040D) should = 0 if thruster heater commanded OFF
-**Action:** If heater status = 0 (OFF):
-- Heater responded to command. Monitor temperature for 60 s to confirm it stops rising.
-- Proceed to Step 5 (monitor temperature decrease).
-**Action:** If heater status still = 1 (ON):
-- Heater did NOT respond to OFF command. Proceed to Step 3 (manual override).
-**GO/NO-GO:** If heater turned off — skip to Step 5. If still on — proceed to Step 3.
+**LABEL:** `STEP-2`
+**Note:** The battery heater thermostat only operates while EPS power line 5
+(`eps.pl_htr_bat`, 0x0115) is energised. A heater on a dark line cannot respond
+to an OFF command because it is not running at all — so line 5 is energised
+FIRST, unconditionally. `EPS_POWER_ON` on a line that is already on is a no-op,
+which is why this can be a straight step rather than another branch.
+**TC:** `EPS_POWER_ON(line_index=5)` (Service 8, Subtype 1, func_id 19) — battery heater line
+**TC:** `HEATER_BATTERY(on=0)` (Service 8, Subtype 1, func_id 40) — command the heater OFF
+**Note:** OBC heater: `HEATER_OBC(on=0)` (func_id 41) with `EPS_POWER_ON(line_index=6)`.
+Thruster heater: `HEATER_THRUSTER(on=0)` (func_id 42).
+**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 27) — re-read the heater status
+**BRANCH:** `tcs.htr_battery == 0` -> GO `STEP-5` | NO-GO `STEP-3` (timeout 70 s)
+**Note:** GO — the heater obeyed; there is nothing to override and nothing to
+shed, so Steps 3 and 4 are SKIPPED. NO-GO — the heater did not respond; fall
+through to the setpoint override. This is the fork that makes the card safe to
+execute: run flat, Step 4 would shed the heater power line on a spacecraft
+whose heater had already turned itself off.
 
 ### Step 3: Command Manual Override via Setpoint Change
-**Action:** Attempt to force heater off by setting an extremely high setpoint (heater
-will never turn on):
-- `HEATER_SET_SETPOINT(circuit=N, on_temp=100.0, off_temp=100.0)` (func_id 44)
-  where N = 0 (battery), 1 (obc), or 2 (thruster)
-**Verify:** Wait 10 s, then request TCS housekeeping: `HK_REQUEST(sid=3)`
-**Verify:** Check heater status — should now be 0 (OFF) since temperature is below
-the new absurd setpoint of 100 C.
-**Action:** If heater is now OFF:
-- Override worked. Proceed to Step 5 (monitor temperature decrease).
-**Action:** If heater is STILL ON despite setpoint change:
-- The heater relay or switch is stuck in the ON position. Software control is
-  ineffective. Proceed to Step 4 (power line shed).
-**GO/NO-GO:** If override worked — skip to Step 5. If still on — proceed to Step 4.
+**LABEL:** `STEP-3`
+**Note:** Force the thermostat to a state in which it can never call for heat,
+by moving both setpoints far above any temperature the zone can reach.
+**TC:** `HEATER_SET_SETPOINT(circuit=0, on_temp=100.0, off_temp=100.0)` (Service 8, Subtype 1, func_id 44) — circuit 0 = battery
+**Note:** OBC = circuit 1, thruster = circuit 2.
+**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 27)
+**BRANCH:** `tcs.htr_battery == 0` -> GO `STEP-5` | NO-GO `STEP-4` (timeout 70 s)
+**Note:** NO-GO here means software control is ineffective: the relay or switch
+is stuck closed, and only removing the power is left.
 
 ### Step 4: Shed Heater Power Line via EPS
-**Action:** As a last resort, cut power to the heater by disabling its EPS power line:
-- Battery heater (line 5): `EPS_POWER_OFF(line_index=5)` (func_id 20)
-- OBC heater (line 6): `EPS_POWER_OFF(line_index=6)` (func_id 20)
-- Thruster heater: Check which power line supplies the thruster heater and shed it.
-**Verify:** Check power line status:
-- `eps.pl_htr_bat` (0x0115) = 0 if battery heater line shed
-- `eps.pl_htr_obc` (0x0116) = 0 if OBC heater line shed
-**Verify:** Check per-line current dropped to 0:
-- `eps.line_current_5` (0x011D) = 0 A (battery heater)
-- `eps.line_current_6` (0x011E) = 0 A (OBC heater)
+**LABEL:** `STEP-4`
+**Note:** Last resort. Cut power to the heater by de-energising its EPS line.
+**TC:** `EPS_POWER_OFF(line_index=5)` (Service 8, Subtype 1, func_id 20) — battery heater line
+**Note:** OBC heater is line 6. The thruster heater has no dedicated switchable
+line; if the thruster zone is the affected one, this step is not available and
+the escalation ends at Step 3 — record that and go to the Contingency section.
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — EPS housekeeping for the line state
+**Verify:** `eps.pl_htr_bat == 0` (0x0115, timeout 10 s) — the line is shed
+**Verify:** `eps.line_current_5 == 0` (0x011D, timeout 10 s) — and drawing nothing
 **Verify:** `eps.power_cons` (0x0106) decreases by the heater power:
-- Battery heater: ~6 W
-- OBC heater: ~4 W
-- Thruster heater: ~8 W
-**Note:** WARNING — Shedding the heater power line means the heater cannot provide
-thermal protection if the zone later gets cold (e.g., during eclipse). Monitor
-the temperature closely.
-**GO/NO-GO:** Power line shed confirmed — proceed to temperature monitoring.
+- Battery heater: 8 W
+- OBC heater: 4 W
+**Note:** WARNING — shedding the heater power line means the heater cannot
+provide thermal protection if the zone later gets cold (e.g. during eclipse).
+Monitor the temperature closely.
+**Note:** A `htr_battery_stuck_on` failure leaves `tcs.htr_battery` (0x040A)
+reading 1 even after the line is shed, because the failure model asserts the
+status flag after the power gate. That is why this step verifies the EPS line
+and its current rather than the heater status word: 0x0115 and 0x011D are the
+measurements that cannot lie about whether current is flowing.
 
 ### Step 5: Monitor Temperature Decrease
-**Action:** Monitor TCS telemetry at 60 s intervals: `HK_REQUEST(sid=3)` (Service 3, Subtype 27)
+**LABEL:** `STEP-5`
+**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 27) — monitor at 60 s intervals
 **Verify:** Temperature of the affected zone is no longer rising.
 **Verify:** Temperature begins to decrease or stabilize:
 - Battery temperature: Should stabilize and then decrease toward ambient
 - OBC temperature: Should stabilize and then decrease
 - Thruster temperature: Should stabilize and then decrease
 **Verify:** Record temperature every 60 s for at least 10 minutes to confirm trend.
-**Action:** If temperature continues to rise despite heater being OFF/power line shed:
-- The heat source is NOT the heater. Investigate other possible causes (e.g., adjacent
-  equipment, solar heating, internal dissipation). Escalate to engineering team.
-**GO/NO-GO:** Temperature decreasing — runaway arrested. Continue monitoring.
+**Note:** If temperature continues to rise despite the heater being OFF or its
+power line shed, the heat source is NOT the heater. Investigate other causes
+(adjacent equipment, solar heating, internal dissipation) and escalate to the
+engineering team — see the Contingency section.
+**GO/NO-GO:** Temperature decreasing — runaway arrested, continue monitoring
 
 ### Step 6: Post-Event Assessment
-**Action:** Once temperature has returned to a safe range:
-- Battery: < 35 C
-- OBC: < 50 C
-- Thruster: within limits
-**Action:** Assess whether the heater can be safely restored:
-- If the heater responded to commands in Step 2: Return to auto mode:
-  `HEATER_AUTO_MODE(circuit=N)` (func_id 45). Monitor for recurrence.
-- If the heater required power line shed: Do NOT re-enable the power line without
-  engineering assessment. The relay or switch is suspected stuck.
-**Action:** Log the thermal runaway event:
-- Affected zone, peak temperature reached
-- Which intervention was required (command OFF / setpoint override / power shed)
-- Duration of the runaway event
-- Current thermal configuration
-**Verify:** `eps.bus_voltage` (0x0105) > 28.0 V — power budget is stable
-**Note:** If the heater power line was shed, plan for thermal management during the
-next eclipse without that heater (may need to shed other loads to maintain temperature
-or accept a cold soak on that zone).
+**LABEL:** `STEP-6`
+**Note:** Once temperature has returned to a safe range — battery < 35 C,
+OBC < 50 C, thruster within limits — assess whether the heater can be restored.
+**Note:** If the heater responded in Step 2, return it to autonomous control
+with `HEATER_AUTO_MODE(circuit=0)` (func_id 45) and monitor for recurrence.
+This is deliberately NOT a `**TC:**` step: restoring a thermostat that has just
+misbehaved is a Flight-Director decision, and an executable card must not make
+it automatically. Send it by hand once the decision is taken.
+**Note:** If the heater required a power line shed, do NOT re-enable the line
+without engineering assessment. The relay or switch is suspected stuck.
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — final power check
+**Verify:** `eps.bus_voltage > 28.0` (0x0105, timeout 10 s) — power budget is stable
+**Note:** Log the thermal runaway event: affected zone, peak temperature
+reached, which intervention was required (command OFF / setpoint override /
+power shed), duration of the runaway, and the current thermal configuration.
+**Note:** If the heater power line was shed, plan for thermal management during
+the next eclipse without that heater (may need to shed other loads to maintain
+temperature, or accept a cold soak on that zone).
 
 ## Verification Criteria
 - [ ] Heater confirmed OFF (command, override, or power shed)

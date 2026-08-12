@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="AOCS" Creator="EOSAT-1 SMDL Generator" Date="2026-08-01" Version="1.0">
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="AOCS" Creator="EOSAT-1 SMDL Generator" Date="2026-08-12" Version="1.0">
   <Description>SMP2 model catalogue for AOCS subsystem</Description>
   <Type Name="UInt8" Uuid="5f89f604-a171-5501-aa33-4d555fe61f64" xsi:type="Integer" Size="1" Signed="false"/>
   <Type Name="UInt16" Uuid="6ba6c296-ed3b-5fbe-8a66-31fe90cbfb0d" xsi:type="Integer" Size="2" Signed="false"/>
@@ -386,7 +386,7 @@
       <Description>Time since last mode/target change until inside the gate [s]</Description>
     </Field>
     <Field Name="aocs_fine_ready" Uuid="7bc10e18-9d3f-57cf-afb9-77e1e8ce078a" Type="UInt8" Kind="Output" View="true">
-      <Description>FINE-entry precondition bitmask (0 = ready): bit0 ST&lt;5 stars, bit1 &lt;4 wheels, bit2 MEKF unconverged, bit3 rates high, bit4 momentum &gt;70%, bit5 propagate-only, bit6 slew not idle 60s</Description>
+      <Description>FINE-entry precondition bitmask (0 = ready): bit0 ST&lt;5 stars, bit1 &lt;3 wheels (a 3-of-4 pyramid still spans R^3 and flies FINE degraded — see aocs.fine_degraded 0x0299; two wheels cannot), bit2 MEKF unconverged, bit3 rates high, bit4 momentum &gt;70%, bit5 propagate-only, bit6 slew not idle 60s</Description>
     </Field>
     <Field Name="aocs_fidelity_mode" Uuid="bf0973ec-ea4e-54f2-8c9d-5c19c8435aa7" Type="UInt8" Kind="Output" View="true">
       <Description>0=full physics, 1=secular (accel bypass &gt;60x)</Description>
@@ -396,6 +396,36 @@
     </Field>
     <Field Name="aocs_power_w" Uuid="8e705470-cda0-5d97-9868-a99adb0a9f33" Type="UInt16" Kind="Output" View="true">
       <Description>AOCS suite power draw by mode (COARSE 4 / NOMINAL 9 / FINE 15 W); EPS bills the aocs_wheels line from this [W]</Description>
+    </Field>
+    <Field Name="aocs_gyro_units_on" Uuid="85aa7428-99e8-5dfe-8b2e-bb6c78f9aedb" Type="UInt8" Kind="Output" View="true">
+      <Description>Number of gyro units powered (S2 devices 0x0206-0x0208). 0 = the MEKF has no rate reference and coasts on CSS+MAG only</Description>
+    </Field>
+    <Field Name="aocs_gyro_saturated" Uuid="1bffbcf1-e498-58a8-95f3-c612b2c7221f" Type="UInt8" Kind="Output" View="true">
+      <Description>1 = at least one gyro channel is at its measurement-range limit (rate knowledge lost on that axis)</Description>
+    </Field>
+    <Field Name="aocs_gyro_bias_injected" Uuid="7d2a6f0c-7a93-546b-b8ba-6f6610a63183" Type="UInt16" Kind="Output" View="true">
+      <Description>Magnitude of the injected gyro-bias fault (instructor visibility; 0 in a healthy spacecraft) [deg/s]</Description>
+    </Field>
+    <Field Name="aocs_commanded_mode" Uuid="99407d6c-2e75-5491-a1ca-e79d2585465c" Type="UInt8" Kind="Output" View="true">
+      <Description>Operational mode last commanded from ground. Every transient and every automatic demotion resolves its return path against this</Description>
+    </Field>
+    <Field Name="aocs_mode_demoted" Uuid="e80571b0-fca4-5cc7-98ce-38d136c2e2da" Type="UInt8" Kind="Output" View="true">
+      <Description>1 = the spacecraft is NOT in its commanded mode (transient or automatic demotion in progress)</Description>
+    </Field>
+    <Field Name="aocs_fine_degraded" Uuid="264b945e-7a3c-5c28-83df-8dacbcf0ce6f" Type="UInt8" Kind="Output" View="true">
+      <Description>1 = FINE_POINT is running on a degraded 3-wheel set (permitted per R3, relaxed jitter/deadband spec)</Description>
+    </Field>
+    <Field Name="aocs_desat_inhibit" Uuid="79a9ebfb-bf9d-5e11-bc65-91bc7a31811b" Type="UInt8" Kind="Output" View="true">
+      <Description>1 = momentum dumps are inhibited (operator latch, or asserted automatically while the payload is imaging)</Description>
+    </Field>
+    <Field Name="aocs_h_body_nms" Uuid="ecd73de9-8ee0-5ecb-a678-55d01408e010" Type="UInt16" Kind="Output" View="true">
+      <Description>Magnitude of the stored BODY momentum |A.h_wheel| — the quantity a magnetic dump actually removes [Nms]</Description>
+    </Field>
+    <Field Name="aocs_desat_ineffective" Uuid="b5858268-c26d-5c62-ad11-2129b5c04ebc" Type="UInt8" Kind="Output" View="true">
+      <Description>1 = the last desaturation timed out without converging (see event AOCS_DESAT_INEFFECTIVE 0x020E)</Description>
+    </Field>
+    <Field Name="aocs_wheels_commissioned" Uuid="3eea4bfc-a472-5b96-8d3f-43ebcd1d4e00" Type="UInt8" Kind="Output" View="true">
+      <Description>Latched 1 once &gt;=3 wheels have been simultaneously enabled; cleared by an AOCS power-down. Lets FDIR tell a double wheel failure apart from an uncommissioned bus</Description>
     </Field>
     <Field Name="aocs_wheels_enabled" Uuid="63b4d534-375b-5ebd-a05e-384938daa7cc" Type="Float32" Kind="Output" View="true">
       <Description>Number of enabled reaction wheels</Description>
@@ -521,7 +551,7 @@
       <Description>DESAT entry at this % of the momentum envelope (default 70) | [%] | range [10, 95] | default 70</Description>
     </Field>
     <Field Name="tc_AOCS_SET_MOM_MGMT_exit_pct" Uuid="8052d3ab-e2ed-5576-889d-b1e211345b71" Type="UInt8" Kind="Input">
-      <Description>DESAT exit below this % (default 20) | [%] | range [5, 90] | default 20</Description>
+      <Description>DESAT completes when the momentum envelope falls back below this % (default 20) | [%] | range [5, 90] | default 20</Description>
     </Field>
     <Field Name="tc_AOCS_EST_RESET_mode" Uuid="d490081c-6c66-5abf-9f1e-fc21a8665ef8" Type="UInt8" Kind="Input">
       <Description>0=cold (TRIAD/ST bootstrap), 1=warm (keep attitude, re-inflate covariance) | default 1 | 0=COLD | 1=WARM</Description>

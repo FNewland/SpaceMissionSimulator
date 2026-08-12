@@ -66,9 +66,45 @@ heaters:
     off_temp_c: 230.0
 
 fpa_cooler_target_c: -15.0
-# Maximum cooler heat lift below the ambient sink (K). Bounds the FPA
-# setpoint control (brief 05 WP-1): -15 C from a +10/+12 C sink needs ~27 K.
+# ABSOLUTE ceiling on the cooler's heat lift below the ambient sink (K).
+#
+# 2026-08b: this used to be the WHOLE cooler model — a flat 40 K with no
+# coupling to `fpa_cooler_power_w`, so the machine had as much authority at a
+# 39 K lift as at a 1 K lift and "the cooler is struggling" was not a state
+# the simulator could enter. It is now only the ceiling; the lift ACHIEVABLE
+# at any instant is computed from the cooler's efficiency in
+# `tcs_basic.TCSBasicModel._fpa_achievable_lift_k`, which carries the full
+# derivation and the citations. Summary:
+#
+#   * -15 C from the +12 C internal sink is a 27 K lift. The FPA node's
+#     UA = C/tau = 100/120 = 0.833 W/K, so 22.5 W has to be pumped from 15 W
+#     of input: COP 1.50.
+#   * A single-stage Bi2Te3 thermoelectric cannot do that. Goldsmid's
+#     optimum-current result COP_max = (Tc/dT)(g - Th/Tc)/(g + 1),
+#     g = sqrt(1 + Z.Tm), with ZT ~ 0.73 gives COP_max = 0.88 at this lift.
+#     The "Peltier envelope" wording elsewhere in the tree is therefore the
+#     thing that was wrong, not the mission.
+#   * 1.50 is 15.7 % of the Carnot COP (Tc/dT = 9.56), well inside the
+#     10-25 % of Carnot that miniature Stirling / free-piston space coolers
+#     reach at near-ambient lifts — the class of machine cooled small-sat EO
+#     detectors actually fly. The model is that machine, at 23 % of Carnot.
+#
+# Measured on the fixed model (`_fpa_achievable_lift_k`):
+#   sink +12 C idle      32.35 K -> floor -20.35 C   (-20 C setpoint just holds)
+#   sink +12 C imaging   31.24 K -> floor -19.24 C   (-20 C setpoint does not)
+#   sink +20 C idle      32.83 K -> floor -12.83 C   (-15 C setpoint does not)
+# The nominal -15 C keeps ~5 K of margin, so the shipped mission is unchanged;
+# the margin is now finite, spendable and VISIBLE at 0x0424 (achievable floor)
+# and 0x0425 (margin), mirrored by the payload at 0x064A / 0x064B.
 fpa_cooler_max_lift_k: 40.0
+# NOT YET CONFIGURABLE. `fpa_cooler_carnot_fraction` (0.23),
+# `fpa_cooler_power_w` (15.0, matching subsystems/payload.yaml) and
+# `fpa_imaging_load_w` (2.0) are read with `config.get(...)` by the model but
+# TCSConfig is a StrictModel and does not declare them, so YAML values here
+# would be rejected by the loader. The model defaults are the live values.
+# Adding the three schema fields is requested in
+# docs/plan_2026-08b/DISPLAY_REQUESTS_PAYLOAD.md (smo-common is not the
+# payload owner's file).
 
 # ---------------------------------------------------------------------------
 # FPA THERMAL ENVELOPE — THE SINGLE SOURCE  (DECISIONS §3, ruled in G3-d)

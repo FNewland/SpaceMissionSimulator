@@ -14,7 +14,7 @@ subsystems of interest for the current operations timeline.
 
 ## Prerequisites
 - [ ] OBDH in NOMINAL mode: `obdh.mode` (0x0300) = 0
-- [ ] TTC link established: `ttc.link_status` (0x0501) = 1 (LOCKED)
+- [ ] TTC link established: `ttc.link_status` (0x0501) = 2 (LOCKED)
 - [ ] `ttc.link_margin` (0x0503) > 3.0 dB (sufficient margin for TM throughput)
 - [ ] Current HK configuration documented in operations log
 - [ ] No critical onboard autonomy sequences depending on current HK intervals
@@ -23,12 +23,12 @@ subsystems of interest for the current operations timeline.
 ## Procedure Steps
 
 ### Step 1 --- Read Current HK Configuration
-**TC:** `HK_REPORT_CONFIG` SID=1 (Service 3, Subtype 25) --- request EPS HK structure report
-**TC:** `HK_REPORT_CONFIG` SID=2 (Service 3, Subtype 25) --- request AOCS HK structure report
-**TC:** `HK_REPORT_CONFIG` SID=3 (Service 3, Subtype 25) --- request TCS HK structure report
-**TC:** `HK_REPORT_CONFIG` SID=4 (Service 3, Subtype 25) --- request OBDH HK structure report
-**TC:** `HK_REPORT_CONFIG` SID=5 (Service 3, Subtype 25) --- request TTC HK structure report
-**TC:** `HK_REPORT_CONFIG` SID=6 (Service 3, Subtype 25) --- request Payload HK structure report
+**TC:** `HK_ENABLE(sid=1)` (Service 3, Subtype 5) --- request EPS HK structure report
+**TC:** `HK_ENABLE(sid=2)` (Service 3, Subtype 5) --- request AOCS HK structure report
+**TC:** `HK_ENABLE(sid=3)` (Service 3, Subtype 5) --- request TCS HK structure report
+**TC:** `HK_ENABLE(sid=4)` (Service 3, Subtype 5) --- request OBDH HK structure report
+**TC:** `HK_ENABLE(sid=5)` (Service 3, Subtype 5) --- request TTC HK structure report
+**TC:** `HK_ENABLE(sid=6)` (Service 3, Subtype 5) --- request Payload HK structure report
 **Verify:** Configuration reports received for all 6 SIDs within 15 s
 **Action:** Record current interval_s values for each SID:
   - SID 1 (EPS): expected 1.0 s (contact) / 10.0 s (standby)
@@ -40,12 +40,12 @@ subsystems of interest for the current operations timeline.
 **GO/NO-GO:** All SID configurations successfully retrieved and recorded.
 
 ### Step 2 --- Modify HK Collection Intervals
-**TC:** `HK_SET_INTERVAL` SID=1, interval=N (Service 3, Subtype 31) --- set EPS interval
-**TC:** `HK_SET_INTERVAL` SID=2, interval=N (Service 3, Subtype 31) --- set AOCS interval
-**TC:** `HK_SET_INTERVAL` SID=3, interval=N (Service 3, Subtype 31) --- set TCS interval
-**TC:** `HK_SET_INTERVAL` SID=4, interval=N (Service 3, Subtype 31) --- set OBDH interval
-**TC:** `HK_SET_INTERVAL` SID=5, interval=N (Service 3, Subtype 31) --- set TTC interval
-**TC:** `HK_SET_INTERVAL` SID=6, interval=N (Service 3, Subtype 31) --- set Payload interval
+**TC:** `HK_SET_INTERVAL(sid=1, interval_s=N)` (Service 3, Subtype 31) --- set EPS interval
+**TC:** `HK_SET_INTERVAL(sid=2, interval_s=N)` (Service 3, Subtype 31) --- set AOCS interval
+**TC:** `HK_SET_INTERVAL(sid=3, interval_s=N)` (Service 3, Subtype 31) --- set TCS interval
+**TC:** `HK_SET_INTERVAL(sid=4, interval_s=N)` (Service 3, Subtype 31) --- set OBDH interval
+**TC:** `HK_SET_INTERVAL(sid=5, interval_s=N)` (Service 3, Subtype 31) --- set TTC interval
+**TC:** `HK_SET_INTERVAL(sid=6, interval_s=N)` (Service 3, Subtype 31) --- set Payload interval
 **Action:** Set intervals to the appropriate rate profile:
   - **Contact profile:** SID1=1s, SID2=4s, SID3=10s, SID4=5s, SID5=2s, SID6=5s
   - **Standby profile:** SID1=10s, SID2=30s, SID3=60s, SID4=30s, SID5=10s, SID6=60s
@@ -55,20 +55,20 @@ subsystems of interest for the current operations timeline.
 **GO/NO-GO:** All interval commands accepted.
 
 ### Step 3 --- Enable Required HK SIDs
-**TC:** `HK_ENABLE` SID=1 (Service 3, Subtype 5) --- enable EPS periodic reporting
-**TC:** `HK_ENABLE` SID=2 (Service 3, Subtype 5) --- enable AOCS periodic reporting
-**TC:** `HK_ENABLE` SID=4 (Service 3, Subtype 5) --- enable OBDH periodic reporting
-**TC:** `HK_ENABLE` SID=5 (Service 3, Subtype 5) --- enable TTC periodic reporting
+**TC:** `HK_ENABLE(sid=1)` (Service 3, Subtype 5) --- enable EPS periodic reporting
+**TC:** `HK_ENABLE(sid=2)` (Service 3, Subtype 5) --- enable AOCS periodic reporting
+**TC:** `HK_ENABLE(sid=4)` (Service 3, Subtype 5) --- enable OBDH periodic reporting
+**TC:** `HK_ENABLE(sid=5)` (Service 3, Subtype 5) --- enable TTC periodic reporting
 **Verify:** Command acceptance for each ENABLE within 5 s
 **Note:** SIDs 1, 2, 4, and 5 are always enabled during nominal operations.
 **GO/NO-GO:** Core SIDs enabled and reporting.
 
 ### Step 4 --- Enable or Disable Optional SIDs Based on Phase
-**Action:** For current operational context, enable/disable optional SIDs:
-  - **If imaging planned:** `HK_ENABLE` SID=6 (Service 3, Subtype 5) --- Payload HK ON
-  - **If no payload ops:** `HK_DISABLE` SID=6 (Service 3, Subtype 7) --- Payload HK OFF
-  - **If thermal concern:** `HK_ENABLE` SID=3 (Service 3, Subtype 5) --- TCS HK ON at high rate
-  - **If thermal nominal:** Set SID=3 to low rate via Step 2 standby profile
+**Note:** For current operational context, enable/disable optional SIDs:
+**TC:** `HK_ENABLE(sid=6)` (Service 3, Subtype 5) — **If imaging planned:**  --- Payload HK ON
+**TC:** `HK_DISABLE(sid=6)` (Service 3, Subtype 6) — **If no payload ops:**  --- Payload HK OFF
+**TC:** `HK_ENABLE(sid=3)` (Service 3, Subtype 5) — **If thermal concern:**  --- TCS HK ON at high rate
+**Note:** **If thermal nominal:** Set SID=3 to low rate via Step 2 standby profile
 **Verify:** Command acceptance within 5 s for each enable/disable
 **Verify:** `obdh.hktm_buf_fill` (0x0312) < 50 % --- buffer not overflowing with new config
 **Note:** Enabling all SIDs at high rate simultaneously may exceed the onboard buffer
@@ -76,8 +76,8 @@ capacity during long non-contact periods. Monitor buffer fill level.
 **GO/NO-GO:** Optional SIDs configured per current operations plan.
 
 ### Step 5 --- Verify New Configuration Active
-**TC:** `HK_REPORT_CONFIG` SID=1 (Service 3, Subtype 25) --- re-read EPS config
-**TC:** `HK_REPORT_CONFIG` SID=2 (Service 3, Subtype 25) --- re-read AOCS config
+**TC:** `HK_ENABLE(sid=1)` (Service 3, Subtype 5) --- re-read EPS config
+**TC:** `HK_ENABLE(sid=2)` (Service 3, Subtype 5) --- re-read AOCS config
 **Action:** Verify reported intervals match commanded values for all modified SIDs.
 **Verify:** Periodic HK packets arriving at expected rates (observe TM packet count
 `obdh.tm_pkt_count` (0x0307) incrementing at the expected aggregate rate).

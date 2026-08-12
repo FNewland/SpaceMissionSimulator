@@ -198,6 +198,40 @@ class AOCSState:
     mom_mgmt_enable: bool = False
     mom_mgmt_entry_pct: float = 70.0
     mom_mgmt_exit_pct: float = 20.0
+
+    # ── Commanded-mode memory (finding A-a) ──
+    # `mode` is where the spacecraft IS; `commanded_mode` is the operational
+    # mode the ground last asked for. Every transient (ECLIPSE, DESAT, SLEW)
+    # and every automatic demotion (FDIR safing, sensor loss) must have a
+    # documented way back to `commanded_mode`, or the spacecraft silently
+    # abandons its mission mode and never returns — which is exactly what the
+    # instrumented run showed (NOMINAL -> ECLIPSE -> COARSE_SUN, six orbits).
+    commanded_mode: int = 0
+    # Why the last transition happened, for the 0x0200 event description.
+    mode_change_reason: str = "init"
+    # 1 while the spacecraft is somewhere other than its commanded mode.
+    mode_demoted: bool = False
+    # Mode to restore when the transient completes (DESAT / SLEW).
+    return_mode: int = 0
+    # Sustain timer for the automatic NOMINAL -> FINE_POINT re-promotion.
+    fine_promote_timer: float = 0.0
+    # FINE running on a degraded (3-wheel) actuator set — the mode is
+    # permitted (R3) but the jitter/deadband spec is relaxed.
+    fine_degraded: bool = False
+    # Desaturation inhibit: set by the operator, and asserted automatically
+    # while the payload is imaging so a dump cannot pre-empt a strip.
+    desat_inhibit: bool = False
+    desat_inhibit_auto: bool = False
+    # DESAT diagnostics
+    desat_h0_nms: float = 0.0        # body momentum at DESAT entry
+    desat_ineffective: bool = False
+
+    # Latched once the reaction-wheel assembly has ever been commissioned
+    # (>= 3 wheels enabled at the same time). FDIR needs this to tell "two
+    # wheels have failed" apart from "the wheels have not been switched on
+    # yet" — see fault_propagation.yaml aocs_wheel_failure_dual. Cleared only
+    # by an AOCS power cycle (MODE_OFF), which genuinely restarts commissioning.
+    wheels_commissioned: bool = False
     # Estimator products mirrored for telemetry
     knowledge_err_3sig_deg: float = 180.0
     control_err_deg: float = 0.0
@@ -380,6 +414,16 @@ class AOCSBasicModel(SubsystemModel):
         self._gyro_bias_tau_s = 1800.0
         self._gyro_bias_ss_dps = 2.8e-5     # 0.1 deg/h
         self._gyro_noise_dps = 0.0005       # per-sample white noise floor (post-filter)
+        self._gyro_max_rate_dps = 400.0     # measurement range (tactical IMU class)
+        self._gyro_tempco_dps_per_k = 2.0e-6  # bias tempco about 22 °C
+        # Density used for an axis with NO rate measurement (unit off /
+        # saturated): the attitude error there grows at the unknown body rate.
+        self._gyro_dead_arw_dps_rts = 0.1
+        # Injected constant bias per axis [deg/s] — the failure surface the
+        # instructor book advertises as "IMU drifts" (scenario `gyro_bias`).
+        self._gyro_bias_inject = [0.0, 0.0, 0.0]
+        self._gyro_temp_bias = 0.0
+        self._gyro_saturated = False
         self._st_nea_cross_arcsec = 6.0
         self._st_nea_roll_arcsec = 40.0
         self._st_lf_bias_arcsec = 3.0       # 1σ, per axis, 1/e ≈ 1 orbit
@@ -404,6 +448,33 @@ class AOCSBasicModel(SubsystemModel):
         # Per-axis torque-gain values saved before a ``gain_corruption`` inject
         self._gain_corruption_saved: dict[str, float] = {}
         # GPS start mode timing (defects/reviews/aocs.md Defect #3)
+        # ── Desaturation law (aocs.yaml `desaturation:`) ──
+        # k [s^-1] in m = k*(h x B)/|B|^2. MUST match aocs.yaml
+        # magnetorquers.desaturation.gain_per_s — this is the value a
+        # standalone `configure({})` model gets, and a mismatch here means the
+        # unit tests measure a different spacecraft from the simulator.
+        self._desat_gain_per_s = 0.002
+        self._desat_deadband_nms = 5.0e-4     # 0.5 mN.m.s: stop, don't chatter
+        self._desat_timeout_s = 3600.0        # see aocs.yaml `desaturation:`
+        # Bang-bang (rods flat out) is OFF by default: measured, it is WORSE
+        # than the linear law — see the desaturation block in aocs.yaml.
+        self._desat_saturate = False
+        # B-dot gain [A.m2 / (T/s)]. Sized against a realistic separation
+        # tumble: at |B| = 3e-5 T the damping torque is k|B|^2*w, so the rate
+        # time constant is tau = I/(k|B|^2). With I = 0.18 kg.m2 and the
+        # 6U rod set, k = 5e5 gives tau = 0.18/(5e5*9e-10) = 400 s, i.e. a
+        # 10 deg/s separation tumble is inside the 0.5 deg/s DETUMBLE exit
+        # guard in ~3*tau = 20 min, and the commanded dipole at 10 deg/s
+        # (|Bdot| ~ 5e-6 T/s) is 2.6 A.m2 -> saturated, as it should be.
+        self._bdot_gain = 5.0e5
+        self._bdot_prev_B = None
+        self._bdot_prev_dt = 0.0
+        self._bdot_filt = np.zeros(3)
+        # Previous reference quaternion per frame, for the numerical
+        # reference-rate feed-forward (see _ref_rate_from_history).
+        self._ref_hist: dict = {}
+        # FINE deadband multiplier when running on a degraded (3-wheel) set
+        self._fine_degraded_db_factor = 4.0
         self._gps_cold_ttff_s = 60.0
         self._gps_warm_ttff_s = 30.0
         self._gps_hot_ttff_s = 5.0
@@ -543,6 +614,11 @@ class AOCSBasicModel(SubsystemModel):
         self._gyro_bias_tau_s = float(gy.get("bias_tau_s", 1800.0))
         self._gyro_bias_ss_dps = float(gy.get("bias_ss_dps", 2.8e-5))
         self._gyro_noise_dps = float(gy.get("noise_dps", 0.0005))
+        self._gyro_max_rate_dps = float(gy.get("max_rate_dps", 400.0))
+        self._gyro_tempco_dps_per_k = float(
+            gy.get("tempco_dps_per_k", 2.0e-6))
+        self._gyro_dead_arw_dps_rts = float(
+            gy.get("dead_axis_arw_dps_rtsec", 0.1))
         st = sens.get("star_tracker", {})
         self._st_nea_cross_arcsec = float(st.get("nea_cross_arcsec", 6.0))
         self._st_nea_roll_arcsec = float(st.get("nea_roll_arcsec", 40.0))
@@ -566,6 +642,17 @@ class AOCSBasicModel(SubsystemModel):
         self._att_error_threshold_deg = config.get("attitude_error_threshold_deg", 5.0)
         self._state.deadband_deg = float(
             config.get("attitude_error_deadband_deg", 0.005))
+
+        # The dump law lives under `magnetorquers:` — it IS the magnetorquer
+        # control law, and AOCSConfig is a StrictModel whose free-form blocks
+        # are the only place model-owned sub-config can go.
+        des = mtq.get("desaturation", config.get("desaturation", {}))
+        self._desat_gain_per_s = float(des.get("gain_per_s", 0.002))
+        self._desat_deadband_nms = float(des.get("deadband_nms", 5.0e-4))
+        self._desat_timeout_s = float(des.get("timeout_s", 3600.0))
+        self._desat_saturate = bool(des.get("saturate_rods", False))
+        self._bdot_gain = float(mtq.get("bdot_gain_am2_per_tps", 5.0e5))
+
 
         self._param_ids = config.get("param_ids", {
             "att_q1": 0x0200, "att_q2": 0x0201, "att_q3": 0x0202, "att_q4": 0x0203,
@@ -599,8 +686,26 @@ class AOCSBasicModel(SubsystemModel):
 
     # ─── Mode transitions ────────────────────────────────────────────
 
-    def _set_mode(self, new_mode: int) -> None:
-        """Transition to a new AOCS mode, resetting timers."""
+    # Modes the ground can hold as an OPERATIONAL mode. Everything else is a
+    # transient (SLEW, DESAT, ECLIPSE) or a safing state (DETUMBLE, SAFE_BOOT)
+    # that must eventually hand control back to one of these.
+    #
+    # COARSE_SUN is deliberately NOT in this set. aocs_mode_codes.yaml defines
+    # mode 3 as "Sun-pointing via coarse sun sensors. PREREQUISITE FOR NOMINAL"
+    # — a hold on the way somewhere, not a destination. It also has to stay out
+    # because FDIR safing reaches the model through the same
+    # `set_mode` command an operator uses (engine `safe_mode_aocs`): if
+    # commanding mode 3 latched it as the commanded mode, every FDIR safing
+    # would erase the mission mode it was supposed to protect, which is exactly
+    # the failure the live run showed.
+    _OPERATIONAL_MODES = (MODE_NOMINAL, MODE_FINE_POINT, MODE_INERTIAL)
+
+    def _set_mode(self, new_mode: int, reason: str = "") -> None:
+        """Transition to a new AOCS mode, resetting timers.
+
+        ``reason`` is carried into the 0x0200 AOCS_MODE_CHANGE event so every
+        transition — commanded, automatic or FDIR-driven — says on the ground
+        WHY it happened and, for a demotion, what the way back is."""
         s = self._state
         if s.mode == new_mode:
             return
@@ -609,6 +714,49 @@ class AOCSBasicModel(SubsystemModel):
         s._guard_timer = 0.0
         s.submode = 0
         s.ctrl_integ = [0.0, 0.0, 0.0]
+        s.mode_change_reason = reason or "unspecified"
+        s.mode_demoted = (s.commanded_mode in self._OPERATIONAL_MODES
+                          and new_mode != s.commanded_mode)
+        if new_mode != MODE_FINE_POINT:
+            s.fine_degraded = False
+        s.fine_promote_timer = 0.0
+
+    def _resume_target(self, s: AOCSState,
+                       fallback: int = MODE_NOMINAL) -> int:
+        """The mode to return to when a transient or demotion clears.
+
+        FINE_POINT is never re-entered directly — its 0x02C5 preconditions
+        need settled wheels and a sustained MEKF convergence that cannot be
+        true at the instant a transient ends. The spacecraft returns to
+        NOMINAL and `_check_fine_promotion` promotes it back to FINE once the
+        preconditions have actually been met for 30 s. That is the documented
+        return path for the only automatic demotion that is not instant."""
+        target = s.commanded_mode
+        if target not in self._OPERATIONAL_MODES:
+            return fallback
+        if target == MODE_FINE_POINT:
+            return MODE_NOMINAL
+        if target in (MODE_NOMINAL, MODE_INERTIAL) and not s.st_valid:
+            # No inertial attitude reference — sun-safe is the honest fallback.
+            return MODE_COARSE_SUN
+        return target
+
+    def _check_fine_promotion(self, s: AOCSState, dt: float) -> None:
+        """NOMINAL -> FINE_POINT re-promotion when FINE is the commanded mode.
+
+        Without this, every eclipse, desat or safing episode permanently costs
+        the mission its fine-pointing mode: the ground command that selected
+        FINE is consumed once and never reasserted."""
+        if s.commanded_mode != MODE_FINE_POINT or s.mode != MODE_NOMINAL:
+            s.fine_promote_timer = 0.0
+            return
+        if s.fine_ready_mask != 0:
+            s.fine_promote_timer = 0.0
+            return
+        s.fine_promote_timer += dt
+        if s.fine_promote_timer >= 30.0:
+            self._set_mode(MODE_FINE_POINT,
+                           reason="preconditions met — resuming commanded FINE")
 
     def _check_emergency(self, s: AOCSState) -> bool:
         """Check for emergency conditions that force mode transitions."""
@@ -618,7 +766,12 @@ class AOCSBasicModel(SubsystemModel):
         if rate_mag > self._emergency_rate_threshold and s.mode not in (
             MODE_OFF, MODE_DETUMBLE, MODE_SAFE_BOOT
         ):
-            self._set_mode(MODE_DETUMBLE)
+            self._set_mode(
+                MODE_DETUMBLE,
+                reason=(f"EMERGENCY body rate {rate_mag:.2f} deg/s > "
+                        f"{self._emergency_rate_threshold:.2f}; return path "
+                        f"DETUMBLE -> COARSE_SUN -> "
+                        f"{_MODE_NAMES.get(s.commanded_mode, 'NOMINAL')}"))
             return True
         return False
 
@@ -632,7 +785,8 @@ class AOCSBasicModel(SubsystemModel):
         if s.mode == MODE_SAFE_BOOT:
             # After 30s hardware init, transition to DETUMBLE
             if s.time_in_mode >= 30.0:
-                self._set_mode(MODE_DETUMBLE)
+                self._set_mode(MODE_DETUMBLE,
+                               reason="SAFE_BOOT hardware init complete")
 
         elif s.mode == MODE_DETUMBLE:
             # Guard: rates < 0.5 deg/s for 30 consecutive seconds
@@ -644,18 +798,44 @@ class AOCSBasicModel(SubsystemModel):
             else:
                 s._guard_timer = 0.0
             if s._guard_timer >= 30.0:
-                self._set_mode(MODE_COARSE_SUN)
+                self._set_mode(
+                    MODE_COARSE_SUN,
+                    reason=(f"rates damped below 0.5 deg/s for 30 s; next "
+                            f"COARSE_SUN -> "
+                            f"{_MODE_NAMES.get(s.commanded_mode, 'NOMINAL')}"))
 
         elif s.mode == MODE_COARSE_SUN:
-            # Guard: CSS valid AND att_error < 10 deg for 60s
-            if s.css_valid and s.att_error < 10.0:
+            # Guard: CSS valid AND sun-pointing error inside the COARSE band
+            # for 60 s. Threshold raised 10 -> 15 deg: measured COARSE_SUN
+            # holds 3.8 deg mean with 10.4 deg peaks, because the mode is
+            # KNOWLEDGE-limited by the coarse sun sensor (six heads, 0.02
+            # illumination noise, TRIAD against the magnetometer) and not by
+            # the control. A 10 deg gate is barely 3 sigma on that
+            # distribution, so a single excursion reset the 60 s timer and
+            # could stall the promotion out of the safe hold indefinitely.
+            # COARSE_SUN is a safe hold, never a destination: as soon as the
+            # sun lock is good and the tracker is back, hand control to the
+            # mode the ground actually asked for. Before this, a COARSE_SUN
+            # demotion could only ever return to NOMINAL — so a FINE or
+            # INERTIAL commanded mode was lost for the rest of the pass.
+            if s.css_valid and s.att_error < 15.0:
                 s._guard_timer += dt
             else:
                 s._guard_timer = 0.0
             if s._guard_timer >= 60.0 and s.st_valid:
-                self._set_mode(MODE_NOMINAL)
+                # commanded_mode 0 (never commanded, e.g. LEOP acquisition)
+                # keeps the historical NOMINAL destination.
+                tgt = self._resume_target(s, fallback=MODE_NOMINAL)
+                self._set_mode(
+                    tgt, reason=("sun lock + star tracker recovered; resuming "
+                                 f"commanded "
+                                 f"{_MODE_NAMES.get(s.commanded_mode, 'NOMINAL')}"))
 
         elif s.mode in (MODE_NOMINAL, MODE_FINE_POINT):
+            # INERTIAL is deliberately absent from this list: an ECI attitude
+            # hold has no sun dependence at all, and ECLIPSE exists to say
+            # "no sun reference is available". Demoting it would be a mode
+            # change with nothing to gain and a return path to get wrong.
             # Eclipse entry -> ECLIPSE mode. Defect #3: auto-trigger on
             # in_eclipse. Phase C: FINE_POINT also yields to eclipse (root
             # cause 14 — it previously sailed through claiming ST knowledge).
@@ -665,27 +845,121 @@ class AOCSBasicModel(SubsystemModel):
                 s._guard_timer += dt
                 # Debounce 5s before entering eclipse (hysteresis to avoid thrashing)
                 if s._guard_timer >= 5.0:
-                    self._set_mode(MODE_ECLIPSE)
+                    self._set_mode(
+                        MODE_ECLIPSE,
+                        reason=("entered eclipse; will resume "
+                                f"{_MODE_NAMES.get(s.commanded_mode, 'NOMINAL')}"
+                                " at eclipse exit"))
 
         elif s.mode == MODE_ECLIPSE:
-            # Eclipse exit -> return to NOMINAL if ST valid
+            # Eclipse exit -> resume the COMMANDED mode, not a hard-coded
+            # NOMINAL. This is the transition that lost nadir pointing for six
+            # orbits in the instrumented run.
             if not orbit_state.in_eclipse:
-                if s.st_valid:
-                    self._set_mode(MODE_NOMINAL)
-                else:
-                    self._set_mode(MODE_COARSE_SUN)
+                tgt = self._resume_target(s, fallback=MODE_NOMINAL)
+                self._set_mode(
+                    tgt, reason=("eclipse exit; resuming commanded "
+                                 f"{_MODE_NAMES.get(s.commanded_mode, 'NOMINAL')}"
+                                 if s.st_valid else
+                                 "eclipse exit with no star tracker — sun-safe hold"))
 
         elif s.mode == MODE_DESAT:
-            # All active wheels below threshold -> NOMINAL
-            if all(
-                abs(s.rw_speed[i]) <= self._rw_desat_speed + 100
-                for i in range(4) if s.active_wheels[i]
-            ):
-                s._guard_timer += dt
-            else:
-                s._guard_timer = 0.0
-            if s._guard_timer >= 10.0:
-                self._set_mode(MODE_NOMINAL)
+            self._check_desat_exit(s, dt)
+
+    def _check_desat_exit(self, s: AOCSState, dt: float) -> None:
+        """DESAT completion, timeout and return path.
+
+        Three defects fixed here at once:
+        * the old exit test looked only at WHEEL SPEED, which the null-space
+          bias regulator can satisfy without removing a single N·m·s of BODY
+          momentum — the thing a magnetic dump actually controls;
+        * `mom_mgmt_exit_pct` was accepted from the operator (func 90) and read
+          nowhere. It is the operational exit target, so it is now one of the
+          completion tests;
+        * there was NO timeout. A dump that cannot converge (weak field
+          geometry, failed rod, inhibited MTQ) parked the spacecraft in DESAT
+          for ever — off-pointing, out of contact, unrecoverable without an
+          operator who happens to be watching.
+        """
+        h_body = float(np.linalg.norm(self._A @ np.array(s.h_wheel)))
+        env_pct = self._h_env_frac(s)
+        # Physical completion: body momentum inside the dump deadband, or the
+        # envelope usage back under the operator's exit target.
+        done = (h_body <= self._desat_deadband_nms
+                or env_pct <= s.mom_mgmt_exit_pct)
+        # Legacy wheel-speed completion retained: a wheel-speed-driven desat
+        # (LEOP wheel run-down) is still a legitimate way to finish.
+        done = done or all(
+            abs(s.rw_speed[i]) <= self._rw_desat_speed + 100
+            for i in range(4) if s.active_wheels[i])
+        if done:
+            s._guard_timer += dt
+        else:
+            s._guard_timer = 0.0
+        if s._guard_timer >= 10.0:
+            tgt = s.return_mode if s.return_mode in self._OPERATIONAL_MODES \
+                else self._resume_target(s)
+            if tgt == MODE_FINE_POINT:
+                tgt = MODE_NOMINAL      # FINE re-entry goes via the promotion
+            s.desat_ineffective = False
+            self._set_mode(tgt, reason=(
+                f"desaturation complete: |h_body| {s.desat_h0_nms * 1000:.2f} "
+                f"-> {h_body * 1000:.2f} mN·m·s ({env_pct:.0f} % envelope); "
+                f"resuming {_MODE_NAMES.get(tgt, '?')}"))
+            return
+        # Timeout: give up loudly rather than silently living in DESAT.
+        if s.time_in_mode >= self._desat_timeout_s:
+            s.desat_ineffective = True
+            tgt = s.return_mode if s.return_mode in self._OPERATIONAL_MODES \
+                else self._resume_target(s)
+            if tgt == MODE_FINE_POINT:
+                tgt = MODE_NOMINAL
+            self._emit_model_event(
+                0x020E, 'MEDIUM',
+                f'Desaturation INEFFECTIVE after {s.time_in_mode:.0f} s: '
+                f'|h_body| {s.desat_h0_nms * 1000:.2f} -> {h_body * 1000:.2f} '
+                f'mN·m·s, {env_pct:.0f} % of envelope still loaded; '
+                f'returning to {_MODE_NAMES.get(tgt, "?")}')
+            self._set_mode(tgt, reason="desat timeout — dump ineffective")
+
+    def _slew_return_target(self, s: AOCSState) -> int:
+        """Where a completed SLEW hands control back to.
+
+        A slew is a transient between two pointing states; ending it always in
+        NOMINAL threw away an INERTIAL or FINE commanded mode every time the
+        spacecraft manoeuvred."""
+        tgt = s.return_mode if s.return_mode in self._OPERATIONAL_MODES \
+            else self._resume_target(s)
+        return MODE_NOMINAL if tgt == MODE_FINE_POINT else tgt
+
+    def _desat_inhibited(self, s: AOCSState) -> bool:
+        """True while a momentum dump must not be started.
+
+        Either the operator has latched the inhibit (AOCS_SET_MOM_MGMT /
+        AOCS_SET_DESAT_INHIBIT) or the payload is imaging."""
+        return bool(s.desat_inhibit or s.desat_inhibit_auto)
+
+    def _enter_desat(self, s: AOCSState, reason: str) -> None:
+        """Enter DESAT, recording where to come back to and the entry loading."""
+        if s.mode != MODE_DESAT:
+            if s.return_mode not in self._OPERATIONAL_MODES:
+                s.return_mode = s.mode if s.mode in self._OPERATIONAL_MODES \
+                    else s.commanded_mode
+            s.desat_h0_nms = float(
+                np.linalg.norm(self._A @ np.array(s.h_wheel)))
+            s.desat_ineffective = False
+        self._set_mode(MODE_DESAT, reason=reason)
+
+    def _emit_model_event(self, event_id: int, severity: str,
+                          description: str) -> None:
+        """Push a single event to the engine outside the tick-event sweep."""
+        if getattr(self, '_engine', None):
+            try:
+                self._engine._model_event_queue.put({
+                    'event_id': event_id, 'severity': severity,
+                    'description': description})
+            except Exception:      # queue full — telemetry, never fatal
+                pass
 
     # ─── Sensor models ───────────────────────────────────────────────
 
@@ -932,22 +1206,38 @@ class AOCSBasicModel(SubsystemModel):
             s.mag_b_y = true_y + s.mag_b_bias[1] + self.rng.gauss(0, s.mag_b_noise)
             s.mag_b_z = true_z + s.mag_b_bias[2] + self.rng.gauss(0, s.mag_b_noise)
 
+        # S2 device gate, applied HERE rather than only in the post-tick
+        # `_apply_device_power_gates` sweep. The sweep runs AFTER the mode tick,
+        # so a powered-off magnetometer still fed the control law with a fresh
+        # reading for the whole tick — switching both units off made no
+        # difference to DETUMBLE at all (measured: identical convergence with
+        # and without the magnetometers). B-dot is a magnetometer-only law, so
+        # this is the sensor whose loss it has to show.
+        ds = s.device_states
+        if not ds.get(0x0209, True):
+            s.mag_a_x = s.mag_a_y = s.mag_a_z = 0.0
+        if not ds.get(0x020A, True):
+            s.mag_b_x = s.mag_b_y = s.mag_b_z = 0.0
+        a_ok = (not s.mag_a_failed) and ds.get(0x0209, True)
+        b_ok = (not s.mag_b_failed) and ds.get(0x020A, True)
+
         # Active mag feeds into control loop (keep existing mag_x/y/z for compat)
-        if s.mag_select == 'A' and not s.mag_a_failed:
+        if s.mag_select == 'A' and a_ok:
             s.mag_x, s.mag_y, s.mag_z = s.mag_a_x, s.mag_a_y, s.mag_a_z
             s.mag_valid = True
-        elif s.mag_select == 'B' and not s.mag_b_failed:
+        elif s.mag_select == 'B' and b_ok:
             s.mag_x, s.mag_y, s.mag_z = s.mag_b_x, s.mag_b_y, s.mag_b_z
             s.mag_valid = True
         else:
-            # Both failed or selected mag failed — try fallback
-            if not s.mag_a_failed:
+            # Selected unit failed or unpowered — cross-strap to the other
+            if a_ok:
                 s.mag_x, s.mag_y, s.mag_z = s.mag_a_x, s.mag_a_y, s.mag_a_z
                 s.mag_valid = True
-            elif not s.mag_b_failed:
+            elif b_ok:
                 s.mag_x, s.mag_y, s.mag_z = s.mag_b_x, s.mag_b_y, s.mag_b_z
                 s.mag_valid = True
             else:
+                s.mag_x = s.mag_y = s.mag_z = 0.0
                 s.mag_valid = False
 
     def _tick_magnetorquers(self, s: AOCSState, dt: float) -> None:
@@ -1205,17 +1495,55 @@ class AOCSBasicModel(SubsystemModel):
 
     # ── Reference generation (WP-5) ──────────────────────────────────
 
-    def _compute_reference(self, s: AOCSState, mode: int):
+    def _ref_rate_from_history(self, key: str, q_ref: np.ndarray,
+                               dt: float) -> np.ndarray:
+        """Body-frame reference rate by differencing successive q_ref.
+
+        A tracking mode whose reference MOVES needs a rate feed-forward or the
+        PD carries the whole tracking rate as a lag error (a type-1 loop has
+        finite velocity error: e_ss = ω_ref·ζ·2/ω_n). The LVLH frame gets this
+        analytically below, but the SUN and TARGET frames both returned a zero
+        reference rate even though both rotate — the sun frame is built on the
+        nadir direction and so turns at orbit rate, and a ground target sweeps
+        several times faster than that near closest approach. Measured before
+        this feed-forward existed: TARGET_TRACK held 0.63 deg mean error and
+        COARSE_SUN 3.16 deg, against 0.055 deg for LVLH nadir which had it.
+
+        Differencing is what flight software actually does for a reference it
+        cannot differentiate in closed form: ω ≈ 2·vec(q_prev* ⊗ q_ref)/dt."""
+        prev = self._ref_hist.get(key)
+        self._ref_hist[key] = (np.array(q_ref, dtype=float), dt)
+        if prev is None or dt <= 0.0:
+            return np.zeros(3)
+        q_prev, dt_prev = prev
+        if dt_prev <= 0.0:
+            return np.zeros(3)
+        dq = att.quat_mult(att.quat_conj(q_prev), np.asarray(q_ref, float))
+        if dq[3] < 0:
+            dq = -dq
+        w = 2.0 * dq[:3] / dt_prev
+        # Reject the transient at a reference discontinuity (mode/target
+        # change) — a step in q_ref would otherwise be differentiated into a
+        # huge spurious rate command.
+        if float(np.linalg.norm(w)) > 0.02:      # > 1.15 deg/s
+            return np.zeros(3)
+        return w
+
+    def _compute_reference(self, s: AOCSState, mode: int, dt: float = 0.0):
         """(q_ref, ω_ref[body, rad/s]) for the active mode/pointing frame."""
         env = self._env
         frame = s.pointing_frame
         if mode == MODE_INERTIAL:
             frame = 0
         if frame == 0:
+            # A commanded ECI quaternion genuinely does not move: zero is the
+            # correct feed-forward, and the wheels absorb the LVLH-fixed
+            # disturbances as secular momentum (measured 0.32 uN.m mean).
             return (np.asarray(s.target_q_cmd, float), np.zeros(3))
         if frame == 3 or mode == MODE_COARSE_SUN:
             C = att.sun_frame_dcm(env['sun_hat'], env['r_m'])
-            return (att.dcm_to_quat(C), np.zeros(3))
+            q_ref = att.dcm_to_quat(C)
+            return (q_ref, self._ref_rate_from_history('sun', q_ref, dt))
         if frame == 2 and s.target_geo_valid:
             lat, lon = math.radians(s.target_geo[0]), math.radians(s.target_geo[1])
             r_t_ecef = (att.R_EARTH + s.target_geo[2]) * np.array([
@@ -1238,7 +1566,8 @@ class AOCSBasicModel(SubsystemModel):
             x = x / xm if xm > 1e-6 else np.array([1.0, 0.0, 0.0])
             y = np.cross(b, x)
             C = np.vstack([x, y, b])
-            return (att.dcm_to_quat(C), np.zeros(3))
+            q_ref = att.dcm_to_quat(C)
+            return (q_ref, self._ref_rate_from_history('target', q_ref, dt))
         # Default: LVLH nadir with orbit-rate feed-forward
         C_li = att.lvlh_dcm(env['r_m'], env['v_ms'])
         q_ref = att.dcm_to_quat(C_li)
@@ -1249,14 +1578,48 @@ class AOCSBasicModel(SubsystemModel):
 
     # ── Sensors → estimator (WP-3 / WP-4) ────────────────────────────
 
+    _GYRO_DEVICES = (0x0206, 0x0207, 0x0208)   # one single-axis unit per body axis
+
+    def _gyro_axes_powered(self, s: AOCSState) -> list[bool]:
+        """Per-axis gyro availability from the S2 device states (0x0206-0x0208).
+
+        The three units are the X, Y and Z channels: switching one off must
+        cost the estimator that axis. Previously nothing read these, so the
+        operator's GYRO OFF commands were inert (coherence review §2.6)."""
+        ds = s.device_states
+        return [bool(ds.get(d, True)) for d in self._GYRO_DEVICES]
+
     def _gyro_measurement(self, s: AOCSState, dt: float) -> np.ndarray:
-        """Measured body rate [rad/s]: truth + true bias + ARW noise."""
+        """Measured body rate [rad/s]: truth + true bias + ARW noise.
+
+        A powered-off unit is a DEAD CHANNEL: it reports zero rate, and
+        `_gyro_axis_sigma` inflates that axis's process noise so the MEKF
+        stops trusting it instead of silently propagating on a perfect gyro.
+        Rate saturation is modelled too — a tactical-grade unit clips at
+        `max_rate_dps`, so a violent separation tumble genuinely loses rate
+        knowledge on the saturated axis (the reason DETUMBLE is specified on
+        the magnetometer and not on the gyro)."""
         sigma_dps = (self._gyro_arw_dps_rts / math.sqrt(max(dt, 1e-3))
                      + self._gyro_noise_dps)
-        return np.array([
-            s.omega_true[i] + self._gyro_bias[i] * _DEG
-            + self.rng.gauss(0.0, sigma_dps) * _DEG
-            for i in range(3)])
+        powered = self._gyro_axes_powered(s)
+        t_bias = getattr(self, '_gyro_temp_bias', 0.0)
+        w_max = self._gyro_max_rate_dps * _DEG
+        out = np.zeros(3)
+        sat = False
+        for i in range(3):
+            if not powered[i]:
+                out[i] = 0.0
+                continue
+            w = (s.omega_true[i]
+                 + (self._gyro_bias[i] + t_bias
+                    + self._gyro_bias_inject[i]) * _DEG
+                 + self.rng.gauss(0.0, sigma_dps) * _DEG)
+            if abs(w) > w_max:
+                w = math.copysign(w_max, w)
+                sat = True
+            out[i] = w
+        self._gyro_saturated = sat
+        return out
 
     def _st_measurement(self, s: AOCSState, unit: int,
                         n_avg: int = 1) -> np.ndarray:
@@ -1299,8 +1662,18 @@ class AOCSBasicModel(SubsystemModel):
             s.est_source = 0
             self._omega_est = np.zeros(3)
             return
-        source = 0x08  # gyro
-        use_st = (s.st_valid and s.mode not in (MODE_ECLIPSE, MODE_DETUMBLE,
+        powered = self._gyro_axes_powered(s)
+        n_gyro = sum(1 for p in powered if p)
+        source = 0x08 if n_gyro else 0x00     # bit3 = gyro contributing
+        # A star tracker's enemy is stray light, not darkness: ECLIPSE is the
+        # BEST sky it ever sees. The old rule excluded ST updates in ECLIPSE
+        # and left the filter propagating open-loop for the whole 35-minute
+        # umbra — the direct cause of the eclipse pointing decay that tripped
+        # FDIR. Eclipse now uses the tracker whenever it is tracking; the
+        # gyro-only coast is retained only as the FALLBACK when it is not
+        # (which is what the mode-table line "gyro-only propagation" is really
+        # describing — no CSS/sun reference is available in umbra).
+        use_st = (s.st_valid and s.mode not in (MODE_DETUMBLE,
                                                 MODE_COARSE_SUN))
         # Update-then-propagate: the sensor measurements correspond to the
         # CURRENT truth state; the mode tick integrates the truth over dt
@@ -1313,7 +1686,12 @@ class AOCSBasicModel(SubsystemModel):
             q_meas = self._st_measurement(s, s.st_selected, n_avg=n_avg)
             if self._ekf.update_st(q_meas, n_avg=n_avg):
                 source |= 0x01
-        elif s.mode in (MODE_DETUMBLE, MODE_COARSE_SUN):
+        elif s.mode in (MODE_DETUMBLE, MODE_COARSE_SUN) or n_gyro == 0:
+            # With every gyro unit off there is no rate reference at all, so
+            # the coarse two-vector (CSS + magnetometer TRIAD) path is the ONLY
+            # thing keeping the estimate bounded — run it in any mode, and let
+            # the covariance grow honestly when the vectors are unavailable too
+            # (eclipse: no sun ⇒ pure coast).
             env = self._env
             q_triad = None
             if s.css_valid and s.mag_valid:
@@ -1352,7 +1730,16 @@ class AOCSBasicModel(SubsystemModel):
                                                math.radians(2.0)):
                         source |= 0x04
         if not secular:
-            self._ekf.propagate(omega_meas, dt)
+            # Per-axis process noise: a healthy channel contributes its ARW; a
+            # powered-off (or saturated) channel contributes the unknown-rate
+            # density instead, so P grows at ~σ_dead·√t on that axis.
+            dead = self._gyro_dead_arw_dps_rts * _DEG
+            arw = self._gyro_arw_dps_rts * _DEG
+            if all(powered) and not getattr(self, '_gyro_saturated', False):
+                self._ekf.propagate(omega_meas, dt)
+            else:
+                self._ekf.propagate(omega_meas, dt, arw_axis=np.array([
+                    arw if powered[i] else dead for i in range(3)]))
         kn = self._ekf.knowledge_3sigma_deg()
         s.knowledge_err_3sig_deg = min(180.0, kn)
         s.est_source = source
@@ -1377,8 +1764,12 @@ class AOCSBasicModel(SubsystemModel):
         sel_stars = getattr(s, f"st{s.st_selected}_num_stars", 0)
         if not (s.st_valid and sel_stars >= 5):
             mask |= 0x01          # bit0: ST not tracking >= 5 stars
-        if sum(1 for w in s.active_wheels if w) < 4:
-            mask |= 0x02          # bit1: fewer than 4 wheels
+        # bit1: fewer than THREE wheels. R3 — the pyramid's whole point is that
+        # any three axes still span R³, so 3-of-4 is a degraded-but-legal FINE
+        # configuration (see _tick_fine_point for the measured numbers). Two
+        # wheels cannot span R³ and remain a hard refusal.
+        if sum(1 for w in s.active_wheels if w) < 3:
+            mask |= 0x02          # bit1: fewer than 3 wheels (FINE impossible)
         if not self._ekf.converged:
             mask |= 0x04          # bit2: MEKF not converged/sustained 30 s
         w_rel = getattr(self, '_omega_est', np.zeros(3)) \
@@ -1476,18 +1867,36 @@ class AOCSBasicModel(SubsystemModel):
             Bmag = float(np.linalg.norm(B_b))
             m = np.zeros(3)
             if s.mag_valid and s.mtq_enabled and Bmag > 1e-9:
-                # B-dot from the magnetometer DERIVATIVE (self-contained, no
-                # gyro in the loop — the classic property of B-dot):
-                # Ḃ_body ≈ −ω×B ⇒ m = −k·Ḃ = +k·(ω×B̂); τ = −k|B|·ω_perp.
-                # ω enters through the measured field derivative, i.e. the
-                # true rate plus differentiation noise.
-                w = (np.asarray(s.omega_true, float)
-                     + np.array([self.rng.gauss(0.0, 0.003 * _DEG)
-                                 for _ in range(3)]))
-                m = 4000.0 * np.cross(w, B_b / Bmag)
-                mmax = max(abs(float(x)) for x in m)
-                if mmax > self._mtq_max_dipole:
-                    m *= self._mtq_max_dipole / mmax
+                # TRUE B-dot: a first-difference of the MEASURED magnetometer
+                # vector. The previous implementation claimed to be B-dot in
+                # its comment but actually fed back `s.omega_true` — the truth
+                # body rate, a quantity no sensor produces. That made DETUMBLE
+                # work perfectly with every gyro switched off AND with the
+                # gyros saturated, which is precisely the case B-dot exists to
+                # cover, and it hid the mode's real failure signature (a
+                # magnetometer fault, not a gyro fault).
+                #
+                # Ḃ_body = −ω×B in the body frame, so m = −k·Ḃ gives
+                # τ = m×B = −k·|B|²·ω_perp: a pure rate damper that needs no
+                # attitude knowledge and no rate sensor.
+                B_meas = np.array([s.mag_x, s.mag_y, s.mag_z]) * 1e-9  # nT->T
+                prev = getattr(self, '_bdot_prev_B', None)
+                prev_t = getattr(self, '_bdot_prev_dt', 0.0)
+                if prev is not None and prev_t > 1e-6:
+                    Bdot = (B_meas - prev) / prev_t
+                    # High-pass the difference lightly: the magnetometer noise
+                    # floor (50 nT) differentiated at h = 0.5 s is 1e-7 T/s,
+                    # the same order as Ḃ at 1 deg/s, so a raw difference is
+                    # all noise at low rate.
+                    self._bdot_filt = (0.7 * getattr(self, '_bdot_filt',
+                                                     np.zeros(3))
+                                       + 0.3 * Bdot)
+                    m = -self._bdot_gain * self._bdot_filt
+                    mmax = max(abs(float(x)) for x in m)
+                    if mmax > self._mtq_max_dipole:
+                        m *= self._mtq_max_dipole / mmax
+                self._bdot_prev_B = B_meas
+                self._bdot_prev_dt = h
             return tau_w + self._mtq_dipole_torque(s, m, B_b)
         self._run_control_dynamics(s, dt, control_fn)
         # 0x0217 semantics preserved: in DETUMBLE the attitude is not yet
@@ -1506,7 +1915,7 @@ class AOCSBasicModel(SubsystemModel):
         operational time); the magnetorquers damp rates and manage momentum.
         With fewer wheels it degrades to the slow magnetic-only crawl.
         """
-        q_ref, w_ref = self._compute_reference(s, MODE_COARSE_SUN)
+        q_ref, w_ref = self._compute_reference(s, MODE_COARSE_SUN, dt)
         s.q_ref = [float(x) for x in q_ref]
         s.omega_ref = [float(x) for x in w_ref]
         wheels_ok = sum(1 for w in s.active_wheels if w) >= 3
@@ -1558,7 +1967,7 @@ class AOCSBasicModel(SubsystemModel):
                              integral: bool = False) -> None:
         """Shared wheel-based pointing tick: reference, PD, allocation,
         integration, att_error = TRUE total pointing error (0x0217)."""
-        q_ref, w_ref = self._compute_reference(s, mode)
+        q_ref, w_ref = self._compute_reference(s, mode, dt)
         s.q_ref = [float(x) for x in q_ref]
         s.omega_ref = [float(x) for x in w_ref]
         wn, zeta = self._mode_gains(mode)
@@ -1587,24 +1996,46 @@ class AOCSBasicModel(SubsystemModel):
         self._tick_wheel_pointing(s, dt, MODE_INERTIAL)
 
     def _tick_fine_point(self, s: AOCSState, dt: float) -> None:
-        """FINE_POINT — ST @4 Hz, both heads, all 4 wheels, tight PD with a
-        control deadband."""
+        """FINE_POINT — ST @4 Hz, both heads, tight PD with a control deadband.
+
+        R3 (Franz): FINE runs on THREE wheels. A pyramid is flown four-of-four
+        precisely so that any three still span R³ — refusing the mode on a
+        single wheel loss threw away the redundancy the geometry was bought
+        for. Measured on the shipped allocation: every 3-of-4 subset has
+        condition number 2.175, mean pointing error on three wheels is
+        0.0188 deg against 0.0208 deg on four, and peak per-wheel torque is
+        4.4 µN·m against the 2 mN·m wheel limit — a ~450x margin. What a
+        3-wheel set genuinely loses is the null space: bias-speed regulation
+        and zero-crossing avoidance are gone, so wheels sit wherever the
+        allocation puts them and jitter is worse. The mode is therefore
+        PERMITTED but flagged `fine_degraded`, with a relaxed deadband, rather
+        than refused. Two wheels do NOT span R³ and are still refused."""
         if not s.st_valid:
-            self._set_mode(MODE_NOMINAL)
+            self._set_mode(MODE_NOMINAL,
+                           reason="FINE lost star tracker — return path is "
+                                  "automatic re-promotion once ST recovers")
             return
         n_active = sum(1 for w in s.active_wheels if w)
-        if n_active < 4:
-            self._set_mode(MODE_NOMINAL)
+        if n_active < 3:
+            self._set_mode(MODE_NOMINAL,
+                           reason=f"FINE needs >= 3 wheels, {n_active} active")
             return
+        s.fine_degraded = (n_active == 3)
+        # Degraded set: relax the control deadband to the NOMINAL-class band
+        # rather than chattering the wheels against a spec they cannot hold
+        # without null-space authority.
+        db = s.deadband_deg * (self._fine_degraded_db_factor
+                               if s.fine_degraded else 1.0)
         self._tick_wheel_pointing(s, dt, MODE_FINE_POINT,
-                                  deadband_deg=s.deadband_deg,
+                                  deadband_deg=db,
                                   integral=True)
 
     def _tick_slew(self, s: AOCSState, dt: float) -> None:
         """SLEW — track a rate-limited SLERP reference trajectory from the
         start attitude to the commanded target with the FINE-bandwidth PD."""
         if s.slew_target_q is None:
-            self._set_mode(MODE_NOMINAL)
+            self._set_mode(self._slew_return_target(s),
+                           reason="SLEW entered with no target quaternion")
             return
         if s.slew_start_q is None:
             s.slew_start_q = list(s.q_true)
@@ -1646,7 +2077,12 @@ class AOCSBasicModel(SubsystemModel):
         # (or on a generous timeout — 2x duration + settling allowance).
         if (progress >= 1.0 and err < 0.2) or (
                 s.slew_elapsed > duration * 2.0 + 120.0):
-            self._set_mode(MODE_NOMINAL)
+            timed_out = not (progress >= 1.0 and err < 0.2)
+            self._set_mode(
+                self._slew_return_target(s),
+                reason=("slew TIMED OUT" if timed_out else
+                        f"slew complete ({total_angle:.1f} deg, "
+                        f"residual {err:.3f} deg)"))
             s.slew_target_q = None
             s.slew_start_q = None
             s.slew_elapsed = None
@@ -1672,15 +2108,38 @@ class AOCSBasicModel(SubsystemModel):
             B_b = att.quat_to_dcm(np.asarray(s.q_true, float)) @ self._env['B_eci']
             Bsq = float(np.dot(B_b, B_b))
             m = np.zeros(3)
-            if Bsq > 1e-18 and s.mtq_enabled:
-                h_b = self._A @ np.array(s.h_wheel)
-                m = 1.0 * np.cross(h_b, B_b / Bsq)
+            h_b = self._A @ np.array(s.h_wheel)
+            if (Bsq > 1e-18 and s.mtq_enabled
+                    and float(np.linalg.norm(h_b)) > self._desat_deadband_nms):
+                # Cross-product dump: m = k·(h×B)/|B|² ⇒ τ = m×B = −k·h_perp,
+                # so k is a RATE in s⁻¹ and the dump time constant is 1/k.
+                # The old k = 1.0 s⁻¹ is not a dump gain at all — it is ~1000x
+                # the orbital rate Ω = 1.1e-3 s⁻¹. When k ≫ Ω the commanded
+                # dipole is clipped to the rod envelope on the very first tick,
+                # the momentum vector locks onto B̂ and simply rides with the
+                # rotating field, and the net secular decay collapses to
+                # ~Ω²/k. Measured: rods loafing at 0.11-0.41 A·m² (7-25 % of
+                # 1.6) and DESAT never reaching its exit condition.
+                # k is now sized so the rods SATURATE over the whole useful
+                # momentum range and the dump runs at the rod's actual torque
+                # authority τ = m_max·B ≈ 1.6 · 30 µT = 48 µN·m, i.e. a full
+                # 0.02 N·m·s wheel loading in 0.02/4.8e-5 ≈ 7 min — the
+                # 5-15 min the manual and aocs.yaml §magnetorquers claim.
+                m = self._desat_gain_per_s * np.cross(h_b, B_b / Bsq)
                 # Uniform (direction-preserving) scaling into the rod
                 # envelope: per-axis clipping would distort the dump
                 # direction and churn momentum between wheels instead of
                 # removing it.
                 mmax = max(abs(float(x)) for x in m)
                 if mmax > self._mtq_max_dipole:
+                    m *= self._mtq_max_dipole / mmax
+                elif self._desat_saturate and mmax > 1e-9:
+                    # Bang-bang: below saturation the linear law leaves the
+                    # rods loafing (measured 0.11-0.46 A.m2 against a 1.6 A.m2
+                    # capability) and the dump takes most of an orbit. Scaling
+                    # the commanded dipole UP to the rod envelope keeps the
+                    # DIRECTION the cross-product law chose while running the
+                    # actuator at the authority it actually has.
                     m *= self._mtq_max_dipole / mmax
             tau_mtq = self._mtq_dipole_torque(s, m, B_b)
             # PD hold + feed-forward of the (known) commanded MTQ torque so
@@ -1693,9 +2152,11 @@ class AOCSBasicModel(SubsystemModel):
         s.att_error = att.quat_angle_deg(s.q_true, hold_q)
 
     def _tick_eclipse(self, s: AOCSState, dt: float) -> None:
-        """ECLIPSE — nadir hold on gyro-only knowledge (no ST updates), so
-        the knowledge error — and with it the true pointing error — grows
-        with the gyro ARW/bias random walk."""
+        """ECLIPSE — nadir hold with no SUN reference (the CSS is dark).
+
+        The star tracker is still used: umbra is the best sky it ever gets.
+        Only when the tracker is unavailable does the mode coast on the gyro,
+        and the MEKF covariance then grows honestly (see _tick_estimator)."""
         self._tick_wheel_pointing(s, dt, MODE_ECLIPSE)
 
     # ── Secular fast-forward (>60x — WP-1) ───────────────────────────
@@ -1738,13 +2199,14 @@ class AOCSBasicModel(SubsystemModel):
             progress = 1.0 if duration <= 0 else min(1.0, s.slew_elapsed / duration)
             q_ref = att.quat_slerp(q0, qt, progress)
             if progress >= 1.0:
-                self._set_mode(MODE_NOMINAL)
+                self._set_mode(self._slew_return_target(s),
+                               reason="slew complete (secular)")
                 s.slew_target_q = None
                 s.slew_start_q = None
                 s.slew_elapsed = None
                 s.slew_idle_timer = 0.0
         else:
-            q_ref, _ = self._compute_reference(s, mode)
+            q_ref, _ = self._compute_reference(s, mode, dt)
         s.q_ref = [float(x) for x in q_ref]
         # Deterministic error draw from the mode's closed-loop distribution
         sigma = _MODE_ERR_SIGMA_DEG.get(mode, 0.05)
@@ -1780,11 +2242,21 @@ class AOCSBasicModel(SubsystemModel):
                     s.h_wheel[i] = h_t + (s.h_wheel[i] - h_t) * decay
                     s.rw_speed[i] = s.h_wheel[i] / self._rw_inertia / _RPM2RAD
         else:
-            dh = self._A_pinv @ (tau_d * dt)
+            # Allocate over the ACTIVE wheel set, exactly as _apply_wheel_torque
+            # does. The fixed 4-wheel `_A_pinv` silently discarded the share of
+            # the disturbance momentum belonging to a failed wheel, so with a
+            # wheel down the momentum books diverged between the real-time and
+            # the >60x paths — a fast-forward could not be trusted to predict a
+            # desat.
+            active = tuple(bool(a) for a in s.active_wheels)
+            pinv = self._alloc_pinv(active)
+            idx = self._alloc_idx
             h_max = self._rw_inertia * self._rw_max_speed * _RPM2RAD
-            for i in range(4):
-                if s.active_wheels[i]:
-                    s.h_wheel[i] = max(-h_max, min(h_max, s.h_wheel[i] + float(dh[i])))
+            if idx:
+                dh = pinv @ (tau_d * dt)
+                for k, i in enumerate(idx):
+                    s.h_wheel[i] = max(-h_max, min(
+                        h_max, s.h_wheel[i] + float(dh[k])))
                     s.rw_speed[i] = s.h_wheel[i] / self._rw_inertia / _RPM2RAD
         # SLOW state 3: MEKF covariance to its steady state
         kn = 0.008 if mode == MODE_FINE_POINT else 0.02
@@ -1803,14 +2275,39 @@ class AOCSBasicModel(SubsystemModel):
 
     def _tick_gyro_and_gps(self, s: AOCSState, dt: float,
                             orbit_state: Any) -> None:
-        """Model gyroscope bias estimation and GPS receiver."""
-        # Gyro bias drift (random walk, ~0.003 deg/s/sqrt(hr) typical MEMS)
-        drift_sigma = 0.00005 * math.sqrt(dt)
+        """Model gyroscope bias truth state and GPS receiver."""
+        # ── TRUE gyro bias: first-order Gauss-Markov, NOT a free random walk ──
+        # The old model was `b += N(0, 5e-5·√dt)` with no mean reversion. That
+        # is an unbounded random walk whose 1σ reaches 5e-5·√3600 = 3e-3 °/s
+        # (≈ 11 °/h) after one hour — 30x the 0.1 °/h bias instability the
+        # datasheet anchor in aocs.yaml declares, and ~100x the σ the MEKF is
+        # built from (MEKF6 takes bias_ss_dps / bias_tau_s straight out of the
+        # same config). Filter and truth therefore disagreed about the process
+        # noise by two orders of magnitude: in ECLIPSE, where the filter has no
+        # attitude update, the MEKF reported 0.29° 3σ knowledge while the
+        # estimate had actually walked 6.8° off truth. That drift is what tripped
+        # the `aocs.att_error > 5` FDIR rule every eclipse and demoted the
+        # spacecraft out of NOMINAL (finding A-a).
+        # Implemented now as the Gauss-Markov the config actually describes:
+        #   db = -b/τ·dt + σ_ss·√(2·dt/τ)·N(0,1)   ⇒  steady-state σ = σ_ss.
+        tau = max(1.0, self._gyro_bias_tau_s)
+        sigma_ss = self._gyro_bias_ss_dps
+        q_step = sigma_ss * math.sqrt(2.0 * min(dt, tau) / tau)
+        # Temperature-dependent bias: a real gyro's bias is specified over a
+        # temperature range, and 0x0273 gyro_temp was decorative until now.
+        # A linear tempco about the 22 °C calibration point (deg/s per K).
+        t_bias = self._gyro_tempco_dps_per_k * (s.gyro_temp - 22.0)
         for i, attr in enumerate(("gyro_bias_x", "gyro_bias_y", "gyro_bias_z")):
             bias = self._gyro_bias[i]
-            bias += self.rng.gauss(0, drift_sigma)
+            bias += -bias / tau * dt + self.rng.gauss(0.0, q_step)
             self._gyro_bias[i] = max(-0.1, min(0.1, bias))
-            setattr(s, attr, self._gyro_bias[i])
+            # Telemetry reports the TOTAL bias the channel exhibits (random
+            # component + thermal term + any injected bias fault), which is
+            # what an operator comparing 0x0270-0x0272 against the MEKF's
+            # estimate would see.
+            setattr(s, attr, self._gyro_bias[i] + t_bias
+                    + self._gyro_bias_inject[i])
+        self._gyro_temp_bias = t_bias
 
         # Gyro temperature (correlated with RW proximity heat)
         avg_rw_temp = sum(s.rw_temp) / 4.0
@@ -2009,11 +2506,26 @@ class AOCSBasicModel(SubsystemModel):
     def _orbit_phase_from_geometry(orbit_state) -> float | None:
         """Sun-sweep phase angle (deg) from the true orbit geometry.
 
-        Defines the rotating LVLH-like frame used by the CSS model
-        (sun_body = (cos b cos phi, cos b sin phi, sin b)): body Z on the
-        orbit normal, X/Y in the orbit plane. phi is the in-plane bearing of
-        the sun's projection measured from the spacecraft position vector, so
-        it advances exactly once per orbit and is phase-locked to eclipse.
+        phi is the in-plane bearing of the sun's projection measured from the
+        spacecraft position vector: with u = r_hat, h_hat = orbit normal and
+        w = h_hat x u (~velocity), phi = atan2(s.w, s.u). It advances exactly
+        once per orbit and is phase-locked to eclipse.
+
+        FRAME NOTE (2026-08b P-d). This docstring used to claim phi defined
+        "the rotating LVLH-like frame used by the CSS model, sun_body =
+        (cos b cos phi, cos b sin phi, sin b), body Z on the orbit normal".
+        That has been false since Phase C: the CSS model reads
+        `_true_sun_body()` off the attitude quaternion, and the body frame it
+        lands in when nadir-pointing is real LVLH (smo_common.attitude:
+        z = nadir, y = -orbit normal, x ~ velocity), in which
+
+            sun_body = (cos b sin phi, -sin b, -cos b cos phi).
+
+        The stale claim was copied into tools/power_budget.py, where it made
+        the tool over-read generation by ~28 % and invert the beta trend.
+        Anything reconstructing a synthetic sun vector from (beta, phi) must
+        use the LVLH form above — see tools/power_budget.sun_body_lvlh.
+
         Returns None when the orbit state has no ECI vectors (test stubs).
         """
         r = getattr(orbit_state, 'pos_eci', None)
@@ -2166,16 +2678,32 @@ class AOCSBasicModel(SubsystemModel):
         # Attitude determination (MEKF / TRIAD path)
         self._tick_estimator(s, dt, secular)
 
+        # Desat inhibit follows the payload: a dump drops fine pointing, so it
+        # must never pre-empt a strip. 0x0600 payload.mode == 2 is IMAGING.
+        # The payload capture gate demands EXACTLY AOCS mode 5, so this and
+        # that gate have to agree — see docs/plan_2026-08b/DISPLAY_REQUESTS_AOCS.md.
+        s.desat_inhibit_auto = int(shared_params.get(0x0600, 0)) == 2
+
         # Emergency checks (before mode tick)
         if not self._check_emergency(s):
             # Auto transitions
             self._check_auto_transitions(s, dt, orbit_state)
 
-        # Autonomous momentum management (AOCS_SET_MOM_MGMT)
-        if (s.mom_mgmt_enable and s.mode in (MODE_NOMINAL, MODE_FINE_POINT,
-                                             MODE_INERTIAL, MODE_ECLIPSE)
+        # Autonomous momentum management (AOCS_SET_MOM_MGMT).
+        # FINE_POINT is deliberately EXCLUDED from automatic entry: auto-desat
+        # used to fire mid-strip, the payload flagged the strip PARTIAL, and the
+        # healthy DESAT exit returned to NOMINAL — so a single dump silently and
+        # permanently cost the mission its imaging mode. In FINE the momentum is
+        # allowed to build to the 0x02C5 bit-4 (70 % envelope) refusal instead,
+        # which is visible to the operator before the strip is planned.
+        if (s.mom_mgmt_enable
+                and s.mode in (MODE_NOMINAL, MODE_INERTIAL, MODE_ECLIPSE)
+                and not self._desat_inhibited(s)
                 and self._h_env_frac(s) >= s.mom_mgmt_entry_pct):
-            self._set_mode(MODE_DESAT)
+            s.return_mode = s.mode
+            self._enter_desat(s, "autonomous momentum management: "
+                              f"{self._h_env_frac(s):.0f} % >= "
+                              f"{s.mom_mgmt_entry_pct:.0f} % entry threshold")
 
         # Mode tick
         prev_mode = s.mode
@@ -2242,6 +2770,18 @@ class AOCSBasicModel(SubsystemModel):
 
         # FINE-entry precondition bitmask (0x02C5)
         self._update_fine_ready(s)
+
+        # Automatic NOMINAL -> FINE re-promotion when FINE is the commanded
+        # mode (the return path for the one demotion that cannot be instant).
+        self._check_fine_promotion(s, dt)
+
+        # Wheel-assembly commissioning latch (0x029D). Set the moment three
+        # or more wheels are simultaneously enabled; an AOCS power-down clears
+        # it because that is a real re-commissioning.
+        if s.mode == MODE_OFF:
+            s.wheels_commissioned = False
+        elif sum(1 for w in s.active_wheels if w) >= 3:
+            s.wheels_commissioned = True
 
         # Wheels housekeeping — temperatures, currents, momentum telemetry
         self._tick_wheels(s, dt)
@@ -2348,7 +2888,34 @@ class AOCSBasicModel(SubsystemModel):
 
         # Equipment enabled flags
         shared_params[0x025C] = 1.0 if s.mag_valid else 0.0
-        shared_params[0x025D] = 1.0 if (s.mode != MODE_OFF) else 0.0  # Gyro on when AOCS active
+        # 0x025D aocs.gyro_enabled — was hard-wired to "mode != OFF", which made
+        # the three S2 gyro device commands (0x0206-0x0208) look inert on the
+        # ground. It now reports the real hardware state: gyros are enabled when
+        # the AOCS is powered AND at least one unit is switched on.
+        _gyro_powered = self._gyro_axes_powered(s)
+        shared_params[0x025D] = 1.0 if (s.mode != MODE_OFF
+                                        and any(_gyro_powered)) else 0.0
+        # 0x0294-0x0296 (free AOCS block): how many of the three gyro units are
+        # on, whether any channel is rate-saturated, and the injected-bias
+        # magnitude — so a dead/saturated IMU is diagnosable from telemetry.
+        shared_params[0x0294] = float(sum(1 for g in _gyro_powered if g))
+        shared_params[0x0295] = 1.0 if getattr(self, '_gyro_saturated',
+                                               False) else 0.0
+        shared_params[0x0296] = float(math.sqrt(
+            sum(b * b for b in self._gyro_bias_inject)))
+
+        # ── Mode-management / degraded-FINE / desat telemetry ──
+        # These make the mode machine observable from the ground: what mode was
+        # ASKED for, whether the spacecraft is currently somewhere else, and
+        # whether FINE is running on a degraded actuator set.
+        shared_params[0x0297] = float(s.commanded_mode)
+        shared_params[0x0298] = 1.0 if s.mode_demoted else 0.0
+        shared_params[0x0299] = 1.0 if s.fine_degraded else 0.0
+        shared_params[0x029A] = 1.0 if self._desat_inhibited(s) else 0.0
+        shared_params[0x029B] = float(
+            np.linalg.norm(self._A @ np.array(s.h_wheel)))   # |h_body| N.m.s
+        shared_params[0x029C] = 1.0 if s.desat_ineffective else 0.0
+        shared_params[0x029D] = 1.0 if s.wheels_commissioned else 0.0
         shared_params[0x025E] = 1.0 if s.mtq_enabled else 0.0
 
         # Phase 4: Flight hardware params
@@ -2572,13 +3139,35 @@ class AOCSBasicModel(SubsystemModel):
         """
         events = []
 
-        # AOCS_MODE_CHANGE (0x0200) — on any mode transition
+        # AOCS_MODE_CHANGE (0x0200) — on any mode transition. The reason string
+        # is part of the event: an unexplained mode change is the single most
+        # expensive thing to debug from a telemetry archive, and a demotion
+        # whose return path is not stated is indistinguishable from a mode the
+        # spacecraft has decided to live in.
         if prev_mode != s.mode:
             events.append({
                 'event_id': 0x0200,
-                'severity': 'LOW',
-                'description': f'AOCS mode change from {_MODE_NAMES.get(prev_mode, "UNKNOWN")} to {_MODE_NAMES.get(s.mode, "UNKNOWN")}'
+                'severity': 'MEDIUM' if s.mode_demoted else 'LOW',
+                'description': (
+                    f'AOCS mode change from {_MODE_NAMES.get(prev_mode, "UNKNOWN")} '
+                    f'to {_MODE_NAMES.get(s.mode, "UNKNOWN")} '
+                    f'({s.mode_change_reason})'
+                    + (f' [DEMOTED from commanded '
+                       f'{_MODE_NAMES.get(s.commanded_mode, "?")}]'
+                       if s.mode_demoted else '')),
             })
+            # AOCS_MODE_RESTORED (0x020F) — the paired positive edge, so an
+            # operator can see the loop close instead of inferring it.
+            if not s.mode_demoted and s.mode == s.commanded_mode \
+                    and prev_mode != s.commanded_mode:
+                events.append({
+                    'event_id': 0x020F,
+                    'severity': 'INFO',
+                    'description': (
+                        'AOCS returned to commanded mode '
+                        f'{_MODE_NAMES.get(s.commanded_mode, "?")} '
+                        f'({s.mode_change_reason})'),
+                })
 
         # RW_OVERSPEED (0x0201) — rising-edge: fire once when any wheel first
         # exceeds 5000 RPM, not every tick the overspeed persists.
@@ -2707,7 +3296,9 @@ class AOCSBasicModel(SubsystemModel):
 
         # GYRO_BIAS_HIGH (0x020B) — rising-edge: fire once when bias drift first
         # exceeds the threshold, not every tick after.
-        bias_mag = math.sqrt(sum(b*b for b in self._gyro_bias))
+        bias_mag = math.sqrt(sum(
+            (b + self._gyro_temp_bias + inj) ** 2
+            for b, inj in zip(self._gyro_bias, self._gyro_bias_inject)))
         gyro_bias_high = bias_mag > 0.05  # deg/s threshold
         if gyro_bias_high and not self._prev_gyro_bias_high:
             events.append({
@@ -2754,12 +3345,47 @@ class AOCSBasicModel(SubsystemModel):
                             "message": (
                                 f"FINE_POINT refused: preconditions unmet "
                                 f"(0x02C5 bitmask=0x{mask:02X})")}
-            self._set_mode(mode)
+            s = self._state
+            # Latch the ground's INTENT. Every automatic transition after this
+            # (eclipse, desat, safing) resolves its return path against
+            # `commanded_mode`, which is what makes a demotion recoverable.
+            # Transients are not intents: commanding SLEW/DESAT/ECLIPSE does
+            # not change where the spacecraft is supposed to end up.
+            if mode in self._OPERATIONAL_MODES:
+                s.commanded_mode = mode
+            elif mode == MODE_OFF:
+                s.commanded_mode = MODE_OFF
+            self._set_mode(mode, reason="commanded by ground (AOCS_SET_MODE)")
             return {"success": True}
 
         elif command == "desaturate":
-            self._set_mode(MODE_DESAT)
+            s = self._state
+            # Guard the dispatch path itself (S8 func 1 and the S19 ea_id 2001
+            # autonomy rule both land here). A dump mid-strip truncates the
+            # strip; a dump commanded while OFF/DETUMBLE is meaningless.
+            if s.mode in (MODE_OFF, MODE_SAFE_BOOT, MODE_DETUMBLE):
+                return {"success": False, "code": "MODE_INVALID",
+                        "message": (f"Desaturation refused in "
+                                    f"{_MODE_NAMES.get(s.mode, '?')}")}
+            if self._desat_inhibited(s):
+                why = "payload imaging" if s.desat_inhibit_auto \
+                    else "operator inhibit"
+                return {"success": False, "code": "DESAT_INHIBITED",
+                        "message": f"Desaturation refused: {why}"}
+            if s.mode == MODE_FINE_POINT:
+                return {"success": False, "code": "DESAT_REFUSED_FINE",
+                        "message": ("Desaturation refused in FINE_POINT — "
+                                    "leave FINE first (a dump drops fine "
+                                    "pointing and the strip is lost)")}
+            s.return_mode = s.mode if s.mode in self._OPERATIONAL_MODES \
+                else s.commanded_mode
+            self._enter_desat(s, "commanded by ground (AOCS_DESATURATE)")
             return {"success": True}
+
+        elif command == "set_desat_inhibit":
+            self._state.desat_inhibit = bool(cmd.get("inhibit", True))
+            return {"success": True,
+                    "message": f"Desat inhibit {'SET' if self._state.desat_inhibit else 'CLEARED'}"}
 
         elif command == "slew_to":
             q = cmd.get("quaternion", [0, 0, 0, 1])
@@ -2767,7 +3393,10 @@ class AOCSBasicModel(SubsystemModel):
             s.slew_target_q = list(q)
             s.slew_start_q = list(s.q_true)
             s.slew_elapsed = 0.0
-            self._set_mode(MODE_SLEW)
+            # A slew is a transient: remember where to hand control back.
+            if s.mode in self._OPERATIONAL_MODES:
+                s.return_mode = s.mode
+            self._set_mode(MODE_SLEW, reason="commanded slew manoeuvre")
             return {"success": True}
 
         elif command == "set_pointing_frame":
@@ -2932,7 +3561,10 @@ class AOCSBasicModel(SubsystemModel):
             s.slew_rate_dps = rate_dps
             s.slew_start_q = list(s.q_true)
             s.slew_elapsed = 0.0
-            self._set_mode(MODE_SLEW)
+            if s.mode in self._OPERATIONAL_MODES:
+                s.return_mode = s.mode
+            self._set_mode(MODE_SLEW,
+                           reason=f"commanded slew at {rate_dps:.2f} deg/s")
             return {"success": True, "message": "Slew maneuver started"}
 
         elif command == "check_momentum":
@@ -3025,8 +3657,16 @@ class AOCSBasicModel(SubsystemModel):
             s.rw_speed[w] = 0.0
 
         elif failure == "gyro_bias":
-            axis = int(kw.get("axis", 0))
-            self._gyro_bias[axis] = float(kw.get("bias", 0.05))
+            # Injected into the PERSISTENT offset, not into `_gyro_bias`: the
+            # latter is now a Gauss-Markov state that mean-reverts with
+            # τ = 1800 s, so a fault written there would quietly heal itself in
+            # half an hour. `axis=3` (or "all") biases all three channels.
+            bias = float(kw.get("bias", kw.get("magnitude", 0.05)))
+            axis = kw.get("axis", 0)
+            if axis in ("all", 3, -1):
+                self._gyro_bias_inject = [bias, bias, bias]
+            else:
+                self._gyro_bias_inject[int(axis) % 3] = bias
 
         elif failure == "st_blind":
             # Temporary blinding of selected tracker
@@ -3116,6 +3756,7 @@ class AOCSBasicModel(SubsystemModel):
 
         elif failure == "gyro_bias":
             self._gyro_bias = [0.0, 0.0, 0.0]
+            self._gyro_bias_inject = [0.0, 0.0, 0.0]
 
         elif failure in ("st_blind", "st_failure"):
             unit = int(kw.get("unit", s.st_selected))

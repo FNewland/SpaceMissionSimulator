@@ -1,0 +1,70 @@
+# Display staleness policy — how old a telemetry value may be before the
+# console stops calling it current.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# The MCS used to carry hard-coded thresholds in index.html: a chart went
+# amber at 5 s and was blanked at 15 s, and every tabular cell wore a STALE
+# badge after 8 s. Those numbers were written for the 1 Hz EPS structure and
+# were applied to every parameter on the spacecraft regardless of how often it
+# is actually downlinked. HK SID 3 (TCS) has an `interval_s` of 60.0, so the
+# thermal displays were "stale" for ~45 s out of every 60 and the thermal
+# charts were blanked (and their buffers emptied) before a trend could ever
+# accumulate. SID 11 (beacon, 30 s) read STALE for 22 s out of every 30 during
+# the one mission phase where it is the ONLY telemetry available.
+#
+# Franz's instruction: "Can the stale data flag be set on the cadence of the
+# telemetry times 1.5 or something?" — so the thresholds are derived per
+# parameter from the ACTUAL cadence of the HK structure that carries it.
+#
+# The same shape of rule already existed on the server: the HK Manager calls a
+# SID SILENT after `interval_s * 2.5 + 1.0` (server.py `_handle_hk_structures`).
+# This file generalises that idea to the displays.
+#
+# HOW IT IS USED
+# --------------
+# The MCS joins `telemetry/hk_structures.yaml` (which SID carries which
+# parameter, and at what interval) with `telemetry/parameters.yaml` and serves
+# the result — plus the factors below — from `GET /api/client-config`
+# (`staleness` and `param_cadence`). The browser derives, per parameter and
+# per subsystem:
+#
+#     fresh    while age <= max(floor_fresh_s, interval_s * fresh_factor)
+#     degraded while age <= max(floor_stale_s, interval_s * stale_factor)
+#     stale    beyond that
+#
+# and a fourth state, NOT ENABLED, when every HK structure carrying the
+# parameter is disabled or has never been seen — because a value that has no
+# enabled source is not "stale telemetry", it is telemetry the operator has
+# not asked for yet, and the correct advice is TC(3,5) rather than chasing a
+# link fault.
+#
+# Parameters that belong to no HK structure (on-demand / S20.3 fetch only) are
+# aperiodic: there is no cadence to derive from, so they use the two absolute
+# thresholds at the bottom.
+staleness:
+  # Franz's "cadence x 1.5". A value older than 1.5 cycles has certainly
+  # missed a downlink; below that it is at worst a late sample.
+  stale_factor: 1.5
+
+  # A value is only "current" until the next sample is nearly due. 0.9 puts the
+  # amber DEGRADED band in the last tenth of the cycle plus the whole of the
+  # first missed cycle, which is where an operator wants the warning.
+  fresh_factor: 0.9
+
+  # Floors for the fast structures. SID 1 runs at 1 Hz and SIDs 2/4/5/6/9 at
+  # 4-8 s; without a floor, normal packet jitter would flicker those displays
+  # amber several times a minute for no operational reason. The floors are
+  # deliberately generous: they exist to suppress flicker, not to hide loss —
+  # a genuine outage is longer than either of them.
+  floor_fresh_s: 10.0
+  floor_stale_s: 20.0
+
+  # Aperiodic parameters: on-demand values fetched with TC(20,3), and anything
+  # that belongs to no HK structure. These do not go stale on a cadence, so
+  # they get one long absolute pair. A fetched diagnostic value stays useful
+  # for minutes; it should NOT wear a STALE badge 8 s after it arrived, which
+  # is what the old hard-coded default did to every on-demand parameter,
+  # forever.
+  aperiodic_fresh_s: 300.0
+  aperiodic_stale_s: 900.0

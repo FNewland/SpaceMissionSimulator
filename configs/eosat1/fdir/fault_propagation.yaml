@@ -74,11 +74,24 @@ fault_cascades:
     primary_param: "aocs.wheels_enabled"
     condition: "<"
     threshold: 2.0  # less than 2 wheels available
-    # "Fewer than two wheels are enabled" is also true of a spacecraft whose
-    # reaction-wheel bus has not been switched on. Without this precondition
-    # FDIR declares a double wheel failure at power-up and the cascade below
-    # cuts the very bus the operator is trying to energise.
-    requires: { param: "eps.pl_aocs_wheels", min: 1 }
+    # "Fewer than two wheels are enabled" is ALSO true of a spacecraft whose
+    # wheels have simply not been commissioned yet. The old precondition
+    # (`eps.pl_aocs_wheels >= 1`) tested the wrong thing: it asked whether the
+    # bus was live, which is exactly the state an operator creates one step
+    # BEFORE enabling the wheels. Reproduced live — energise `aocs_wheels`,
+    # take more than 5 s to send the four AOCS_ENABLE_WHEEL commands, and FDIR
+    # declares a double wheel failure on a perfectly healthy spacecraft.
+    #
+    # The right precondition is "the wheel assembly has ever been
+    # commissioned": aocs.wheels_commissioned (0x029D) latches the first time
+    # three or more wheels are simultaneously enabled and is cleared only by
+    # an AOCS power-down. A bus that has been energised but never had its
+    # wheels enabled therefore cannot raise this fault, while a genuine
+    # in-flight double failure still can — and, crucially, the latch is not
+    # invalidated by the rule's own safing response (gating on `aocs.mode >= 4`
+    # was tried and self-defeats: the cascade drops the mode to COARSE_SUN,
+    # which un-latches the fault before its cascades run).
+    requires: { param: "aocs.wheels_commissioned", min: 1 }
     persist_s: 5.0
     recovery: aocs_recovery
     cascades:
@@ -90,10 +103,18 @@ fault_cascades:
         action: "power_off"
         description: "Payload imaging disabled due to attitude instability"
         delay_s: 2.0
-      - target_subsystem: "eps"
-        action: "reduce_power_to_aocs"
-        description: "AOCS power reduced when in safe mode"
-        delay_s: 3.0
+      # REMOVED: `eps: reduce_power_to_aocs`, which switched the `aocs_wheels`
+      # power line OFF in response to a WHEEL fault. That is the opposite of
+      # the desired response — the surviving wheels, the magnetorquers and
+      # every AOCS sensor hang off that line, so the cascade turned a
+      # recoverable single-string wheel problem into a dark, tumbling
+      # spacecraft. It was also irreversible: AOCS latches MODE_OFF on the
+      # line gate (aocs_basic.py, "EPS power-line gate") and nothing brings it
+      # back when the fault clears — and the fault cannot clear with the
+      # sensors unpowered. Both remaining cascades ARE restorable:
+      # `enter_safe_mode` lands in COARSE_SUN, which now returns to the
+      # commanded mode automatically once sun lock and the star tracker are
+      # back (see _check_auto_transitions).
 
   - fault_id: "aocs_safe_mode_entry"
     description: "AOCS entered safe mode due to any cause"

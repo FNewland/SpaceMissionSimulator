@@ -47,36 +47,41 @@ GENERIC_S8_WRAPPERS = {"FUNC_PERFORM", "S8_COMMAND"}
 
 # (mnemonic, service, subtype) annotations in the procedures that disagree with
 # tc_catalog.yaml. Reported to Flight Ops; pinned here so *new* drift fails.
-KNOWN_ANNOTATION_DRIFT = {
-    # ("GET_PARAM", 20, 1) and ("SET_PARAM", 20, 3) are gone (G3-e). This
-    # suite implements S20.1 = set and S20.3 = get, the inverse of
-    # ECSS-E-ST-70-41 (20,1 report request / 20,3 set). The procedures used to
-    # follow the standard while the wire followed the implementation, so an
-    # operator working the card sent the wrong subtype in 79 places across ten
-    # files. A procedure has to match the spacecraft it commands; the
-    # deviation from ECSS is documented in docs/PUS_SERVICE_REFERENCE.md.
-    # ("SET_PARAM", 8, 1) is gone: data_downlink.md used to fake a rate change
-    # through a payload SET_PARAM; it now commands the real ladder with
-    # TTC_SET_DOWNLINK_MODE (79) + TTC_SET_DATA_RATE (65) (defect #86).
-    # HK one-shot request is S3.27 in the catalog and the engine; several
-    # procedures quote the report subtype (3.25) or S3.1 instead.
-    ("HK_REQUEST", 3, 25): "procedures quote the S3.25 report, not the S3.27 request",
-    ("HK_REQUEST", 3, 1): "emergency procedures quote S3.1 instead of S3.27",
-    ("HK_REPORT_CONFIG", 3, 25): "hk_configuration.md quotes the report subtype",
-    # Emergency procedures use an "S8 subtype = subsystem" shorthand that the
-    # dispatcher does not implement (everything is S8.1 + func_id).
-    ("HEATER_CONTROL", 8, 7): "emergency-procedure S8 subtype shorthand",
-    ("OBC_SET_MODE", 8, 3): "emergency-procedure S8 subtype shorthand",
-    ("AOCS_SET_MODE", 8, 4): "emergency-procedure S8 subtype shorthand",
-    ("PAYLOAD_SET_MODE", 8, 5): "emergency-procedure S8 subtype shorthand",
-    ("TTC_SWITCH_REDUNDANT", 8, 2): "emergency-procedure S8 subtype shorthand",
-    ("TTC_SWITCH_PRIMARY", 11, 1): "ttc_link_verification.md quotes S11, not S8.1",
-    ("TTC_SWITCH_REDUNDANT", 11, 2): "ttc_link_verification.md quotes S11, not S8.1",
-    # Memory-management subtypes quoted from the standard rather than the sim.
-    ("MEM_LOAD_DATA", 6, 9): "software_upload.md quotes S6.9, catalog has S6.2",
-    ("MEM_LOAD_ABORT", 6, 3): "software_upload.md quotes S6.3, catalog has S6.2",
-    ("MEM_CHECK", 6, 5): "software_upload.md quotes S6.5, catalog has S6.9",
-}
+#: Known mnemonic/annotation disagreements with `tc_catalog.yaml`.
+#:
+#: **EMPTY as of 2026-08b Phase 5 — every entry below was FIXED, not excused.**
+#: The list is kept (with its history) because an empty allowlist is the goal
+#: state and a future addition should have to argue for itself.
+#:
+#: What was here, and what happened to it:
+#:
+#:   ("HK_REQUEST", 3, 25) / (3, 1)      -> 96 annotations corrected to S3.27
+#:   ("HK_REPORT_CONFIG", 3, 25)         -> the mnemonic is an ALIAS of
+#:                                          HK_ENABLE and the command is S3.5;
+#:                                          hk_configuration.md also wrote its
+#:                                          `SID=N` outside the backticks, so
+#:                                          the wire packed sid=0
+#:   ("HEATER_CONTROL", 8, 7)            -> HEATER_CONTROL is an alias of
+#:   ("OBC_SET_MODE", 8, 3)                 HEATER_BATTERY and has no `circuit`
+#:   ("AOCS_SET_MODE", 8, 4)                argument at all. The whole "S8
+#:   ("PAYLOAD_SET_MODE", 8, 5)             subtype names the subsystem"
+#:   ("TTC_SWITCH_REDUNDANT", 8, 2)         shorthand was invented; every S8
+#:                                          function-perform is Subtype 1, and
+#:                                          the dispatcher rejects the rest.
+#:   ("TTC_SWITCH_PRIMARY", 11, 1)       -> S11 is time-tagged scheduling; the
+#:   ("TTC_SWITCH_REDUNDANT", 11, 2)        transponder selects are S8 funcs
+#:                                          63 / 64
+#:   ("MEM_LOAD_DATA", 6, 9)             -> the command is MEM_LOAD at S6.2;
+#:                                          S6.9 is MEM_CHECK, so the UPLOAD
+#:                                          step was addressed to the checksum
+#:                                          service
+#:   ("MEM_CHECK", 6, 5)                 -> S6.5 is MEM_DUMP: the card asked
+#:                                          for a dump and then verified a
+#:                                          checksum nobody computed
+#:   ("MEM_LOAD_ABORT", 6, 3)            -> the mnemonic does not exist in the
+#:                                          catalogue at all; the reference is
+#:                                          gone from the tree
+KNOWN_ANNOTATION_DRIFT: dict[tuple[str, int, int], str] = {}
 
 # Raw S8 func_ids quoted in procedures that route to a different subsystem than
 # the surrounding text describes. Value = subsystem the func actually drives.

@@ -25,7 +25,8 @@ steps:
     command: "s8_command"
     params:
       func_id: 0  # AOCS_SET_MODE
-      data: [0x02]  # mode = 2 (safe)
+      data: [0x03]  # mode = 3 (COARSE_SUN — the sun-safe hold; mode 2 is
+                    # DETUMBLE, which was mislabelled "safe" here)
 
   - step_id: 3
     name: "Reduce TCS Heaters"

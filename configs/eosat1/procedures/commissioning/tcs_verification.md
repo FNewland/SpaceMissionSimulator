@@ -12,7 +12,7 @@ propulsion (if applicable). Establish baseline thermal profiles over a full orbi
 
 ## Prerequisites
 - [ ] COM-001 (EPS Checkout) completed — power budget verified
-- [ ] Spacecraft in SAFE_POINT mode with stable sun-pointing
+- [ ] Spacecraft in COARSE_SUN mode with stable sun-pointing
 - [ ] Minimum one full orbit of thermal telemetry archived
 - [ ] Bidirectional S-band link active
 - [ ] `eps.bat_soc` (0x0101) > 60%
@@ -42,25 +42,25 @@ propulsion (if applicable). Establish baseline thermal profiles over a full orbi
 **GO/NO-GO:** All zones above minimum operational limits during eclipse
 
 ### Step 4 — Test Battery Heater Circuit
-**TC:** `HEATER_CONTROL(circuit=1, on=1)` (Service 8, Subtype 1)
+**TC:** `HEATER_OBC(on=1)` (Service 8, Subtype 1, func_id 41)
 **Verify:** Battery heater ON acknowledged within 5s
 **Action:** Monitor `tcs.temp_battery` (0x0407) for 3 minutes to confirm heating effect.
 **Verify:** `tcs.temp_battery` (0x0407) rising or stable (heater counteracting cooling) within 180s
-**TC:** `HEATER_CONTROL(circuit=1, on=0)` (Service 8, Subtype 1)
+**TC:** `HEATER_OBC(on=0)` (Service 8, Subtype 1, func_id 41)
 **Verify:** Battery heater OFF acknowledged within 5s
 **GO/NO-GO:** Battery heater circuit operational
 
 ### Step 5 — Test OBC Heater Circuit
-**TC:** `HEATER_CONTROL(circuit=2, on=1)` (Service 8, Subtype 1)
+**TC:** `HEATER_THRUSTER(on=1)` (Service 8, Subtype 1, func_id 42)
 **Verify:** OBC heater ON acknowledged within 5s
 **Verify:** `tcs.temp_obc` (0x0406) stable or increasing within 120s
-**TC:** `HEATER_CONTROL(circuit=2, on=0)` (Service 8, Subtype 1)
+**TC:** `HEATER_THRUSTER(on=0)` (Service 8, Subtype 1, func_id 42)
 **Verify:** OBC heater OFF acknowledged within 5s
 **GO/NO-GO:** OBC heater circuit operational
 
 ### Step 6 — Verify Autonomous Heater Thermostat Settings
-**TC:** `GET_PARAM(0x0410)` (Service 20, Subtype 3) — battery heater ON threshold
-**TC:** `GET_PARAM(0x0411)` (Service 20, Subtype 3) — battery heater OFF threshold
+**TC:** `GET_PARAM(param_id=0x0410)` (Service 20, Subtype 3) — battery heater ON threshold
+**TC:** `GET_PARAM(param_id=0x0411)` (Service 20, Subtype 3) — battery heater OFF threshold
 **Verify:** Battery heater ON threshold = +5C within 10s
 **Verify:** Battery heater OFF threshold = +10C within 10s
 **Action:** Confirm autonomous thermostat will maintain battery within [+5C, +35C] range without ground intervention.
@@ -68,9 +68,9 @@ propulsion (if applicable). Establish baseline thermal profiles over a full orbi
 
 ### Step 7 — FPA Cooler Interface Check (Pre-activation)
 **Action:** Verify FPA cooler power interface and thermistor readback before payload commissioning.
-**TC:** `GET_PARAM(0x040C)` (Service 20, Subtype 3) — `tcs.cooler_fpa`, the effective cooler state
+**TC:** `GET_PARAM(param_id=0x040C)` (Service 20, Subtype 3) — `tcs.cooler_fpa`, the effective cooler state
 **Verify:** `tcs.cooler_fpa` (0x040C) = 0 (cooler OFF) within 10s
-**TC:** `GET_PARAM(0x0114)` (Service 20, Subtype 3) — `eps.pl_fpa_cooler`, the EPS supply to the cooler
+**TC:** `GET_PARAM(param_id=0x0114)` (Service 20, Subtype 3) — `eps.pl_fpa_cooler`, the EPS supply to the cooler
 **Verify:** `eps.pl_fpa_cooler` (0x0114) = 0 (line unpowered) within 10s
 **Verify:** `tcs.temp_fpa` (0x0408) consistent with the uncooled equilibrium (+8C to +14C) within 10s
 **Action:** Record baseline FPA temperature for comparison during cooler activation (COM-010).
@@ -81,8 +81,10 @@ propulsion (if applicable). Establish baseline thermal profiles over a full orbi
 **GO/NO-GO:** Thermal performance within model predictions (+/- 5C tolerance)
 
 ## Off-Nominal Handling
-- If `tcs.temp_battery` < +5C and heater does not respond: Switch to redundant heater circuit via `HEATER_CONTROL(circuit=3, on=1)`. If no redundant circuit available, consider attitude adjustment to increase solar heating. Alert thermal engineer.
-- If `tcs.temp_obc` > +45C: Verify sun-pointing attitude is not causing excessive solar heating on OBC panel. Consider temporary attitude offset. Check if heater stuck ON via `GET_PARAM(0x0412)`.
+- If `tcs.temp_battery` < +5C and heater does not respond: There is NO redundant battery heater circuit: `subsystems/tcs.yaml` declares three
+  circuits only — 0 battery, 1 obc, 2 thruster. Consider an attitude adjustment to
+  increase solar heating, and shed loads to protect the cell. Alert thermal engineer.
+- If `tcs.temp_obc` > +45C: Verify sun-pointing attitude is not causing excessive solar heating on OBC panel. Consider temporary attitude offset. Check if heater stuck ON via `GET_PARAM(param_id=0x0412)`.
 - If eclipse temperatures drop faster than predicted: Thermal model may need updating. Check for MLI damage indicators. Increase heater duty cycle if approaching survival limits.
 - If FPA temperature reading invalid (outside the -25.5C to +17.5C S12 alarm band with the cooler off): cross-check `payload.fpa_temp` (0x0601), which reads the same physical chain 0.5 K colder. Agreement means the FPA really is out of band; disagreement points at one of the two sensors. If the TCS thermistor has failed, payload commissioning can proceed on 0x0601 with the loss of redundancy logged.
 - If thermal zones show unexpected asymmetry: May indicate partial MLI blanket detachment or view factor change. Document and monitor trend over multiple orbits.

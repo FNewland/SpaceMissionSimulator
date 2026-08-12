@@ -1093,6 +1093,24 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
          style="text-decoration:none; display:inline-flex; align-items:center;"
          title="Mission configuration editor — classification, validation, diff, history, baselines">CONFIG</a>
       <button class="freeze-btn" id="freeze-btn">FREEZE</button>
+      <!-- 2026-08b Phase 2c: battery SoC override. Sits with the time
+           controls because it is the same kind of thing: the instructor
+           editing the world to keep a lesson running, not a spacecraft
+           command and not a failure. Every use writes a clearly-labelled
+           INSTRUCTOR OVERRIDE event so it can never be mistaken for
+           physics in the event log. -->
+      <span style="margin-left:14px; padding-left:12px; border-left:1px solid var(--border-mid);
+                   display:inline-flex; align-items:center; gap:6px;"
+            title="Override battery state of charge (instructor only — logged as an override, not physics)">
+        <label for="soc-override-input"
+               style="font-size:11px; color:var(--text-mid); letter-spacing:0.5px;">SoC %</label>
+        <input type="number" id="soc-override-input" min="0" max="100" step="1" value="80"
+               style="width:58px; background:var(--bg-deep); color:var(--text-hi);
+                      border:1px solid var(--border-mid); border-radius:3px;
+                      padding:3px 5px; font-family:inherit; font-size:11px;">
+        <button class="override-btn" id="btn-set-soc"
+                title="Set battery SoC now (0-100 %)">SET SoC</button>
+      </span>
     </div>
   </header>
 
@@ -2116,6 +2134,26 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
     addLogEntry(newState ? 'low' : 'info', 'OVERRIDE', newState ? 'Pass override ENABLED' : 'Pass override DISABLED');
   }
 
+  // ===== BATTERY SoC OVERRIDE (2026-08b Phase 2c) =====
+  // Franz: "add a power override ... that allows us to set the battery level
+  // higher than it currently is, to allow us to continue running a sim where
+  // the battery is getting low." Goes down the same validated instructor
+  // command path as everything else (engine.INSTRUCTOR_CMD_TYPES /
+  // _INSTRUCTOR_NUMERIC_FIELDS range-check 0-100), and is applied on the tick
+  // thread via instr_queue — no threading hazard, and voltage/bus voltage
+  // re-derive from SoC on the same tick.
+  function setBatterySoc() {
+    const el = $('soc-override-input');
+    if (!el) return;
+    const soc = parseFloat(el.value);
+    if (!isFinite(soc) || soc < 0 || soc > 100) {
+      alert('Battery SoC override must be a number between 0 and 100 %.');
+      return;
+    }
+    wsSend({ type: 'set_battery_soc', soc_pct: soc });
+    apiPost('/api/command', { type: 'set_battery_soc', soc_pct: soc });
+  }
+
   function toggleFreeze() {
     frozen = !frozen;
     const btn = $('freeze-btn');
@@ -2362,6 +2400,13 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
     // Override button
     $('btn-override').addEventListener('click', toggleOverride);
     const _ovh = $('btn-override-hdr'); if (_ovh) _ovh.addEventListener('click', toggleOverride);
+
+    // Battery SoC override (2026-08b Phase 2c)
+    const _soc = $('btn-set-soc'); if (_soc) _soc.addEventListener('click', setBatterySoc);
+    const _socIn = $('soc-override-input');
+    if (_socIn) _socIn.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') setBatterySoc();
+    });
 
     // Scenario controls
     $('refresh-scenarios').addEventListener('click', loadScenarios);

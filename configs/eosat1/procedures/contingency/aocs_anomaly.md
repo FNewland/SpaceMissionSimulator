@@ -20,13 +20,13 @@ safety margins.
 ## Procedure Steps
 
 ### Step 1 — Assess Current AOCS State
-**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 25)
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27)
 **Verify:** `aocs.mode` (0x020F) value received within 5s
 **Verify:** `aocs.att_error` (0x0217) value received within 5s
 **GO/NO-GO:** Telemetry is live and AOCS mode is confirmed — proceed if data is valid
 
 ### Step 2 — Evaluate Reaction Wheel Health
-**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 25)
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27)
 **Verify:** `aocs.rw1_speed` (0x0207), `aocs.rw2_speed` (0x0208), `aocs.rw3_speed` (0x0209), `aocs.rw4_speed` (0x020A) — all within +/-6000 rpm
 **Verify:** `aocs.rw1_temp` (0x0218), `aocs.rw2_temp` (0x0219), `aocs.rw3_temp` (0x021A), `aocs.rw4_temp` (0x021B) — all < 60 deg-C
 **GO/NO-GO:** If any wheel temp >= 60 deg-C or speed oscillating > +/-500 rpm/s, flag that wheel and proceed to Step 3. If all wheels nominal, skip to Step 5.
@@ -44,7 +44,7 @@ safety margins.
 **GO/NO-GO:** Momentum is reduced to < 20% capacity on all active wheels — proceed
 
 ### Step 5 — Verify Body Rates Are Stable
-**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 25)
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27)
 **Verify:** `aocs.rate_roll` (0x0204) < 0.1 deg/s
 **Verify:** `aocs.rate_pitch` (0x0205) < 0.1 deg/s
 **Verify:** `aocs.rate_yaw` (0x0206) < 0.1 deg/s

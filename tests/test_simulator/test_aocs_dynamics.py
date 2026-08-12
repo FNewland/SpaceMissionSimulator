@@ -341,13 +341,55 @@ class TestFineGating:
         r = m.handle_command({"command": "fine_ready_check"})
         assert r["fine_ready_mask"] == 0
 
-    def test_fine_refused_with_three_wheels(self):
+    def test_fine_permitted_with_three_wheels(self):
+        """R3 (Franz): FINE runs on THREE wheels, flagged degraded.
+
+        Replaces test_fine_refused_with_three_wheels, which enforced the old
+        4-of-4 rule. A pyramid is flown four-of-four precisely so that any
+        three still span R^3 (every 3-of-4 subset of this geometry has
+        condition number 2.175), so refusing the mode threw away the exact
+        redundancy the geometry was bought for."""
+        for dead in range(4):
+            m, o, p = settled_model(MODE_NOMINAL, ticks=1400)
+            m.handle_command({"command": "disable_wheel", "wheel": dead})
+            # Let the surviving three re-settle: losing a wheel dumps its
+            # momentum into the body, so bit3 (|w| < 0.01 deg/s) needs a
+            # couple of minutes before FINE can legitimately be entered.
+            for _ in range(300):
+                m.tick(1.0, o, p)
+            assert not (m._state.fine_ready_mask & 0x02), (
+                f"bit1 set with 3 wheels (dead={dead})")
+            r = m.handle_command({"command": "set_mode", "mode": 5})
+            assert r["success"], (dead, r)
+            for _ in range(400):
+                m.tick(1.0, o, p)
+            assert m._state.mode == MODE_FINE_POINT, (
+                f"FINE dropped out on 3 wheels (dead={dead})")
+            assert m._state.fine_degraded is True
+            assert p[0x0299] == 1.0          # aocs.fine_degraded telemetry
+            # Degraded FINE must still be a fine-pointing mode: the measured
+            # 3-wheel mean error is ~0.012 deg against ~0.011 deg on four.
+            assert m._state.att_error < 0.1, m._state.att_error
+            # And it must not be doing it by flogging the wheels: measured
+            # peak per-wheel torque is ~5 uN.m against the 2 mN.m limit.
+            assert max(abs(t) for t in m._state.tau_wheel) < 2.0e-4
+
+    def test_fine_refused_with_two_wheels(self):
+        """Two wheels cannot span R^3 — FINE is still a hard refusal."""
         m, o, p = settled_model(MODE_NOMINAL, ticks=1400)
-        m.handle_command({"command": "disable_wheel", "wheel": 2})
-        m.tick(1.0, o, p)
+        m.handle_command({"command": "disable_wheel", "wheel": 0})
+        m.handle_command({"command": "disable_wheel", "wheel": 1})
+        for _ in range(60):
+            m.tick(1.0, o, p)
         r = m.handle_command({"command": "set_mode", "mode": 5})
         assert not r["success"]
         assert r["fine_ready_mask"] & 0x02
+
+    def test_fine_not_degraded_on_four_wheels(self):
+        m, o, p = settled_model(MODE_FINE_POINT, ticks=1400)
+        assert m._state.mode == MODE_FINE_POINT
+        assert m._state.fine_degraded is False
+        assert p[0x0299] == 0.0
 
     def test_mode_power_published(self):
         """0x02C8 follows the COARSE 4 / NOMINAL 9 / FINE 15 W table."""

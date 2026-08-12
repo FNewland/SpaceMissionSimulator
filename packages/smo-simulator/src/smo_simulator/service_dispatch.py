@@ -329,8 +329,8 @@ class ServiceDispatcher:
         # cryocooler — keep the unified TCS cooler flag in agreement
         # (brief 05 WP-2).
         if ok and device_id == 0x0601:
-            self._cmd(self._engine.subsystems.get("tcs"),
-                      {"command": "fpa_cooler", "on": bool(on_off)})
+            # 2026-08b PL-a: shared helper, so the EPS line follows too.
+            self._request_fpa_cooler(bool(on_off))
         return ok
 
     def _get_device_state(self, device_id: int) -> bool:
@@ -696,8 +696,17 @@ class ServiceDispatcher:
         elif func_id in range(92, 96):
             # Phase E payload extras (WP-7): 92 SELECT_FILTER,
             # 93 CYCLE_SHUTTER, 94 INITIATE_TRANSFER, 95 CAL_LAMP —
-            # allocated from the free block 92-99 (96-99 remain free).
+            # allocated from the free block 92-99 (97-99 remain free).
             return self._route_payload_cmd(func_id, data[1:])
+        elif func_id == 96:  # AOCS_SET_DESAT_INHIBIT (2026-08b)
+            return self._route_aocs_cmd(func_id, data[1:])
+        elif func_id in (97, 98):
+            # UHF beacon TRANSMITTER on/off (2026-08b, ruling R2). Allocated
+            # from the free 97-99 block rather than extended out of the 63-79
+            # TT&C range on purpose: everything in 63-79 is gated on the
+            # `ttc_tx` power line, and the beacon must stay commandable when
+            # that line is dead. 99 remains free.
+            return self._route_ttc_cmd(func_id, data[1:])
         elif func_id in range(108, 119):
             # Phase D propulsion block 108-118. NOTE: brief 03 planned 85-95,
             # but Phase C's AOCS pointing commands took 85-91 first and
@@ -709,6 +718,11 @@ class ServiceDispatcher:
             # buttons). They have no fields; map each to its intended existing
             # EPS/TCS handler (defect B: these previously fell through to []).
             return self._route_legacy_quick_action(func_id)
+        elif func_id == 119:
+            # PAYLOAD_SET_SHUTTER (2026-08b PL-d). First of the free 119-127
+            # block; 96 is AOCS_SET_DESAT_INHIBIT and 97/98 are the UHF beacon,
+            # so the payload takes the next clean allocation upward.
+            return self._route_payload_cmd(func_id, data[1:])
         return []
 
     def _route_prop_cmd(self, func_id: int, data: bytes) -> list[bytes]:
@@ -947,6 +961,12 @@ class ServiceDispatcher:
             exit_ = int(data[2]) if len(data) > 2 else 20
             self._cmd(aocs, {"command": "set_mom_mgmt", "enable": enable,
                              "entry_pct": entry, "exit_pct": exit_})
+        elif func_id == 96:  # AOCS_SET_DESAT_INHIBIT: inhibit (1 byte)
+            # 2026-08b: a momentum dump drops fine pointing, so the operator
+            # (and the payload, automatically) must be able to fence it off.
+            inhibit = bool(data[0]) if data else True
+            self._cmd(aocs, {"command": "set_desat_inhibit",
+                             "inhibit": inhibit})
         elif func_id == 91:  # AOCS_EST_RESET: mode (1 byte; 0=cold, 1=warm)
             reset_mode = int(data[0]) if data else 0
             self._cmd(aocs, {"command": "est_reset", "mode": reset_mode})
@@ -964,16 +984,15 @@ class ServiceDispatcher:
             # is not in. The payload model itself gates on its power line.
             self._cmd(self._engine.subsystems.get("payload"),
                       {"command": "set_mode", "mode": mode})
-            self._cmd(self._engine.subsystems.get("tcs"),
-                      {"command": "fpa_cooler", "on": mode >= 1})
+            # 2026-08b PL-a: shared helper — TCS flag AND the EPS line.
+            self._request_fpa_cooler(mode >= 1)
         elif func_id == 17:  # fpa cooler
             on = bool(data[0]) if data else False
-            self._cmd(eps, {"command": "set_fpa_cooler", "on": on})
-            # One cryocooler, one commanded state (brief 05 WP-2): the EPS
-            # cooler command also drives the unified TCS cooler flag, so
-            # 0x040C / billing / FPA physics all agree on any command path.
-            self._cmd(self._engine.subsystems.get("tcs"),
-                      {"command": "fpa_cooler", "on": on})
+            # One cryocooler, one commanded state (brief 05 WP-2 / 2026-08b
+            # PL-a): the shared helper drives the EPS line and the unified TCS
+            # cooler flag together, so 0x0114 / 0x040C / billing / FPA physics
+            # agree on every command path — this one included.
+            self._request_fpa_cooler(on)
         elif func_id == 18:  # transponder tx
             on = bool(data[0]) if data else True
             self._cmd(eps, {"command": "set_transponder_tx", "on": on})
@@ -1064,6 +1083,38 @@ class ServiceDispatcher:
             self._make_error_response(result)
         return result if isinstance(result, dict) else {}
 
+    def _request_fpa_cooler(self, on: bool) -> dict:
+        """Drive the ONE cryocooler from any command path (2026-08b PL-a).
+
+        There is one cryocooler and there must be one commanded state, but
+        there are FIVE ways to ask for it — EPS_FPA_COOLER (func 17),
+        EPS_PAYLOAD_MODE (16), PAYLOAD_SET_MODE (26), TCS FPA_COOLER (43) and
+        the S2 device 0x0601 — and until now only func 17 worked. The other
+        four set the TCS request flag and never energised the EPS `fpa_cooler`
+        line, while `tcs_basic` only cools when that line is up and the line
+        defaults OFF. Measured on the shipped build: after 1200 s of commanding
+        via 26, 16 or 43 the FPA node sat at +11.93 C and 0x0610 FPA READY read
+        NO, with no error reported anywhere — and COM-009, the mission's only
+        cooler-activation procedure, uses func 43.
+
+        Both sides, every path, in the order that lets the model's own
+        power-line guard see a live line: energise then command, command off
+        then de-energise.
+        """
+        eps = self._engine.subsystems.get("eps")
+        tcs = self._engine.subsystems.get("tcs")
+        if on:
+            self._cmd(eps, {"command": "set_fpa_cooler", "on": True})
+            # EPS republishes 0x0114 on its next tick; publish it NOW so the
+            # TCS handler's "line is dark" refusal cannot fire on a line this
+            # very call has just switched on.
+            self._engine.params[0x0114] = 1
+            return self._cmd(tcs, {"command": "fpa_cooler", "on": True})
+        result = self._cmd(tcs, {"command": "fpa_cooler", "on": False})
+        self._cmd(eps, {"command": "set_fpa_cooler", "on": False})
+        self._engine.params[0x0114] = 0
+        return result
+
     def _route_payload_cmd(self, func_id: int, data: bytes) -> list[bytes]:
         payload = self._engine.subsystems.get("payload")
         if not payload:
@@ -1071,13 +1122,13 @@ class ServiceDispatcher:
         if func_id == 26:  # set mode
             mode = data[0] if data else 0
             result = self._cmd(payload, {"command": "set_mode", "mode": mode})
-            # STANDBY/IMAGING imply the FPA cooler; OFF releases it. Route the
-            # request to the unified TCS cooler flag (brief 05 WP-2) so the
-            # COM-010 path (payload commands only) actually runs the cooler
-            # that EPS bills and 0x040C displays.
+            # STANDBY / IMAGING / CALIBRATION all imply the FPA cooler; OFF
+            # releases it. 2026-08b PL-a: this is now the shared helper, which
+            # drives the EPS line as well as the TCS flag — before, the COM-010
+            # payload-only path set a request flag against a dark power line
+            # and the detector never cooled.
             if result.get("success", False):
-                self._cmd(self._engine.subsystems.get("tcs"),
-                          {"command": "fpa_cooler", "on": mode >= 1})
+                self._request_fpa_cooler(mode >= 1)
         elif func_id == 27:  # set scene
             scene_id = (
                 struct.unpack('>H', data[:2])[0] if len(data) >= 2 else 0
@@ -1092,16 +1143,40 @@ class ServiceDispatcher:
             # the length guard and captured at (0, 0) "successfully".
             scene_id = struct.unpack('>H', data[0:2])[0] if len(data) >= 2 else 0
             lines = struct.unpack('>H', data[2:4])[0] if len(data) >= 4 else 0
-            self._cmd(payload, {
+            result = self._cmd(payload, {
                 "command": "capture", "scene_id": scene_id, "lines": lines
             })
+            # 2026-08b PL-c: a captured product is science, and it belongs in
+            # the Science_Store. Before this, the store held S1 acknowledgements
+            # and S8 function reports and nothing else, so the scheduled
+            # S15_DUMP_SCIENCE_STORE returned no imagery of any kind. The bulk
+            # pixels stay in payload mass memory (S13 moves those); what is
+            # stored here is the product RECORD — 32 octets per image — which
+            # is what a science store is for and what makes the dump legible.
+            if result.get("success") and result.get("image"):
+                pkt = self._image_record_tm(result["image"])
+                if pkt is not None:
+                    try:
+                        self._engine._tm_storage.store_packet_direct(3, pkt)
+                    except Exception:  # noqa: BLE001 — storage is best-effort
+                        pass
+                return [pkt] if pkt is not None else []
         elif func_id == 29:  # download image
             scene_id = (
                 struct.unpack('>H', data[:2])[0] if len(data) >= 2 else 0
             )
-            self._cmd(payload, {
+            # 2026-08b PL-c: this called the model and THREW THE RESULT AWAY —
+            # the operator got a bare S1.7 "execution complete" and no image
+            # metadata ever reached the ground on this func. It now answers
+            # with the product record.
+            result = self._cmd(payload, {
                 "command": "download_image", "scene_id": scene_id
             })
+            img = result.get("image")
+            if img:
+                pkt = self._image_record_tm(img)
+                if pkt is not None:
+                    return [pkt]
         elif func_id == 30:  # delete image
             scene_id = (
                 struct.unpack('>H', data[:2])[0] if len(data) >= 2 else 0
@@ -1114,8 +1189,29 @@ class ServiceDispatcher:
             self._cmd(payload, {
                 "command": "mark_bad_segment", "segment": seg
             })
-        elif func_id == 32:  # get image catalog
-            self._cmd(payload, {"command": "get_image_catalog"})
+        elif func_id == 32:  # get image catalog -> TM(8,2) catalogue report
+            # 2026-08b PL-c: called the model and discarded the result, so the
+            # ONE command whose entire purpose is to tell the ground what is on
+            # board produced no telemetry whatsoever. Built like
+            # PROP_GET_STATUS (func 118), the mission's existing TM(8,2)
+            # pattern.
+            result = self._cmd(payload, {"command": "get_image_catalog"})
+            catalog = result.get("catalog")
+            if catalog is not None:
+                # Header: count(2) + products_held(2) + product_mb x100 (4) +
+                # free_mb x100 (4), then `count` 20-octet product summaries.
+                # Capped at 32 products per report — a 4-station pass plan
+                # never holds more, and an unbounded report would overrun the
+                # frame at the LOW tier.
+                shown = catalog[:32]
+                resp = struct.pack(
+                    '>HHII', len(shown), len(catalog),
+                    int(round(float(result.get("product_mb", 0.0)) * 100)),
+                    int(round(float(result.get("free_mb", 0.0)) * 100)))
+                for img in shown:
+                    resp += self._image_summary(img)
+                return [self._engine.tm_builder._pack_tm(
+                    service=8, subtype=2, data=resp)]
         elif func_id == 33:  # set band configuration
             mask = data[0] if data else 0x0F
             result = self._cmd(payload, {
@@ -1204,12 +1300,69 @@ class ServiceDispatcher:
             self._cmd(payload, {"command": "cycle_shutter", "cycles": cycles})
         elif func_id == 94:  # initiate on-board transfer of a stored scene
             scene_id = struct.unpack('>H', data[:2])[0] if len(data) >= 2 else 0
-            self._cmd(payload, {"command": "initiate_transfer",
-                                "scene_id": scene_id})
+            # 2026-08b PL-c: the result was discarded, so the byte count and
+            # the product checksum the ground needs to open an S13 session were
+            # computed on board and then dropped. TM(8,2):
+            # scene_id(2) + bytes_total(4) + blocks(4) + crc32(4).
+            result = self._cmd(payload, {"command": "initiate_transfer",
+                                         "scene_id": scene_id})
+            if result.get("success"):
+                return [self._engine.tm_builder._pack_tm(
+                    service=8, subtype=2,
+                    data=struct.pack(
+                        '>HIII', scene_id & 0xFFFF,
+                        int(result.get("bytes_total", 0)) & 0xFFFFFFFF,
+                        int(result.get("blocks", 0)) & 0xFFFFFFFF,
+                        int(result.get("checksum") or 0) & 0xFFFFFFFF))]
         elif func_id == 95:  # calibration lamp on/off
             on = bool(data[0]) if data else False
             self._cmd(payload, {"command": "set_cal_lamp", "on": on})
+        elif func_id == 119:  # PAYLOAD_SET_SHUTTER — ABSOLUTE position
+            # 2026-08b PL-d: there was no absolute shutter command anywhere in
+            # the catalogue. PAYLOAD_CYCLE_SHUTTER (93) is a relative toggle and
+            # a relative toggle cannot reach a KNOWN state, which is exactly
+            # what a dark frame and COM-011 step 2 need.
+            position = data[0] if data else 1
+            self._cmd(payload, {"command": "set_shutter",
+                                "position": position})
         return []
+
+    # ── Image product records (2026-08b PL-c) ────────────────────────────
+    #
+    # One 20-octet summary, used by the func 32 catalogue report, the func 29
+    # product report and the Science_Store record written at capture. Fixed
+    # width and integer-scaled, like every other TM in this mission — no
+    # float32 on the downlink.
+    def _image_summary(self, img: dict) -> bytes:
+        """scene_id(2) lat(4,1e-4 deg) lon(4,1e-4 deg) size_kb(4) lines(2)
+        quality(1,%) status(1) flags(1) segment(1)."""
+        flags = 0
+        if img.get("fine_degraded"):
+            flags |= 0x01           # strip flown on a 3-wheel FINE set
+        if img.get("checksum") is not None:
+            flags |= 0x02           # product checksum computed
+        return struct.pack(
+            '>HiiIHBBBB',
+            int(img.get("scene_id", 0)) & 0xFFFF,
+            int(round(float(img.get("lat", 0.0)) * 10000)),
+            int(round(float(img.get("lon", 0.0)) * 10000)),
+            int(round(float(img.get("size_mb", 0.0)) * 1000)),
+            min(65535, int(img.get("lines", 0))),
+            min(255, int(round(float(img.get("quality", 0.0))))),
+            int(img.get("status", 0)) & 0xFF,
+            flags,
+            int(img.get("segment", 0)) & 0xFF,
+        )
+
+    def _image_record_tm(self, img: dict):
+        """TM(8,2) product record for one image, or None if it cannot pack."""
+        try:
+            return self._engine.tm_builder._pack_tm(
+                service=8, subtype=2, data=self._image_summary(img))
+        except Exception:  # noqa: BLE001 — a malformed entry must not kill the TC
+            logger.warning("could not pack image record for %r",
+                           img.get("scene_id"))
+            return None
 
     def _route_tcs_cmd(self, func_id: int, data: bytes) -> list[bytes]:
         tcs = self._engine.subsystems.get("tcs")
@@ -1223,7 +1376,11 @@ class ServiceDispatcher:
             })
         elif func_id == 43:  # FPA cooler
             on = bool(data[0]) if data else True
-            self._cmd(tcs, {"command": "fpa_cooler", "on": on})
+            # 2026-08b PL-a: COM-009's path. It used to set the TCS request
+            # flag against a power line nothing switched on, and the handler
+            # answered "success" regardless — the operator got "execution
+            # complete" while 0x040C stayed 0 forever.
+            self._request_fpa_cooler(on)
         elif func_id == 44:  # Set heater setpoint
             if len(data) >= 9:
                 circuit = data[0]
@@ -1443,6 +1600,13 @@ class ServiceDispatcher:
             # spacecraft drifts into at 1 Mbps.
             on = bool(data[0]) if data else True
             self._cmd(ttc, {"command": "set_downlink_mode", "on": on})
+        elif func_id == 97:  # TTC_BEACON_TX_ON  — the UHF beacon transmitter
+            self._cmd(ttc, {"command": "beacon_tx_on"})
+        elif func_id == 98:  # TTC_BEACON_TX_OFF — silences HK SID 11's
+            # lifeline. NOT the same command as TTC_SET_BEACON_MODE (70),
+            # which selects a rung of the S-band TM rate ladder and touches
+            # no hardware. See ttc.yaml's `beacon:` block.
+            self._cmd(ttc, {"command": "beacon_tx_off"})
         return []
 
     # ─── S9 Time Management ─────────────────────────────────────────
@@ -1749,6 +1913,26 @@ class ServiceDispatcher:
 
     # ─── S13 Large Data Transfer ─────────────────────────────────────
 
+    def _payload_model(self):
+        """The live payload model, or None when one is not really attached.
+
+        Same MagicMock guard as `_default_image_size_mb`: a mock answers every
+        attribute, so "has the method" is not enough — the catalogue has to be
+        a real list.
+        """
+        payload = self._engine.subsystems.get("payload")
+        cat = getattr(getattr(payload, "_state", None), "image_catalog", None)
+        if isinstance(cat, list) and hasattr(payload, "image_block"):
+            return payload
+        return None
+
+    def _payload_has_catalogue(self) -> bool:
+        return self._payload_model() is not None
+
+    def _catalogued_image(self, scene_id: int):
+        pl = self._payload_model()
+        return None if pl is None else pl.find_image(scene_id)
+
     def _default_image_size_mb(self) -> int:
         """Configured payload image size, in whole MB (S13 wire field is u16).
 
@@ -1774,8 +1958,35 @@ class ServiceDispatcher:
             # Format: scene_id(2) + initial_size_mb(2) OR variant: scene_id(2) + reserved(2)
             scene_id = struct.unpack('>H', data[:2])[0]
             size_mb = struct.unpack('>H', data[2:4])[0] if len(data) >= 4 else 0
-            if size_mb == 0:
-                size_mb = self._default_image_size_mb()
+
+            # ── 2026-08b PL-c: the transfer is of a REAL PRODUCT ──
+            # S13.1 never touched `image_catalog`. Measured on the shipped
+            # build: a transfer for scene 9999 against an EMPTY catalogue
+            # returned transfer_id 1, 4 MB, ACTIVE — the ground could open, run
+            # and complete a download of an image that had never been taken.
+            # The session is now bound to a catalogued product and sized from
+            # the product's own compressed size, not from a wire field or a
+            # constant.
+            img = self._catalogued_image(scene_id)
+            if img is not None:
+                size_bytes = self._payload_model().image_size_bytes(img)
+                size_mb = max(1, int(round(size_bytes / 1e6)))
+            elif self._payload_has_catalogue():
+                self._make_error_response({
+                    "error_code": 0x0003,
+                    "message": (f"S13 create refused: scene {scene_id} is not "
+                                "in the payload image catalogue "
+                                "(PAYLOAD_GET_IMAGE_CATALOG, func 32)")})
+                return [self._engine.tm_builder._pack_tm(
+                    service=13, subtype=4, data=struct.pack('>H', 0)
+                )]
+            else:
+                # No real payload model in the loop (unit harness): keep the
+                # legacy wire/constant sizing so standalone S13 tests still
+                # exercise the session bookkeeping.
+                size_bytes = 0
+                if size_mb == 0:
+                    size_mb = self._default_image_size_mb()
 
             transfer_id = getattr(self, '_s13_transfer_counter', 1)
             self._s13_transfer_counter = transfer_id + 1
@@ -1784,13 +1995,21 @@ class ServiceDispatcher:
             if not hasattr(self, '_s13_transfers'):
                 self._s13_transfers = {}
 
-            # Calculate total blocks (1024 bytes per block)
-            total_blocks = (size_mb * 1024 * 1024 + 1023) // 1024
+            if img is not None:
+                total_blocks = self._payload_model().image_block_count(img)
+                checksum = self._payload_model().image_checksum(scene_id) or 0
+            else:
+                # Calculate total blocks (1024 bytes per block)
+                total_blocks = (size_mb * 1024 * 1024 + 1023) // 1024
+                size_bytes = size_mb * 1024 * 1024
+                checksum = 0
 
             self._s13_transfers[transfer_id] = {
                 'transfer_id': transfer_id,
                 'scene_id': scene_id,
                 'size_mb': size_mb,
+                'size_bytes': size_bytes,
+                'checksum': checksum,
                 'total_blocks': total_blocks,
                 'blocks_sent': 0,
                 'status': 'ACTIVE',  # ACTIVE, PAUSED, COMPLETE
@@ -1799,8 +2018,14 @@ class ServiceDispatcher:
             logger.info("S13 create transfer %d for scene %d (%d MB, %d blocks)",
                        transfer_id, scene_id, size_mb, total_blocks)
 
-            # Response: transfer_id(2)
+            # Response: transfer_id(2) [+ total_blocks(4) + crc32(4) when the
+            # session is bound to a real product]. The two extra fields are
+            # APPENDED, so a ground decoder that only reads the first two
+            # octets is unaffected; they are what lets the ground know how many
+            # segments to ask for and what the product should checksum to.
             resp_data = struct.pack('>H', transfer_id)
+            if img is not None:
+                resp_data += struct.pack('>II', total_blocks, checksum)
             return [self._engine.tm_builder._pack_tm(
                 service=13, subtype=2, data=resp_data
             )]
@@ -1824,9 +2049,23 @@ class ServiceDispatcher:
             if xfer['status'] != 'ACTIVE':
                 return []
 
-            # Generate simulated image data block (1024 bytes)
-            # In a real system, this would read from payload memory
-            block_data = bytes([(segment_num + i) % 256 for i in range(1024)])
+            # ── 2026-08b PL-c: serve the PRODUCT's bytes ──
+            # This used to be `bytes([(segment_num + i) % 256 ...])` — a ramp,
+            # with a source comment admitting it ("In a real system, this would
+            # read from payload memory"). Every scene downlinked identically,
+            # nothing could be checksummed, and a CORRUPT product was
+            # byte-for-byte indistinguishable from a good one. The bytes now
+            # come from the product itself (payload_basic.image_block: a keyed
+            # BLAKE2b stream over the entry's data_seed, damaged for a corrupt
+            # product), so a ground CRC of the received image agrees with the
+            # `checksum` S13.1 reported — or does not, and the operator can see
+            # which blocks failed.
+            block_data = None
+            pl = self._payload_model()
+            if pl is not None:
+                block_data = pl.image_block(xfer['scene_id'], segment_num)
+            if block_data is None:
+                block_data = bytes([(segment_num + i) % 256 for i in range(1024)])
 
             # Response: transfer_id(2) + segment_num(2) + block_data(1024)
             resp_data = struct.pack('>HH', transfer_id, segment_num) + block_data
@@ -1849,6 +2088,23 @@ class ServiceDispatcher:
                 xfer = self._s13_transfers.pop(transfer_id)
                 logger.info("S13 transfer %d complete (scene %d)",
                            transfer_id, xfer['scene_id'])
+                # ── 2026-08b PL-c: ending a transfer FREES the product ──
+                # S13_END_TRANSFER is catalogued as "Complete transfer session
+                # and free resources"; it freed nothing. Measured: mem_used_mb
+                # was byte-identical before and after, so a spacecraft could
+                # downlink its entire store and still report it full, and the
+                # pass plan's "n images need n dumps" arithmetic never
+                # recovered any capacity.
+                #
+                # Only a transfer that actually completed releases the product
+                # — an aborted or partial session must leave the image on
+                # board, which is exactly the "the pass dropped, re-dump next
+                # orbit" case S13 exists for.
+                pl = self._payload_model()
+                if pl is not None and xfer['total_blocks'] > 0 \
+                        and xfer['blocks_sent'] >= xfer['total_blocks']:
+                    self._cmd(pl, {"command": "release_image",
+                                   "scene_id": xfer['scene_id']})
 
             return []
 
@@ -2226,8 +2482,21 @@ class ServiceDispatcher:
             return None  # TCS heaters individually power-gated by EPS
         if 50 <= func_id < 63:
             return None  # OBDH
-        if 63 <= func_id < 79:
+        if 63 <= func_id < 80:
+            # 2026-08b: was `< 79`, which let func 79 TTC_SET_DOWNLINK_MODE
+            # slip past the ttc_tx acceptance gate its fifteen siblings get —
+            # routing has used range(63, 80) since the rate ladder landed, so
+            # the two disagreed by exactly one function. The gate on the mode
+            # that unlocks the HIGH tier is the last one you want leaking.
             return "ttc_tx"
+        if func_id in (97, 98):
+            # TTC_BEACON_TX_ON / _OFF. Deliberately NOT gated on ttc_tx: the
+            # UHF beacon is a separate radio billed to the non-switchable
+            # `ttc_rx` line, and the whole point of it is that it is
+            # commandable when the S-band chain is dead. Gating it on the line
+            # that kills the S-band chain would make the lifeline unreachable
+            # in exactly the situation it exists for.
+            return None
         return None
 
     def check_power_state(
@@ -2344,8 +2613,10 @@ class ServiceDispatcher:
             return None  # TCS
         if 50 <= func_id < 63:
             return None  # OBDH
-        if 63 <= func_id < 79:
-            return None  # TTC TX (line gate is sufficient)
+        if 63 <= func_id < 80:
+            return None  # TTC TX (line gate is sufficient); 79 included
+        if func_id in (97, 98):
+            return None  # TTC UHF beacon TX — no line or mode gate at all
         return None
 
     # ─── State save/restore (plan A-4) ───────────────────────────────

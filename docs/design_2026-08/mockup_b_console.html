@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup B — Operator Console — EOSAT-1 MCS</title>
+<style>
+/* ============================================================
+   MOCKUP B — MODERN OPERATOR CONSOLE
+   Design thesis: overview-first, drill-down. The spacecraft
+   schematic IS the navigation surface — you click the thing you
+   are worried about, not a tab labelled with its acronym.
+   A persistent situational-awareness header answers the four
+   questions an operator must never have to hunt for:
+   can I see it / can I talk to it / is it healthy / what's next.
+   Restrained dark theme, one accent, desaturated status hues.
+   ============================================================ */
+:root{
+  --bg:#0E1013;
+  --s1:#14171C;
+  --s2:#1A1E24;
+  --s3:#22272F;
+  --line:#2B313A;
+  --line-2:#373F4A;
+  --tx:#E6E9ED;
+  --tx2:#A3ACB9;
+  --tx3:#6E7885;
+  --ok:#8A93A0;          /* nominal = GREY. deliberately not green. */
+  --warn:#E8A317;
+  --alarm:#FF5C4D;
+  --info:#5AA9FF;        /* accent — interaction + commanded state */
+  --shelf:#8B7CF6;
+  --hatch:repeating-linear-gradient(45deg,transparent 0 4px,rgba(255,255,255,.06) 4px 8px);
+  --mono:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+  --sans:"Inter","Segoe UI",system-ui,-apple-system,sans-serif;
+  --r:6px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--tx);font-family:var(--sans);font-size:14px;line-height:1.45;
+  display:flex;flex-direction:column;overflow:hidden;-webkit-font-smoothing:antialiased}
+button,select,input{font:inherit;color:inherit}
+button{background:none;border:none;cursor:pointer}
+:focus-visible{outline:2px solid var(--info);outline-offset:2px}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.hide{display:none!important}
+
+/* ================= SA HEADER (the four questions) ================= */
+header{flex:0 0 auto;background:var(--s1);border-bottom:1px solid var(--line)}
+.hrow{display:flex;align-items:center;gap:20px;height:58px;padding:0 20px}
+.mark{display:flex;align-items:center;gap:11px;padding-right:20px;border-right:1px solid var(--line)}
+.mark .g{width:30px;height:30px;border:1.5px solid var(--tx3);border-radius:7px;display:grid;place-items:center;
+  font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:-.5px;color:var(--tx2)}
+.mark b{font-size:15px;letter-spacing:.4px;display:block;line-height:1.1}
+.mark span{font-size:10.5px;color:var(--tx3);letter-spacing:1.6px}
+.clk{display:flex;flex-direction:column;line-height:1.15}
+.clk label{font-size:9.5px;letter-spacing:1.3px;color:var(--tx3);text-transform:uppercase}
+.clk b{font-family:var(--mono);font-size:18px;font-weight:600;letter-spacing:.3px}
+.grow{flex:1}
+.pos{display:flex;align-items:center;gap:9px;background:var(--s2);border:1px solid var(--line);
+  border-radius:var(--r);padding:5px 12px}
+.pos label{font-size:9.5px;letter-spacing:1.3px;color:var(--tx3)}
+.pos b{font-size:13px}
+.abtn{display:flex;align-items:center;gap:9px;background:rgba(255,92,77,.10);border:1px solid rgba(255,92,77,.45);
+  border-radius:var(--r);padding:6px 13px;color:var(--alarm);font-weight:600;font-size:13px}
+.abtn .n{font-family:var(--mono);font-size:16px}
+.abtn:hover{background:rgba(255,92,77,.18)}
+.ibtn{border:1px solid var(--line-2);border-radius:var(--r);padding:6px 12px;font-size:12.5px;color:var(--tx2)}
+.ibtn:hover{background:var(--s2);color:var(--tx)}
+
+/* four SA cards */
+.sa{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border-top:1px solid var(--line)}
+.sacard{background:var(--s1);padding:9px 20px;display:flex;align-items:center;gap:14px;min-width:0}
+.sacard .q{font-size:9.5px;letter-spacing:1.3px;color:var(--tx3);text-transform:uppercase;flex:0 0 84px}
+.sacard .a{min-width:0}
+.sacard .a b{display:block;font-family:var(--mono);font-size:15px;font-weight:600;letter-spacing:.2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sacard .a span{display:block;font-size:11px;color:var(--tx3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sacard.w b{color:var(--warn)} .sacard.a b{color:var(--alarm)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);flex:0 0 auto}
+.dot.w{background:var(--warn)} .dot.a{background:var(--alarm)}
+
+/* ================= SHELL ================= */
+.shell{flex:1;display:flex;min-height:0}
+nav.rail{flex:0 0 62px;background:var(--s1);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;align-items:center;padding:12px 0;gap:5px}
+.rail button{width:44px;height:44px;border-radius:var(--r);display:grid;place-items:center;
+  font-family:var(--mono);font-size:10.5px;font-weight:700;letter-spacing:.3px;color:var(--tx3);position:relative}
+.rail button:hover{background:var(--s2);color:var(--tx2)}
+.rail button.on{background:var(--s3);color:var(--tx);box-shadow:inset 2px 0 0 var(--info)}
+.rail button .b{position:absolute;top:5px;right:5px;width:7px;height:7px;border-radius:50%}
+.rail button .b.w{background:var(--warn)} .rail button .b.a{background:var(--alarm)}
+.rail .sp{flex:1}
+
+.work{flex:1;overflow:auto;min-width:0}
+.pad{padding:20px 24px 26px;max-width:1720px}
+
+/* ================= CARDS ================= */
+.card{background:var(--s1);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.card>h2{font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--tx3);
+  padding:11px 16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--line)}
+.card>h2 .r{margin-left:auto;font-weight:400;letter-spacing:.3px;font-size:11px;text-transform:none}
+.cb{padding:16px}
+.g{display:grid;gap:16px}
+h1.pt{font-size:22px;font-weight:600;letter-spacing:-.3px;margin-bottom:3px}
+p.sub{color:var(--tx3);font-size:13px;margin-bottom:18px}
+
+/* ================= SCHEMATIC NAV ================= */
+.stage{position:relative;background:
+  radial-gradient(120% 90% at 50% 0%,#171B21 0%,#0F1216 70%);border-radius:10px;padding:8px}
+svg.sc{width:100%;display:block}
+.sc .body{fill:#1B2027;stroke:#333B45;stroke-width:1.5}
+.sc .panelfill{fill:#171C23;stroke:#2E353F}
+.sc .wire{stroke:#39414D;stroke-width:1.4;fill:none}
+.sc .wire.flow{stroke:#4A5563;stroke-dasharray:5 5;animation:flow 2.4s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-20}}
+@media (prefers-reduced-motion:reduce){.sc .wire.flow{animation:none}}
+.node{cursor:pointer}
+.node rect.bx{fill:#1C2129;stroke:#39414D;stroke-width:1.5;rx:8}
+.node:hover rect.bx{fill:#232932;stroke:#4E5866}
+.node.warn rect.bx{stroke:var(--warn);stroke-width:2}
+.node.alarm rect.bx{stroke:var(--alarm);stroke-width:2;fill:rgba(255,92,77,.09)}
+.node .nm{font-family:var(--sans);font-size:12.5px;font-weight:600;fill:#C9D0D9;letter-spacing:.6px}
+.node .vl{font-family:var(--mono);font-size:15px;font-weight:600;fill:#E6E9ED}
+.node.warn .vl{fill:var(--warn)} .node.alarm .vl{fill:var(--alarm)}
+.node .sm{font-family:var(--mono);font-size:10px;fill:#6E7885}
+.node .badge{font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.6px}
+.node.warn .badge{fill:var(--warn)} .node.alarm .badge{fill:var(--alarm)}
+.node .spark{fill:none;stroke:#5C6672;stroke-width:1.3}
+.node.warn .spark{stroke:var(--warn)} .node.alarm .spark{stroke:var(--alarm)}
+
+/* ================= PARAM ROWS ================= */
+.pr{display:grid;grid-template-columns:1fr 108px 150px 72px;gap:14px;align-items:center;
+  padding:10px 0;border-bottom:1px solid var(--line)}
+.pr:last-child{border-bottom:none}
+.pr .k{min-width:0}
+.pr .k b{font-size:13px;font-weight:500;display:block}
+.pr .k span{font-family:var(--mono);font-size:10.5px;color:var(--tx3)}
+.pr .val{text-align:right;font-family:var(--mono);font-size:18px;font-weight:600;letter-spacing:-.2px}
+.pr .val u{text-decoration:none;font-size:11px;color:var(--tx3);margin-left:3px}
+.pr.w .val{color:var(--warn)} .pr.a .val{color:var(--alarm)}
+.pr.w{box-shadow:inset 3px 0 0 var(--warn);padding-left:11px;margin-left:-14px}
+.pr.a{box-shadow:inset 3px 0 0 var(--alarm);padding-left:11px;margin-left:-14px;background:rgba(255,92,77,.05)}
+.bar{position:relative;height:10px;background:var(--s3);border-radius:5px;overflow:hidden}
+.bar .band{position:absolute;top:0;bottom:0;background:rgba(255,255,255,.055)}
+.bar .tk{position:absolute;top:0;bottom:0;width:1.5px}
+.bar .tk.y{background:rgba(232,163,23,.75)} .bar .tk.r{background:rgba(255,92,77,.8)}
+.bar .nd{position:absolute;top:-2px;bottom:-2px;width:3px;border-radius:2px;background:var(--tx)}
+.pr.w .bar .nd{background:var(--warn)} .pr.a .bar .nd{background:var(--alarm)}
+.trend{font-family:var(--mono);font-size:11px;color:var(--tx3);text-align:right}
+.trend b{color:var(--tx2)}
+
+/* ================= ALARM DRAWER ================= */
+.drawer{position:fixed;top:0;right:0;bottom:0;width:520px;background:var(--s1);
+  border-left:1px solid var(--line-2);box-shadow:-20px 0 60px rgba(0,0,0,.5);
+  transform:translateX(100%);transition:transform .22s cubic-bezier(.3,0,.2,1);z-index:60;display:flex;flex-direction:column}
+.drawer.open{transform:none}
+@media (prefers-reduced-motion:reduce){.drawer{transition:none}}
+.drawer h2{font-size:12px;letter-spacing:1.5px;text-transform:uppercase;color:var(--tx3);
+  padding:16px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px}
+.drawer .body{flex:1;overflow:auto}
+.arow{padding:13px 18px;border-bottom:1px solid var(--line);display:grid;
+  grid-template-columns:34px 1fr auto;gap:12px;align-items:start}
+.arow.p1,.arow.p2{box-shadow:inset 3px 0 0 var(--alarm)}
+.arow.p3{box-shadow:inset 3px 0 0 var(--warn)}
+.arow.shelved{box-shadow:inset 3px 0 0 var(--shelf);opacity:.7}
+.arow.rtn{opacity:.55;box-shadow:inset 3px 0 0 var(--line-2)}
+.pbadge{font-family:var(--mono);font-size:11px;font-weight:700;text-align:center;padding:2px 0;
+  border:1px solid currentColor;border-radius:4px;color:var(--tx3)}
+.arow.p1 .pbadge,.arow.p2 .pbadge{color:var(--alarm)} .arow.p3 .pbadge{color:var(--warn)}
+.arow.shelved .pbadge{color:var(--shelf)}
+.arow .t1{font-size:13.5px;font-weight:600;margin-bottom:2px}
+.arow .t1 .gl{font-family:var(--mono)}
+.arow .t2{font-family:var(--mono);font-size:11.5px;color:var(--tx3)}
+.arow .why{margin-top:8px;font-size:12px;color:var(--tx2);background:var(--s2);
+  border-radius:6px;padding:9px 11px;line-height:1.5}
+.arow .why b{color:var(--tx);font-weight:600}
+.arow .acts{display:flex;flex-direction:column;gap:6px}
+.mini{border:1px solid var(--line-2);border-radius:5px;padding:4px 10px;font-size:11.5px;color:var(--tx2);white-space:nowrap}
+.mini:hover{background:var(--s2);color:var(--tx)}
+.mini.pri{border-color:var(--info);color:var(--info)}
+.scrim{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:55;opacity:0;pointer-events:none;transition:opacity .2s}
+.scrim.open{opacity:1;pointer-events:auto}
+
+.flood{display:flex;align-items:center;gap:14px;padding:12px 18px;border-bottom:1px solid var(--line);background:var(--s2)}
+.flood .tr{position:relative;flex:1;height:14px;background:var(--s3);border-radius:7px;overflow:hidden}
+.flood .tr i{position:absolute;inset:0 auto 0 0;background:var(--tx3);opacity:.6}
+.flood .tr u{position:absolute;top:0;bottom:0;width:2px;background:var(--alarm)}
+
+.tag{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.6px;
+  border:1px solid var(--line-2);border-radius:4px;padding:1px 7px;color:var(--tx3)}
+.note{font-size:12px;color:var(--tx3);line-height:1.6}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:5px 14px;font-size:12.5px}
+.kv .k{color:var(--tx3)} .kv .v{font-family:var(--mono);text-align:right}
+.stepper{display:flex;gap:4px}
+.stepper div{flex:1;text-align:center;padding:7px 0;border:1px solid var(--line-2);border-radius:5px;
+  font-family:var(--mono);font-size:11.5px;color:var(--tx3)}
+.stepper div.on{border-color:var(--tx2);color:var(--tx);font-weight:700}
+.spark2{width:100%;height:44px;display:block}
+.spark2 polyline{fill:none;stroke:var(--tx3);stroke-width:1.5}
+.spark2 .fill{fill:rgba(255,255,255,.04);stroke:none}
+@media(max-width:1280px){.g2{grid-template-columns:1fr!important}.sa{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="hrow">
+    <div class="mark"><div class="g">EO1</div><div><b>EOSAT-1</b><span>MISSION CONTROL</span></div></div>
+    <div class="clk"><label>UTC</label><b id="utc">08:14:22</b></div>
+    <div class="clk"><label>MET</label><b>041:07:52:11</b></div>
+    <div class="clk"><label>Orbit</label><b>4 118</b></div>
+    <div class="grow"></div>
+    <div class="pos"><label>POSITION</label><b>Power &amp; Thermal</b></div>
+    <button class="abtn" onclick="drawer(true)"><span class="n">2</span> UNACKNOWLEDGED</button>
+    <button class="ibtn" onclick="gs()">GREYSCALE TEST</button>
+  </div>
+  <div class="sa">
+    <div class="sacard"><div class="q">Can I see it?</div><span class="dot"></span>
+      <div class="a"><b>LIVE · 1.2 s</b><span>HK SID 3 · all subsystems fresh</span></div></div>
+    <div class="sacard"><div class="q">Can I talk?</div><span class="dot"></span>
+      <div class="a"><b>KIRUNA · LOS 04:38</b><span>16 kbps LOW · commanded LOW · elevation 34°</span></div></div>
+    <div class="sacard a"><div class="q">Is it well?</div><span class="dot a"></span>
+      <div class="a"><b>1 ALARM · 1 WARNING</b><span>EPS payload line overcurrent · power margin low</span></div></div>
+    <div class="sacard w"><div class="q">What's next?</div><span class="dot w"></span>
+      <div class="a"><b>ECLIPSE IN 12:07</b><span>then SVALBARD AOS 08:41 · imaging pass 08:52</span></div></div>
+  </div>
+</header>
+
+<div class="shell">
+  <nav class="rail">
+    <button class="on" data-v="ov" onclick="view('ov',this)">OVR</button>
+    <button data-v="eps" onclick="view('eps',this)">EPS<span class="b a"></span></button>
+    <button data-v="aocs" onclick="view('aocs',this)">AOCS</button>
+    <button data-v="tcs" onclick="view('tcs',this)">TCS</button>
+    <button data-v="ttc" onclick="view('ttc',this)">TTC</button>
+    <button data-v="pld" onclick="view('pld',this)">PLD</button>
+    <button data-v="obdh" onclick="view('obdh',this)">OBC</button>
+    <div class="sp"></div>
+    <button onclick="drawer(true)">ALM<span class="b a"></span></button>
+    <button>PRC</button><button>LOG</button>
+  </nav>
+
+  <div class="work">
+
+  <!-- ===================== OVERVIEW ===================== -->
+  <div class="pad" id="v-ov">
+    <h1 class="pt">Spacecraft overview</h1>
+    <p class="sub">The schematic is the navigation. Click any element to open its subsystem view — nothing here is a tab you must decode.</p>
+
+    <div class="g g2" style="grid-template-columns:1fr 396px">
+      <div class="card">
+        <h2>EOSAT-1 · functional schematic <span class="r">nominal elements are grey — colour marks deviation only</span></h2>
+        <div class="cb"><div class="stage">
+          <svg class="sc" viewBox="0 0 960 500">
+            <defs><linearGradient id="pg" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#1B222B"/><stop offset="1" stop-color="#141A21"/></linearGradient></defs>
+
+            <!-- solar wings -->
+            <g opacity=".95">
+              <rect x="24" y="150" width="120" height="200" rx="4" fill="url(#pg)" stroke="#2E353F"/>
+              <rect x="24" y="150" width="120" height="200" rx="4" fill="none" stroke="#333B45"/>
+              <g stroke="#242C36" stroke-width="1">
+                <line x1="24" y1="200" x2="144" y2="200"/><line x1="24" y1="250" x2="144" y2="250"/>
+                <line x1="24" y1="300" x2="144" y2="300"/><line x1="84" y1="150" x2="84" y2="350"/></g>
+              <text x="84" y="368" text-anchor="middle" class="sm" style="font-family:var(--mono);font-size:10px;fill:#6E7885">SA-A +Y  1.84 A</text>
+
+              <rect x="816" y="150" width="120" height="200" rx="4" fill="url(#pg)" stroke="#333B45"/>
+              <g stroke="#242C36" stroke-width="1">
+                <line x1="816" y1="200" x2="936" y2="200"/><line x1="816" y1="250" x2="936" y2="250"/>
+                <line x1="816" y1="300" x2="936" y2="300"/><line x1="876" y1="150" x2="876" y2="350"/></g>
+              <text x="876" y="368" text-anchor="middle" class="sm" style="font-family:var(--mono);font-size:10px;fill:#6E7885">SA-B −Y  1.79 A</text>
+              <path class="wire flow" d="M144 250 H196"/><path class="wire flow" d="M816 250 H764"/>
+            </g>
+
+            <!-- bus body -->
+            <rect class="body" x="196" y="86" width="568" height="330" rx="14"/>
+            <text x="480" y="72" text-anchor="middle" style="font-family:var(--mono);font-size:10.5px;fill:#5C6672;letter-spacing:2px">SPACECRAFT BUS</text>
+
+            <!-- EPS -->
+            <g class="node alarm" onclick="view('eps',document.querySelector('[data-v=eps]'))">
+              <rect class="bx" x="222" y="112" width="228" height="112"/>
+              <text x="240" y="136" class="nm">EPS</text>
+              <text x="432" y="136" class="badge" text-anchor="end">▲ 1 ALARM</text>
+              <text x="240" y="170" class="vl">61.4<tspan class="sm" dx="3">%</tspan></text>
+              <text x="240" y="188" class="sm">SoC · 0x0101</text>
+              <text x="352" y="170" class="vl">27.94<tspan class="sm" dx="3">V</tspan></text>
+              <text x="352" y="188" class="sm">BUS · 0x0105</text>
+              <polyline class="spark" id="sp-eps" points=""/>
+              <text x="240" y="212" class="sm" style="fill:#FF5C4D">line 3 overcurrent 2.31 A</text>
+            </g>
+
+            <!-- OBDH -->
+            <g class="node" onclick="view('obdh',null)">
+              <rect class="bx" x="222" y="244" width="228" height="96"/>
+              <text x="240" y="268" class="nm">OBDH</text>
+              <text x="432" y="268" class="badge" text-anchor="end" style="fill:#6E7885">OBC-A</text>
+              <text x="240" y="300" class="vl">44<tspan class="sm" dx="3">%</tspan></text>
+              <text x="240" y="318" class="sm">CPU · 0x0302</text>
+              <text x="352" y="300" class="vl">41<tspan class="sm" dx="3">%</tspan></text>
+              <text x="352" y="318" class="sm">TM BUF · 0x0312</text>
+            </g>
+
+            <!-- AOCS -->
+            <g class="node" onclick="view('aocs',document.querySelector('[data-v=aocs]'))">
+              <rect class="bx" x="510" y="112" width="228" height="112"/>
+              <text x="528" y="136" class="nm">AOCS</text>
+              <text x="720" y="136" class="badge" text-anchor="end" style="fill:#6E7885">NADIR</text>
+              <text x="528" y="170" class="vl" id="sc-atterr">0.113<tspan class="sm" dx="3">°</tspan></text>
+              <text x="528" y="188" class="sm">ATT ERR · 0x0217</text>
+              <text x="640" y="170" class="vl">0.011</text>
+              <text x="640" y="188" class="sm">|h| N·m·s · 0x025B</text>
+              <text x="528" y="212" class="sm">RW1..4 nominal · ST1 TRACKING 14 stars</text>
+            </g>
+
+            <!-- TTC -->
+            <g class="node" onclick="view('ttc',null)">
+              <rect class="bx" x="510" y="244" width="228" height="96"/>
+              <text x="528" y="268" class="nm">TT&amp;C</text>
+              <text x="720" y="268" class="badge" text-anchor="end" style="fill:#6E7885">LOCKED</text>
+              <text x="528" y="300" class="vl">−6.2</text>
+              <text x="528" y="318" class="sm">BER log10 · 0x050C</text>
+              <text x="640" y="300" class="vl">38.6<tspan class="sm" dx="3">°C</tspan></text>
+              <text x="640" y="318" class="sm">PA TEMP · 0x050F</text>
+            </g>
+
+            <!-- TCS strip -->
+            <g class="node" onclick="view('tcs',null)">
+              <rect class="bx" x="222" y="358" width="228" height="42"/>
+              <text x="240" y="384" class="nm" style="font-size:11.5px">TCS</text>
+              <text x="310" y="384" class="vl" style="font-size:13px">21.4 °C</text>
+              <text x="392" y="384" class="sm">OBC node</text>
+            </g>
+            <g class="node" onclick="view('pld',null)">
+              <rect class="bx" x="510" y="358" width="228" height="42"/>
+              <text x="528" y="384" class="nm" style="font-size:11.5px">PAYLOAD</text>
+              <text x="620" y="384" class="vl" style="font-size:13px">−19.7 °C</text>
+              <text x="700" y="384" class="sm">IMAGING</text>
+            </g>
+
+            <!-- antenna -->
+            <path class="wire" d="M480 86 V52"/><circle cx="480" cy="44" r="9" fill="none" stroke="#39414D" stroke-width="1.5"/>
+            <path class="wire flow" d="M480 34 V10"/>
+            <text x="496" y="20" class="sm" style="font-family:var(--mono);font-size:10px;fill:#6E7885">↓ 16 kbps  KIRUNA</text>
+          </svg>
+        </div></div>
+      </div>
+
+      <div class="g" style="align-content:start">
+        <div class="card">
+          <h2>Next 30 minutes <span class="r">projection</span></h2>
+          <div class="cb">
+            <svg viewBox="0 0 360 96" style="width:100%;display:block">
+              <rect x="140" y="12" width="96" height="28" fill="rgba(232,163,23,.16)" rx="3"/>
+              <text x="188" y="30" text-anchor="middle" style="font-family:var(--mono);font-size:9.5px;fill:#E8A317">ECLIPSE</text>
+              <rect x="248" y="48" width="72" height="16" fill="rgba(90,169,255,.18)" rx="3"/>
+              <text x="284" y="60" text-anchor="middle" style="font-family:var(--mono);font-size:9px;fill:#5AA9FF">SVALBARD</text>
+              <rect x="16" y="48" width="66" height="16" fill="rgba(90,169,255,.18)" rx="3"/>
+              <text x="49" y="60" text-anchor="middle" style="font-family:var(--mono);font-size:9px;fill:#5AA9FF">KIRUNA</text>
+              <polyline points="8,26 60,28 120,30 140,32 188,44 236,54 260,48 320,38 352,32"
+                fill="none" stroke="#8A93A0" stroke-width="1.6"/>
+              <polyline points="120,30 140,32 188,44 236,54 260,48 320,38 352,32"
+                fill="none" stroke="#E8A317" stroke-width="1.6" stroke-dasharray="4 3"/>
+              <line x1="120" y1="8" x2="120" y2="72" stroke="#E6E9ED" stroke-width="1.5"/>
+              <text x="120" y="88" text-anchor="middle" style="font-family:var(--mono);font-size:9px;fill:#6E7885">NOW</text>
+              <text x="8" y="88" style="font-family:var(--mono);font-size:9px;fill:#6E7885">−10m</text>
+              <text x="352" y="88" text-anchor="end" style="font-family:var(--mono);font-size:9px;fill:#6E7885">+30m</text>
+            </svg>
+            <div class="kv" style="margin-top:12px">
+              <span class="k">Battery SoC at eclipse exit</span><span class="v" style="color:var(--warn)">47.1 %</span>
+              <span class="k">Time to SoC yellow (25 %)</span><span class="v">1 h 36 m</span>
+              <span class="k">TM store at next AOS</span><span class="v">58 %</span>
+              <span class="k">Next momentum desat</span><span class="v">09:22</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Spacecraft state</h2>
+          <div class="cb">
+            <div class="kv">
+              <span class="k">Phase</span><span class="v">6 NOMINAL</span>
+              <span class="k">AOCS mode</span><span class="v">NADIR POINTING</span>
+              <span class="k">Payload mode</span><span class="v">IMAGING</span>
+              <span class="k">Active OBC</span><span class="v">OBC-A</span>
+              <span class="k">FDIR level</span><span class="v">EQUIPMENT</span>
+              <span class="k">Load shed</span><span class="v">L0 NOMINAL</span>
+            </div>
+            <div style="margin-top:14px" class="stepper">
+              <div>PRE-SEP</div><div>LEOP</div><div>COMM</div><div class="on">NOMINAL</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== EPS L2 ===================== -->
+  <div class="pad hide" id="v-eps">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:3px">
+      <h1 class="pt" style="margin:0">Electrical power</h1>
+      <span class="tag">EPS</span><span class="tag" style="border-color:rgba(255,92,77,.5);color:var(--alarm)">▲ 1 ALARM</span>
+      <button class="ibtn" style="margin-left:auto" onclick="view('ov',document.querySelector('[data-v=ov]'))">← Overview</button>
+    </div>
+    <p class="sub">Level 2 · owned by POWER &amp; THERMAL · 24 parameters, 12 limit-checked</p>
+
+    <div class="g g2" style="grid-template-columns:1fr 420px;align-items:start">
+      <div class="g">
+        <div class="card">
+          <h2>Power flow <span class="r">click any block for equipment detail</span></h2>
+          <div class="cb"><div class="stage" style="padding:14px">
+            <svg class="sc" viewBox="0 0 880 210">
+              <g class="node"><rect class="bx" x="12" y="18" width="112" height="66"/>
+                <text x="68" y="42" class="nm" text-anchor="middle" style="font-size:11px">SA-A</text>
+                <text x="68" y="66" class="vl" text-anchor="middle" style="font-size:14px">1.84 A</text></g>
+              <g class="node"><rect class="bx" x="12" y="112" width="112" height="66"/>
+                <text x="68" y="136" class="nm" text-anchor="middle" style="font-size:11px">SA-B</text>
+                <text x="68" y="160" class="vl" text-anchor="middle" style="font-size:14px">1.79 A</text></g>
+              <path class="wire flow" d="M124 51 H160 V90 H188"/><path class="wire flow" d="M124 145 H160 V106 H188"/>
+              <g class="node"><rect class="bx" x="188" y="62" width="124" height="72"/>
+                <text x="250" y="88" class="nm" text-anchor="middle" style="font-size:11px">MPPT</text>
+                <text x="250" y="112" class="vl" text-anchor="middle" style="font-size:14px">104 W</text></g>
+              <path class="wire flow" d="M312 98 H352"/>
+              <g class="node"><rect class="bx" x="352" y="34" width="140" height="64"/>
+                <text x="422" y="58" class="nm" text-anchor="middle" style="font-size:11px">BUS 28 V</text>
+                <text x="422" y="82" class="vl" text-anchor="middle" style="font-size:15px" id="e-busv">27.94 V</text></g>
+              <path class="wire flow" d="M422 98 V126"/>
+              <g class="node"><rect class="bx" x="352" y="126" width="140" height="64"/>
+                <text x="422" y="150" class="nm" text-anchor="middle" style="font-size:11px">BATTERY</text>
+                <text x="422" y="174" class="vl" text-anchor="middle" style="font-size:15px" id="e-soc">61.4 %</text></g>
+              <path class="wire" d="M492 66 H536"/><line class="wire" x1="536" y1="14" x2="536" y2="196"/>
+              <g id="e-lines"></g>
+            </svg>
+          </div></div>
+        </div>
+
+        <div class="card">
+          <h2>Power lines <span class="r">0x0110–0x011F · limits from limits.yaml</span></h2>
+          <div class="cb" id="e-linetbl" style="padding-top:6px"></div>
+        </div>
+      </div>
+
+      <div class="g" style="align-content:start">
+        <div class="card">
+          <h2>Key parameters</h2>
+          <div class="cb" id="e-params" style="padding-top:6px"></div>
+        </div>
+
+        <div class="card">
+          <h2>Battery SoC <span class="r">last 60 min · eclipse shaded</span></h2>
+          <div class="cb">
+            <svg class="spark2" viewBox="0 0 380 70" preserveAspectRatio="none" style="height:70px">
+              <rect x="196" y="0" width="120" height="70" fill="rgba(232,163,23,.10)"/>
+              <line x1="0" y1="52" x2="380" y2="52" stroke="rgba(232,163,23,.5)" stroke-width="1" stroke-dasharray="3 3"/>
+              <polyline class="fill" points="0,70 0,14 60,17 120,20 196,24 260,38 316,44 380,40 380,70"/>
+              <polyline points="0,14 60,17 120,20 196,24 260,38 316,44 380,40" stroke="#A3ACB9" stroke-width="1.6"/>
+            </svg>
+            <div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:10.5px;color:var(--tx3);margin-top:5px">
+              <span>−60 min</span><span style="color:var(--warn)">yellow low 25 %</span><span>now 61.4 %</span></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Command <span class="r">in place · position-gated</span></h2>
+          <div class="cb">
+            <select style="width:100%;padding:9px 11px;background:var(--s2);border:1px solid var(--line-2);
+              border-radius:6px;font-size:13px;margin-bottom:9px">
+              <option>S8,1 FUNC 19 — EPS_LINE_OFF</option>
+              <option>S8,1 FUNC 18 — EPS_LINE_ON</option>
+              <option>S8,1 FUNC 22 — EPS_LOAD_SHED_STAGE</option>
+            </select>
+            <select style="width:100%;padding:9px 11px;background:var(--s2);border:1px solid var(--line-2);
+              border-radius:6px;font-size:13px;margin-bottom:12px">
+              <option>LINE 3 — PAYLOAD  (2.31 A ▲)</option>
+            </select>
+            <div style="display:flex;gap:9px">
+              <button class="mini pri" style="flex:1;padding:10px;text-align:center">ARM</button>
+              <button class="mini" style="flex:1;padding:10px;text-align:center;opacity:.4">EXECUTE</button>
+            </div>
+            <div class="stepper" style="margin-top:12px">
+              <div class="on">BUILD</div><div>ARM</div><div>SENT</div><div>ACCEPT</div><div>EXEC</div>
+            </div>
+            <p class="note" style="margin-top:10px">Two-step arm/execute for hazardous commands. The verification stepper is the same component as load shed and AOCS mode.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== AOCS L2 ===================== -->
+  <div class="pad hide" id="v-aocs">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:3px">
+      <h1 class="pt" style="margin:0">Attitude &amp; orbit control</h1><span class="tag">AOCS</span>
+      <button class="ibtn" style="margin-left:auto" onclick="view('ov',document.querySelector('[data-v=ov]'))">← Overview</button>
+    </div>
+    <p class="sub">Level 2 · owned by FLIGHT DYNAMICS · mode NADIR POINTING for 02:14:07</p>
+    <div class="g g2" style="grid-template-columns:1fr 420px;align-items:start">
+      <div class="card"><h2>Attitude, rates and momentum</h2><div class="cb" id="a-params" style="padding-top:6px"></div></div>
+      <div class="g" style="align-content:start">
+        <div class="card"><h2>Reaction wheels</h2><div class="cb" id="a-rw" style="padding-top:6px"></div></div>
+        <div class="card"><h2>Mode</h2><div class="cb">
+          <div class="stepper"><div>SAFE</div><div>DETUMB</div><div>SUN</div><div class="on">NADIR</div><div>SLEW</div></div>
+          <p class="note" style="margin-top:11px">Same stepper as EPS load shed and TC verification — one idiom per concept, across every screen.</p>
+        </div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="pad hide" id="v-generic">
+    <h1 class="pt" id="gen-t">Subsystem</h1>
+    <p class="sub">Level 2 · same composition: schematic, limit-checked parameter groups, embedded trend, in-place commanding.</p>
+    <div class="card"><div class="cb"><p class="note">Placeholder for the mockup. The point of the direction is that this page is <em>generated</em> from a display definition, not hand-written — which is why every subsystem behaves identically.</p></div></div>
+  </div>
+
+  </div>
+</div>
+
+<!-- ===================== ALARM DRAWER ===================== -->
+<div class="scrim" id="scrim" onclick="drawer(false)"></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-label="Alarm list">
+  <h2>Alarms
+    <span class="tag" style="border-color:rgba(255,92,77,.5);color:var(--alarm)">2 UNACK</span>
+    <button class="mini" style="margin-left:auto" onclick="drawer(false)">Close ✕</button></h2>
+  <div class="flood">
+    <span style="font-size:10px;letter-spacing:1.3px;color:var(--tx3)">RATE</span>
+    <div class="tr"><i style="width:30%"></i><u style="left:100%"></u></div>
+    <span class="num" style="font-size:11.5px;color:var(--tx2)">3 / 10 min · normal</span>
+  </div>
+  <div class="body">
+    <div class="arow p2">
+      <div class="pbadge">P2</div>
+      <div>
+        <div class="t1"><span class="gl">▲</span> Payload line overcurrent</div>
+        <div class="t2">eps.line_current_3 · 0x011B · 2.31 A &gt; 2.00 A</div>
+        <div class="why"><b>Cause</b> payload load switch drawing above rating.<br>
+          <b>Consequence</b> PDM trip in ~40 s; imaging pass lost.<br>
+          <b>Response</b> run <em>eps_overcurrent</em>, then EPS_LINE_OFF line 3.</div>
+      </div>
+      <div class="acts"><button class="mini pri">ACK</button><button class="mini">Procedure</button><button class="mini">Go to</button></div>
+    </div>
+    <div class="arow p3">
+      <div class="pbadge">P3</div>
+      <div>
+        <div class="t1"><span class="gl">▼</span> Power margin negative</div>
+        <div class="t2">eps.power_margin_w · 0x0135 · −37.9 W</div>
+        <div class="why"><b>Cause</b> eclipse entry with payload imaging.<br>
+          <b>Consequence</b> SoC yellow (25 %) in ~1 h 36 m.<br>
+          <b>Response</b> monitor; stage 1 load shed below 40 %.</div>
+      </div>
+      <div class="acts"><button class="mini pri">ACK</button><button class="mini">Shelve…</button></div>
+    </div>
+    <div class="arow shelved">
+      <div class="pbadge">P4</div>
+      <div><div class="t1">◇ SEU count elevated</div>
+        <div class="t2">obdh.seu_count · 0x0319 · shelved 01:12 remaining by FDIR/SYSTEMS</div></div>
+      <div class="acts"><button class="mini">Unshelve</button></div>
+    </div>
+    <div class="arow rtn">
+      <div class="pbadge">P3</div>
+      <div><div class="t1">Gyro temperature returned to normal</div>
+        <div class="t2">aocs.gyro_temp · 0x0273 · 48.2 °C · 07:58:31</div></div>
+      <div class="acts"><button class="mini">Clear</button></div>
+    </div>
+  </div>
+  <div style="padding:14px 18px;border-top:1px solid var(--line)" class="note">
+    Shelving requires a timer and is logged against your position. Blink is reserved for unacknowledged P1 and stops on ack.
+  </div>
+</aside>
+
+<script>
+const EPS=[
+ ['eps.bat_soc','0x0101','Battery SoC','%',61.4,25,95,15,100,1,0,100],
+ ['eps.bus_voltage','0x0105','Bus voltage','V',27.94,27,29,26.5,29.5,2,26,30],
+ ['eps.bat_voltage','0x0100','Battery voltage','V',26.42,23,29,22,29.5,2,21,30],
+ ['eps.bat_current','0x0109','Battery current','A',-1.36,-4,4,-6,6,2,-6,6],
+ ['eps.bat_temp','0x0102','Battery temperature','°C',14.8,2,40,0,45,1,-5,50],
+ ['eps.power_margin_w','0x0135','Power margin','W',-37.9,-10,200,-40,220,1,-80,200],
+ ['eps.bat_dod','0x0120','Depth of discharge','%',38.6,0,60,0,80,1,0,100]
+];
+const AOCS=[
+ ['aocs.att_error','0x0217','Attitude error','°',0.113,-1,1,-2,2,3,-2.5,2.5],
+ ['aocs.rate_roll','0x0204','Roll rate','°/s',0.021,-0.5,0.5,-2,2,3,-2,2],
+ ['aocs.rate_pitch','0x0205','Pitch rate','°/s',-0.014,-0.5,0.5,-2,2,3,-2,2],
+ ['aocs.rate_yaw','0x0206','Yaw rate','°/s',0.008,-0.5,0.5,-2,2,3,-2,2],
+ ['aocs.h_body_mag','0x025B','Momentum |h|','N·m·s',0.0112,0,0.018,0,0.030,4,0,0.035]
+];
+const RW=[
+ ['aocs.rw1_speed','0x0207','Wheel 1','RPM',3140,-5000,5000,-5500,5500,0,-6000,6000],
+ ['aocs.rw2_speed','0x0208','Wheel 2','RPM',-2870,-5000,5000,-5500,5500,0,-6000,6000],
+ ['aocs.rw3_speed','0x0209','Wheel 3','RPM',1620,-5000,5000,-5500,5500,0,-6000,6000],
+ ['aocs.rw4_speed','0x020A','Wheel 4','RPM',-940,-5000,5000,-5500,5500,0,-6000,6000]
+];
+const LINES=[[0,'PL-0','OBC','0x0118',0.94,1.8,2.0,1],[1,'PL-1','TT&C RX','0x0119',0.18,.25,.30,1],
+ [2,'PL-2','TT&C TX','0x011A',0.71,.9,1.0,1],[3,'PL-3','PAYLOAD','0x011B',2.31,2.2,2.5,1],
+ [4,'PL-4','FPA COOLER','0x011C',0.64,.8,1.0,1],[5,'PL-5','HTR BAT','0x011D',0.31,.4,.5,1],
+ [6,'PL-6','HTR OBC','0x011E',0.00,.25,.30,0],[7,'PL-7','AOCS WHEELS','0x011F',0.52,.7,.8,1]];
+
+const pct=(v,lo,hi)=>Math.max(0,Math.min(100,(v-lo)/(hi-lo)*100));
+function st(v,yl,yh,rl,rh){if(v<rl||v>rh)return['a',v>rh?'▲':'▼'];if(v<yl||v>yh)return['w',v>yh?'▲':'▼'];return['','']}
+function bar(v,yl,yh,rl,rh,dl,dh,cls){
+  return `<div class="bar">
+    <div class="band" style="left:${pct(yl,dl,dh)}%;width:${pct(yh,dl,dh)-pct(yl,dl,dh)}%"></div>
+    <div class="tk r" style="left:${pct(rl,dl,dh)}%"></div><div class="tk y" style="left:${pct(yl,dl,dh)}%"></div>
+    <div class="tk y" style="left:${pct(yh,dl,dh)}%"></div><div class="tk r" style="left:${pct(rh,dl,dh)}%"></div>
+    <div class="nd" style="left:calc(${pct(v,dl,dh)}% - 1.5px)"></div></div>`;
+}
+function rows(arr){
+  return arr.map(p=>{
+    const [nm,id,lbl,u,v,yl,yh,rl,rh,dp,dl,dh]=p;
+    const [c,gl]=st(v,yl,yh,rl,rh);
+    const d=(Math.random()-0.5);
+    return `<div class="pr ${c}">
+      <div class="k"><b>${lbl}</b><span>${nm} · ${id}</span></div>
+      <div class="val">${gl?`<span style="font-size:12px">${gl}</span> `:''}${v.toFixed(dp)}<u>${u}</u></div>
+      ${bar(v,yl,yh,rl,rh,dl,dh,c)}
+      <div class="trend">${d>0?'↗':'↘'} <b>${Math.abs(d).toFixed(2)}</b></div></div>`;
+  }).join('');
+}
+function linetbl(){
+  document.getElementById('e-linetbl').innerHTML=LINES.map(l=>{
+    const [,tag,load,id,i,y,r,sw]=l;
+    const [c,gl]=st(i,0,y,0,r);
+    return `<div class="pr ${c}" style="grid-template-columns:1fr 100px 150px 56px">
+      <div class="k"><b>${tag} · ${load}</b><span>${id}${sw?'':' · switch OFF'}</span></div>
+      <div class="val">${gl?`<span style="font-size:12px">${gl}</span> `:''}${i.toFixed(2)}<u>A</u></div>
+      ${bar(i,0,y,0,r,0,r*1.25,c)}
+      <div class="trend">${sw?'▮ ON':'▯ OFF'}</div></div>`;
+  }).join('');
+  document.getElementById('e-lines').innerHTML=LINES.map((l,k)=>{
+    const [,tag,load,,i,y,r,sw]=l;const c=i>r?'alarm':(i>y?'warn':'');
+    const y0=16+k*23;
+    return `<line class="wire" x1="536" y1="${y0+9}" x2="576" y2="${y0+9}"/>
+      <g class="node ${c}"><rect class="bx" x="576" y="${y0}" width="78" height="18"/>
+      <text x="615" y="${y0+13}" class="nm" text-anchor="middle" style="font-size:10px">${tag}</text></g>
+      <text x="666" y="${y0+13}" class="vl ${c}" style="font-size:11.5px">${i.toFixed(2)} A</text>
+      <text x="726" y="${y0+13}" class="sm">${load}</text>`;
+  }).join('');
+}
+function render(){
+  document.getElementById('e-params').innerHTML=rows(EPS);
+  document.getElementById('a-params').innerHTML=rows(AOCS);
+  document.getElementById('a-rw').innerHTML=rows(RW);
+  linetbl();
+  document.getElementById('e-soc').textContent=EPS[0][4].toFixed(1)+' %';
+  document.getElementById('e-busv').textContent=EPS[1][4].toFixed(2)+' V';
+  document.getElementById('sc-atterr').firstChild.nodeValue=AOCS[0][4].toFixed(3);
+}
+const VIEWS=['ov','eps','aocs','generic'];
+function view(v,btn){
+  const known=['ov','eps','aocs'];
+  VIEWS.forEach(x=>document.getElementById('v-'+x).classList.add('hide'));
+  if(known.includes(v)){document.getElementById('v-'+v).classList.remove('hide')}
+  else{document.getElementById('v-generic').classList.remove('hide');
+       document.getElementById('gen-t').textContent=v.toUpperCase()}
+  document.querySelectorAll('.rail button').forEach(b=>b.classList.remove('on'));
+  const b=btn||document.querySelector(`[data-v=${v}]`); if(b)b.classList.add('on');
+  document.querySelector('.work').scrollTop=0;
+}
+function drawer(o){
+  document.getElementById('drawer').classList.toggle('open',o);
+  document.getElementById('scrim').classList.toggle('open',o);
+}
+function gs(){document.body.style.filter=document.body.style.filter?'':'grayscale(1)'}
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape')drawer(false);
+  if(e.key.toLowerCase()==='a'&&!/input|select|textarea/i.test(e.target.tagName))drawer(true);
+});
+render();
+setInterval(()=>{
+  [...EPS,...AOCS,...RW].forEach(p=>p[4]+=(Math.random()-0.5)*Math.abs(p[4]||1)*0.006);
+  render();
+},1500);
+setInterval(()=>{document.getElementById('utc').textContent=new Date().toISOString().substr(11,8)},1000);
+</script>
+</body>
+</html>

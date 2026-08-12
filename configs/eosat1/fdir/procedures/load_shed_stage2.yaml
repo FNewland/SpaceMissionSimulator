@@ -17,13 +17,22 @@ steps:
       data: [0x00]  # mode = 0 (off)
 
   - step_id: 2
-    name: "AOCS Safe Mode"
-    description: "Transition AOCS to safe mode (reduced attitude control)"
+    name: "AOCS Sun-Safe Hold"
+    description: "Transition AOCS to COARSE_SUN, the sun-safe hold"
     delay_s: 1.0
     command: "s8_command"
     params:
       func_id: 0  # AOCS_SET_MODE
-      data: [0x02]  # mode = 2 (safe)
+      # 2026-08b: was [0x02] labelled "safe". Mode 2 is DETUMBLE — a
+      # magnetic-only RATE DAMPER with no pointing at all, so shedding to it
+      # throws away the solar-array geometry at precisely the moment the
+      # battery needs it most. Mode 3 COARSE_SUN is the sun-safe hold, and it
+      # is what safe_mode_entry, emergency_power_down and
+      # aocs_safe_mode_recovery all command since the AOCS owner's Phase 1
+      # pass. COARSE_SUN is also not an operational mode in the model, so
+      # commanding it does not overwrite the ground's commanded mode (0x0297)
+      # and the spacecraft hands itself back once the load shed relaxes.
+      data: [0x03]  # mode = 3 (COARSE_SUN — the sun-safe hold)
 
   - step_id: 3
     name: "Disable Non-Essential Heaters"

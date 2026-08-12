@@ -316,14 +316,62 @@ class LoadSheddingManager:
 
 
 class ProcedureExecutor:
-    """Manages procedure loading and execution."""
+    """Manages procedure loading and execution.
+
+    2026-08b Phase 5 — THE FALSE-SUCCESS DEFECT
+    -------------------------------------------
+    This class used to report ``PROCEDURE_STARTED`` (0x0F07) followed by
+    ``PROCEDURE_COMPLETED`` (0x0F08) at ``progress_pct: 100.0`` for a
+    procedure that sent nothing at all. Four distinct ways to send nothing all
+    looked identical to a successful recovery on the ground:
+
+    1. ``steps: []`` — ``all([])`` is ``True``, so an empty procedure was
+       COMPLETE on its first tick;
+    2. no ``steps`` key at all — same path;
+    3. a step naming a command with no registered callback — ``_execute_step``
+       looked the callback up, found ``None``, and fell through silently while
+       the caller still set ``step["executed"] = True``;
+    4. a step carrying no ``command`` key — ``step.get("command", "")`` gives
+       ``""``, which is never a registered callback, so case 3 again.
+
+    ``PROCEDURE_FAILED`` (0x0F09) fired only when a *registered* callback
+    raised. Everything else was success. Since 0x0F08 and the
+    ``proc.*`` telemetry (0x0900-0x0903) feed the FDIR window, a level-3
+    recovery that did nothing was indistinguishable from one that worked.
+
+    All four now FAIL LOUDLY: the execution goes to ``FAILED``, 0x0F09 is
+    emitted with a ``reason``, and no 0x0F08 is sent. Validation happens at
+    ``start_procedure`` time where it can (cases 1, 2, 3 and 4 are all static
+    properties of the definition), so a broken card is rejected *before* the
+    ground is told a recovery has begun, not several ticks later.
+
+    WHAT IS DELIBERATELY UNCHANGED
+    ------------------------------
+    FDIR still does NOT treat procedure completion as fault-cleared.
+    ``EOSat1Engine._complete_recovery`` is called only when the fault
+    *condition* itself clears, and escalation between recovery levels remains
+    wall-clock driven (``_recovery_level_delays``). Making 0x0F08 mean
+    "recovered" would be a behaviour change in engine.py, which this phase does
+    not own — and it would be the wrong change anyway: a procedure completing
+    is evidence that commands were sent, not that the spacecraft is well. What
+    this fix buys is that 0x0F08 now *is* evidence that commands were sent.
+    """
 
     def __init__(self):
         self._procedures: dict[str, dict] = {}
         self._active_procedures: dict[str, "ProcedureExecution"] = {}
         self._callbacks: dict[str, Callable] = {}
         self._event_callback: Optional[Callable] = None
-        self._last_finished: Optional["ProcedureExecution"] = None
+        #: Terminal executions, kept by exec_id so `execution_state` can answer
+        #: for a run that has already been popped out of `_active_procedures`.
+        #: This used to be a single `_last_finished` slot assigned at the TOP of
+        #: the tick loop, one tick after the state became terminal — but a
+        #: COMPLETE execution is popped in the SAME tick it completes, so the
+        #: slot was never filled for a normally-finishing procedure and
+        #: `execution_state()` returned None for every one of them. Nothing
+        #: consumes it today, which made it a trap for whoever wires in the
+        #: check rather than a live bug.
+        self._finished: dict[str, "ProcedureExecution"] = {}
 
     def register_procedure(self, proc_id: str, config: dict) -> None:
         """Register a procedure definition."""
@@ -338,12 +386,80 @@ class ProcedureExecutor:
         """Register callback for procedure events."""
         self._event_callback = callback
 
+    def validate_procedure(self, proc_id: str) -> list[str]:
+        """Return the reasons *proc_id* cannot execute (empty list = runnable).
+
+        This is the static half of the false-success fix and it is public so
+        that a content test can assert every shipped FDIR card is executable
+        without having to run the engine. It answers the same question
+        ``start_procedure`` asks, so the gate and the runtime cannot drift.
+        """
+        config = self._procedures.get(proc_id)
+        if not config:
+            return [f"procedure {proc_id!r} is not registered"]
+
+        problems: list[str] = []
+        steps = config.get("steps")
+        if steps is None:
+            # Case 2. A YAML card whose `steps:` key is missing or misspelt.
+            problems.append("no 'steps' key — the procedure defines no actions")
+        elif not isinstance(steps, list):
+            problems.append(f"'steps' is {type(steps).__name__}, expected a list")
+        elif not steps:
+            # Case 1. `all([])` is True, which is why this was "complete".
+            problems.append("'steps' is empty — the procedure would complete "
+                            "instantly having sent nothing")
+        else:
+            for idx, step in enumerate(steps, start=1):
+                where = f"step {idx}"
+                if not isinstance(step, dict):
+                    problems.append(f"{where}: not a mapping ({step!r})")
+                    continue
+                name = step.get("name") or step.get("step_id") or idx
+                cmd = step.get("command")
+                if not cmd:
+                    # Case 4.
+                    problems.append(
+                        f"{where} ({name}): no 'command' key — nothing to send")
+                elif cmd not in self._callbacks:
+                    # Case 3.
+                    problems.append(
+                        f"{where} ({name}): command {cmd!r} has no registered "
+                        f"callback (registered: "
+                        f"{sorted(self._callbacks) or 'none'})")
+        return problems
+
     def start_procedure(self, proc_id: str, current_time: float) -> Optional[str]:
-        """Start executing a procedure. Returns execution ID."""
+        """Start executing a procedure. Returns execution ID.
+
+        Returns ``None`` — and emits no PROCEDURE_STARTED — when the definition
+        cannot possibly command anything. Refusing here rather than at the
+        first tick means the ground never sees a 0x0F07 that will not be
+        followed by real commanding.
+        """
         import copy
         config = self._procedures.get(proc_id)
         if not config:
             logger.warning("Unknown procedure: %s", proc_id)
+            return None
+
+        problems = self.validate_procedure(proc_id)
+        if problems:
+            reason = "; ".join(problems)
+            logger.error("Procedure %s is not executable: %s", proc_id, reason)
+            if self._event_callback:
+                # 0x0F09 PROCEDURE_FAILED without a preceding 0x0F07: the run
+                # never began. The old code sent 0x0F07 then 0x0F08 here.
+                self._event_callback({
+                    "event_id": 0x0F09,  # PROCEDURE_FAILED
+                    "procedure_id": proc_id,
+                    "execution_id": "",
+                    "severity": 4,
+                    "reason": reason,
+                    "description": (f"Procedure {proc_id} is not executable: "
+                                    f"{reason}"),
+                    "timestamp": current_time,
+                })
             return None
 
         exec_id = f"{proc_id}_{int(current_time)}"
@@ -373,7 +489,7 @@ class ProcedureExecutor:
         completed = []
         for exec_id, proc in list(self._active_procedures.items()):
             if proc.state == "COMPLETE" or proc.state == "FAILED":
-                self._last_finished = proc
+                self._finished[exec_id] = proc
                 completed.append(exec_id)
                 continue
 
@@ -385,8 +501,14 @@ class ProcedureExecutor:
                     continue
                 step_delay = step.get("delay_s", 0.0)
                 if current_time - proc.start_time >= step_delay:
+                    # `executed` is now set by `_execute_step` ONLY when a
+                    # command actually went out. It used to be set here,
+                    # unconditionally, immediately after a call that may have
+                    # done nothing at all — which is how a step naming an
+                    # unregistered command counted towards 100 % progress.
                     self._execute_step(proc, step, current_time)
-                    step["executed"] = True
+                if proc.state == "FAILED":
+                    break
 
             # Step counters drive the proc.* telemetry (0x0900-0x0903) and the
             # progress bar in the FDIR window. `ProcedureExecution.tick` never
@@ -395,10 +517,20 @@ class ProcedureExecutor:
             proc.current_step = min(proc.completed_steps + 1, len(proc.steps)) \
                 if proc.steps else 0
 
-            # Check if procedure complete
-            all_done = all(s.get("executed", False) for s in proc.steps)
+            if proc.state == "FAILED":
+                self._finished[exec_id] = proc
+                completed.append(exec_id)
+                continue
+
+            # Check if procedure complete. `proc.steps` is guaranteed non-empty
+            # by `start_procedure`'s validation, but the explicit test stays:
+            # `all([])` being True is the whole defect and a future caller that
+            # builds an execution some other way must not re-acquire it.
+            all_done = bool(proc.steps) and all(
+                s.get("executed", False) for s in proc.steps)
             if all_done and proc.state == "RUNNING":
                 proc.state = "COMPLETE"
+                self._finished[exec_id] = proc
                 if self._event_callback:
                     self._event_callback({
                         "event_id": 0x0F08,  # PROCEDURE_COMPLETED
@@ -407,31 +539,72 @@ class ProcedureExecutor:
                         "timestamp": current_time,
                     })
                 completed.append(exec_id)
+            elif not proc.steps:
+                # Defence in depth for an execution built without validation.
+                self._fail(proc, current_time,
+                           "execution has no steps — nothing was sent")
+                self._finished[exec_id] = proc
+                completed.append(exec_id)
 
         for exec_id in completed:
             self._active_procedures.pop(exec_id, None)
 
+    def _fail(self, proc: "ProcedureExecution", current_time: float,
+              reason: str) -> None:
+        """Move an execution to FAILED and tell the ground WHY.
+
+        0x0F09 used to carry no reason at all, so the one case that did fail
+        (a registered callback raising) arrived on the ground as a bare
+        "procedure failed" with the exception only in a server-side log.
+        """
+        proc.state = "FAILED"
+        proc.failure_reason = reason
+        logger.warning("Procedure %s FAILED: %s", proc.proc_id, reason)
+        if self._event_callback:
+            self._event_callback({
+                "event_id": 0x0F09,  # PROCEDURE_FAILED
+                "procedure_id": proc.proc_id,
+                "execution_id": proc.exec_id,
+                "severity": 4,
+                "reason": reason,
+                "description": f"Procedure {proc.proc_id} FAILED: {reason}",
+                "timestamp": current_time,
+            })
+
     def _execute_step(self, proc: "ProcedureExecution", step: dict,
                      current_time: float) -> None:
-        """Execute a single procedure step."""
+        """Execute a single procedure step.
+
+        Marks ``step['executed']`` only on a command that was genuinely
+        dispatched. A step with no ``command`` key, or one naming a command
+        with no registered callback, now FAILS the procedure instead of being
+        skipped in silence and counted as done.
+        """
         cmd = step.get("command", "")
         params = step.get("params", {})
+        label = step.get("name") or step.get("step_id") or "?"
+
+        if not cmd:
+            self._fail(proc, current_time,
+                       f"step {label!r} has no 'command' key — nothing to send")
+            return
 
         callback = self._callbacks.get(cmd)
-        if callback:
-            try:
-                callback(params)
-                logger.info("Procedure step executed: %s -> %s", proc.proc_id, cmd)
-            except Exception as e:
-                logger.warning("Procedure step error (%s): %s", cmd, e)
-                proc.state = "FAILED"
-                if self._event_callback:
-                    self._event_callback({
-                        "event_id": 0x0F09,  # PROCEDURE_FAILED
-                        "procedure_id": proc.proc_id,
-                        "execution_id": proc.exec_id,
-                        "timestamp": current_time,
-                    })
+        if callback is None:
+            self._fail(proc, current_time,
+                       f"step {label!r} names command {cmd!r}, which has no "
+                       f"registered callback")
+            return
+
+        try:
+            callback(params)
+        except Exception as e:  # noqa: BLE001
+            self._fail(proc, current_time,
+                       f"step {label!r} ({cmd}) raised: {e}")
+            return
+
+        step["executed"] = True
+        logger.info("Procedure step executed: %s -> %s", proc.proc_id, cmd)
 
     def get_active_procedures(self) -> list[dict]:
         """Return list of active procedure executions."""
@@ -450,12 +623,29 @@ class ProcedureExecutor:
         ]
 
     def execution_state(self, exec_id: str) -> Optional[str]:
+        """RUNNING / COMPLETE / FAILED for *exec_id*, or None if unknown.
+
+        Previously returned None for EVERY normally-completed procedure: the
+        terminal execution was recorded into a single `_last_finished` slot at
+        the TOP of the next tick's loop, but a COMPLETE execution is popped out
+        of `_active_procedures` in the SAME tick it completes, so that top-of-
+        loop branch was never reached for it. Terminal executions are now
+        recorded at the moment they become terminal, keyed by exec_id, so a
+        caller wiring in "did the recovery procedure actually run?" gets a
+        truthful answer instead of a silent None that reads as "still running".
+        """
         proc = self._active_procedures.get(exec_id)
         if proc is not None:
             return proc.state
-        if self._last_finished is not None and self._last_finished.exec_id == exec_id:
-            return self._last_finished.state
+        finished = self._finished.get(exec_id)
+        if finished is not None:
+            return finished.state
         return None
+
+    def execution_failure_reason(self, exec_id: str) -> str:
+        """Why *exec_id* failed, or '' (also '' for a run that succeeded)."""
+        proc = self._active_procedures.get(exec_id) or self._finished.get(exec_id)
+        return getattr(proc, "failure_reason", "") if proc is not None else ""
 
     def registered_procedures(self) -> list[str]:
         return sorted(self._procedures)
@@ -476,6 +666,7 @@ class ProcedureExecutor:
                     "steps": copy.deepcopy(p.steps), "start_time": p.start_time,
                     "state": p.state, "current_step": p.current_step,
                     "completed_steps": p.completed_steps,
+                    "failure_reason": p.failure_reason,
                 }
                 for p in self._active_procedures.values()
             ],
@@ -492,6 +683,7 @@ class ProcedureExecutor:
                 state=d.get("state", "RUNNING"),
                 current_step=d.get("current_step", 0),
                 completed_steps=d.get("completed_steps", 0),
+                failure_reason=d.get("failure_reason", ""),
             )
             self._active_procedures[ex.exec_id] = ex
 
@@ -506,6 +698,8 @@ class ProcedureExecution:
     state: str = "RUNNING"
     current_step: int = 0
     completed_steps: int = 0
+    #: Populated by ``ProcedureExecutor._fail``. Empty on a successful run.
+    failure_reason: str = ""
 
     def tick(self, current_time: float) -> None:
         """Advance procedure execution."""

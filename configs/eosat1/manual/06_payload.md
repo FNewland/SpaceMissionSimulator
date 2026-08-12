@@ -257,22 +257,22 @@ Every payload setting reachable over the wire, with its encoding.
 
 | Setting | Command | func_id | Wire form | Engineering range | Default | Readback |
 |---|---|---|---|---|---|---|
-| Set payload mode | `PAYLOAD_SET_MODE` | 26 (0x1A) | mode:uint8 | — | 0 | payload.mode (0x0600) |
+| Set payload mode. Modes 1 (STANDBY), 2 (IMAGING) and 3 (CALI | `PAYLOAD_SET_MODE` | 26 (0x1A) | mode:uint8 | 0 … 3 | 0 | payload.mode (0x0600) |
 | DEPRECATED — pre-set the next scene id. Superseded by PAYLOA | `PAYLOAD_SET_SCENE` | 27 (0x1B) | scene_id:uint16 | 0 … 65535 | 0 | payload.scene_id (0x0606) |
 | Trigger one image acquisition. The WHERE is set by the WHEN: | `PAYLOAD_CAPTURE` | 28 (0x1C) | scene_id:uint16, lines:uint16 | 0 … 65535; 256 … 20000 | 0; 2048 | payload.last_scene_id (0x060C) |
-| Queue image for downlink | `PAYLOAD_DOWNLOAD_IMAGE` | 29 (0x1D) | scene_id:uint16 | 0 … 65535 | 0 | — |
+| Report one stored image product. 2026-08b PL-c: the handler | `PAYLOAD_DOWNLOAD_IMAGE` | 29 (0x1D) | scene_id:uint16 | 0 … 65535 | 0 | — |
 | Delete specific image from payload memory | `PAYLOAD_DELETE_IMAGE` | 30 (0x1E) | scene_id:uint16 | 0 … 65535 | 0 | — |
 | Mark memory segment as unusable | `PAYLOAD_MARK_BAD_SEGMENT` | 31 (0x1F) | segment_id:uint8 | 0 … 7 | 0 | payload.mem_segments_bad (0x0612) |
-| Request stored image catalog | `PAYLOAD_GET_IMAGE_CATALOG` | 32 (0x20) | no arguments | — | — | — |
+| Request the stored image catalogue. 2026-08b PL-c: this now | `PAYLOAD_GET_IMAGE_CATALOG` | 32 (0x20) | no arguments | — | — | — |
 | Set spectral band enable mask | `PAYLOAD_SET_BAND_CONFIG` | 33 (0x21) | mask:uint8 | 1 … 15 | 15 | payload.band_enable_mask (0x0625) |
 | Set per-band detector integration times. Fixed point, 0.01 m | `PAYLOAD_SET_INTEGRATION_TIME` | 34 (0x22) | blue_ms:uint16 x0.01, green_ms:uint16 x0.01, red_ms:uint16 x0.01, nir_ms:uint16 x0.01 | 0.1 … 655.35; 0.1 … 655.35; 0.1 … 655.35; 0.1 … 655.35 | 2.0; 2.0; 2.0; 2.0 | payload.integration_ms (average) (0x0635) |
 | Set detector gain. Fixed point, 0.001x/LSB (was float32). Ga | `PAYLOAD_SET_GAIN` | 35 (0x23) | gain:uint16 x0.001 | 0.1 … 10.0 | 1.0 | payload.gain_code (0x0636) |
 | Set the FPA thermo-electric cooler regulation setpoint (driv | `PAYLOAD_COOLER_SETPOINT` | 36 (0x24) | setpoint:uint16 x0.01 | -20.0 … 0.0 | -15.0 | payload.fpa_setpoint (0x0631) |
-| Begin calibration sequence (dark frame / flat field / both) | `PAYLOAD_START_CALIBRATION` | 37 (0x25) | mode:uint8 | — | 2 | payload.cal_active (0x062A) |
+| Begin a radiometric calibration sequence (dark frame / flat | `PAYLOAD_START_CALIBRATION` | 37 (0x25) | mode:uint8 | — | 2 | payload.cal_active (0x062A) |
 | Abort calibration sequence | `PAYLOAD_STOP_CALIBRATION` | 38 (0x26) | no arguments | — | — | — |
 | Select compression algorithm and ratio override (was a singl | `PAYLOAD_SET_COMPRESSION` | 39 (0x27) | algorithm:uint8, ratio:uint8 x0.1 | —; 0.0 … 4.0 | 3; 0.0 | payload.compression_ratio (0x0614) |
 | Rotate the filter wheel to a position (2 s per 90 deg step) | `PAYLOAD_SELECT_FILTER` | 92 (0x5C) | position:uint8 | — | 0 | payload.filter_pos (0x063D) |
-| Run a shutter mechanism cycle test (COM-011 dark-frame prep) | `PAYLOAD_CYCLE_SHUTTER` | 93 (0x5D) | cycles:uint8 | 1 … 100 | 1 | payload.shutter_pos (0x063C) |
+| Run a shutter mechanism EXERCISE. This is a mechanism health | `PAYLOAD_CYCLE_SHUTTER` | 93 (0x5D) | cycles:uint8 | 1 … 100 | 1 | payload.shutter_pos (0x063C) |
 | Start the on-board image transfer engine for a stored scene | `PAYLOAD_INITIATE_TRANSFER` | 94 (0x5E) | scene_id:uint16 | 1 … 65535 | 1 | payload.transfer_active (0x062D) |
 | Calibration lamp on/off (also reachable as S2 device 0x0602) | `PAYLOAD_CAL_LAMP` | 95 (0x5F) | on:uint8 | — | 0 | payload.cal_lamp_on (0x0615) |
 

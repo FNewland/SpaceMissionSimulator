@@ -59,6 +59,14 @@ structures:
       - { param_id: 0x0137, pack_format: B, scale: 1 }
       - { param_id: 0x0138, pack_format: B, scale: 1 }
       - { param_id: 0x0139, pack_format: h, scale: 100 }
+      # 2026-08b: wing_status promoted into SID 1 (1 byte at 1 Hz = 8 bps of
+      # the 16 kbps LOW tier). It lived only in SID 8, which is NOT in
+      # simulation.yaml default_enabled_sids [1, 11], so an operator could run
+      # a whole session at 18.6 W generation with the wings stowed and nothing
+      # on any display said so — the single biggest contributor to the
+      # reported "generation drops off way too fast" symptom. It stays in
+      # SID 8 as well; duplication across structures is normal and costs a byte.
+      - { param_id: 0x0144, pack_format: B, scale: 1 }     # wing_status
 
   # Phase B (brief 01 WP-11): EPS power-management SID — wing/SADA status,
   # per-wing currents, total load current, eclipse flag, power margin and the
@@ -170,6 +178,22 @@ structures:
       - { param_id: 0x028B, pack_format: H, scale: 100 }
       - { param_id: 0x028C, pack_format: H, scale: 100 }
       - { param_id: 0x028D, pack_format: H, scale: 100 }
+      # 2026-08b AOCS batch. Mode management is the highest-value addition
+      # here: without commanded_mode / mode_demoted an operator cannot tell a
+      # transient apart from a spacecraft that has quietly abandoned its
+      # mission mode (which is exactly what six orbits of the instrumented run
+      # looked like on the ground).
+      - { param_id: 0x0297, pack_format: B, scale: 1 }   # commanded_mode
+      - { param_id: 0x0298, pack_format: B, scale: 1 }   # mode_demoted
+      - { param_id: 0x0299, pack_format: B, scale: 1 }   # fine_degraded
+      - { param_id: 0x029A, pack_format: B, scale: 1 }   # desat_inhibit
+      - { param_id: 0x029B, pack_format: H, scale: 100000 }  # |h_body| N.m.s
+      - { param_id: 0x029C, pack_format: B, scale: 1 }   # desat_ineffective
+      - { param_id: 0x029D, pack_format: B, scale: 1 }   # wheels_commissioned
+      # Gyro wiring — these make the three S2 gyro device commands observable.
+      - { param_id: 0x0294, pack_format: B, scale: 1 }   # gyro_units_on
+      - { param_id: 0x0295, pack_format: B, scale: 1 }   # gyro_saturated
+      - { param_id: 0x0296, pack_format: H, scale: 100000 }  # gyro_bias_injected
 
   - sid: 3
     name: TCS
@@ -263,6 +287,20 @@ structures:
       - { param_id: 0x062D, pack_format: B, scale: 1 }
       - { param_id: 0x062E, pack_format: H, scale: 100 }
       - { param_id: 0x062F, pack_format: H, scale: 100 }
+      # 2026-08b (PL-a / PL-c / PL-d). Eleven octets that answer the three
+      # questions an operator could not answer from SID 5 before: what is the
+      # calibration doing, what is in the image store, and how much cooling
+      # authority is left. `cooler_margin_k` in particular is the honest
+      # explanation for an FPA that will not come ready — the failure Franz
+      # reported as "cannot do a capture, FPA does not get to YES".
+      - { param_id: 0x0644, pack_format: B, scale: 1 }     # cal_mode
+      - { param_id: 0x0645, pack_format: B, scale: 1 }     # cal_abort_reason
+      - { param_id: 0x0646, pack_format: B, scale: 1 }     # cal_valid_mask
+      - { param_id: 0x0647, pack_format: I, scale: 100 }   # product_mb
+      - { param_id: 0x0648, pack_format: H, scale: 1 }     # product_count
+      - { param_id: 0x0649, pack_format: B, scale: 1 }     # readout_active
+      - { param_id: 0x064A, pack_format: h, scale: 100 }   # cooler_floor_c
+      - { param_id: 0x064B, pack_format: h, scale: 100 }   # cooler_margin_k
 
   - sid: 6
     name: TTC
@@ -286,6 +324,14 @@ structures:
       - { param_id: 0x0512, pack_format: B, scale: 1 }
       - { param_id: 0x0513, pack_format: I, scale: 1 }
       - { param_id: 0x0516, pack_format: B, scale: 1 }
+      # 0x0525 ttc.tx_active — is the S-band prime chain actually radiating?
+      # Periodic rather than on-demand, and worth its single byte: it is the
+      # parameter that answers "why is there no telemetry", and every other
+      # packet in this structure is gated on it (2026-08b, finding T-a). The
+      # per-condition breakdown (0x052B) and the UHF beacon transmitter set
+      # (0x0526-0x052A) stay on-demand — one byte here, the diagnosis on
+      # request. +1.15 bps of channel.
+      - { param_id: 0x0525, pack_format: B, scale: 1 }
       - { param_id: 0x0519, pack_format: h, scale: 100 }
       # Phase 4: AGC, Doppler, range rate, cmd auth
       - { param_id: 0x051A, pack_format: h, scale: 10 }
@@ -415,7 +461,22 @@ structures:
     # cadence triples the transmit duty cycle in exactly the mode where power is
     # scarcest.
     interval_s: 30.0
-    # 6 parameters — matches bootloader emission (canonical per SPACECDF_RECONCILE item 8)
+    #
+    # 2026-08b (Franz's ruling R2): this structure is now carried by a REAL
+    # separate radio. The UHF beacon transmitter (ttc.yaml `beacon:` block,
+    # 437.5 MHz, 1 W into a dipole) emits SID 11 — and only SID 11 — whenever
+    # the S-band prime chain is not radiating. So this is the packet you get
+    # when the PA is off, the ttc_tx line is pulled, the transponder has
+    # failed or the patch never deployed, which is exactly when you most need
+    # to know the OBC is alive.
+    #
+    # 7 parameters — the 6 canonical bootloader ones (SPACECDF_RECONCILE item
+    # 8) plus ttc.pa_on. The seventh is the diagnostic that makes the beacon
+    # earn its place: reading "S-band PA is OFF" from the ONE packet that
+    # still arrives when the S-band chain is silent turns "no telemetry" from
+    # a mystery into a one-command fix (TTC_PA_ENABLE, S8 func 66). One byte
+    # every 30 s = +0.31 bps of channel; the beacon carries it with 100x
+    # headroom at 1 kbps.
     parameters:
       - { param_id: 0x0100, pack_format: H, scale: 100 }    # bat_voltage
       - { param_id: 0x0101, pack_format: H, scale: 100 }    # bat_soc
@@ -423,3 +484,4 @@ structures:
       - { param_id: 0x030A, pack_format: H, scale: 1 }      # reboot_count
       - { param_id: 0x0311, pack_format: B, scale: 1 }      # sw_image
       - { param_id: 0x030C, pack_format: B, scale: 1 }      # active_obc
+      - { param_id: 0x0516, pack_format: B, scale: 1 }      # ttc.pa_on

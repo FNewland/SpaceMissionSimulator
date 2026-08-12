@@ -36,9 +36,14 @@ def _model(eol=False):
     m.configure(_eps_cfg())
     m.rng.seed(1)
     if eol:
-        # sa_age_factor = 1 - hours * 3.14e-6; 0.92 at 3-year EOL
-        m._state.sa_lifetime_hours = 0.08 / 3.14e-6
-        m._state.sa_age_factor = 0.92
+        # 2026-08b: the aging rate is now DERIVED from eps.yaml
+        # `array_losses.annual_degradation` (2.75 %/yr over sunlit hours), so
+        # wind the odometer to the design life and let the model compute the
+        # factor rather than restating a hard-coded 3.14e-6/h here.
+        m._state.sa_lifetime_hours = (
+            3.0 * 8760.0 * EPSBasicModel.SUNLIT_FRACTION)
+        m._state.sa_age_factor = max(
+            0.5, 1.0 - m._state.sa_lifetime_hours * m._sa_degradation_per_hour)
     return m
 
 
@@ -55,15 +60,17 @@ def _mean_gen(m, sun, n=50, dt=1.0, orbit=None):
 class TestLossStack:
     def test_one_square_metre_normal_incidence_eol(self):
         """WP-1 acceptance: 1 m2 at normal incidence with the full loss stack
-        and 3-year aging => 267.9 W (K = 1361 x 0.295 x 0.85 x 0.926 x 0.92
-        x 0.97 x 0.95)."""
+        and 3-year aging => 267.2 W (K = 1361 x 0.295 x 0.85 x 0.926 x 0.97
+        x 0.95 x 0.9175). 2026-08b: the aging factor is 0.9175, not 0.92 —
+        3 x 2.75 %/yr linear, now derived from eps.yaml rather than from a
+        hard-coded per-hour constant that disagreed with it."""
         m = _model(eol=True)
         m._panel_areas_body = {k: 0.0 for k in m._panel_areas_body}
         m._wing_py_area, m._wing_my_area = 1.0, 0.0
         m._state.wing_py_deployed = True
         # Phase C: drive axis is body Y — full illumination needs sun ⊥ Y
         gen = _mean_gen(m, (1.0, 0.0, 0.0))
-        assert gen == pytest.approx(267.9, abs=2.5)
+        assert gen == pytest.approx(267.2, abs=2.5)
 
     def test_legacy_behaviour_without_loss_stack(self):
         """Back-compat: with `array_losses` absent the constant reverts to
@@ -116,7 +123,12 @@ class TestSolarArrayDrive:
     def test_drive_angle_load_bearing_when_not_tracking(self):
         """WP-2 (b): with tracking off, the frozen drive angle places the
         wing normal — rotating the wings 90 deg away from a fixed sun kills
-        their output (>= 60 % reduction)."""
+        their output (>= 60 % reduction).
+
+        2026-08b: the shaft now SLEWS at `sada_max_rate_deg_s` (1.0 deg/s)
+        instead of teleporting, so the 90 deg reposition needs >= 90 s of
+        ticks before the steady state is measured.
+        """
         m = self._deployed()
         m._sada_tracking = False
         m._panel_areas_body = {k: 0.0 for k in m._panel_areas_body}
@@ -124,10 +136,43 @@ class TestSolarArrayDrive:
         m.handle_command({"command": "set_solar_array_drive", "angle_deg": 0.0})
         gen_home = _mean_gen(m, sun, n=30)
         m.handle_command({"command": "set_solar_array_drive", "angle_deg": 90.0})
+        _mean_gen(m, sun, n=95)          # let the shaft actually get there
         gen_rot = _mean_gen(m, sun, n=30)
         assert gen_home > 10.0
         assert gen_rot < 0.4 * gen_home, (
             f"drive angle not load-bearing: {gen_home:.1f} -> {gen_rot:.1f} W")
+
+    def test_drive_slews_at_the_configured_rate(self):
+        """2026-08b: `sada_max_rate_deg_s` was dead config — the angle was
+        assigned instantly. A 90 deg reposition must now take ~90 s at
+        1.0 deg/s, and must be PARTIALLY complete in between."""
+        m = self._deployed()
+        m._sada_tracking = False
+        m.handle_command({"command": "set_solar_array_drive", "angle_deg": 90.0})
+        _mean_gen(m, (0.0, 1.0, 0.0), n=30, dt=1.0)
+        assert 25.0 < m._state.solar_array_drive_angle < 35.0, (
+            "drive teleported or did not move: "
+            f"{m._state.solar_array_drive_angle:.1f} deg after 30 s")
+        _mean_gen(m, (0.0, 1.0, 0.0), n=70, dt=1.0)
+        assert m._state.solar_array_drive_angle == pytest.approx(90.0, abs=0.5)
+
+    def test_stuck_sada_failure_is_injectable_and_freezes_the_shaft(self):
+        """2026-08b: nothing at runtime could set `_sada_tracking = False`, so
+        the "SADA stuck" failure the code comments described could not be
+        exercised. It is now a first-class injection, observable as a frozen
+        0x0133 plus a fall in orbit-average wing yield."""
+        m = self._deployed()
+        assert m._sada_tracking is True
+        m.inject_failure("sada_stuck", angle_deg=0.0)
+        assert m._sada_tracking is False
+        # Sun swings right across the frozen normal; the shaft must not move.
+        for k in range(60):
+            ang = math.radians(6.0 * k)
+            m.tick(1.0, _Orbit(), {0x0245: math.cos(ang), 0x0246: 0.0,
+                                   0x0247: math.sin(ang)})
+            assert m._state.solar_array_drive_angle == pytest.approx(0.0)
+        m.clear_failure("sada_stuck")
+        assert m._sada_tracking is True
 
     def test_stuck_sada_costs_orbit_average_energy(self):
         """A stuck drive (tracking off) reverts the wings to the |sin phi|
@@ -152,13 +197,31 @@ class TestSolarArrayDrive:
         assert avg_stuck < 0.75 * avg_track, (
             f"stuck SADA not punished: {avg_track:.1f} vs {avg_stuck:.1f} W")
 
-    def test_device_gate_still_zeroes_generation(self):
-        """WP-2 (c): S2 device 0x0101 (solar array drive) OFF => 0 W."""
+    def test_device_gate_zeroes_only_the_wings(self):
+        """WP-2 (c), REVISED 2026-08b: S2 device 0x0101 (solar array drive)
+        OFF removes the WING contribution only.
+
+        The gate used to zero gen_w and every sa_panel_current, including the
+        five body-mounted faces — which need no drive, being bonded to the
+        structure and wired straight to the MPPT. An operator who switched the
+        SADA off therefore saw 0 W in full sunlight, indistinguishable from a
+        total array loss. The residual body generation is the diagnosis.
+        """
+        sun = (0.6, 0.0, -0.8)   # off-axis so body faces are genuinely lit
+        healthy = self._deployed()
+        gen_on = _mean_gen(healthy, sun, n=10)
+
         m = self._deployed()
         m.set_device_state(0x0101, False)
-        gen = _mean_gen(m, (0.0, 1.0, 0.0), n=10)
-        assert gen == 0.0
+        gen_off = _mean_gen(m, sun, n=10)
+
         assert m._state.sa_wing_currents["py"] == 0.0
+        assert m._state.sa_wing_currents["my"] == 0.0
+        assert gen_off > 0.0, "body-mounted cells need no solar array drive"
+        assert gen_off < 0.5 * gen_on, (
+            f"wing contribution not removed: {gen_on:.1f} -> {gen_off:.1f} W")
+        # Body faces keep producing; the ±Y faces keep their BODY share only.
+        assert m._state.sa_panel_currents["px"] > 0.0
 
 
 class TestSunVectorDeterminism:

@@ -92,29 +92,47 @@ class TMProcessor:
         return result
 
     def _process_monitoring(self, data: bytes, subtype: int) -> dict:
-        """Process S12 monitoring transition report."""
-        if len(data) < 6:
+        """Process an S12 check-transition report, TM(12,9) / TM(12,10).
+
+        This used to unpack only the historical 6-byte prefix (param_id +
+        value) and throw away `mon_id`, `check_type`, `severity` and both
+        limits — four of the six fields that make a limit violation legible —
+        even though the full 18-byte parser sat next door in
+        `smo_mcs.pus_reports`. The raised alarm therefore said "0x0101 = 8.2"
+        with no band, no severity and no monitor id, so two monitors on the
+        same parameter (the WARNING and ALARM tiers on battery SoC, for
+        instance) were indistinguishable on the ground.
+        """
+        from smo_common.reporting.decode import (
+            decode_s12_transition, s12_check_type_name, s12_severity_name,
+        )
+        rec = decode_s12_transition(data, subtype)
+        if rec is None:
             return {"service": 12, "subtype": subtype}
-        param_id = struct.unpack('>H', data[:2])[0]
-        value = struct.unpack('>f', data[2:6])[0]
 
-        result = {
-            "service": 12,
-            "subtype": subtype,
-            "param_id": param_id,
-            "value": value,
-            "transition": (
-                "out_of_limits" if subtype == 9 else "back_to_nominal"
-            ),
-        }
+        result: dict[str, Any] = {"service": 12, "subtype": subtype, **rec}
+        if rec.get("check_type") is not None:
+            result["check_type_name"] = s12_check_type_name(rec["check_type"])
+        if rec.get("severity") is not None:
+            result["severity_name"] = s12_severity_name(rec["severity"])
 
-        # If out-of-limits, add as alarm
+        # If out-of-limits, add as alarm — now carrying the whole report, so
+        # the journal can say which monitor fired and against what band.
         if subtype == 9:
-            self._alarms.append({
-                "param_id": param_id,
-                "value": value,
+            alarm = {
+                "param_id": rec["param_id"],
+                "value": rec["value"],
                 "status": "monitoring_violation",
-            })
+            }
+            for key in ("mon_id", "check_type", "severity",
+                        "low_limit", "high_limit"):
+                if rec.get(key) is not None:
+                    alarm[key] = rec[key]
+            if "check_type_name" in result:
+                alarm["check_type_name"] = result["check_type_name"]
+            if "severity_name" in result:
+                alarm["severity_name"] = result["severity_name"]
+            self._alarms.append(alarm)
 
         return result
 

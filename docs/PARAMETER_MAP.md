@@ -19,9 +19,9 @@ Columns:
 
 | | Count |
 |---|---:|
-| Catalogued parameters | 415 |
-| In at least one HK SID | 299 |
-| On-demand (S20-readable) | 137 |
+| Catalogued parameters | 441 |
+| In at least one HK SID | 318 |
+| On-demand (S20-readable) | 144 |
 | Declared stubs (model does not compute) | 20 |
 | Ground limit bands | 51 |
 | S12 on-board monitors | 46 |
@@ -31,16 +31,16 @@ Columns:
 
 | SID | Name | Members |
 |---:|---|---:|
-| 1 | EPS | 51 |
-| 2 | AOCS | 71 |
+| 1 | EPS | 52 |
+| 2 | AOCS | 81 |
 | 3 | TCS | 17 |
 | 4 | Platform | 27 |
-| 5 | Payload | 23 |
-| 6 | TTC | 31 |
+| 5 | Payload | 31 |
+| 6 | TTC | 32 |
 | 7 | AOCS_DETERMINATION | 41 |
 | 8 | EPS Power Management | 13 |
 | 9 | PROP | 26 |
-| 11 | Beacon | 6 |
+| 11 | Beacon | 7 |
 
 ## aocs
 
@@ -146,6 +146,16 @@ Columns:
 | `0x028D` | aocs.css_head_health_mz | % | 2 |  |  |  |  |
 | `0x028E` | aocs.rw_cmd_sum | Nm |  | yes |  |  |  |
 | `0x0292` | aocs.slew_state |  |  | yes |  |  |  |
+| `0x0294` | aocs.gyro_units_on |  | 2 |  |  |  |  |
+| `0x0295` | aocs.gyro_saturated |  | 2 |  |  |  |  |
+| `0x0296` | aocs.gyro_bias_injected | deg/s | 2 |  |  |  |  |
+| `0x0297` | aocs.commanded_mode |  | 2 |  |  |  |  |
+| `0x0298` | aocs.mode_demoted |  | 2 |  |  |  |  |
+| `0x0299` | aocs.fine_degraded |  | 2 |  |  |  |  |
+| `0x029A` | aocs.desat_inhibit |  | 2 |  |  |  |  |
+| `0x029B` | aocs.h_body_nms | Nms | 2 |  |  |  |  |
+| `0x029C` | aocs.desat_ineffective |  | 2 |  |  |  |  |
+| `0x029D` | aocs.wheels_commissioned |  | 2 |  |  |  |  |
 | `0x02A0` | aocs.q_est_1 |  | 7 |  |  |  |  |
 | `0x02A1` | aocs.q_est_2 |  | 7 |  |  |  |  |
 | `0x02A2` | aocs.q_est_3 |  | 7 |  |  |  |  |
@@ -259,7 +269,7 @@ Columns:
 | `0x0140` | eps.subsys_power_payload | W | 8 |  |  |  |  |
 | `0x0141` | eps.subsys_power_obdh | W | 8 |  |  |  |  |
 | `0x0143` | eps.actual_charge_current_a | A | 1 |  |  |  |  |
-| `0x0144` | eps.wing_status |  | 8 |  |  |  |  |
+| `0x0144` | eps.wing_status |  | 1, 8 |  |  |  |  |
 | `0x0145` | eps.wing_deploy_timer | s |  | yes |  |  |  |
 | `0x0146` | eps.sa_wing_py_current | A | 8 |  |  |  |  |
 | `0x0147` | eps.sa_wing_my_current | A | 8 |  |  |  |  |
@@ -372,6 +382,14 @@ Columns:
 | `0x0640` | payload.cal_flag |  |  | yes |  |  |  |
 | `0x0642` | payload.dark_frame_cnt |  |  | yes |  |  |  |
 | `0x0643` | payload.bias_frame_cnt |  |  | yes |  |  |  |
+| `0x0644` | payload.cal_mode |  | 5 |  |  |  |  |
+| `0x0645` | payload.cal_abort_reason |  | 5 |  |  |  |  |
+| `0x0646` | payload.cal_valid_mask |  | 5 |  |  |  |  |
+| `0x0647` | payload.product_mb | MB | 5 |  |  |  |  |
+| `0x0648` | payload.product_count |  | 5 |  |  |  |  |
+| `0x0649` | payload.readout_active |  | 5 |  |  |  |  |
+| `0x064A` | payload.cooler_floor_c | C | 5 |  |  |  |  |
+| `0x064B` | payload.cooler_margin_k | K | 5 |  |  |  |  |
 
 ## prop
 
@@ -486,7 +504,7 @@ Columns:
 | `0x0511` | ttc.bit_sync |  | 6 |  |  |  |  |
 | `0x0512` | ttc.frame_sync |  | 6 |  |  |  |  |
 | `0x0513` | ttc.cmd_rx_count |  | 6 |  |  |  |  |
-| `0x0516` | ttc.pa_on |  | 6 |  |  |  |  |
+| `0x0516` | ttc.pa_on |  | 6, 11 |  |  |  |  |
 | `0x0519` | ttc.eb_n0 | dB | 6 |  |  | TTC Eb/N0 Low (4.0…100.0, WARNING) |  |
 | `0x051A` | ttc.agc_level | dB | 6 |  | -80…-30 / -100…-20 |  |  |
 | `0x051B` | ttc.doppler_hz | Hz | 6 |  |  |  |  |
@@ -499,6 +517,14 @@ Columns:
 | `0x0522` | ttc.cmd_decode_timer | s | 6 |  |  |  |  |
 | `0x0523` | ttc.active_gs |  |  | yes |  |  |  |
 | `0x0524` | ttc.gs_equipment_status |  |  | yes |  |  |  |
+| `0x0525` | ttc.tx_active |  | 6 |  |  |  |  |
+| `0x0526` | ttc.beacon_tx_on |  |  | yes |  |  |  |
+| `0x0527` | ttc.beacon_active |  |  | yes |  |  |  |
+| `0x0528` | ttc.beacon_link_margin | dB |  | yes |  |  |  |
+| `0x0529` | ttc.beacon_dl_freq | MHz |  | yes |  |  |  |
+| `0x052A` | ttc.beacon_tx_power | W |  | yes |  |  |  |
+| `0x052B` | ttc.tx_gate_status |  |  | yes |  |  |  |
+| `0x052C` | ttc.eirp_dbw | dBW |  | yes |  |  |  |
 | `0x0535` | ttc.antenna_deployment_ready |  |  | yes |  |  |  |
 | `0x0536` | ttc.antenna_deployment_sensor |  |  | yes |  |  |  |
 | `0x0537` | ttc.modulation_mode |  |  | yes |  |  |  |

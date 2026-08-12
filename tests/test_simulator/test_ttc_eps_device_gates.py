@@ -14,6 +14,8 @@ Wired devices (see ttc_basic.py / eps_basic.py):
 """
 from unittest.mock import MagicMock
 
+import pytest
+
 from smo_simulator.models.ttc_basic import TTCBasicModel
 from smo_simulator.models.eps_basic import EPSBasicModel
 
@@ -214,6 +216,23 @@ def _make_eps():
     return model
 
 
+def _make_eps_with_wings():
+    """The solar-array-drive gate is only meaningful on a spacecraft that HAS
+    a drive and deployed wings — `configure({})` gives neither."""
+    import yaml as _yaml
+    from pathlib import Path as _Path
+    cfg_dir = _Path(__file__).parent.parent.parent / "configs" / "eosat1"
+    cfg = _yaml.safe_load((cfg_dir / "subsystems" / "eps.yaml").read_text())
+    cfg["simulation"] = _yaml.safe_load(
+        (cfg_dir / "simulation.yaml").read_text())["eps"]
+    model = EPSBasicModel()
+    model.configure(cfg)
+    model.rng.seed(20260812)
+    model._state.wing_py_deployed = True
+    model._state.wing_my_deployed = True
+    return model
+
+
 def test_eps_charge_regulator_default_on_charges_in_sunlight():
     model = _make_eps()
     orbit = make_eps_orbit(in_eclipse=False, beta_deg=0.0)
@@ -255,30 +274,47 @@ def test_eps_solar_array_drive_default_on_generates():
     assert model._state.power_gen_w > 0.0
 
 
-def test_eps_solar_array_drive_off_zeros_generation():
-    model = _make_eps()
+def test_eps_solar_array_drive_off_zeros_only_the_wings():
+    """2026-08b: the 0x0101 gate used to zero generation ENTIRELY, including
+    the five BODY-mounted faces. Body cells are bonded to the structure and
+    wired straight to the MPPT — they need no drive. Switching the SADA off in
+    full sunlight and reading exactly 0 W was indistinguishable from a total
+    array loss; the surviving body generation is what tells them apart."""
+    healthy = _make_eps_with_wings()
     orbit = make_eps_orbit(in_eclipse=False, beta_deg=0.0)
     sp = {0x0245: 1.0, 0x0246: 0.0, 0x0247: 0.0}
+    for _ in range(3):
+        healthy.tick(1.0, orbit, sp)
+    gen_healthy = healthy._state.power_gen_w
+
+    model = _make_eps_with_wings()
     model.set_device_state(0x0101, False)  # solar array drive OFF
     for _ in range(3):
         model.tick(1.0, orbit, sp)
     s = model._state
-    assert s.power_gen_w == 0.0
-    assert s.sa_a_current == 0.0
-    assert s.sa_b_current == 0.0
+    assert 0.0 < s.power_gen_w < gen_healthy, (
+        f"SADA-off generation {s.power_gen_w:.1f} W vs {gen_healthy:.1f} W "
+        f"healthy")
+    assert s.sa_wing_currents['py'] == 0.0
+    assert s.sa_wing_currents['my'] == 0.0
+    bus = max(s.bus_voltage, 20.0)
+    assert (s.sa_a_current + s.sa_b_current) * bus == pytest.approx(
+        s.power_gen_w, rel=0.02)
 
 
 def test_eps_solar_array_drive_recovers_when_repowered():
-    model = _make_eps()
+    model = _make_eps_with_wings()
     orbit = make_eps_orbit(in_eclipse=False, beta_deg=0.0)
     sp = {0x0245: 1.0, 0x0246: 0.0, 0x0247: 0.0}
     model.set_device_state(0x0101, False)
     model.tick(1.0, orbit, sp)
-    assert model._state.power_gen_w == 0.0
+    gated = model._state.power_gen_w
+    assert model._state.sa_wing_currents['py'] == 0.0
     model.set_device_state(0x0101, True)
-    for _ in range(3):
+    # The shaft is rate-limited now, so let it slew back onto the sun.
+    for _ in range(200):
         model.tick(1.0, orbit, sp)
-    assert model._state.power_gen_w > 0.0
+    assert model._state.power_gen_w > gated * 1.5
 
 
 # ── EPS: decorative devices stay no-ops (default behaviour unchanged) ────

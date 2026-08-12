@@ -103,7 +103,14 @@ class TestHkStructuresEndpoint:
         beacon = by_sid[11]
         assert beacon["name"] == "Beacon"
         assert beacon["apid"] == body["bootloader_apid"] == 2
-        assert beacon["param_count"] == 6
+        # 2026-08b (ruling R2): 7, not 6. SID 11 is now carried by a real
+        # separate radio — the UHF beacon transmitter — and gained
+        # ttc.pa_on (0x0516) as its seventh parameter, so the one packet that
+        # still arrives when the S-band chain is silent says whether the PA is
+        # the reason for the silence. This also settles a documentation split:
+        # commissioning_sequence_walkthrough.md:44 has said "7 parameters"
+        # against the config's 6 since the 2026-07 display audit.
+        assert beacon["param_count"] == 7
         assert beacon["interval_s"] == pytest.approx(30.0)
         assert beacon["readonly"] is True
         assert beacon["note"], "the read-only row needs an explanatory state"

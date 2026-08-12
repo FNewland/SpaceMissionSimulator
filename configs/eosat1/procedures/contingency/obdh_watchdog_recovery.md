@@ -12,7 +12,7 @@ This procedure verifies the OBC has re-initialised correctly, confirms no data l
 assesses whether the root cause is transient or systemic.
 
 ## Prerequisites
-- [ ] TT&C link is active — `ttc.link_status` (0x0501) = 1
+- [ ] TT&C link is active — `ttc.link_status` (0x0501) = 2 (LOCKED)
 - [ ] Previous `obdh.reboot_count` (0x030A) value is known from last nominal pass
 - [ ] Flight software version and patch level are documented on console
 - [ ] Mass memory dump capability is available if data recovery is needed
@@ -20,7 +20,7 @@ assesses whether the root cause is transient or systemic.
 ## Procedure Steps
 
 ### Step 1 — Confirm Watchdog Reset Occurrence
-**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 25)
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27)
 **Verify:** `obdh.reboot_count` (0x030A) — compare with last known value; confirm increment
 **Verify:** `obdh.mode` (0x0300) — record current mode (expected 0=NOMINAL after clean reboot)
 **Verify:** `obdh.cpu_load` (0x0302) — record value (expected < 70% post-boot)
@@ -34,32 +34,32 @@ assesses whether the root cause is transient or systemic.
 **GO/NO-GO:** Application image running before any HK_ENABLE / OBC_SET_MODE TCs are issued.
 
 ### Step 2 — Verify OBC Nominal Post-Reboot State
-**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 25)
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27)
 **Verify:** `obdh.mode` (0x0300) = 0 (NOMINAL) — if mode = 1 (SAFE), OBC detected an issue during re-init
 **Verify:** `obdh.cpu_load` (0x0302) < 70% — elevated load may indicate boot loop or stuck process
 **Action:** If OBC is in SAFE mode, assess whether to remain in SAFE or attempt NOMINAL restoration
 **GO/NO-GO:** OBC in NOMINAL mode with CPU load < 70% — proceed. If in SAFE mode, proceed with caution.
 
 ### Step 3 — Request All Housekeeping Frames
-**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 25) — EPS
-**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 25) — AOCS
-**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 25) — OBDH
-**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 25) — TCS
-**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 25) — TT&C
-**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 25) — Payload
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — EPS
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — AOCS
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) — OBDH
+**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 27) — TCS
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) — TT&C
+**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 27) — Payload
 **Verify:** All six HK frames received within 30s
 **Verify:** No subsystem is in an unexpected mode or reporting out-of-limit parameters
 **GO/NO-GO:** All subsystems reporting nominal — proceed. Any anomalies trigger respective CON procedures.
 
 ### Step 4 — Verify Data Integrity and Onboard Storage
-**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 25)
+**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 27)
 **Verify:** Onboard time is consistent with ground reference (drift < 2s acceptable after reboot)
 **Verify:** Stored telecommand queue status — confirm no commands were lost
 **Verify:** Mass memory partition status — confirm science data and HK archives are intact
 **GO/NO-GO:** Data integrity confirmed — proceed. If time drift > 5s, perform time synchronisation via `SET_PARAM(param_id=obdh.utc_correction, value=<delta>)`.
 
 ### Step 5 — Assess Root Cause Indicators
-**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 25)
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
 **Action:** Review `obdh.cpu_load` (0x0302) trend — was CPU at 100% before reset?
 **Action:** Review EPS data — was there a bus voltage dip that could cause brownout?
 **Verify:** `eps.bus_voltage` (0x0105) > 27.0V (stable)

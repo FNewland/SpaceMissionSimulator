@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="TTC" Creator="EOSAT-1 SMDL Generator" Date="2026-08-01" Version="1.0">
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="TTC" Creator="EOSAT-1 SMDL Generator" Date="2026-08-12" Version="1.0">
   <Description>SMP2 model catalogue for TTC subsystem</Description>
   <Type Name="UInt8" Uuid="ab46787a-5742-5d41-9471-82b8d26b3826" xsi:type="Integer" Size="1" Signed="false"/>
   <Type Name="UInt16" Uuid="00ba295b-550c-5551-b87d-d604e30c7592" xsi:type="Integer" Size="2" Signed="false"/>
@@ -113,6 +113,30 @@
     </Field>
     <Field Name="ttc_gs_equipment_status" Uuid="48c9892d-6b71-555f-8e34-1f843988676f" Type="Float32" Kind="Output" View="true">
       <Description>GS equipment health bitmask, SET bit = healthy: bit0 antenna+tracking, bit1 LNA, bit2 uplink HPA, bit3 reference oscillator+feed. 15 = all healthy</Description>
+    </Field>
+    <Field Name="ttc_tx_active" Uuid="e02c5612-6fe0-5b24-8ed9-9ec2002b1679" Type="UInt8" Kind="Output" View="true">
+      <Description>S-band prime downlink radiating (0=inhibited, 1=transmitting). AND of: PA on and not in thermal shutdown, transponder alive, EPS ttc_tx line on, station in view. This is the gate on every TM packet except the UHF beacon's SID 11</Description>
+    </Field>
+    <Field Name="ttc_tx_gate_status" Uuid="a7e17efb-2899-5e75-993b-e8812d9f008e" Type="Float32" Kind="Output" View="true">
+      <Description>Downlink gate breakdown, SET bit = permissive: bit0 PA on, bit1 EPS ttc_tx line on, bit2 station in view, bit3 S-band radiating, bit4 UHF beacon TX commanded on, bit5 UHF beacon radiating, bit6 S-band antenna deployed, bit7 beacon MODE off. 0xDF = transmitting normally</Description>
+    </Field>
+    <Field Name="ttc_eirp_dbw" Uuid="b8e922b0-a261-5af8-aa13-0bd1c0e9e37e" Type="Float32" Kind="Output" View="true">
+      <Description>Live S-band EIRP at the COMMANDED PA power = ttc.yaml eirp_dbw + 10*log10(P/pa_ref_power_w). Moves 3.01 dB down at LOW and 3.98 dB up at HIGH — the proof that TTC_SET_TX_POWER (S8 func 68) reaches the link and not just telemetry 0x050D [dBW]</Description>
+    </Field>
+    <Field Name="ttc_beacon_tx_on" Uuid="ed9e987d-33a5-5183-9794-f23af1c7b8db" Type="Float32" Kind="Output" View="true">
+      <Description>UHF beacon transmitter commanded on (TTC_BEACON_TX_ON/OFF, S8 funcs 97/98). 0=off, 1=on</Description>
+    </Field>
+    <Field Name="ttc_beacon_active" Uuid="ee1afe56-abe6-5a2d-914d-03d9360bc42b" Type="Float32" Kind="Output" View="true">
+      <Description>UHF beacon actually radiating to a station now (commanded on AND in contact AND its link closes). Independent of ttc.tx_active by construction — that independence is the reason the beacon is a second box</Description>
+    </Field>
+    <Field Name="ttc_beacon_link_margin" Uuid="d12debce-7f1e-5b0f-a48e-11e1ffb13da4" Type="Float32" Kind="Output" View="true">
+      <Description>UHF beacon link margin against its OWN budget: 437.5 MHz, 1 W into a 0 dBi dipole, 1 kbps, conv+RS, to a -8 dB/K Yagi station. Typically ~27 dB — compare with the S-band LOW rung's ~46 dB and read off where the difference comes from [dB]</Description>
+    </Field>
+    <Field Name="ttc_beacon_dl_freq" Uuid="63a5bbc6-986f-58ec-8077-7a1ac20f3be1" Type="Float32" Kind="Output" View="true">
+      <Description>UHF beacon downlink frequency (435-438 MHz amateur-satellite segment; 437.5 MHz as flown) [MHz]</Description>
+    </Field>
+    <Field Name="ttc_beacon_tx_power" Uuid="a199fa9a-675c-53bf-b463-09707a0faac0" Type="Float32" Kind="Output" View="true">
+      <Description>UHF beacon RF output (1.0 W = 30 dBm, EnduroSat UHF Type II typical). 0 W when the beacon transmitter is commanded off [W]</Description>
     </Field>
     <Field Name="ttc_pa_backup_temp" Uuid="c6bf5077-9e60-5a6b-acea-a6a708a79e77" Type="Float32" Kind="Output" View="true">
       <Description>Backup power amplifier temperature [C]</Description>

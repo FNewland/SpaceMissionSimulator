@@ -1,14 +1,24 @@
 # OBCP 2 — Safe-mode entry (safe-ing script)
 #
 # Autonomous safe-ing: EPS to SAFE, payload powered down (EPS-side mode and
-# power line), FPA cooler line off, then AOCS to SAFE. All func_ids are real
-# S8 routes (EPS 83/16/20, AOCS 0). The AOCS step is deliberately LAST: it is
-# power-gated on the aocs_wheels line, so if the wheels are unpowered the
-# step fails (OBCP_STEP_FAILED event) after all EPS safe-ing has completed.
+# power line), FPA cooler line off, then AOCS to the sun-safe hold. All
+# func_ids are real S8 routes (EPS 83/16/20, AOCS 0). The AOCS step is
+# deliberately LAST: it is power-gated on the aocs_wheels line, so if the
+# wheels are unpowered the step fails (OBCP_STEP_FAILED event) after all EPS
+# safe-ing has completed.
+#
+# 2026-08b Phase 5: the AOCS step commanded mode 2, labelled "SAFE". Mode 2 is
+# DETUMBLE — a magnetic-only RATE DAMPER with no pointing — so an autonomous
+# safe-ing threw away the solar-array geometry at the moment the battery needed
+# it most. Mode 3 COARSE_SUN is the sun-safe hold and is what safe_mode_entry,
+# emergency_power_down, aocs_safe_mode_recovery and both load-shed cards all
+# command since Phase 1. COARSE_SUN is also not an operational mode in the
+# model, so commanding it does not overwrite the ground's commanded mode
+# (0x0297) and the spacecraft hands itself back once conditions recover.
 procedure:
   id: 2
   name: safe_mode_entry
-  description: "EPS SAFE, payload off + unpowered, cooler off, AOCS SAFE"
+  description: "EPS SAFE, payload off + unpowered, cooler off, AOCS COARSE_SUN"
   steps:
     - delay_s: 0          # EPS set mode SAFE (1)
       service: 8
@@ -30,8 +40,8 @@ procedure:
       subtype: 1
       func_id: 20
       data_hex: "04"
-    - delay_s: 1          # AOCS set mode SAFE (2)
+    - delay_s: 1          # AOCS set mode COARSE_SUN (3) — the sun-safe hold
       service: 8
       subtype: 1
       func_id: 0
-      data_hex: "02"
+      data_hex: "03"

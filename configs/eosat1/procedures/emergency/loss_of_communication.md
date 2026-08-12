@@ -26,22 +26,23 @@ with decision gates at 6h, 12h, 24h, and 48h elapsed time since last contact.
 **GO/NO-GO:** At least two ground stations fully operational with clear line-of-sight for next pass.
 
 ### Step 2 --- Attempt Contact on All Available Ground Stations
-**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 1) --- transmitted blind on each pass.
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) --- transmitted blind on each pass.
 **Sequence:** Schedule uplink attempts on every visible pass (min elevation 5 deg) across
 Iqaluit and Troll in priority order based on maximum elevation.
 **Verify:** `ttc.rssi` (0x0502) > -125 dBm and `ttc.link_status` (0x0501) = 2 (LOCKED) within 30s of AOS.
 **GO/NO-GO:** If telemetry received on any station, exit emergency and transition to EMG-001 assessment. If no response after full ground station rotation, proceed to Step 3.
 
 ### Step 3 --- Blind Command on Primary Transponder
-**TC:** `TTC_SWITCH_PRIMARY` (Service 8, Subtype 1) --- blind, repeated 3x with 10s spacing.
-**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 1) --- transmitted 15s after switch command.
+**TC:** `TTC_SWITCH_PRIMARY` (Service 8, Subtype 1, func_id 63) --- blind, repeated 3x with 10s spacing.
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) --- transmitted 15s after switch command.
 **Verify:** `ttc.link_status` (0x0501) = 2 (LOCKED) within 45s.
 **Timing:** Execute at pass with elevation > 20 deg to maximise link margin.
 **GO/NO-GO:** If link acquired, proceed to full HK dump. If no response, proceed to Step 4.
 
 ### Step 4 --- Blind Command on Redundant Transponder
-**TC:** `TTC_SWITCH_REDUNDANT` (Service 8, Subtype 2) --- blind, repeated 3x with 10s spacing.
-**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 1) --- transmitted 15s after switch command.
+**TC:** `TTC_SWITCH_REDUNDANT` (Service 8, Subtype 1, func_id 64) --- blind, repeated 3x with 10s
+spacing. (Was annotated Subtype 2; every S8 function-perform is Subtype 1.)
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) --- transmitted 15s after switch command.
 **Verify:** `ttc.link_status` (0x0501) = 2 (LOCKED) within 45s.
 **Timing:** Execute at next available high-elevation pass (> 20 deg).
 **GO/NO-GO:** If link acquired, remain on redundant transponder and assess primary. If no response, proceed to Step 5.
@@ -58,15 +59,22 @@ increase beacon power.
 **Action:** If 12 hours elapsed since last contact, concentrate all resources on high-latitude
 stations with optimal geometry.
 **Stations:** Iqaluit and Troll --- both provide near-polar pass coverage every ~95 min.
-**TC:** Alternate between `TTC_SWITCH_PRIMARY` and `TTC_SWITCH_REDUNDANT` on successive passes.
-**TC:** `OBC_SET_MODE(mode=2)` (Service 8, Subtype 3) --- blind emergency mode command.
+**Note:** Alternate between the two transponders on successive passes: send the
+primary select on one pass and the redundant select on the next.
+**TC:** `TTC_SWITCH_PRIMARY` (Service 8, Subtype 1, func_id 63) --- odd-numbered passes
+**TC:** `TTC_SWITCH_REDUNDANT` (Service 8, Subtype 1, func_id 64) --- even-numbered passes
+**TC:** `OBC_SET_MODE(mode=2)` (Service 8, Subtype 1, func_id 50) --- blind emergency mode command.
+(Was annotated Subtype 3, which is not an S8 subtype this suite dispatches.)
 **Verify:** Any downlink signal within pass window.
 **GO/NO-GO:** If contact restored, proceed to EMG-001 for safe mode recovery.
 
 ### Step 7 --- Emergency Network Escalation (24h Threshold)
 **Action:** Request support from partner agency ground stations (ESA ESTRACK, NASA NEN).
 **Expand:** Add Malindi, Maspalomas, and South Point stations to tracking schedule.
-**TC:** Continue blind commanding rotation on all passes.
+**Note:** Continue the Step 6 blind commanding rotation on all passes --- the
+commands are `TTC_SWITCH_PRIMARY` (func 63) and `TTC_SWITCH_REDUNDANT`
+(func 64), alternating. Nothing new is sent here, so this step carries no
+`**TC:**` line of its own.
 **Notify:** ESA Space Debris Office of potential uncontrolled spacecraft status.
 **GO/NO-GO:** If 24h exceeded with no contact, convene Anomaly Review Board.
 

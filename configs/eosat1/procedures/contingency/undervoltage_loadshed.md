@@ -14,7 +14,7 @@ is monitored until battery state-of-charge and bus voltage return to safe levels
 
 ## Prerequisites
 - [ ] Undervoltage flag detected — `eps.uv_flag` (0x010E) = 1 or bus voltage observed < 27.0 V
-- [ ] TT&C link active — `ttc.link_status` (0x0501) = 1
+- [ ] TT&C link active — `ttc.link_status` (0x0501) = 2 (LOCKED)
 - [ ] Flight Director notified and authorizes manual load shedding
 - [ ] Current orbit prediction available (eclipse entry/exit times)
 
@@ -47,8 +47,9 @@ is monitored until battery state-of-charge and bus voltage return to safe levels
 ## Procedure Steps
 
 ### Step 1: Detect and Confirm Undervoltage Condition
-**Action:** Request EPS housekeeping: `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
-**Verify:** `eps.uv_flag` (0x010E) = 1
+**LABEL:** `STEP-1`
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — Request EPS housekeeping
+**Verify:** `eps.uv_flag == 1` (0x010E, timeout 10 s)
 **Verify:** `eps.bus_voltage` (0x0105) — record current value (expected < 27.0 V)
 **Verify:** `eps.bat_soc` (0x0101) — record current value
 **Verify:** `eps.bat_voltage` (0x0100) — record current value
@@ -59,47 +60,71 @@ is monitored until battery state-of-charge and bus voltage return to safe levels
 **GO/NO-GO:** Undervoltage confirmed. Flight Director authorizes load shedding — proceed.
 
 ### Step 2: Shed Load Priority 1 — Payload OFF
-**Action:** Command payload to OFF: `PAYLOAD_SET_MODE(mode=0)` (func_id 26)
+**LABEL:** `STEP-2`
+**TC:** `PAYLOAD_SET_MODE(mode=0)` (Service 8, Subtype 1, func_id 26) — Command payload to OFF
 **Verify:** `payload.mode` (0x0600) = 0 (OFF) within 10 s
 **Verify:** `eps.power_cons` (0x0106) decreases (expected -45 W if imaging, -8 W if standby)
-**Action:** Wait 30 s and re-check bus voltage: `HK_REQUEST(sid=1)`
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — Wait 30 s and re-check bus voltage
+**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 27) — Payload housekeeping
 **Verify:** `eps.bus_voltage` (0x0105) — record new value
-**GO/NO-GO:** If bus voltage stabilizing and > 26.5 V, HOLD at this level and monitor.
-If still declining or < 26.5 V, proceed to next shed level.
+**BRANCH:** `eps.bus_voltage > 26.5` -> GO `STEP-6` | NO-GO `STEP-3` (timeout 60 s)
+**Note:** GO — the shed worked; HOLD at this level and go straight to monitoring.
+NO-GO — still declining; fall through to the next shed level. The 60 s branch
+timeout is what the prose called "wait 30 s and re-check": it gives the bus two
+1 Hz SID 1 samples to settle before the predicate is judged.
 
 ### Step 3: Shed Load Priority 2 — FPA Cooler OFF
-**Action:** Disable FPA cooler: `FPA_COOLER(on=0)` (func_id 43)
+**LABEL:** `STEP-3`
+**TC:** `FPA_COOLER(on=0)` (Service 8, Subtype 1, func_id 43) — Disable FPA cooler
 **Verify:** `tcs.cooler_fpa` (0x040C) = 0 (OFF) within 5 s
 **Verify:** `eps.power_cons` (0x0106) decreases by ~15 W
-**Action:** Wait 30 s and re-check bus voltage: `HK_REQUEST(sid=1)`
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — Wait 30 s and re-check bus voltage
+**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 27) — TCS housekeeping
 **Verify:** `eps.bus_voltage` (0x0105) — record new value
-**GO/NO-GO:** If bus voltage stabilizing and > 26.0 V, HOLD and monitor. If still
-declining or < 26.0 V, proceed to next shed level.
+**BRANCH:** `eps.bus_voltage > 26.0` -> GO `STEP-6` | NO-GO `STEP-4` (timeout 60 s)
 
 ### Step 4: Shed Load Priority 3 — TX Transmitter OFF
-**Action:** Disable power amplifier: `TTC_PA_OFF` (func_id 67)
+**LABEL:** `STEP-4`
+**TC:** `TTC_PA_OFF` (Service 8, Subtype 1, func_id 67) — Disable power amplifier
 **Verify:** `ttc.pa_on` (0x0516) = 0 within 5 s
 **Verify:** `eps.power_cons` (0x0106) decreases by ~20 W
 **Note:** WARNING — This will terminate downlink capability. Uplink (RX) remains active.
 The spacecraft can still receive commands but cannot send telemetry.
-**Action:** Wait 30 s and re-check bus voltage: `HK_REQUEST(sid=1)`
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — Wait 30 s and re-check bus voltage
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) — TT&C housekeeping
 **Verify:** `eps.bus_voltage` (0x0105) — record new value
-**GO/NO-GO:** If bus voltage stabilizing and > 25.5 V, HOLD and monitor. If still
-declining, proceed to next shed level.
+**BRANCH:** `eps.bus_voltage > 25.5` -> GO `STEP-6` | NO-GO `STEP-5` (timeout 60 s)
+**Note:** After this step the S-band downlink is INHIBITED — `ttc.tx_active`
+(0x0525) goes to 0 and telemetry stops. The UHF beacon is a separate radio on the
+non-switchable `ttc_rx` line and keeps sending HK SID 11, so the ground can still
+see the spacecraft's state; the branch predicate is evaluated from the last
+SID 1 sample received before the PA went down, or from the beacon.
 
 ### Step 5: Shed Load Priority 4 — Reaction Wheels OFF
-**Action:** Power off AOCS wheels: `EPS_POWER_OFF(line_index=7)` (func_id 20)
+**LABEL:** `STEP-5`
+**TC:** `EPS_POWER_OFF(line_index=7)` (Service 8, Subtype 1, func_id 20) — Power off AOCS wheels
 **Verify:** `eps.pl_aocs_wheels` (0x0117) = 0 (OFF) within 5 s
 **Note:** WARNING — Spacecraft will lose active attitude control. Residual momentum
 will cause slow drift. Magnetic detumbling (if available) or gravity gradient will
 provide passive stabilization only.
-**Action:** Wait 30 s and re-check: `HK_REQUEST(sid=1)`
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — Wait 30 s and re-check
 **Verify:** `eps.bus_voltage` (0x0105) — record new value
-**GO/NO-GO:** If bus voltage is now stabilizing, monitor for recovery. If bus voltage
-continues to decline below 25.0 V, command `OBC_SET_MODE(mode=2)` for EMERGENCY.
+**BRANCH:** `eps.bus_voltage > 25.0` -> GO `STEP-6` | NO-GO `STEP-5B` (timeout 60 s)
+
+### Step 5B: Last Resort — OBC EMERGENCY Mode
+**LABEL:** `STEP-5B`
+**Note:** Reached only when every shed level has been taken and the bus is still
+below 25.0 V.
+**TC:** `OBC_SET_MODE(mode=2)` (Service 8, Subtype 1, func_id 50) — EMERGENCY
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) — Platform/OBDH housekeeping
+**Verify:** `obdh.mode == 2` (0x0300, timeout 15 s) — EMERGENCY
+**Note:** This step existed only as prose inside Step 5's GO/NO-GO line. Run flat,
+the old card would have sent it on EVERY execution — including the common case
+where shedding the payload alone recovered the bus.
 
 ### Step 6: Monitor Recovery
-**Action:** Monitor EPS telemetry at 60 s intervals: `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
+**LABEL:** `STEP-6`
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — Monitor EPS telemetry at 60 s intervals
 **Verify:** `eps.bus_voltage` (0x0105) — trending upward
 **Verify:** `eps.bat_soc` (0x0101) — trending upward (especially in sunlit phase)
 **Verify:** `eps.power_gen` (0x0107) > 0 W when in sunlight
@@ -112,8 +137,8 @@ available solar array power.
 **GO/NO-GO:** Bus voltage > 28.0 V and SoC > 40% — proceed to restore loads.
 
 ### Step 7: Restore Loads in Reverse Priority Order
-**Action:** Re-enable loads one at a time, waiting 5 min between each to verify stability:
-1. AOCS wheels: `EPS_POWER_ON(line_index=7)` (func_id 19) — verify `aocs.mode` (0x020F)
+**Note:** Re-enable loads one at a time, waiting 5 min between each to verify stability:
+**TC:** `EPS_POWER_ON(line_index=7)` (Service 8, Subtype 1, func_id 19) — AOCS wheels:    — verify `aocs.mode` (0x020F)
    returns to controllable mode. May need `AOCS_SET_MODE(mode=3)` for COARSE_SUN first.
 2. TX transmitter: `TTC_PA_ON` (func_id 66) — verify `ttc.pa_on` (0x0516) = 1
 3. FPA cooler: `FPA_COOLER(on=1)` (func_id 43) — verify `tcs.cooler_fpa` (0x040C) = 1

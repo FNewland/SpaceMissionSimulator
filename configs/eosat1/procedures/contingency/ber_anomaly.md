@@ -13,7 +13,7 @@ rate reduction and transponder switchover if the primary unit is degraded.
 
 ## Prerequisites
 - [ ] BER anomaly detected — `ttc.ber` (0x050C) >= -5 (BER worse than 1e-5)
-- [ ] TT&C link active — `ttc.link_status` (0x0501) = 1
+- [ ] TT&C link active — `ttc.link_status` (0x0501) = 2 (LOCKED)
 - [ ] Ground station has confirmed the anomaly is not ground-segment related
 - [ ] Flight Director notified
 
@@ -52,7 +52,7 @@ rate reduction and transponder switchover if the primary unit is degraded.
 ## Procedure Steps
 
 ### Step 1: Characterize BER Anomaly
-**Action:** Request TTC housekeeping: `HK_REQUEST(sid=5)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) — Request TTC housekeeping
 **Verify:** `ttc.ber` (0x050C) — record current value (expected >= -5)
 **Verify:** `ttc.eb_n0` (0x0519) — record Eb/N0 value
 **Verify:** `ttc.link_margin` (0x0503) — record link margin
@@ -65,7 +65,7 @@ atmospheric attenuation and low gain. Wait for higher elevation before declaring
 **GO/NO-GO:** BER anomaly confirmed not due to geometry — proceed to PA investigation.
 
 ### Step 2: Check Power Amplifier Temperature
-**Action:** Request TTC housekeeping: `HK_REQUEST(sid=5)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) — Request TTC housekeeping
 **Verify:** `ttc.pa_temp` (0x050F) — record value
 **Verify:** `ttc.pa_on` (0x0516) = 1 (PA active)
 **Verify:** `ttc.tx_fwd_power` (0x050D) — record forward power
@@ -78,15 +78,15 @@ atmospheric attenuation and low gain. Wait for higher elevation before declaring
 **GO/NO-GO:** PA assessment complete — follow appropriate branch.
 
 ### Step 3: PA Overheating — Thermal Mitigation
-**Action:** If PA temperature > 55 C, reduce thermal load:
-- Command PA off: `TTC_PA_OFF` (func_id 67)
-- Wait 120 s for cooldown
-- Request TTC housekeeping: `HK_REQUEST(sid=5)`
-- **Verify:** `ttc.pa_temp` (0x050F) trending downward
-- Command PA back on: `TTC_PA_ON` (func_id 66)
-- **Verify:** `ttc.pa_on` (0x0516) = 1 within 5 s
-**Action:** If PA temperature is still > 50 C after PA-on, reduce TX power level:
-`TTC_SET_TX_POWER(level=0)` (func_id 68) — set to low power (1 W)
+**Note:** If PA temperature > 55 C, reduce thermal load:
+**TC:** `TTC_PA_OFF` (Service 8, Subtype 1, func_id 67) — Command PA off
+**Note:** Wait 120 s for cooldown
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) — Request TTC housekeeping
+**Note:** **Verify:** `ttc.pa_temp` (0x050F) trending downward
+**TC:** `TTC_PA_ON` (Service 8, Subtype 1, func_id 66) — Command PA back on
+**Note:** **Verify:** `ttc.pa_on` (0x0516) = 1 within 5 s
+**Note:** If PA temperature is still > 50 C after PA-on, reduce TX power level:
+**TC:** `TTC_SET_TX_POWER(level=0)` (Service 8, Subtype 1, func_id 68) — set to low power (1 W)
 **Verify:** `ttc.pa_temp` (0x050F) stabilizing
 **Verify:** `ttc.ber` (0x050C) — check if BER improves with cooler PA
 **Note:** If PA overheating persists, follow EMG-006 for thermal investigation
@@ -99,18 +99,18 @@ of the transponder zone.
 changes the waveform from QPSK RS(255,223) to BPSK conv(7,1/2)+RS, worth a further
 1.5 dB of coding gain. If the link is already at LOW there is no operational rung below
 it: BEACON is the bootloader lifeline and is not commandable here, so skip to Step 5.
-**Action:** Step down to LOW: `TTC_SET_DATA_RATE(rate=0)` (func_id 65)
-**TC:** `TTC_SET_DATA_RATE` rate=0 (Service 8, Subtype 1, func_id 65)
+**TC:** `TTC_SET_DATA_RATE(rate=0)` (Service 8, Subtype 1, func_id 65) — Step down to LOW
+**TC:** `TTC_SET_DATA_RATE(rate=0)` (Service 8, Subtype 1, func_id 65)
 **Verify:** `ttc.tm_data_rate` (0x0506) = 16000 bps within 10 s
 **Verify:** `ttc.tm_tier` (0x0539) = 1 (LOW) and equal to `ttc.tm_tier_cmd` (0x053A)
 **Verify:** `ttc.tm_symbol_rate` (0x053B) = 16000 Bd (BPSK)
 **Verify:** `ttc.carrier_lock` (0x0510) = 1
 **Verify:** `ttc.bit_sync` (0x0511) = 1
 **Action:** If a dump was in progress, release the gate as well:
-**TC:** `TTC_SET_DOWNLINK_MODE` on=0 (Service 8, Subtype 1, func_id 79)
+**TC:** `TTC_SET_DOWNLINK_MODE(on=0)` (Service 8, Subtype 1, func_id 79)
 **Verify:** `ttc.downlink_mode` (0x053C) = 0
-**Action:** Wait 30 s for BER to stabilize, then request TTC housekeeping:
-`HK_REQUEST(sid=5)` (Service 3, Subtype 27)
+**Note:** Wait 30 s for BER to stabilize, then request TTC housekeeping:
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27)
 **Verify:** `ttc.ber` (0x050C) < -5 (BER improved at the lower rung)
 **Verify:** `ttc.eb_n0` (0x0519) > 10 dB at the lower rung
 **Action:** If BER improved:
@@ -123,9 +123,9 @@ Proceed to Step 5 (transponder switchover).
 **GO/NO-GO:** If BER acceptable at LOW, monitor and log. If not, proceed to Step 5.
 
 ### Step 5: Try Transponder Switchover
-**Action:** Switch to redundant transponder: `TTC_SWITCH_REDUNDANT` (func_id 64)
+**TC:** `TTC_SWITCH_REDUNDANT` (Service 8, Subtype 1, func_id 64) — Switch to redundant transponder
 **Verify:** Wait 15 s for redundant transponder to initialize
-**Action:** Request TTC housekeeping: `HK_REQUEST(sid=5)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) — Request TTC housekeeping
 **Verify:** `ttc.carrier_lock` (0x0510) = 1 (re-acquired on redundant unit)
 **Verify:** `ttc.bit_sync` (0x0511) = 1
 **Verify:** `ttc.frame_sync` (0x0512) = 1
@@ -133,9 +133,9 @@ Proceed to Step 5 (transponder switchover).
 **Verify:** `ttc.xpdr_temp` (0x0507) — record redundant transponder temperature
 **Action:** If BER improved on redundant transponder: The primary transponder is degraded.
 Log as hardware anomaly. Continue operations on redundant unit.
-**Action:** If BER NOT improved: Issue is likely external (interference, ground segment,
-or antenna issue). Revert to primary transponder: `TTC_SWITCH_PRIMARY` (func_id 63).
-Continue at LOW (16 kbps) and escalate for ground segment investigation.
+**Note:** If BER NOT improved: Issue is likely external (interference, ground segment,
+**TC:** `TTC_SWITCH_PRIMARY` (Service 8, Subtype 1, func_id 63) — or antenna issue). Revert to primary transponder:   .
+**Note:** Continue at LOW (16 kbps) and escalate for ground segment investigation.
 **GO/NO-GO:** Transponder assessment complete. Log findings and proceed with best
 configuration.
 

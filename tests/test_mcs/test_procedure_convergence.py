@@ -38,6 +38,13 @@ CONFIG_DIR = REPO_ROOT / "configs" / "eosat1"
 # A telemetry snapshot in the same shape the MCS caches from /api/state.
 STATE = {
     "sc_mode": 1,
+    # `aocs` is in the engine's real state summary and NOM-002's runnable
+    # steps now check it: 2026-08b PL-a added an AOCS_SET_MODE(FINE_POINT) +
+    # `wait_for aocs.mode == 5` to activity_types.yaml `imaging_pass`, without
+    # which every planner-scheduled capture was refused by the payload's own
+    # pointing gate. A stub that omits `aocs` makes the runner's vocabulary
+    # check reject a step the real spacecraft can execute.
+    "aocs": {"mode": 5, "att_error_deg": 0.01},
     "payload": {"mode": 2, "store_used": 12.5, "fpa_ready": True},
     "eps": {"soc_pct": 80.0, "bus_voltage_V": 28.0},
     "ttc": {"link_status": 1, "mode": 0},
@@ -394,7 +401,15 @@ class TestCanonicalSchemaAndAdapters:
 class TestProcedureIndexLinks:
 
     def test_shipped_runnable_links_resolve_to_real_steps(self, real_server):
-        linked = [e for e in real_server._procedure_index if e.get("runnable")]
+        # `kind: advisory` (2026-08b) declares a card that deliberately
+        # commands NOTHING — CTG-020, the ground-station antenna failure, is
+        # the only one today. It is the DECLARED exception that keeps
+        # "extracts zero command steps" distinguishable from the defect in
+        # which 21 documents hid their commanding behind `**Action:**` prose
+        # and were silently inert, so it must not be asserted to have steps.
+        linked = [e for e in real_server._procedure_index
+                  if e.get("runnable")
+                  and e["runnable"].get("kind") != "advisory"]
         assert len(linked) >= 4, "the exemplar links have gone missing"
         for entry in linked:
             resolved = real_server._indexed_procedure(entry["id"])
@@ -414,7 +429,13 @@ class TestProcedureIndexLinks:
             link = entry.get("runnable")
             if not link:
                 continue
-            assert link["kind"] in ("activity_type", "steps_file", "markdown")
+            assert link["kind"] in ("activity_type", "steps_file", "markdown",
+                                    "advisory")
+            if link["kind"] == "advisory":
+                # An advisory card names no target by construction; what it
+                # must carry is the reason it commands nothing.
+                assert link.get("reason"), entry["id"]
+                continue
             if link["kind"] == "activity_type":
                 assert link["ref"] in activity_names, entry["id"]
             elif link["kind"] == "steps_file":
@@ -493,7 +514,23 @@ class TestProcedureIndexLinks:
         resolved = real_server._indexed_procedure("NOM-008")
         assert resolved is not None
         assert resolved["source"].startswith("markdown:")
-        assert all(s["type"] == "command" for s in resolved["steps"])
+        # The adapter used to emit command steps only. The 2026-08b procedure
+        # work introduced a real branching step format, so a card can now also
+        # carry wait / tlm_check / go_nogo steps — each of which the executor
+        # understands (`ProcedureRunner._execute_step`). What must stay true is
+        # that no step carries a type the executor would silently skip.
+        # `label` and `branch` are the branching format's DECLARATIVE steps: a
+        # label is a jump target and carries no action. They are listed here
+        # because they are legal in a card, not because the executor runs
+        # them — see docs/plan_2026-08b/MCS_REQUESTS.md §9 for the open
+        # question of what `ProcedureRunner` should do with a branch.
+        executable = {"command", "wait", "tlm_check", "go_nogo"}
+        declarative = {"label", "branch"}
+        unknown = sorted({s["type"] for s in resolved["steps"]}
+                         - executable - declarative)
+        assert not unknown, f"steps of an unknown type: {unknown}"
+        assert any(s["type"] == "command" for s in resolved["steps"]), \
+            "no **TC:** annotations were extracted"
         assert resolved["steps"], "no **TC:** annotations were extracted"
 
 

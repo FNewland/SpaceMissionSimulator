@@ -440,18 +440,38 @@ class TestDefect1RadiometricCalibration:
         model.configure({"image_size_mb": 800.0, "total_storage_mb": 20000.0})
         return model
 
-    def test_calibration_generates_coefficients(self):
-        """start_calibration should generate gain/bias coefficients on completion."""
-        model = self._make_model()
-        model._state.mode = 2  # IMAGING
+    def _ready_for_dark(self, model):
+        """Put the model into the configuration a DARK run legally needs.
+
+        2026-08b PL-d: STANDBY (not IMAGING), shutter CLOSED, lamp OFF and the
+        FPA at its operating temperature. Before the fix the ONLY precondition
+        was `mode == 2` (IMAGING) and none of these four was checked, so the
+        shipped COM-011 card had to open the shutter onto the scene in order to
+        take a dark frame.
+        """
+        model._state.mode = 1          # STANDBY
+        model._state.shutter_position = 0
+        model._state.cal_lamp_on = False
+        # The FPA must really be cold and settled: readiness is recomputed
+        # every tick from the temperature, and a calibration that leaves the
+        # regulation band now ABORTS (event 0x0612, reason 4) rather than
+        # completing over frames taken at the wrong dark current.
+        model._state.cooler_active = True
+        model._state.fpa_temp = model._state.cooler_setpoint_c
         model._state.fpa_ready = True
+        model._state.fpa_ready_timer = 120.0
 
-        # Start calibration
+    def test_calibration_generates_coefficients(self):
+        """A BOTH run completes and yields gain AND bias coefficients."""
+        model = self._make_model()
+        self._ready_for_dark(model)
+
         result = model.handle_command({"command": "start_calibration"})
-        assert result["success"] is True, "Calibration should start in IMAGING mode"
+        assert result["success"] is True, result
         assert model._state.calibration_active is True
+        # STANDBY is promoted to CALIBRATION so 0x0600 tells the truth.
+        assert model._state.mode == 3
 
-        # Simulate 31 seconds of calibration (duration=30s)
         orbit_state = make_orbit_state()
         for _ in range(31):
             model.tick(1.0, orbit_state, {})
@@ -465,45 +485,31 @@ class TestDefect1RadiometricCalibration:
         assert model._state.calibration_valid_mask == 0x0F, (
             "All 4 bands should be marked valid (0x0F)"
         )
-        assert model._state.gain_coeff['blue'] is not None, (
-            "Gain coefficient for blue band should be generated"
-        )
-        assert model._state.bias_coeff['blue'] is not None, (
-            "Bias coefficient for blue band should be generated"
-        )
+        assert model._state.gain_coeff['blue'] is not None
+        assert model._state.bias_coeff['blue'] is not None
+        assert model._state.cal_abort_reason == 0
+        assert model._state.mode == 1, "CALIBRATION should fall back to STANDBY"
 
     def test_dark_flat_frame_counts_accumulate(self):
-        """dark_frame_count and flat_frame_count should both be > 0 after calibration."""
+        """dark_frame_count and flat_frame_count should both be > 0."""
         model = self._make_model()
-        model._state.mode = 2
-        model._state.fpa_ready = True
-
+        self._ready_for_dark(model)
         model.handle_command({"command": "start_calibration"})
         orbit_state = make_orbit_state()
 
-        # Tick for 2 seconds (should be in dark frame phase)
         model.tick(1.0, orbit_state, {})
         model.tick(1.0, orbit_state, {})
         assert model._state.dark_frame_count > 0, (
             "Dark frame count should be > 0 during DARK_FRAME phase"
         )
 
-        # Tick to completion (31 seconds total)
         for _ in range(29):
             model.tick(1.0, orbit_state, {})
 
-        assert model._state.calibration_active is False, (
-            "Calibration should be complete after 31s"
-        )
-        assert model._state.calibration_valid_mask == 0x0F, (
-            "All bands should be valid (0x0F) after calibration"
-        )
-        assert model._state.dark_frame_count == 10, (
-            "Dark frame count should be 10 after full dark phase"
-        )
-        assert model._state.flat_frame_count > 0, (
-            "Flat frame count should be accumulated in FLAT_FIELD phase"
-        )
+        assert model._state.calibration_active is False
+        assert model._state.calibration_valid_mask == 0x0F
+        assert model._state.dark_frame_count == 10
+        assert model._state.flat_frame_count > 0
 
 
 class TestDefect2FPAReadinessHysteresis:

@@ -24,15 +24,33 @@ class PowerBudget:
         """Margin between generation and consumption."""
         return self.power_gen_w - self.power_cons_w
 
+    #: Dead-band on the instantaneous margin, in watts. `power_cons` carries a
+    #: 1 W-sigma noise term, so anything tighter than ~3 W would make the label
+    #: flicker on measurement noise alone.
+    MARGIN_DEADBAND_W = 3.0
+
     @property
     def soc_trend(self) -> str:
-        """Trend indicator based on margin."""
-        if self.power_margin_w > 50:
+        """Is the spacecraft gaining or losing energy right now?
+
+        The thresholds used to be ``> +50 W`` for "charging" and ``< -10 W``
+        for "discharging" — numbers calibrated for a spacecraft that does not
+        exist. EO-Sat-1's ENTIRE generation is ~85 W sunlit (88.6 W peak after
+        the R1 re-sizing) and ~38 W orbit-average, so a +50 W margin is
+        reachable only in a quiescent, wings-deployed, low-beta, sunlit corner
+        case. Normal nominal operations — a real, healthy, battery-charging
+        state at +9 to +16 W — reported "stable": the one word on the panel
+        that exists to answer "am I gaining or losing energy?" was wrong for
+        most of the mission (EPS owner R-1).
+
+        The band is now proportional to this spacecraft and sits just outside
+        the measurement noise.
+        """
+        if self.power_margin_w > self.MARGIN_DEADBAND_W:
             return "charging"
-        elif self.power_margin_w < -10:
+        if self.power_margin_w < -self.MARGIN_DEADBAND_W:
             return "discharging"
-        else:
-            return "stable"
+        return "stable"
 
 
 class PowerBudgetMonitor:
@@ -118,6 +136,28 @@ class PowerBudgetMonitor:
                 k: round(v, 1) for k, v in state.per_subsystem_power.items()
             },
             "total_subsystem_power": round(sum(state.per_subsystem_power.values()), 1),
+            # EPS owner R-2. 0x013C-0x0141 live ONLY in HK SID 8, which is not
+            # in simulation.yaml's `default_enabled_sids: [1, 11]`. On a fresh
+            # session the breakdown is therefore empty, and the panel used to
+            # show nothing without saying why. State the dependency instead.
+            "breakdown_available": bool(state.per_subsystem_power),
+            "breakdown_requires": {"sid": 8, "command": "TC(3,5) HK_ENABLE sid=8"},
+            "breakdown_note": (
+                ""
+                if state.per_subsystem_power else
+                "Per-subsystem power (0x013C-0x0141) is carried only by HK "
+                "SID 8, which is not enabled by default — send TC(3,5) "
+                "HK_ENABLE sid=8 to populate this table."
+            ),
+            # The six values now sum to 0x0106 identically (the EPS owner
+            # closed the gaps: 0x013C was hard-wired 0.0, and the propulsion
+            # line, an injected bus short and the measurement noise belonged to
+            # no bucket). Publish the reconciliation, because it is the check
+            # that would have caught the old defect.
+            "breakdown_residual_w": (
+                round(state.power_cons_w - sum(state.per_subsystem_power.values()), 1)
+                if state.per_subsystem_power else None
+            ),
         }
 
     @staticmethod

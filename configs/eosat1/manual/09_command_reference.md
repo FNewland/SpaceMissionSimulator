@@ -2,7 +2,7 @@
 
 **Document ID:** EOSAT1-UM-REF-010  
 **Issue:** 2.0  
-**Date:** 2026-08-01  
+**Date:** 2026-08-12  
 **Classification:** UNCLASSIFIED — For Simulation Use Only
 
 > **GENERATED FILE — DO NOT EDIT BY HAND.**  
@@ -184,6 +184,9 @@
 | `PAYLOAD_CYCLE_SHUTTER` | S8.1 | 93 (0x5D) | 2 | cycles | nominal |
 | `PAYLOAD_INITIATE_TRANSFER` | S8.1 | 94 (0x5E) | 3 | scene_id | nominal |
 | `PAYLOAD_CAL_LAMP` | S8.1 | 95 (0x5F) | 2 | on | nominal |
+| `AOCS_SET_DESAT_INHIBIT` | S8.1 | 96 (0x60) | 2 | inhibit | nominal |
+| `TTC_BEACON_TX_ON` | S8.1 | 97 (0x61) | 1 | — | normal |
+| `TTC_BEACON_TX_OFF` | S8.1 | 98 (0x62) | 1 | — | caution |
 | `EPS_SA_A_ON_LEGACY` | S8.1 | 100 (0x64) | 1 | — | nominal |
 | `EPS_SA_A_OFF_LEGACY` | S8.1 | 101 (0x65) | 1 | — | nominal |
 | `EPS_SA_B_ON_LEGACY` | S8.1 | 102 (0x66) | 1 | — | nominal |
@@ -203,6 +206,7 @@
 | `PROP_INHIBIT_SET` | S8.1 | 116 (0x74) | 2 | on | nominal |
 | `PROP_INHIBIT_CLR` | S8.1 | 117 (0x75) | 3 | key | nominal |
 | `PROP_GET_STATUS` | S8.1 | 118 (0x76) | 1 | — | nominal |
+| `PAYLOAD_SET_SHUTTER` | S8.1 | 119 (0x77) | 2 | position | caution |
 | `SET_TIME` | S9.1 | — | 4 | cuc_seconds | nominal |
 | `REQUEST_TIME` | S9.2 | — | 0 | — | nominal |
 | `SCHEDULE_TC` | S11.4 | — | var | exec_time_cuc, tc_data | nominal |
@@ -614,7 +618,7 @@ Configure autonomous momentum management (auto-DESAT thresholds)
 
 - `enable` — 0=disable, 1=enable
 - `entry_pct` — DESAT entry at this % of the momentum envelope (default 70)
-- `exit_pct` — DESAT exit below this % (default 20)
+- `exit_pct` — DESAT completes when the momentum envelope falls back below this % (default 20)
 
 Example: `5A 01 46 14`  (enable=1, entry_pct=70, exit_pct=20)
 
@@ -811,11 +815,11 @@ Example: `53 00`  (mode=0)
 
 **S8.1** · func_id **26** (0x1A) · 2 data byte(s) · readback payload.mode (0x0600)
 
-Set payload mode
+Set payload mode. Modes 1 (STANDBY), 2 (IMAGING) and 3 (CALIBRATION) all request the FPA cooler; mode 0 releases it. The request now drives BOTH the TCS cooler flag and the EPS `fpa_cooler` power line (2026-08b PL-a) — previously this path set a flag against a dark line and the detector never cooled, so FPA READY (0x0610) stayed NO forever with no error.
 
 | Argument | Type | Offset | Unit | Raw ↔ engineering | Range | Default |
 |---|---|---|---|---|---|---|
-| `mode` | uint8 | 1 | — | enumerated | — | 0 |
+| `mode` | uint8 | 1 | — | enumerated | 0 … 3 | 0 |
 
 *`mode` values:*
 
@@ -824,8 +828,9 @@ Set payload mode
 | 0 | `OFF` | Imager off, cooler released |
 | 1 | `STANDBY` | FPA cooler on, detector idle |
 | 2 | `IMAGING` | Detector integrating; capture enabled |
+| 3 | `CALIBRATION` | Radiometric calibration; capture disabled, shutter and lamp gated by the cal sequencer |
 
-- `mode` — 0=off, 1=standby, 2=imaging
+- `mode` — 0=off, 1=standby, 2=imaging, 3=calibration
 
 Example: `1A 00`  (mode=0)
 
@@ -862,7 +867,7 @@ Example: `1C 00 00 08 00`  (scene_id=0, lines=2048)
 
 **S8.1** · func_id **29** (0x1D) · 3 data byte(s)
 
-Queue image for downlink
+Report one stored image product. 2026-08b PL-c: the handler called the model and threw the result away, so no image metadata ever reached the ground on this func. It now answers with a TM(8,2) 20-octet product summary (same layout as PAYLOAD_GET_IMAGE_CATALOG's entries), or an S1.8 refusal if the scene is not in the catalogue.
 
 | Argument | Type | Offset | Unit | Raw ↔ engineering | Range | Default |
 |---|---|---|---|---|---|---|
@@ -904,7 +909,7 @@ Example: `1F 00`  (segment_id=0)
 
 **S8.1** · func_id **32** (0x20) · 1 data byte(s)
 
-Request stored image catalog
+Request the stored image catalogue. 2026-08b PL-c: this now RETURNS something. The handler called the model and discarded the result, so the one command whose entire purpose is to tell the ground what is on board produced no telemetry at all. TM(8,2) reply, built like PROP_GET_STATUS (func 118): shown(2) + held(2) + product_mb x100 (4) + free_mb x100 (4), followed by `shown` 20-octet product summaries of scene_id(2) lat(4, 1e-4 deg) lon(4, 1e-4 deg) size_kb(4) lines(2) quality(1, %) status(1, 0=OK/1=PARTIAL/2=CORRUPT) flags(1) segment(1). flags bit 0 = the strip was flown on a 3-wheel (degraded) FINE set, bit 1 = a product checksum has been computed. At most 32 summaries per report; `held` is the true count.
 
 *No arguments.*
 
@@ -989,7 +994,7 @@ Example: `24 64 D7`  (setpoint=-15.0)
 
 **S8.1** · func_id **37** (0x25) · 2 data byte(s) · readback payload.cal_active (0x062A)
 
-Begin calibration sequence (dark frame / flat field / both)
+Begin a radiometric calibration sequence (dark frame / flat field / both). PRECONDITIONS (2026-08b PL-d — the gate is on the OPTICS, not on a mode word; the old rule was "must be in IMAGING mode", which required the shutter to be open onto the scene before a dark frame could be asked for). Refused with S1.8 unless:    * payload mode is 1 STANDBY or 3 CALIBRATION — never 0 OFF and never     2 IMAGING (error 0x0021);   * the FPA is thermally ready, 0x0610 == 1 (0x0022) — dark current     roughly doubles every 6-8 K, so coefficients taken off setpoint     describe a different detector;   * DARK and BOTH: shutter CLOSED, 0x063C == 0 (0x0023) and the     calibration lamp OFF, 0x0615 == 0 (0x0024);   * FLAT: shutter OPEN and lamp ON;   * the devices involved are powered — FPA 0x0600, shutter 0x0603, and     the lamp 0x0602 for FLAT/BOTH (0x0007).  A BOTH run starts in the dark configuration and the on-board sequencer opens the shutter and lights the lamp itself at the DARK -> FLAT transition; no ground step can land between two phases 15 s apart. Changing the optics under a running sequence ABORTS it (event 0x0612, reason at 0x0645) rather than completing over invalid frames. Completion sets the per-band coefficients; 0x0646 cal_valid_mask marks the bands that now have BOTH a bias and a gain, so a DARK run completes an earlier FLAT run and vice versa.
 
 | Argument | Type | Offset | Unit | Raw ↔ engineering | Range | Default |
 |---|---|---|---|---|---|---|
@@ -999,9 +1004,9 @@ Begin calibration sequence (dark frame / flat field / both)
 
 | Value | Label | Meaning |
 |---|---|---|
-| 0 | `DARK` | Dark frames only (shutter closed) |
-| 1 | `FLAT` | Flat field only (cal lamp) |
-| 2 | `BOTH` | Dark then flat (legacy sequence) |
+| 0 | `DARK` | Dark frames only — shutter CLOSED, lamp OFF (produces the bias half) |
+| 1 | `FLAT` | Flat field only — shutter OPEN, lamp ON (produces the gain half) |
+| 2 | `BOTH` | Dark then flat; the sequencer drives the optics across the phase boundary |
 
 - `mode` — 0=dark only, 1=flat only, 2=both (COM-011 step 2 uses DARK)
 
@@ -1069,13 +1074,13 @@ Example: `5C 00`  (position=0)
 
 **S8.1** · func_id **93** (0x5D) · 2 data byte(s) · position `payload` · readback payload.shutter_pos (0x063C)
 
-Run a shutter mechanism cycle test (COM-011 dark-frame prep)
+Run a shutter mechanism EXERCISE. This is a mechanism health test, not a way to reach a position — use PAYLOAD_SET_SHUTTER (func 119) for that. 2026-08b PL-d: `cycles` counts TRANSITIONS of the blade, one per model tick, and the mechanism is driven entirely by the model. Previously the command handler toggled once AND the tick toggled once per remaining count, so cycles=1 moved the blade twice, the shutter always ended where it started, and the shutter could never be commanded closed at all.
 
 | Argument | Type | Offset | Unit | Raw ↔ engineering | Range | Default |
 |---|---|---|---|---|---|---|
-| `cycles` | uint8 | 1 | cycles | raw = eng | 1 … 100 | 1 |
+| `cycles` | uint8 | 1 | transitions | raw = eng | 1 … 100 | 1 |
 
-- `cycles` — Number of open/close cycles (1-100)
+- `cycles` — Number of blade transitions (1-100). An ODD count ends on the opposite position from the start; an EVEN count returns to it.
 
 Example: `5D 01`  (cycles=1)
 
@@ -1083,7 +1088,7 @@ Example: `5D 01`  (cycles=1)
 
 **S8.1** · func_id **94** (0x5E) · 3 data byte(s) · position `payload` · readback payload.transfer_active (0x062D)
 
-Start the on-board image transfer engine for a stored scene — the bridge to the S13_CREATE_TRANSFER ground workflow (textbook section 6.7).
+Start the on-board image transfer engine for a stored scene — the bridge to the S13_CREATE_TRANSFER ground workflow (textbook section 6.7). 2026-08b PL-c: raises event 0x0610 TRANSFER_START (promised by a source comment and previously emitted by nothing) and answers with a TM(8,2) report of scene_id(2) + bytes_total(4) + blocks(4) + crc32(4) — the three numbers the ground needs to plan and verify a dump, all of which used to be computed on board and then dropped. The transfer drains at the ACTIVE TM information rate (0x0506) and only while the downlink is up (0x0501), not at the old hard-coded 10 Mbps: it stalls at loss of signal and resumes on the next pass.
 
 | Argument | Type | Offset | Unit | Raw ↔ engineering | Range | Default |
 |---|---|---|---|---|---|---|
@@ -1673,7 +1678,71 @@ Enter or leave DOWNLINK / payload-dump mode. This is the gate on the HIGH tier o
 
 Example: `4F 00`  (on=0)
 
-### 3.7 EPS (legacy quick actions)
+### 3.7 Other
+
+#### AOCS_SET_DESAT_INHIBIT
+
+**S8.1** · func_id **96** (0x60) · 2 data byte(s) · position `aocs`
+
+Inhibit/allow momentum desaturation. A dump drops fine pointing, so it must not pre-empt an imaging strip; the inhibit is also asserted AUTOMATICALLY while payload.mode is IMAGING
+
+| Argument | Type | Offset | Unit | Raw ↔ engineering | Range | Default |
+|---|---|---|---|---|---|---|
+| `inhibit` | uint8 | 1 | — | enumerated | — | 1 |
+
+*`inhibit` values:*
+
+| Value | Label | Meaning |
+|---|---|---|
+| 0 | `ALLOW` |  |
+| 1 | `INHIBIT` |  |
+
+- `inhibit` — 0=allow desaturation, 1=inhibit
+
+Example: `60 01`  (inhibit=1)
+
+#### TTC_BEACON_TX_ON
+
+**S8.1** · func_id **97** (0x61) · 1 data byte(s) · NORMAL · readback ttc.beacon_tx_on (0x0526)
+
+Switch the UHF bootloader beacon TRANSMITTER on. This is the second radio, not a mode of the S-band transponder: separate band (437.5 MHz, in the 435-438 MHz amateur-satellite segment), separate PA (1 W RF), separate deployable dipole and separate link budget. It carries HK SID 11 only, and it keeps carrying it when the S-band prime chain is dead - PA off, ttc_tx line pulled, transponder failed or patch stowed. That independence is the entire reason a spacecraft carries one.
+
+*No arguments.*
+
+Example: `61`
+
+#### TTC_BEACON_TX_OFF
+
+**S8.1** · func_id **98** (0x62) · 1 data byte(s) · CAUTION · readback ttc.beacon_tx_on (0x0526)
+
+Switch the UHF bootloader beacon transmitter off. CAUTION: this removes the mission's last independent downlink. With the beacon off, an S-band failure leaves the spacecraft unable to tell the ground that the OBC is alive, and recovery depends entirely on the uplink still working. Use only for RFI de-confliction or a deliberate radio-silence exercise.
+
+*No arguments.*
+
+Example: `62`
+
+#### PAYLOAD_SET_SHUTTER
+
+**S8.1** · func_id **119** (0x77) · 2 data byte(s) · CAUTION · position `payload` · readback payload.shutter_pos (0x063C)
+
+Drive the shutter to an ABSOLUTE position. 2026-08b PL-d: there was no absolute shutter command anywhere in this catalogue — PAYLOAD_CYCLE_SHUTTER was the only shutter TC, and a relative toggle cannot reach a KNOWN state. That is what COM-011 step 2 ("cycle to CLOSED, verify 0x063C == 0 within 10 s") needs, what a dark frame needs, and what PAYLOAD_CAPTURE now checks before acquiring. Idempotent: commanding CLOSED twice leaves it CLOSED. Refused (0x0007) when the shutter mechanism device 0x0603 is unpowered, and (0x0005) while a PAYLOAD_CYCLE_SHUTTER exercise is running.
+
+| Argument | Type | Offset | Unit | Raw ↔ engineering | Range | Default |
+|---|---|---|---|---|---|---|
+| `position` | uint8 | 1 | — | enumerated | — | 1 |
+
+*`position` values:*
+
+| Value | Label | Meaning |
+|---|---|---|
+| 0 | `CLOSED` | Blade across the aperture — the dark-frame configuration |
+| 1 | `OPEN` | Light path open — required for capture and for flat fields |
+
+- `position` — 0=closed, 1=open
+
+Example: `77 01`  (position=1)
+
+### 3.8 EPS (legacy quick actions)
 
 #### EPS_SA_A_ON_LEGACY
 
@@ -1755,7 +1824,7 @@ OBC heater OFF (legacy quick-action)
 
 Example: `6B`
 
-### 3.8 Propulsion
+### 3.9 Propulsion
 
 #### PROP_ARM
 
@@ -3172,15 +3241,15 @@ Example: ``
 
 **S13.1** · 4 data byte(s)
 
-Create download transfer session for image
+Create a download transfer session for a STORED image product. 2026-08b PL-c: the session is now bound to a real catalogue entry. A scene that is not in the payload's image catalogue is REFUSED (S1.8 error 0x0003 plus a TM(13,4) NAK) — previously a transfer for scene 9999 against an EMPTY catalogue returned transfer_id 1, 4 MB and ACTIVE, so the ground could open, run and complete the download of an image that had never been taken. Use PAYLOAD_GET_IMAGE_CATALOG (S8 func 32) to see what is actually on board. The session is sized from the product's own COMPRESSED size, so `size_mb` is now advisory: it is ignored whenever the scene is catalogued. TM(13,2) response: transfer_id(2) + total_blocks(4) + crc32(4). The last two fields are appended, so a decoder that reads only the transfer id is unaffected; `crc32` is the checksum the instrument computed over the product at capture, and the ground should recompute it over the received blocks — a CORRUPT product (catalogue status 2) will not match, which is how a corrupted image is now diagnosable.
 
 | Argument | Type | Offset | Unit | Raw ↔ engineering | Range | Default |
 |---|---|---|---|---|---|---|
 | `scene_id` | uint16 | 0 | — | raw = eng | — | — |
 | `size_mb` | uint16 | 2 | — | raw = eng | — | — |
 
-- `scene_id` — Scene ID to download
-- `size_mb` — Image size in MB (0=configured payload image size, 4 MB)
+- `scene_id` — Scene ID to download (must be in the payload image catalogue)
+- `size_mb` — Advisory only; ignored for a catalogued scene. 0 = configured payload image size (4 MB)
 
 Example: `00 00 00 00`  (scene_id=0, size_mb=0)
 
@@ -3188,7 +3257,7 @@ Example: `00 00 00 00`  (scene_id=0, size_mb=0)
 
 **S13.3** · 4 data byte(s)
 
-Request segment of image data (1024 bytes per block)
+Request one 1024-byte segment of image data. The bytes are DERIVED from the product (a keyed stream over the catalogue entry's data_seed), so the same segment requested twice is identical and the whole product checksums to the crc32 that S13_CREATE_TRANSFER reported. They used to be a `(segment_num + i) % 256` ramp identical for every scene.
 
 | Argument | Type | Offset | Unit | Raw ↔ engineering | Range | Default |
 |---|---|---|---|---|---|---|
@@ -3204,7 +3273,7 @@ Example: `00 00 00 00`  (transfer_id=0, segment_num=0)
 
 **S13.5** · 2 data byte(s)
 
-Complete transfer session and free resources
+Complete transfer session and free resources. 2026-08b PL-c: it now really does free them — a session whose blocks were ALL sent deletes the product and returns its storage (event 0x0614, 0x0647/0x0648 fall). Previously nothing was freed, so a spacecraft could downlink its entire store and still report it full. A partial or aborted session leaves the product on board, which is the "the pass dropped, re-dump next orbit" case this service exists for.
 
 | Argument | Type | Offset | Unit | Raw ↔ engineering | Range | Default |
 |---|---|---|---|---|---|---|
@@ -3532,6 +3601,8 @@ The console's QUICK COMMANDS panel is generated from the same catalogue: each bu
 | TTC | TX Pwr LOW (1W) | `TTC_SET_TX_POWER` | level=0 | `44 00` |
 | TTC | TX Pwr NOM (2W) | `TTC_SET_TX_POWER` | level=1 | `44 01` |
 | TTC | TX Pwr HIGH (5W) | `TTC_SET_TX_POWER` | level=2 | `44 02` |
+| TTC | Beacon TX ON | `TTC_BEACON_TX_ON` | — | `61` |
+| TTC | Beacon TX OFF | `TTC_BEACON_TX_OFF` | — | `62` |
 | PAYLOAD | Standby | `PAYLOAD_SET_MODE` | mode=1 | `1A 01` |
 | PAYLOAD | Imaging | `PAYLOAD_SET_MODE` | mode=2 | `1A 02` |
 | PAYLOAD | Off | `PAYLOAD_SET_MODE` | mode=0 | `1A 00` |
@@ -3548,8 +3619,24 @@ The console's QUICK COMMANDS panel is generated from the same catalogue: each bu
 | PAYLOAD | Cal Lamp On | `PAYLOAD_CAL_LAMP` | on=1 | `5F 01` |
 | PAYLOAD | Cal Lamp Off | `PAYLOAD_CAL_LAMP` | on=0 | `5F 00` |
 | PAYLOAD | Shutter x5 | `PAYLOAD_CYCLE_SHUTTER` | cycles=5 | `5D 05` |
+| PAYLOAD | Shutter CLOSED | `PAYLOAD_SET_SHUTTER` | position=0 | `77 00` |
+| PAYLOAD | Shutter OPEN | `PAYLOAD_SET_SHUTTER` | position=1 | `77 01` |
+| PAYLOAD | Calibration mode | `PAYLOAD_SET_MODE` | mode=3 | `1A 03` |
+| PAYLOAD | Cal FLAT | `PAYLOAD_START_CALIBRATION` | mode=1 | `25 01` |
 | PAYLOAD | Filter CLEAR | `PAYLOAD_SELECT_FILTER` | position=0 | `5C 00` |
 | PAYLOAD | Catalog Req | `PAYLOAD_GET_IMAGE_CATALOG` | — | `20` |
+| PROPULSION | Catbed Preheat ON | `HEATER_THRUSTER` | on=1 | `2A 01` |
+| PROPULSION | Catbed Preheat OFF | `HEATER_THRUSTER` | on=0 | `2A 00` |
+| PROPULSION | Iso Valves OPEN | `PROP_ISO_OPEN` | branch=2 | `71 02` |
+| PROPULSION | Iso Valves CLOSE | `PROP_ISO_CLOSE` | branch=2 | `72 02` |
+| PROPULSION | Load Burn 0.85 m/s pro | `PROP_SET_BURN` | dv_m_s=0.85, direction=0, mode=1, t_start_cuc=0 | `6E 3F 59 99 9A 00 01 00 00 00 00` |
+| PROPULSION | ARM (step 2 of 2) | `PROP_ARM` | arm_code=42435 | `6C A5 C3` |
+| PROPULSION | DISARM | `PROP_DISARM` | — | `6D` |
+| PROPULSION | EXECUTE BURN | `PROP_EXECUTE` | — | `6F` |
+| PROPULSION | ABORT BURN | `PROP_ABORT` | — | `70` |
+| PROPULSION | Inhibit SET | `PROP_INHIBIT_SET` | on=1 | `74 01` |
+| PROPULSION | Inhibit CLEAR | `PROP_INHIBIT_CLR` | key=42435 | `75 A5 C3` |
+| PROPULSION | Status Report | `PROP_GET_STATUS` | — | `76` |
 | OBDH | OBC Reboot | `OBC_REBOOT` | — | `34` |
 | OBDH | OBC Switch | `OBC_SWITCH_UNIT` | — | `35` |
 | OBDH | Boot App | `OBC_BOOT_APP` | — | `37` |
@@ -3564,7 +3651,9 @@ The console's QUICK COMMANDS panel is generated from the same catalogue: each bu
 | HK REQUESTS (S3.27) | OBDH (SID4) | `HK_REQUEST` | sid=4 | `00 04` |
 | HK REQUESTS (S3.27) | Payload (SID5) | `HK_REQUEST` | sid=5 | `00 05` |
 | HK REQUESTS (S3.27) | TTC (SID6) | `HK_REQUEST` | sid=6 | `00 06` |
+| HK REQUESTS (S3.27) | PROP (SID9) | `HK_REQUEST` | sid=9 | `00 09` |
+| HK REQUESTS (S3.27) | EPS PWR (SID8) | `HK_REQUEST` | sid=8 | `00 08` |
 
 ---
 
-*Generated from `commands/tc_catalog.yaml` — 216 commands, 268 arguments.*
+*Generated from `commands/tc_catalog.yaml` — 220 commands, 270 arguments.*

@@ -357,6 +357,35 @@ _DEFAULT_TM_RATE_TIERS: list[dict[str, Any]] = [
 ]
 
 
+class BeaconConfig(StrictModel):
+    """The UHF bootloader beacon TRANSMITTER — a second radio (ruling R2).
+
+    Distinct from `TTCConfig.beacon_tier`, which names a rung of the S-band
+    TM rate ladder. Conflating the two is what left the mission with no
+    beacon transmitter at all: BEACON was rung 0 of the S-band ladder, so
+    switching the S-band PA off silenced the lifeline as well as the prime
+    chain. Every default below is the shipped EO-Sat-1 value and is sourced
+    to flight hardware in `configs/eosat1/subsystems/ttc.yaml`.
+    """
+
+    enabled: bool = True
+    dl_freq_mhz: float = 437.5              # 435-438 MHz amateur-satellite
+    band_mhz: tuple[float, float] = (435.0, 438.0)
+    rf_power_w: float = 1.0                 # 30 dBm — EnduroSat UHF Type II
+    sc_gain_dbi: float = 0.0                # deployable tape-spring dipole
+    gs_g_t_db: float = -8.0                 # ~16 dBic Yagi over T_sys ~300 K
+    bps: int = 1000
+    coding_gain_db: float = 7.5             # conv(7,1/2) + RS(255,223)
+    required_eb_n0_db: float = 9.6
+    atmospheric_loss_db: float = 0.2        # UHF, well below the water line
+    polarization_loss_db: float = 3.0       # linear dipole vs circular ground
+    implementation_loss_db: float = 2.0
+    dc_power_w: float = 1.8                 # while keying
+    standby_dc_power_w: float = 0.2
+    eps_line: str = "ttc_rx"                # non-switchable receiver line
+    hk_sid: int = 11                        # the ONE structure it carries
+
+
 class TTCConfig(StrictModel):
     model: str = "ttc_basic"
     ul_freq_mhz: float = 2025.5
@@ -381,9 +410,24 @@ class TTCConfig(StrictModel):
     tc_uplink_rate_bps: int = 4000
 
     eirp_dbw: float = 10.0
+    # RF watts at which `eirp_dbw` is quoted. The TT&C model derives the live
+    # EIRP as eirp_dbw + 10*log10(P_commanded / pa_ref_power_w), so
+    # TTC_SET_TX_POWER moves the link budget instead of only moving telemetry
+    # 0x050D (2026-08b finding T-b). Defaults to the NOMINAL operating point.
+    pa_ref_power_w: float = 2.0
     gs_g_t_db: float = 20.0
     sc_gain_dbi: float = 3.0
     coding_gain_db: float = 6.0
+
+    # ── S-band SSPA operating points, RF watts (TTC_SET_TX_POWER levels) ──
+    # Configuration rather than code constants, because the EIRP above is
+    # derived from them: a hardware number that drives a link budget belongs
+    # in the hardware sheet, not in a model default.
+    pa_low_power_w: float = 1.0        # level 0 = LOW
+    pa_nominal_power_w: float = 2.0    # level 1 = NOMINAL
+    pa_max_power_w: float = 5.0        # level 2 = HIGH
+    pa_shutdown_temp_c: float = 70.0
+    pa_thermal_tau_s: float = 60.0
 
     # ── Link-budget losses (mirror rfsim.yaml link_budget) ──
     atmospheric_loss_db: float = 0.5
@@ -392,6 +436,13 @@ class TTCConfig(StrictModel):
     gt_derate_below_10deg_db: float = 1.5
     gt_derate_below_30deg_db: float = 0.5
     required_eb_n0_db: float = 9.6
+
+    # ── UHF bootloader beacon transmitter (Franz's ruling R2, 2026-08b) ──
+    # A second, physically separate radio: its own band, PA, antenna, budget
+    # and power draw. Carries HK SID 11 only and survives the S-band PA being
+    # switched off. See configs/eosat1/subsystems/ttc.yaml for the flight
+    # hardware each number comes from.
+    beacon: "BeaconConfig" = Field(default_factory=lambda: BeaconConfig())
 
     param_ids: dict[str, int] = Field(default_factory=dict)
 

@@ -543,7 +543,20 @@ button, select, input { font-family: inherit; font-size: inherit; }
 .log-sev.warn  { color: var(--status-warning); }
 .log-sev.alarm { color: var(--status-alarm); }
 .log-sev.nom   { color: var(--status-nominal); }
-.log-msg { color: var(--text-secondary); flex: 1; }
+/* `min-width: 0` + `overflow-wrap` so a long event description WRAPS rather
+   than being clipped by the flex row. The AOCS mode-change events now carry
+   the reason and the return path — "AOCS mode change from NOMINAL to DETUMBLE
+   (EMERGENCY body rate 2.31 deg/s > 2.00; return path DETUMBLE -> COARSE_SUN
+   -> NOMINAL)" — and the return path is the operationally important half. */
+.log-msg { color: var(--text-secondary); flex: 1; min-width: 0; overflow-wrap: anywhere; }
+/* An instructor's intervention must never be mistakable for spacecraft
+   behaviour (EPS owner R-7): `set_battery_soc` and friends prefix their event
+   description with "INSTRUCTOR OVERRIDE". */
+.instructor-badge {
+  display: inline-block; font-size: 8px; font-weight: 700; letter-spacing: 1px;
+  padding: 1px 5px; margin-right: 5px; border-radius: 2px;
+  background: rgba(167,139,250,.22); color: #C4B5FD; border: 1px solid rgba(167,139,250,.5);
+}
 .verif-badge { display: inline-block; font-size: 8px; font-weight: 700; padding: 1px 5px; border-radius: 2px; margin-right: 4px; }
 .verif-badge.s1-1 { background: rgba(0,200,150,.2);  color: var(--status-nominal); }
 .verif-badge.s1-2 { background: rgba(255,107,107,.2); color: var(--status-alarm); }
@@ -599,6 +612,22 @@ button, select, input { font-family: inherit; font-size: inherit; }
 .btn-danger { background: rgba(255,107,107,.14); color: var(--status-alarm); border-color: rgba(255,107,107,.5); }
 .btn-danger:hover { background: rgba(255,107,107,.26); }
 .btn-ghost:hover { background: var(--surface-tertiary); }
+/* Named-bit indicator grid. Used for the propulsion arm-interlock mask
+   (0x0B15) and the AOCS FINE-ready mask (0x02C5): both are bitmasks whose
+   individual bits are the only statement of WHY a command was refused, and
+   both were rendered as hexadecimal. */
+.prop-bitgrid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 3px 10px; }
+.bit-ind {
+  display: flex; align-items: center; gap: 6px; font-size: 10px;
+  color: var(--text-secondary); padding: 1px 0;
+}
+.bit-ind .bit-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px;
+  background: rgba(0,200,150,.30); border: 1px solid var(--status-nominal);
+}
+.bit-ind.set { color: var(--status-alarm); }
+.bit-ind.set .bit-dot { background: rgba(255,107,107,.35); border-color: var(--status-alarm); }
+.bit-ind .bit-n { color: var(--text-tertiary); font-size: 9px; min-width: 20px; }
 .quick-cmds { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
 .quick-cmd {
   font-size: 9px; padding: 3px 9px; border-radius: var(--r); cursor: pointer; font-weight: 600;
@@ -726,6 +755,14 @@ a.kbd-help-btn { text-decoration: none; display: inline-block; line-height: 14px
   background:repeating-linear-gradient(45deg, rgba(20,20,34,.86) 0 10px, rgba(28,28,46,.86) 10px 20px);
   color:var(--status-alarm); font-size:11px; font-weight:700; letter-spacing:1px;
   border:1px solid var(--status-alarm); border-radius:var(--r); padding:6px; pointer-events:none;
+}
+/* Fourth state (2026-08b): the HK structure behind this plot is not enabled.
+   Distinct from STALE because the remedy is a telecommand, not a link check. */
+.chart-stale-overlay.disabled {
+  position:absolute; inset:0; align-items:center; justify-content:center; text-align:center;
+  background:repeating-linear-gradient(45deg, rgba(20,20,34,.86) 0 10px, rgba(30,26,16,.86) 10px 20px);
+  color:var(--status-warning); font-size:11px; font-weight:700; letter-spacing:1px;
+  border:1px solid var(--status-warning); border-radius:var(--r); padding:6px; pointer-events:none;
 }
 .chart-stale-overlay.degraded {
   position:absolute; top:6px; right:8px; align-items:center;
@@ -963,6 +1000,7 @@ a.kbd-help-btn { text-decoration: none; display: inline-block; line-height: 14px
   <button class="tab-btn" role="tab" aria-selected="false" aria-controls="pane-aocs" id="tab-aocs" data-tab="aocs" data-subsystem="aocs"><span class="tab-dot"></span>AOCS</button>
   <button class="tab-btn" role="tab" aria-selected="false" aria-controls="pane-ttc" id="tab-ttc" data-tab="ttc" data-subsystem="ttc"><span class="tab-dot"></span>TTC</button>
   <button class="tab-btn" role="tab" aria-selected="false" aria-controls="pane-payload" id="tab-payload" data-tab="payload" data-subsystem="payload"><span class="tab-dot"></span>PAYLOAD</button>
+  <button class="tab-btn" role="tab" aria-selected="false" aria-controls="pane-prop" id="tab-prop" data-tab="prop" data-subsystem="prop"><span class="tab-dot"></span>PROP</button>
   <button class="tab-btn" role="tab" aria-selected="false" aria-controls="pane-obdh" id="tab-obdh" data-tab="obdh" data-subsystem="obdh"><span class="tab-dot"></span>OBDH</button>
   <button class="tab-btn" role="tab" aria-selected="false" aria-controls="pane-commanding" id="tab-commanding" data-tab="commanding"><span class="tab-dot"></span>COMMANDING</button>
   <button class="tab-btn" role="tab" aria-selected="false" aria-controls="pane-pus" id="tab-pus" data-tab="pus"><span class="tab-dot"></span>PUS SERVICES</button>
@@ -1316,6 +1354,53 @@ a.kbd-help-btn { text-decoration: none; display: inline-block; line-height: 14px
       </svg>
     </div>
   </div>
+
+  <!-- ── SOLAR WINGS + ENERGY BALANCE (EPS owner R-3 / R-6) ──
+       R-3 is the single biggest contributor to Franz's "generation drops off
+       way too fast": wing_status (0x0144) used to live only in HK SID 8, which
+       is off by default, so an operator could run a whole session with the
+       wings stowed at 18.6 W generation and NOTHING on any display said why.
+       It is in SID 1 now, i.e. arriving at 1 Hz on every session. A stowed
+       wing is not a failure and raises no alarm — which is exactly why it has
+       to be on the face of the display.
+
+       R-6: a single instantaneous margin cannot answer "am I closing the
+       energy budget?", because the margin is positive in sunlight and negative
+       in eclipse BY DESIGN. The rolling Wh/orbit integral can. -->
+  <div class="panel" role="region" aria-label="Solar wings and energy balance">
+    <h2 class="panel-hdr">SOLAR WINGS &amp; ENERGY BALANCE</h2>
+    <div class="panel-body">
+      <div id="eps-wing-banner" style="font-size:12px;font-weight:700;letter-spacing:1px;
+           padding:4px 0;">WING STATUS --</div>
+      <div class="grid-1x2">
+        <div>
+          <div class="data-row"><span class="lbl">Wing status (0x0144)</span><span class="val" id="eps-wing-status">--</span></div>
+          <div class="data-row"><span class="lbl">Deploy timer (0x0145)</span><span class="val" id="eps-wing-timer">--</span></div>
+          <div class="data-row"><span class="lbl">+Y wing current (0x0146)</span><span class="val" id="eps-wing-a">-- A</span></div>
+          <div class="data-row"><span class="lbl">-Y wing current (0x0147)</span><span class="val" id="eps-wing-b">-- A</span></div>
+          <div class="data-row"><span class="lbl">SADA (0x0133)</span><span class="val" id="eps-sada">--</span></div>
+          <div class="data-row"><span class="lbl">Array age factor (0x0123)</span><span class="val" id="eps-array-age">--</span></div>
+        </div>
+        <div>
+          <div class="data-row"><span class="lbl">Energy balance</span><span class="val" id="eps-wh-orbit">-- Wh/orbit</span></div>
+          <div class="data-row"><span class="lbl">Integration window</span><span class="val" id="eps-wh-window">--</span></div>
+          <div class="data-row"><span class="lbl">Margin now</span><span class="val" id="eps-margin-now">-- W</span></div>
+          <div class="data-row"><span class="lbl">Min SoC seen</span><span class="val" id="eps-soc-min">-- %</span></div>
+          <div class="data-row"><span class="lbl">Eclipse (0x0108)</span><span class="val" id="eps-eclipse">--</span></div>
+        </div>
+      </div>
+      <!-- R-5: three states that look identical on a single power_gen number —
+           eclipse, wings stowed, and the solar-array drive switched off — are
+           only distinguishable from the per-face currents. -->
+      <div style="margin-top:8px;font-size:9px;color:var(--text-tertiary);letter-spacing:1px;">PER-FACE GENERATION (0x012B-0x0130)</div>
+      <table class="data-table" style="margin-top:3px;" aria-label="Per-face solar generation">
+        <thead><tr><th>Face</th><th>Current (A)</th><th>Face</th><th>Current (A)</th></tr></thead>
+        <tbody id="eps-faces-tbody"></tbody>
+      </table>
+      <div id="eps-gen-diagnosis" style="margin-top:5px;font-size:10px;"></div>
+    </div>
+  </div>
+
   <div class="grid-1x2">
     <div class="panel" role="region" aria-label="Battery status">
       <h2 class="panel-hdr">BATTERY</h2>
@@ -1347,7 +1432,7 @@ a.kbd-help-btn { text-decoration: none; display: inline-block; line-height: 14px
     <h2 class="panel-hdr">POWER LINES</h2>
     <div class="panel-body">
       <table class="data-table" aria-label="Power lines status">
-        <thead><tr><th>Line</th><th>Status</th><th>Current (A)</th><th>OC Trip</th></tr></thead>
+        <thead><tr><th>Line</th><th>Status</th><th>Current (A)</th><th>Power (W)</th><th>OC Trip</th></tr></thead>
         <tbody id="eps-lines-tbody"></tbody>
       </table>
     </div>
@@ -1624,9 +1709,28 @@ a.kbd-help-btn { text-decoration: none; display: inline-block; line-height: 14px
   <div class="panel" role="region" aria-label="AOCS mode">
     <h2 class="panel-hdr">MODE STATE MACHINE</h2>
     <div class="panel-body">
+      <!-- D-1 (AOCS owner, critical). In the instrumented run the spacecraft
+           went NOMINAL -> ECLIPSE -> COARSE_SUN and never came back for six
+           orbits, and NOTHING on any display said so: the mode field read
+           "COARSE_SUN" and looked perfectly healthy. The commanded mode
+           (0x0297) beside the actual one, with 0x0298 mode_demoted driving the
+           colour, is the whole fix. -->
+      <div class="data-row" style="font-size:12px;">
+        <span class="lbl">MODE</span>
+        <span class="val"><span id="aocs-mode-actual" style="font-weight:700;">--</span>
+        <span id="aocs-mode-cmd" style="margin-left:8px;color:var(--text-tertiary);"></span></span>
+      </div>
+      <div id="aocs-demote-note" style="display:none;font-size:10px;font-weight:700;
+           letter-spacing:1px;margin:2px 0 6px;"></div>
       <div class="mode-chain" id="aocs-mode-chain"></div>
       <div class="data-row"><span class="lbl">Submode</span><span class="val" id="aocs-submode">--</span></div>
       <div class="data-row"><span class="lbl">Time in Mode</span><span class="val" id="aocs-time-in-mode">-- s</span></div>
+      <div class="data-row"><span class="lbl">FINE (0x0299)</span><span class="val" id="aocs-fine-degraded">--</span></div>
+      <!-- 0x02C5: the FINE-entry precondition mask. Every bit is a reason a
+           FINE_POINT command will be refused, and it was shown nowhere. -->
+      <div style="margin-top:7px;font-size:9px;color:var(--text-tertiary);letter-spacing:1px;">FINE-ENTRY PRECONDITIONS (0x02C5)</div>
+      <div id="aocs-fine-ready" class="prop-bitgrid" style="margin-top:3px;"></div>
+      <div id="aocs-fine-verdict" style="margin-top:5px;font-size:10px;font-weight:700;letter-spacing:1px;">--</div>
     </div>
   </div>
   <div class="grid-1x2">
@@ -1642,7 +1746,26 @@ a.kbd-help-btn { text-decoration: none; display: inline-block; line-height: 14px
           <div class="data-row"><span class="lbl">Yaw Rate</span><span class="val" id="aocs-yaw">-- &deg;/s</span></div>
           <div class="gauge-bar" role="meter" aria-valuenow="0" aria-valuemin="-5" aria-valuemax="5" aria-label="Yaw rate" id="aocs-yaw-gauge"><div class="gauge-fill nom" id="aocs-yaw-fill" style="width:50%"></div></div>
         </div>
-        <div class="data-row" style="margin-top:6px"><span class="lbl">Total Momentum</span><span class="val" id="aocs-momentum">-- Nms</span></div>
+        <!-- D-4 (AOCS owner). The console showed |h_wheel| only, which reads
+             near zero even with every wheel saturated: a four-wheel pyramid
+             can sit at 5000 rpm on all four with ZERO body momentum (the
+             null-space direction) and at 1200 rpm with a large one. What a
+             magnetic dump removes is BODY momentum (0x029B), and what says
+             how close the wheels are to their limit is the envelope
+             percentage (0x02BA). Show all three, and label which is which. -->
+        <div class="data-row" style="margin-top:6px"><span class="lbl">Wheel Momentum |h| (0x025B)</span><span class="val" id="aocs-momentum">-- Nms</span></div>
+        <div class="data-row"><span class="lbl">Body Momentum (0x029B)</span><span class="val" id="aocs-h-body">-- Nms</span></div>
+        <div class="data-row"><span class="lbl">Envelope used (0x02BA)</span><span class="val" id="aocs-mom-envelope">-- %</span></div>
+        <div class="gauge-bar" role="meter" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" aria-label="Momentum envelope" id="aocs-mom-gauge"><div class="gauge-fill nom" id="aocs-mom-fill" style="width:0%"></div></div>
+        <div class="data-row" style="margin-top:6px">
+          <span class="lbl">Desat</span>
+          <span class="val">
+            <span class="led off" id="aocs-desat-inhibit-led" role="status" aria-label="Desat inhibit: inactive"></span>
+            <span id="aocs-desat-inhibit-lbl">INHIBIT --</span>
+            <span class="led off" id="aocs-desat-ineff-led" style="margin-left:8px;" role="status" aria-label="Desat ineffective: inactive"></span>
+            <span id="aocs-desat-ineff-lbl">EFFECTIVE</span>
+          </span>
+        </div>
       </div>
     </div>
     <div>
@@ -1663,6 +1786,20 @@ a.kbd-help-btn { text-decoration: none; display: inline-block; line-height: 14px
           <div class="data-row"><span class="lbl">X</span><span class="val" id="aocs-css-x">--</span></div>
           <div class="data-row"><span class="lbl">Y</span><span class="val" id="aocs-css-y">--</span></div>
           <div class="data-row"><span class="lbl">Z</span><span class="val" id="aocs-css-z">--</span></div>
+        </div>
+      </div>
+      <!-- D-6 (AOCS owner). The three S2 gyro device commands were
+           unobservable: 0x025D was hard-wired to "AOCS mode != 0" and ignored
+           the device states entirely, so switching a gyro off changed nothing
+           anyone could see. 0x0294/0x0295 make the units and their saturation
+           real telemetry. -->
+      <div class="panel" role="region" aria-label="Gyros" style="margin-top:8px">
+        <h2 class="panel-hdr">GYROS (IMU)</h2>
+        <div class="panel-body">
+          <div class="data-row"><span class="lbl">Enabled (0x025D)</span><span class="val"><span class="led off" id="aocs-gyro-en-led" role="status" aria-label="Gyros enabled: no"></span> <span id="aocs-gyro-en">--</span></span></div>
+          <div class="data-row"><span class="lbl">Units powered (0x0294)</span><span class="val" id="aocs-gyro-units">--</span></div>
+          <div class="data-row"><span class="lbl">Saturated (0x0295)</span><span class="val" id="aocs-gyro-sat">--</span></div>
+          <div class="data-row"><span class="lbl">Injected bias (0x0296)</span><span class="val" id="aocs-gyro-bias">--</span></div>
         </div>
       </div>
       <div class="panel" role="region" aria-label="Magnetorquers" style="margin-top:8px">
@@ -1721,6 +1858,57 @@ a.kbd-help-btn { text-decoration: none; display: inline-block; line-height: 14px
 
 <!-- TTC TAB -->
 <div class="tab-pane" id="pane-ttc" role="tabpanel" aria-labelledby="tab-ttc">
+  <!-- ── DOWNLINK STATUS (TT&C owner §2.1, the headline request) ──
+       Franz: "we can power off the transmitter but still receive telemetry in
+       the MCS". The model half is fixed; this is the console half. This page
+       showed link QUALITY (RSSI, margin, rate, temperatures) and nothing at
+       all about the link's PERMISSION: not pa_on, not antenna_deployed, not
+       beacon_mode, not downlink_mode. An operator looking at it with the PA
+       off saw a healthy link and no reason for the silence.
+
+       The five states are derived from tx_gate_status (0x052B) so the reason
+       comes from the spacecraft rather than being re-derived on the ground. -->
+  <div class="panel" role="region" aria-label="Downlink status">
+    <h2 class="panel-hdr">DOWNLINK</h2>
+    <div class="panel-body">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <span id="ttc-downlink-state" style="font-size:14px;font-weight:700;letter-spacing:2px;">--</span>
+        <span id="ttc-downlink-why" style="font-size:10px;color:var(--text-tertiary);"></span>
+      </div>
+      <div id="ttc-gate-bits" class="prop-bitgrid" style="margin-top:8px;"></div>
+      <div class="data-row" style="margin-top:8px"><span class="lbl">S-band radiating (0x0525)</span><span class="val"><span class="led off" id="ttc-txactive-led" role="status" aria-label="TX active: no"></span> <span id="ttc-txactive-lbl">--</span></span></div>
+      <div class="data-row"><span class="lbl">EIRP (0x052C)</span><span class="val" id="ttc-eirp">-- dBW</span></div>
+      <div class="data-row"><span class="lbl">EPS ttc_tx line (0x0112)</span><span class="val"><span class="led off" id="ttc-txline-led" role="status" aria-label="TTC TX line: off"></span> <span id="ttc-txline-lbl">--</span></span></div>
+      <div style="font-size:9px;color:var(--text-tertiary);margin-top:3px;">
+        The auto-TX hold re-energises the ttc_tx line for 300 s after every accepted telecommand.
+      </div>
+      <div class="data-row" style="margin-top:6px"><span class="lbl">TM tier forced (beacon mode, 0x0521)</span><span class="val" id="ttc-beacon-mode">--</span></div>
+    </div>
+  </div>
+
+  <!-- ── UHF BEACON (TT&C owner §2.2) ──
+       A SEPARATE radio. It must NOT be greyed out when the S-band block goes
+       red: that independence is the whole teaching point of ruling R2, and a
+       UI that dimmed the beacon with the prime chain would teach the opposite
+       of the truth. -->
+  <div class="panel" role="region" aria-label="UHF beacon transmitter" id="ttc-beacon-panel"
+       style="border-color:rgba(167,139,250,.45);">
+    <h2 class="panel-hdr" style="color:#C4B5FD;">UHF BEACON TRANSMITTER <span class="tag" style="font-size:8px">separate radio — independent of the S-band chain</span></h2>
+    <div class="panel-body">
+      <div class="grid-1x2">
+        <div>
+          <div class="data-row"><span class="lbl">Beacon radiating (0x0527)</span><span class="val"><span class="led off" id="ttc-beacon-active-led" role="status" aria-label="Beacon radiating: no"></span> <span id="ttc-beacon-active-lbl">--</span></span></div>
+          <div class="data-row"><span class="lbl">UHF beacon TX (0x0526)</span><span class="val" id="ttc-beacon-tx">--</span></div>
+        </div>
+        <div>
+          <div class="data-row"><span class="lbl">Downlink freq (0x0529)</span><span class="val" id="ttc-beacon-freq">-- MHz</span></div>
+          <div class="data-row"><span class="lbl">TX power (0x052A)</span><span class="val" id="ttc-beacon-pwr">-- W</span></div>
+          <div class="data-row"><span class="lbl">Link margin (0x0528)</span><span class="val" id="ttc-beacon-margin">-- dB</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- TTC RF Signal Chain Diagram -->
   <div class="panel" role="region" aria-label="RF signal chain diagram">
     <h2 class="panel-hdr">RF SIGNAL CHAIN</h2>
@@ -1850,7 +2038,18 @@ a.kbd-help-btn { text-decoration: none; display: inline-block; line-height: 14px
   </div>
   <div class="grid-1x2">
     <div class="panel" role="region" aria-label="RF parameters">
-      <h2 class="panel-hdr">RF PARAMETERS</h2>
+      <!-- §3.1: the MCS reads these from the engine's state summary over HTTP,
+           not through the RF pipeline. That was always a fidelity shortcut;
+           with the tx_active gate live it becomes visible, because the TM
+           packet stream stops dead while these numbers keep updating once a
+           second for a radio that is not transmitting. Badge it rather than
+           pretend. -->
+      <h2 class="panel-hdr">RF PARAMETERS
+        <span class="tag" id="ttc-backchannel-badge" style="display:none;font-size:8px;
+              background:rgba(240,180,41,.16);color:var(--status-warning);
+              border-color:rgba(240,180,41,.5);"
+              title="These values come from the ground system's back-channel to the simulator, not through the RF chain. The spacecraft is not transmitting.">BACK-CHANNEL — NOT VIA RF</span>
+      </h2>
       <div class="panel-body">
         <div class="data-row"><span class="lbl">RSSI</span><span class="val" id="ttc-rssi">-- dBm</span></div>
         <div class="data-row"><span class="lbl">Link Margin</span><span class="val" id="ttc-margin">-- dB</span></div>
@@ -1907,6 +2106,77 @@ a.kbd-help-btn { text-decoration: none; display: inline-block; line-height: 14px
 
 <!-- PAYLOAD TAB -->
 <div class="tab-pane" id="pane-payload" role="tabpanel" aria-labelledby="tab-payload">
+  <!-- ── FPA READINESS (payload owner D-1) ──
+       The display half of Franz's "cannot do a capture — FPA does not get to
+       YES". `payload.fpa_ready` (0x0610) is a bare 0/1 and FOUR different
+       conditions produce the same 0, none of which the panel showed. The most
+       valuable new number is cooler_margin_k (0x064B): setpoint minus
+       achievable floor. At or below zero it says "the cooler physically cannot
+       reach the setpoint you commanded at this sink temperature", which is a
+       state the model can now genuinely enter.
+
+       The EPS fpa_cooler line (0x0114) belongs in this block even though it is
+       an EPS parameter: three of the four cooler command paths failed
+       precisely because that line stayed dark, and no operator debugging a
+       payload symptom had any reason to open an EPS page. -->
+  <div class="panel" role="region" aria-label="FPA readiness">
+    <h2 class="panel-hdr">FPA READINESS</h2>
+    <div class="panel-body">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span class="led off" id="pld-fpa-ready2" role="status" aria-label="FPA ready: NO"></span>
+        <span id="pld-fpa-ready2-lbl" style="font-size:14px;font-weight:700;letter-spacing:2px;">--</span>
+        <span id="pld-fpa-ready-why" style="font-size:10px;color:var(--text-tertiary);"></span>
+      </div>
+      <div class="grid-1x2" style="margin-top:6px;">
+        <div>
+          <div class="data-row"><span class="lbl">Detector (0x0601)</span><span class="val" id="pld-fpa-det">-- C</span></div>
+          <div class="data-row"><span class="lbl">Setpoint (0x0631)</span><span class="val" id="pld-fpa-setpoint">-- C</span></div>
+          <div class="data-row"><span class="lbl">Achievable floor (0x064A)</span><span class="val" id="pld-fpa-floor">-- C</span></div>
+        </div>
+        <div>
+          <div class="data-row"><span class="lbl">Margin (0x064B)</span><span class="val" id="pld-fpa-margin">-- K</span></div>
+          <div class="data-row"><span class="lbl">Cooler (0x040C)</span><span class="val" id="pld-cooler-state">--</span></div>
+          <div class="data-row"><span class="lbl">EPS line 4 fpa_cooler (0x0114)</span><span class="val" id="pld-cooler-line">--</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-1x2">
+    <!-- ── CALIBRATION (payload owner D-3) ──
+         A calibration can now stop early ON PURPOSE, discarding half-made
+         coefficients, which is the correct behaviour. Without 0x0645 the
+         operator saw a progress bar that stopped and no reason anywhere. -->
+    <div class="panel" role="region" aria-label="Calibration">
+      <h2 class="panel-hdr">CALIBRATION</h2>
+      <div class="panel-body">
+        <div class="data-row"><span class="lbl">Payload mode (0x0600)</span><span class="val" id="pld-mode">--</span></div>
+        <div class="data-row"><span class="lbl">Active (0x062A)</span><span class="val" id="pld-cal-active">--</span></div>
+        <div class="data-row"><span class="lbl">Progress (0x062B)</span><span class="val" id="pld-cal-progress">--</span></div>
+        <div class="data-row"><span class="lbl">Phase set (0x0644)</span><span class="val" id="pld-cal-mode">--</span></div>
+        <div class="data-row"><span class="lbl">Bands calibrated (0x0646)</span><span class="val" id="pld-cal-bands">--</span></div>
+        <div class="data-row" id="pld-cal-abort-row" style="display:none;"><span class="lbl">Aborted because (0x0645)</span><span class="val" id="pld-cal-abort">--</span></div>
+      </div>
+    </div>
+
+    <!-- ── STORE + INSTRUMENT (payload owner D-4 / D-7) ──
+         `store_used` and `mem_used_mb` cannot answer "what can I downlink?",
+         because the store starts 20 % full of non-product fill. product_count
+         and product_mb can. This is also the display that makes the IMAGING
+         fix legible: store_used now moves only when product_count moves. -->
+    <div class="panel" role="region" aria-label="Image store and instrument">
+      <h2 class="panel-hdr">IMAGE STORE &amp; INSTRUMENT</h2>
+      <div class="panel-body">
+        <div class="data-row"><span class="lbl">Store used (0x0604 / 0x060B)</span><span class="val" id="pld-store-used">--</span></div>
+        <div class="data-row"><span class="lbl">Products (0x0648 / 0x0647)</span><span class="val" id="pld-products">--</span></div>
+        <div class="data-row" style="margin-top:6px"><span class="lbl">Shutter (0x063C)</span><span class="val"><span class="led off" id="pld-shutter-led" role="status" aria-label="Shutter: unknown"></span> <span id="pld-shutter">--</span></span></div>
+        <div class="data-row"><span class="lbl">Readout active (0x0649)</span><span class="val"><span class="led off" id="pld-readout-led" role="status" aria-label="Readout: idle"></span> <span id="pld-readout">--</span></span></div>
+        <div class="data-row"><span class="lbl">Line rate / data rate</span><span class="val" id="pld-rates">--</span></div>
+        <div class="data-row"><span class="lbl">Desat warning (0x02C5 b4)</span><span class="val" id="pld-desat-warn">--</span></div>
+      </div>
+    </div>
+  </div>
+
   <div class="grid-1x2">
     <div class="panel" role="region" aria-label="Payload sensors">
       <h2 class="panel-hdr">SENSOR STATUS</h2>
@@ -1957,6 +2227,181 @@ a.kbd-help-btn { text-decoration: none; display: inline-block; line-height: 14px
   <div class="panel"><h2 class="panel-hdr">FPA TEMPERATURE</h2><div class="panel-body"><div class="chart-container"><canvas id="pld-chart-fpa"></canvas></div></div></div>
   <!-- Payload Events -->
   <div class="panel"><h2 class="panel-hdr">PAYLOAD EVENTS</h2><div class="panel-body"><div id="payload-events" class="subsys-events"></div></div></div>
+</div>
+
+<!-- PROP TAB (2026-08b) ─────────────────────────────────────────────────────
+     The propulsion subsystem shipped with 28 telemetry parameters
+     (0x0B00-0x0B1B), 11 commands (S8 funcs 108-118), HK SID 9 at 8 s, 19
+     events (0x0800-0x0812), 5 ground-limit bands, 8 S12 monitors, an operator
+     position and a full model — and the console showed exactly one thing for
+     it: `<option value="prop">PROP</option>` in the TRENDS dropdown.
+
+     SID 9 is deliberately NOT in simulation.yaml's `default_enabled_sids:
+     [1, 11]`. That is correct flight-representative behaviour, so the tab
+     opens in the NOT ENABLED state and says which telecommand fixes it,
+     rather than showing dashes or (worse) a stale-but-plausible tank
+     pressure. -->
+<div class="tab-pane" id="pane-prop" role="tabpanel" aria-labelledby="tab-prop">
+  <div class="panel" id="prop-sid-banner" role="status" style="display:none;border-color:var(--status-warning);">
+    <div class="panel-body" style="color:var(--status-warning);font-size:11px;font-weight:700;letter-spacing:1px;">
+      <span id="prop-sid-banner-text">HK SID 9 (PROP) NOT ENABLED — SEND TC(3,5) HK_ENABLE sid=9</span>
+      <button class="btn btn-ghost" style="font-size:9px;padding:2px 8px;margin-left:10px;"
+              onclick="hkEnableSid(9)" aria-label="Enable propulsion housekeeping">ENABLE SID 9</button>
+      <button class="btn btn-ghost" style="font-size:9px;padding:2px 8px;"
+              onclick="hkRequest(9)" aria-label="Request one propulsion housekeeping packet">ONE-SHOT REQUEST</button>
+    </div>
+  </div>
+
+  <div class="grid-1x2">
+    <!-- ── STATUS ── -->
+    <div class="panel" role="region" aria-label="Propulsion status">
+      <h2 class="panel-hdr">PROPULSION STATUS</h2>
+      <div class="panel-body">
+        <div class="data-row"><span class="lbl">State (0x0B00)</span><span class="val"><span class="led off" id="prop-state-led"></span> <span id="prop-state">--</span></span></div>
+        <div class="data-row"><span class="lbl">Burn status (0x0B0D)</span><span class="val" id="prop-burn-status">--</span></div>
+        <div class="data-row"><span class="lbl">Last abort (0x0B14)</span><span class="val" id="prop-abort-reason">--</span></div>
+        <div class="data-row"><span class="lbl">Propellant (0x0B02)</span><span class="val" id="prop-propellant">--</span></div>
+        <div class="data-row"><span class="lbl">dV remaining (0x0B0C)</span><span class="val" id="prop-dv-remaining">--</span></div>
+        <div class="data-row"><span class="lbl">Prop line (0x014A)</span><span class="val" id="prop-eps-line">--</span></div>
+        <div class="data-row"><span class="lbl">Power draw (0x0B1B)</span><span class="val" id="prop-power">--</span></div>
+      </div>
+    </div>
+
+    <!-- ── ARM INTERLOCKS — the operationally critical widget ──
+         PROP_ARM is refused whenever ANY bit of 0x0B15 is set, and the bit is
+         the only thing that says why. Rendering it as a hex number makes the
+         operator decode a bitmask by hand during a debris-avoidance window. -->
+    <div class="panel" role="region" aria-label="Arm interlocks">
+      <h2 class="panel-hdr">ARM INTERLOCKS <span class="tag" id="prop-mask-tag" style="font-size:8px">0x0B15</span></h2>
+      <div class="panel-body">
+        <div id="prop-interlocks" class="prop-bitgrid"></div>
+        <div id="prop-arm-verdict" style="margin-top:7px;font-size:10px;font-weight:700;letter-spacing:1px;">--</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── FEED SYSTEM SCHEMATIC ── -->
+  <div class="panel" role="region" aria-label="Propulsion feed system">
+    <h2 class="panel-hdr">FEED SYSTEM</h2>
+    <div class="panel-body">
+      <svg id="prop-diagram" viewBox="0 0 700 150" class="svg-diagram" style="max-height:150px;">
+        <defs>
+          <pattern id="pr-bg" width="18" height="18" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="0.5" fill="rgba(46,46,70,0.7)"/></pattern>
+        </defs>
+        <rect width="700" height="150" fill="url(#pr-bg)" rx="3"/>
+        <!-- Tank -->
+        <rect id="prop-svg-tank" x="20" y="42" width="120" height="66" rx="10" class="svg-eq-box nominal"/>
+        <text x="80" y="66" class="svg-label" style="font-size:8px;font-weight:700;fill:#6BB3FF;">TANK</text>
+        <text x="80" y="80" class="svg-label-sm" id="prop-svg-p">-- bar</text>
+        <text x="80" y="94" class="svg-label-sm" id="prop-svg-prop">-- g</text>
+        <!-- Feed line to latches -->
+        <line x1="140" y1="75" x2="205" y2="75" stroke="#6BB3FF" stroke-width="1.6"/>
+        <!-- Latch A -->
+        <rect id="prop-svg-latch-a" x="205" y="34" width="96" height="30" rx="4" class="svg-eq-box off"/>
+        <text x="253" y="53" class="svg-label" style="font-size:8px;font-weight:700;">LATCH A</text>
+        <text x="345" y="53" class="svg-label-sm" id="prop-svg-latch-a-lbl" style="text-anchor:start;">--</text>
+        <!-- Latch B -->
+        <rect id="prop-svg-latch-b" x="205" y="86" width="96" height="30" rx="4" class="svg-eq-box off"/>
+        <text x="253" y="105" class="svg-label" style="font-size:8px;font-weight:700;">LATCH B</text>
+        <text x="345" y="105" class="svg-label-sm" id="prop-svg-latch-b-lbl" style="text-anchor:start;">--</text>
+        <line x1="301" y1="49" x2="330" y2="49" stroke="#6BB3FF" stroke-width="1.2"/>
+        <line x1="301" y1="101" x2="330" y2="101" stroke="#6BB3FF" stroke-width="1.2"/>
+        <line x1="400" y1="49" x2="430" y2="49" stroke="#6BB3FF" stroke-width="1.2"/>
+        <line x1="400" y1="101" x2="430" y2="101" stroke="#6BB3FF" stroke-width="1.2"/>
+        <line x1="430" y1="49" x2="430" y2="101" stroke="#6BB3FF" stroke-width="1.2"/>
+        <line x1="430" y1="75" x2="466" y2="75" stroke="#6BB3FF" stroke-width="1.6"/>
+        <!-- FCV -->
+        <rect id="prop-svg-fcv" x="466" y="58" width="80" height="34" rx="4" class="svg-eq-box off"/>
+        <text x="506" y="72" class="svg-label" style="font-size:8px;font-weight:700;">FCV</text>
+        <text x="506" y="85" class="svg-label-sm" id="prop-svg-fcv-lbl">--</text>
+        <line x1="546" y1="75" x2="582" y2="75" stroke="#6BB3FF" stroke-width="1.6"/>
+        <!-- Thruster / catalyst bed -->
+        <rect id="prop-svg-thruster" x="582" y="50" width="96" height="50" rx="4" class="svg-eq-box off"/>
+        <text x="630" y="68" class="svg-label" style="font-size:8px;font-weight:700;fill:#F0B429;">THRUSTER</text>
+        <text x="630" y="81" class="svg-label-sm" id="prop-svg-catbed">-- C</text>
+        <text x="630" y="94" class="svg-label-sm" id="prop-svg-thrust">-- mN</text>
+      </svg>
+    </div>
+  </div>
+
+  <div class="grid-1x2">
+    <!-- ── TANK & FEED ── -->
+    <div class="panel" role="region" aria-label="Tank and feed">
+      <h2 class="panel-hdr">TANK &amp; FEED</h2>
+      <div class="panel-body">
+        <table class="data-table" aria-label="Tank and feed parameters">
+          <thead><tr><th>Parameter</th><th>Value</th></tr></thead>
+          <tbody id="prop-tank-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── BURN PROGRESS ── -->
+    <div class="panel" role="region" aria-label="Burn progress">
+      <h2 class="panel-hdr">BURN</h2>
+      <div class="panel-body">
+        <div class="data-row"><span class="lbl">dV commanded (0x0B0E)</span><span class="val" id="prop-dv-cmd">--</span></div>
+        <div class="data-row"><span class="lbl">dV achieved (0x0B0F)</span><span class="val" id="prop-dv-ach">--</span></div>
+        <div class="data-row"><span class="lbl">dV error</span><span class="val" id="prop-dv-err">--</span></div>
+        <div class="data-row"><span class="lbl">Burn time (0x0B11 / 0x0B10)</span><span class="val" id="prop-burn-time">--</span></div>
+        <div style="margin-top:6px;height:9px;background:var(--surface-tertiary);border-radius:5px;overflow:hidden;">
+          <div id="prop-burn-bar" style="height:100%;width:0%;background:var(--status-commanding);transition:width .4s;"></div>
+        </div>
+        <div class="data-row" style="margin-top:8px"><span class="lbl">Att error (0x0217)</span><span class="val" id="prop-att-err">--</span></div>
+        <div class="data-row"><span class="lbl">AOCS mode</span><span class="val" id="prop-aocs-mode">--</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-1x2">
+    <!-- ── dV BUDGET ── -->
+    <div class="panel" role="region" aria-label="Delta-V budget">
+      <h2 class="panel-hdr">dV BUDGET</h2>
+      <div class="panel-body">
+        <div class="data-row"><span class="lbl">dV used, lifetime (0x0B0B)</span><span class="val" id="prop-dv-accum">--</span></div>
+        <div class="data-row"><span class="lbl">dV remaining (0x0B0C)</span><span class="val" id="prop-dv-rem2">--</span></div>
+        <div style="margin-top:4px;height:9px;background:var(--surface-tertiary);border-radius:5px;overflow:hidden;">
+          <div id="prop-dv-bar" style="height:100%;width:0%;background:var(--status-nominal);"></div>
+        </div>
+        <div class="data-row" style="margin-top:8px"><span class="lbl">Burns completed (0x0B12)</span><span class="val" id="prop-burn-count">--</span></div>
+        <div class="data-row"><span class="lbl">Total on-time (0x0B13)</span><span class="val" id="prop-on-time">--</span></div>
+        <div class="data-row"><span class="lbl">SC mass (0x0B18)</span><span class="val" id="prop-mass">--</span></div>
+        <div class="data-row"><span class="lbl">SMA (0x0B1A)</span><span class="val" id="prop-sma">--</span></div>
+        <div class="data-row"><span class="lbl">Element set (0x0B19)</span><span class="val" id="prop-epoch">--</span></div>
+      </div>
+    </div>
+
+    <!-- ── COMMAND CONSOLE ──
+         Generated from the tc_catalog.yaml quick_commands PROPULSION group, so
+         the two-step arm sequence and its `critical: true` confirmations come
+         from the catalogue rather than being hand-typed here. -->
+    <div class="panel" role="region" aria-label="Propulsion commands">
+      <h2 class="panel-hdr">PROPULSION COMMANDS</h2>
+      <div class="panel-body">
+        <div style="font-size:9px;color:var(--text-tertiary);margin-bottom:5px;line-height:1.5;">
+          Two-step arm: <b>SET_BURN</b> (loads dV, publishes the predicted duration at
+          0x0B10 for FDS cross-check) &rarr; <b>ARM</b> within 300 s &rarr; <b>EXECUTE</b>.
+          ARM runs every interlock in 0x0B15; the catbed must reach 180 &deg;C first.
+        </div>
+        <div class="quick-cmds" id="prop-quick-cmds"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PROP charts -->
+  <div style="display:flex;gap:6px;margin-bottom:4px;align-items:center;">
+    <button class="dump-btn" onclick="requestTmDump('prop')" aria-label="Request propulsion stored telemetry dump">Request S15 TM Dump (PROP)</button>
+    <span id="prop-dump-status" style="font-size:9px;color:var(--text-tertiary);"></span>
+  </div>
+  <div class="grid-1x2">
+    <div class="panel"><h2 class="panel-hdr">TANK PRESSURE / PROPELLANT</h2><div class="panel-body"><div class="chart-container"><canvas id="prop-chart-tank"></canvas></div></div></div>
+    <div class="panel"><h2 class="panel-hdr">THRUST vs ATTITUDE ERROR</h2><div class="panel-body"><div class="chart-container"><canvas id="prop-chart-burn"></canvas></div></div></div>
+  </div>
+
+  <!-- PROP events (0x0800-0x0812) — before this batch every propulsion event
+       fell through `EVENT_SUBSYSTEM_RANGES` unrouted, because the table
+       stopped at 0x06FF. -->
+  <div class="panel"><h2 class="panel-hdr">PROPULSION EVENTS</h2><div class="panel-body"><div id="prop-events" class="subsys-events"></div></div></div>
 </div>
 
 <!-- OBDH TAB -->
@@ -3179,6 +3624,18 @@ a.kbd-help-btn { text-decoration: none; display: inline-block; line-height: 14px
   <div class="alarm-journal-header">
     <h2>ALARM JOURNAL</h2>
     <div style="display:flex;gap:6px;align-items:center;">
+      <!-- S12 limit checks are stored in the on-board Alarm store (4), not in
+           HK or Science. Dumping it plays back the spacecraft's own record of
+           every limit transition; /dumps decodes the S12 contents (parameter,
+           direction, value, check type, severity and limit band). -->
+      <button class="btn btn-ghost" id="alarm-dump-btn" style="font-size:9px;padding:2px 8px;"
+              onclick="requestTmDump('alarms', 4)"
+              title="TC(15,9) on store 4 (Alarm_Store) — plays back every S12 limit transition"
+              aria-label="Dump the on-board alarm store">DUMP S12 STORE</button>
+      <a class="btn btn-ghost" href="/dumps" target="_blank" rel="noopener"
+         style="font-size:9px;padding:2px 8px;text-decoration:none;"
+         title="Decoded delayed-TM archive, including full S12 contents">ARCHIVE</a>
+      <span id="alarms-dump-status" style="font-size:9px;color:var(--text-tertiary);"></span>
       <button class="btn btn-ghost" id="alarm-clear-all-btn" style="font-size:9px;padding:2px 8px;" aria-label="Acknowledge all alarms">ACK ALL</button>
       <button class="btn btn-ghost" id="alarm-journal-close" style="font-size:12px;padding:2px 6px;" aria-label="Close alarm journal">&times;</button>
     </div>
@@ -3312,50 +3769,302 @@ function createTimeChart(canvasId, datasets, yLabel) {
 //
 // One policy, gated in exactly one place (pushChartData) so no call site can
 // forget it.
-const TM_FRESH_S = 5;    //  < 5 s              → fresh, plot normally
-const TM_STALE_S = 15;   //  5–15 s             → degraded, plot with an amber LAG chip
-                         //  > 15 s / no TM     → stale, stop appending and blank
+//
+// ── 2026-08b: the thresholds come from the CADENCE, not from two constants ──
+// Franz: "The timeouts for the TCS graphs is set to 60s but TCS telemetry is
+// only coming in every 60s so we often get stale data displays rather than
+// thermal graphs. Can the stale data flag be set on the cadence of the
+// telemetry times 1.5 or something?"
+//
+// He is right, and it was worse than reported. HK SID 3 (TCS) has
+// `interval_s: 60.0`; the two constants below were written for the 1 Hz EPS
+// structure. A 60 s parameter is 5-15 s old for one second in sixty, so the
+// TCS charts were BLANKED — buffers emptied — for ~45 s of every 60 and could
+// never accumulate a trace at all. The 8 s structures (TTC / PAYLOAD / OBDH /
+// PROP) wore a permanent amber LAG chip; the 30 s beacon read STALE for 22 s
+// out of every 30 during the one phase where it is the only telemetry there is.
+//
+// The two constants below now describe the LINK ONLY — the age of the newest
+// frame of any kind, against a 1 Hz state broadcast. Per-subsystem and
+// per-parameter verdicts are derived from that stream's own cadence:
+//
+//     fresh    age <= max(floor_fresh_s, interval_s * fresh_factor)
+//     degraded age <= max(floor_stale_s, interval_s * stale_factor)
+//     stale    beyond
+//
+// with the factors and floors served from configuration
+// (configs/<mission>/mcs/staleness.yaml -> GET /api/client-config), not from a
+// JS literal, and the per-parameter interval from the cadence join the same
+// endpoint publishes (param_cadence / subsystem_cadence / sid_intervals).
+// The same shape of rule already lived on the server: the HK Manager calls a
+// SID SILENT after `interval_s * 2.5 + 1.0`.
+const TM_FRESH_S = 5;    //  < 5 s              → link fresh
+const TM_STALE_S = 15;   //  5–15 s             → link degraded (amber LAG chip)
+                         //  > 15 s / no TM     → link stale, stop appending and blank
+
+// Mirror of configs/<mission>/mcs/staleness.yaml. Overwritten by
+// /api/client-config at start-up; kept here so the console still behaves
+// sensibly (and is unit-testable) before that fetch returns.
+let STALENESS = {
+  stale_factor: 1.5, fresh_factor: 0.9,
+  floor_fresh_s: 10.0, floor_stale_s: 20.0,
+  aperiodic_fresh_s: 300.0, aperiodic_stale_s: 900.0,
+};
+
+// The cadence join, served by /api/client-config. The fallbacks below are the
+// join of configs/eosat1/telemetry/{hk_structures,parameters}.yaml as shipped;
+// tests/test_mcs/test_staleness_cadence.py fails if they drift from the
+// configuration, so a stale fallback cannot quietly mislead an operator.
+let SID_INTERVALS = {1: 1.0, 2: 4.0, 3: 60.0, 4: 8.0, 5: 8.0,
+                     6: 8.0, 7: 4.0, 8: 8.0, 9: 8.0, 11: 30.0};
+let SID_NAMES = {};
+let PARAM_CADENCE = {};              // pid (number) -> {interval_s, sids:[…]}
+let SUBSYS_CADENCE = {                // subsystem  -> {interval_s, sids:[…]}
+  eps:     {interval_s: 1.0,  sids: [1, 4, 8, 11]},
+  aocs:    {interval_s: 4.0,  sids: [2, 7]},
+  tcs:     {interval_s: 60.0, sids: [3]},
+  obdh:    {interval_s: 8.0,  sids: [4, 11]},
+  payload: {interval_s: 8.0,  sids: [5]},
+  ttc:     {interval_s: 8.0,  sids: [6, 11]},
+  prop:    {interval_s: 8.0,  sids: [9]},
+};
+
+/** Install the staleness policy + cadence join from /api/client-config. */
+function applyStalenessConfig(cfg) {
+  if (!cfg) return;
+  if (cfg.staleness) {
+    for (const k in STALENESS) {
+      if (cfg.staleness[k] != null) STALENESS[k] = Number(cfg.staleness[k]);
+    }
+  }
+  if (cfg.param_cadence) {
+    const out = {};
+    for (const hex in cfg.param_cadence) {
+      const row = cfg.param_cadence[hex];      // [interval_s, sid, sid, …]
+      if (!row || !row.length) continue;
+      out[parseInt(hex, 16)] = {interval_s: Number(row[0]), sids: row.slice(1).map(Number)};
+    }
+    PARAM_CADENCE = out;
+  }
+  if (cfg.subsystem_cadence) {
+    const out = {};
+    for (const sub in cfg.subsystem_cadence) {
+      const row = cfg.subsystem_cadence[sub];
+      out[sub] = {interval_s: Number(row.interval_s), sids: (row.sids || []).map(Number)};
+    }
+    SUBSYS_CADENCE = out;
+  }
+  if (cfg.sid_intervals) {
+    const out = {};
+    for (const sid in cfg.sid_intervals) out[Number(sid)] = Number(cfg.sid_intervals[sid]);
+    SID_INTERVALS = out;
+  }
+  if (cfg.sid_names) SID_NAMES = cfg.sid_names;
+}
+
+/**
+ * Freshness thresholds for one telemetry cadence.
+ * `intervalS == null` means aperiodic (on-demand only — no HK structure
+ * carries it), which gets the two absolute thresholds instead.
+ */
+function stalenessThresholds(intervalS) {
+  if (intervalS == null || !(Number(intervalS) > 0)) {
+    return {fresh: STALENESS.aperiodic_fresh_s, stale: STALENESS.aperiodic_stale_s,
+            aperiodic: true, interval_s: null};
+  }
+  const iv = Number(intervalS);
+  const fresh = Math.max(STALENESS.floor_fresh_s, iv * STALENESS.fresh_factor);
+  const stale = Math.max(STALENESS.floor_stale_s, iv * STALENESS.stale_factor, fresh);
+  return {fresh: fresh, stale: stale, aperiodic: false, interval_s: iv};
+}
+
+/** Verdict for an age against a cadence: 'fresh' | 'degraded' | 'stale'. */
+function ageVerdict(ageS, intervalS) {
+  const th = stalenessThresholds(intervalS);
+  const age = Number(ageS);
+  if (!isFinite(age)) return 'fresh';
+  if (age <= th.fresh) return 'fresh';
+  if (age <= th.stale) return 'degraded';
+  return 'stale';
+}
+
+// Ordering used to combine the link verdict with the cadence verdict. NOT
+// ENABLED sits between degraded and stale: it is more actionable than "late"
+// (the operator can fix it with one telecommand) but a dead link is the
+// bigger truth when both apply.
+const _FRESHNESS_RANK = {fresh: 0, degraded: 1, disabled: 2, stale: 3, none: 4};
+function worseFreshness(a, b) {
+  return (_FRESHNESS_RANK[b] || 0) > (_FRESHNESS_RANK[a] || 0) ? b : a;
+}
+
+/**
+ * Which of a SID list is actually delivering, from the broadcast state.
+ *
+ * `state.hk_enabled` carries any enable bit the spacecraft actually reported;
+ * `state.hk_sid_age_s` carries how long since each SID was last decoded. A SID
+ * that has never been seen and was never reported enabled is NOT ENABLED —
+ * which is a different statement from "stale", and has a different remedy.
+ */
+function sidObservationAvailable(st) {
+  // The server publishes `hk_sid_age_s` on every broadcast (and `hk_enabled`
+  // once the spacecraft has reported one). When NEITHER is present we know
+  // nothing about which structures are on and must not claim a SID is off —
+  // an unknown is not a diagnosis.
+  return !!(st && (st.hk_sid_age_s || st.hk_enabled));
+}
+
+function liveSids(st, sids) {
+  if (!sidObservationAvailable(st)) {
+    return {live: (sids || []).slice(), dead: [], known: false};
+  }
+  const ages = (st && st.hk_sid_age_s) || {};
+  const reported = (st && st.hk_enabled) || {};
+  const live = [], dead = [];
+  (sids || []).forEach(sid => {
+    const key = String(sid);
+    if (reported[key] === false) { dead.push(sid); return; }
+    if (ages[key] == null) {
+      // Never decoded. Only call it enabled if the spacecraft said so.
+      if (reported[key] === true) live.push(sid); else dead.push(sid);
+      return;
+    }
+    live.push(sid);
+  });
+  return {live: live, dead: dead, known: true};
+}
+
+/** Fastest configured interval among a set of SIDs (null when empty). */
+function fastestSidInterval(sids) {
+  let best = null;
+  (sids || []).forEach(sid => {
+    const iv = SID_INTERVALS[Number(sid)];
+    if (iv != null && (best == null || iv < best)) best = iv;
+  });
+  return best;
+}
 
 // Chart canvas id prefix → the subsystem key used by state.subsystem_staleness.
 // A subsystem whose HK SID is disabled or which is powered down goes stale
 // while the link itself is still up, so both gates are applied.
 const CHART_SUBSYSTEM_PREFIX = {
-  eps: 'eps', tcs: 'tcs', aocs: 'aocs', ttc: 'ttc', pld: 'payload', obdh: 'obdh'
+  eps: 'eps', tcs: 'tcs', aocs: 'aocs', ttc: 'ttc', pld: 'payload', obdh: 'obdh',
+  prop: 'prop'
 };
 function chartSubsystemOf(canvasId) {
   return CHART_SUBSYSTEM_PREFIX[String(canvasId || '').split('-')[0]] || null;
 }
 
 /**
- * Freshness verdict for a chart: 'fresh' | 'degraded' | 'stale' | 'none'.
- * Pure function of the broadcast state — unit-testable without a browser.
+ * Freshness verdict and its reason, for a chart or a whole subsystem.
+ *
+ * Four states (2026-08b), all pure functions of the broadcast state:
+ *
+ *   fresh     the newest sample is inside one cadence
+ *   degraded  a sample is late — plotted, with an amber LAG chip
+ *   stale     more than `stale_factor` cadences old, or the link is down;
+ *             stop appending and blank
+ *   disabled  NO HK structure carrying this subsystem is enabled. The remedy
+ *             is TC(3,5), not a link investigation — and until this state
+ *             existed the display LIED: a disabled SID's parameters are absent
+ *             from the MCS cache, so `subsystem_staleness` had no key at all,
+ *             the gate fell through to the global link age and the chart
+ *             reported FRESH while plotting nothing.
+ *
+ * `tmFreshness(st, subsystem)` keeps its two-argument signature and its
+ * string return; `tmFreshnessDetail` adds the reason.
  */
-function tmFreshness(st, subsystem) {
-  if (!st) return 'none';
+function tmFreshnessDetail(st, subsystem) {
+  const out = {verdict: 'none', reason: 'no_telemetry', subsystem: subsystem || null,
+               interval_s: null, age_s: null, sids: [], dead_sids: []};
+  if (!st) return out;
   const globalAge = st.last_frame_age_s;
-  if (globalAge == null) return 'none';         // no TM frame has ever arrived
-  if (st.stale === true) return 'stale';        // server's own >60 s verdict
-  let age = Number(globalAge);
-  if (subsystem && st.subsystem_staleness &&
-      st.subsystem_staleness[subsystem] != null) {
-    // Blank if EITHER the link or this subsystem's own telemetry is stale.
-    age = Math.max(age, Number(st.subsystem_staleness[subsystem]));
+  if (globalAge == null) return out;            // no TM frame has ever arrived
+  out.age_s = Number(globalAge);
+  if (st.stale === true) {                      // server's own >60 s verdict
+    out.verdict = 'stale'; out.reason = 'link_stale';
+    return out;
   }
-  // Out of contact means no new TM can possibly arrive; once the newest frame
-  // is older than the fresh window the trace is certainly not live.
-  if (st.in_contact === false && age >= TM_FRESH_S) return 'stale';
-  if (age < TM_FRESH_S) return 'fresh';
-  if (age < TM_STALE_S) return 'degraded';
-  return 'stale';
+  // ── link verdict: the age of the newest frame of ANY kind ──
+  const g = Number(globalAge);
+  let verdict = g < TM_FRESH_S ? 'fresh' : (g < TM_STALE_S ? 'degraded' : 'stale');
+  let reason = verdict === 'fresh' ? 'ok' : 'link_' + verdict;
+
+  // ── cadence verdict: this subsystem's own downlink rate ──
+  const cad = subsystem ? SUBSYS_CADENCE[subsystem] : null;
+  if (cad) {
+    out.sids = cad.sids.slice();
+    const l = liveSids(st, cad.sids);
+    out.dead_sids = l.dead.slice();
+    if (!l.live.length) {
+      // Nothing that carries this subsystem is enabled.
+      out.interval_s = cad.interval_s;
+      const disabled = worseFreshness(verdict, 'disabled');
+      out.verdict = disabled;
+      out.reason = disabled === 'disabled' ? 'sid_not_enabled' : reason;
+      return out;
+    }
+    const interval = fastestSidInterval(l.live);
+    out.interval_s = interval != null ? interval : cad.interval_s;
+    const ss = st.subsystem_staleness;
+    if (ss && ss[subsystem] != null) {
+      const subAge = Number(ss[subsystem]);
+      out.age_s = Math.max(out.age_s, subAge);
+      const v = ageVerdict(subAge, out.interval_s);
+      if (v !== 'fresh') {
+        const combined = worseFreshness(verdict, v);
+        if (combined !== verdict) reason = 'cadence_' + v;
+        verdict = combined;
+      }
+    }
+  }
+  // Out of contact, no NEW telemetry can arrive, so a trace must not be kept
+  // alive on the last received value. Two guards on that shortcut, both
+  // learned from a live run:
+  //
+  //  * test the age against the CADENCE, not against a flat 5 s. During a
+  //    beacon-only phase (SID 11, 30 s) frames legitimately arrive 20 s apart.
+  //  * require the LINK itself to have gone quiet too. `in_contact` is the
+  //    ground system's TLE-derived PREDICTION; when an instructor forces a
+  //    pass (`override_passes`) telemetry arrives while the prediction still
+  //    says no contact. Measured on the live simulator, the prediction alone
+  //    blanked the TCS chart — and emptied its buffers — for six seconds in
+  //    every sixty while 60 s TCS packets were visibly arriving, which is
+  //    Franz's original symptom wearing a different hat. Evidence beats
+  //    prediction: if frames are arriving, we are in contact.
+  if (st.in_contact === false && g >= TM_FRESH_S) {
+    const th = stalenessThresholds(out.interval_s);
+    if (out.age_s >= th.fresh) {
+      verdict = worseFreshness(verdict, 'stale');
+      reason = 'los';
+    }
+  }
+  out.verdict = verdict;
+  out.reason = reason;
+  return out;
+}
+
+function tmFreshness(st, subsystem) {
+  return tmFreshnessDetail(st, subsystem).verdict;
 }
 
 /** Human-readable banner for a blanked chart. */
-function staleChartLabel(freshness, st) {
+function staleChartLabel(freshness, st, detail) {
   if (freshness === 'none') return 'NO DATA — NO TELEMETRY RECEIVED';
+  if (freshness === 'disabled') {
+    const sids = (detail && detail.dead_sids && detail.dead_sids.length)
+               ? detail.dead_sids : ((detail && detail.sids) || []);
+    const list = sids.map(s => 'SID ' + s).join(' / ') || 'ITS HK STRUCTURE';
+    return `NO DATA — ${list} NOT ENABLED — SEND TC(3,5) HK_ENABLE`;
+  }
   const age = st && st.last_frame_age_s;
   const ageTxt = age == null ? '' : ` — LAST FRAME ${Math.floor(age)}s AGO`;
   const los = st && st.in_contact === false ? 'NO DATA (LOS)' : 'NO DATA — TELEMETRY STALE';
-  return los + ageTxt;
+  const cadence = detail && detail.reason && detail.reason.indexOf('cadence_') === 0
+                && detail.interval_s
+    ? ` — ${detail.subsystem ? detail.subsystem.toUpperCase() + ' ' : ''}HK EVERY ${detail.interval_s}s, ` +
+      `LAST ${Math.floor(detail.age_s)}s AGO`
+    : '';
+  return los + (cadence || ageTxt);
 }
 
 function chartOverlayEl(canvasId, create) {
@@ -3373,7 +4082,7 @@ function chartOverlayEl(canvasId, create) {
 }
 
 /** Empty a chart's buffers and canvas and show an explicit NO DATA / STALE state. */
-function blankChart(canvasId, freshness) {
+function blankChart(canvasId, freshness, detail) {
   const chart = chartInstances[canvasId];
   const bufs = chartBuffers[canvasId];
   if (chart && bufs) {
@@ -3385,25 +4094,54 @@ function blankChart(canvasId, freshness) {
     }
     if (hadData) chart.update('none');
   }
+  delete chartLastSampleAge[canvasId];
   const el = chartOverlayEl(canvasId, true);
   if (el) {
-    el.textContent = staleChartLabel(freshness, state);
-    el.className = 'chart-stale-overlay stale visible';
+    el.textContent = staleChartLabel(freshness, state, detail);
+    el.className = 'chart-stale-overlay ' +
+                   (freshness === 'disabled' ? 'disabled' : 'stale') + ' visible';
   }
 }
 
 /** Clear (or downgrade to an amber LAG chip) the overlay once telemetry returns. */
-function setChartFreshOverlay(canvasId, freshness) {
+function setChartFreshOverlay(canvasId, freshness, detail) {
   const el = chartOverlayEl(canvasId, freshness === 'degraded');
   if (!el) return;
   if (freshness === 'degraded') {
-    const age = state && state.last_frame_age_s;
-    el.textContent = `LAG ${age == null ? '?' : Math.floor(age)}s`;
+    // Report the age of THIS subsystem's telemetry against its own cadence.
+    // The old chip showed the global link age, which for a 60 s structure was
+    // never the number the operator needed.
+    const age = detail && detail.age_s != null ? detail.age_s
+              : (state && state.last_frame_age_s);
+    const iv = detail && detail.interval_s ? `/${detail.interval_s}s` : '';
+    el.textContent = `LAG ${age == null ? '?' : Math.floor(age)}s${iv}`;
     el.className = 'chart-stale-overlay degraded visible';
   } else {
     el.textContent = '';
     el.className = 'chart-stale-overlay';
   }
+}
+
+// Last per-subsystem telemetry age seen by each chart. `pushChartData` used to
+// append one point per 1 Hz UI tick regardless of whether new telemetry had
+// arrived, so a 60 s structure contributed SIXTY identical samples per real
+// sample and the 120-point window showed two minutes of duplicates rather
+// than two hours of thermal history. The age counts up between packets and
+// resets when one arrives, so "the age went DOWN" is exactly "a new sample".
+const chartLastSampleAge = {};
+
+/** True when this subsystem has produced a genuinely new sample since the
+ *  last append to `canvasId`. Charts whose subsystem is unknown, or for which
+ *  the server publishes no per-subsystem age, are ungated (old behaviour). */
+function chartHasNewSample(canvasId, st, subsystem) {
+  if (!subsystem || !st) return true;
+  const ss = st.subsystem_staleness;
+  const age = ss && ss[subsystem] != null ? Number(ss[subsystem]) : null;
+  if (age == null || !isFinite(age)) return true;
+  const prev = chartLastSampleAge[canvasId];
+  chartLastSampleAge[canvasId] = age;
+  if (prev == null) return true;
+  return age < prev - 1e-9;
 }
 
 function pushChartData(canvasId, timeLabel, values) {
@@ -3412,12 +4150,16 @@ function pushChartData(canvasId, timeLabel, values) {
   const bufs = chartBuffers[canvasId];
   if (!bufs) return;
   // ── the single staleness gate ──────────────────────────────────────
-  const freshness = tmFreshness(state, chartSubsystemOf(canvasId));
-  if (freshness === 'stale' || freshness === 'none') {
-    blankChart(canvasId, freshness);
+  const subsystem = chartSubsystemOf(canvasId);
+  const detail = tmFreshnessDetail(state, subsystem);
+  const freshness = detail.verdict;
+  if (freshness === 'stale' || freshness === 'none' || freshness === 'disabled') {
+    blankChart(canvasId, freshness, detail);
     return;
   }
-  setChartFreshOverlay(canvasId, freshness);
+  setChartFreshOverlay(canvasId, freshness, detail);
+  // ── the duplicate-sample gate ───────────────────────────────────────
+  if (!chartHasNewSample(canvasId, state, subsystem)) return;
   // ───────────────────────────────────────────────────────────────────
   for (let i = 0; i < values.length && i < bufs.length; i++) {
     bufs[i].push({ x: timeLabel, y: values[i] });
@@ -3439,9 +4181,14 @@ const EVENT_SUBSYSTEM_RANGES = {
   obdh:    [0x0300, 0x03FF],
   tcs:     [0x0400, 0x04FF],
   ttc:     [0x0500, 0x05FF],
-  payload: [0x0600, 0x06FF]
+  payload: [0x0600, 0x06FF],
+  // 0x0800-0x08FF is the propulsion range (event_catalog.yaml declares
+  // 0x0800-0x0812). The table stopped at 0x06FF, so all nineteen propulsion
+  // events — including PROP_BURN_ABORTED and PROP_LEAK_DETECTED — fell
+  // through unrouted and appeared on no subsystem pane.
+  prop:    [0x0800, 0x08FF]
 };
-const subsysEvents = { eps: [], aocs: [], tcs: [], ttc: [], obdh: [], payload: [] };
+const subsysEvents = { eps: [], aocs: [], tcs: [], ttc: [], obdh: [], payload: [], prop: [] };
 const MAX_SUBSYS_EVENTS = 500;
 const SUBSYS_EVENT_RENDER_CAP = 500;
 
@@ -3527,7 +4274,23 @@ const POSITION_INFO = {
 };
 
 // ===== AOCS MODE NAMES =====
-const AOCS_MODES = ['OFF','SAFE_BOOT','DETUMBLE','COARSE_SUN','NOMINAL','FINE_POINT','SLEW','DESAT','ECLIPSE'];
+// The nine-mode state machine, from configs/<mission>/aocs/aocs_mode_codes.yaml.
+// Mode 9 INERTIAL was missing here, so an INERTIAL spacecraft rendered as
+// `MODE_9` (AOCS owner's D-3). Modes 3 COARSE_SUN and 8 ECLIPSE are HOLDS, not
+// destinations — the mode-vs-commanded row below is what makes that visible.
+const AOCS_MODES = ['OFF','SAFE_BOOT','DETUMBLE','COARSE_SUN','NOMINAL',
+                    'FINE_POINT','SLEW','DESAT','ECLIPSE','INERTIAL'];
+/** Mode number -> label, never a bare number and never a '?'. */
+function aocsModeLabel(mode) {
+  if (mode == null) return '--';
+  const m = Number(mode);
+  return AOCS_MODES[m] || `MODE_${m}`;
+}
+/** Format a numeric telemetry value with its unit, or '--' when absent. */
+function fmtUnit(v, dp, unit) {
+  if (v == null || !isFinite(Number(v))) return '--' + (unit ? ' ' + unit : '');
+  return Number(v).toFixed(dp == null ? 1 : dp) + (unit ? ' ' + unit : '');
+}
 const ST_STATUS = ['OFF','BOOT','TRACK','BLIND','FAIL'];
 const SC_MODES = {0:'SAFE',1:'NOMINAL',2:'SCIENCE',3:'EMERGENCY'};
 const REBOOT_CAUSES = {0:'NONE',1:'WATCHDOG',2:'COMMANDED',3:'SEU',4:'POWER'};
@@ -4186,9 +4949,17 @@ function makeLogRow(kind, e) {
   row.className = 'log-entry';
   if (kind === 'events') {
     row.dataset.sev = e.sev || 'info';
+    // EPS owner R-7: an instructor override is not spacecraft behaviour, and a
+    // student reviewing the log must never read it as such. The model marks it
+    // by starting the description with "INSTRUCTOR OVERRIDE"; badge it rather
+    // than leaving it as one more severity-2 line among hundreds.
+    const isOverride = /INSTRUCTOR OVERRIDE/.test(String(e.msg || ''));
+    if (isOverride) row.dataset.instructor = '1';
     row.innerHTML = `<span class="log-ts">${esc(e.ts)}</span>` +
       `<span class="log-sev ${esc(e.sev || 'info')}">${esc(e.sevLabel || '')}</span>` +
-      `<span class="log-msg">${esc(e.msg || '')}</span>`;
+      `<span class="log-msg">` +
+      (isOverride ? '<span class="instructor-badge" title="Instructor action, not spacecraft behaviour">INSTRUCTOR</span>' : '') +
+      `${esc(e.msg || '')}</span>`;
     if (!logSeverityMatches(e.sev, eventSevFilter)) row.classList.add('log-filtered');
   } else {
     const c = packetRowCells(e);
@@ -5571,6 +6342,18 @@ function renderQuickCmds() {
       .filter(q => (q.group || '') === 'PAYLOAD')
       .map(quickCmdButtonHtml).join('');
   }
+  // PROP tab console: the PROPULSION group, in catalogue order — which is the
+  // order NOM-004 flies (preheat, valves, SET_BURN, ARM, EXECUTE). The
+  // `critical: true` entries render with the confirmation styling.
+  const propBody = document.getElementById('prop-quick-cmds');
+  if (propBody) {
+    const propCmds = tcQuickCommands.filter(q => (q.group || '') === 'PROPULSION');
+    propBody.innerHTML = propCmds.length
+      ? propCmds.map(quickCmdButtonHtml).join('')
+      : `<div class="cmd-group-label">${tcCatalogLoaded
+          ? 'this position may not command propulsion (allowed_func_ids excludes 108-118)'
+          : 'loading /api/tc-catalog…'}</div>`;
+  }
   initQuickCmds();
 }
 
@@ -5728,12 +6511,51 @@ function buildRWCards() {
   c.innerHTML = html;
 }
 
+// The switchable lines, in EPS index order, with the load each carries. Names
+// (rather than "Line 3") are the EPS owner's R-4: an operator answering "what
+// is drawing my power?" should not have to remember that line 4 is the FPA
+// cooler. The two non-switchable lines are listed too, because they draw
+// power and their absence from the table made the total impossible to
+// reconcile against power_cons.
+const EPS_LINES = [
+  {idx: 0, name: 'obc',         note: '6 W constant (non-switchable)'},
+  {idx: 1, name: 'ttc_rx',      note: '1.5 W constant + UHF beacon (non-switchable)'},
+  {idx: 2, name: 'ttc_tx',      note: 'tier-dependent: 5 W LOW, 11 W HIGH'},
+  {idx: 3, name: 'payload',     note: '2.4 W standby, 5.5 W imaging'},
+  {idx: 4, name: 'fpa_cooler',  note: '15 W'},
+  {idx: 5, name: 'htr_bat',     note: '8 W, thermostat duty'},
+  {idx: 6, name: 'htr_obc',     note: '4 W'},
+  {idx: 7, name: 'aocs_wheels', note: 'mode-dependent 4 / 9 / 15 W'},
+];
+
 function buildEPSLines() {
   const tbody = document.getElementById('eps-lines-tbody');
   let html = '';
-  for (let i=0; i<8; i++) {
-    html += `<tr><td>Line ${i}</td><td id="eps-line-${i}-status" style="font-weight:bold;color:var(--status-nominal);">ON</td><td id="eps-line-${i}-cur">--</td><td><span class="led off" id="eps-line-${i}-oc" role="status" aria-label="Line ${i} OC trip: inactive" title="OC trip flag"></span></td></tr>`;
+  for (const l of EPS_LINES) {
+    const i = l.idx;
+    html += `<tr title="${esc(l.note)}">`
+      + `<td>${i} <span style="color:var(--text-primary);font-weight:600;">${esc(l.name)}</span>`
+      + `<div style="color:var(--text-tertiary);font-size:9px;">${esc(l.note)}</div></td>`
+      + `<td id="eps-line-${i}-status" style="font-weight:bold;color:var(--status-nominal);">ON</td>`
+      + `<td id="eps-line-${i}-cur">--</td>`
+      + `<td id="eps-line-${i}-w">--</td>`
+      + `<td><span class="led off" id="eps-line-${i}-oc" role="status" aria-label="Line ${i} OC trip: inactive" title="OC trip flag"></span></td></tr>`;
   }
+  // Propulsion is line 8 and its status/current are ON-DEMAND parameters
+  // (0x014A / 0x014B) rather than SID 1, so it is shown but marked as such.
+  html += `<tr title="catbed heater 12 W + valve drivers 2 W, armed only; on-demand parameters">`
+    + `<td>8 <span style="color:var(--text-primary);font-weight:600;">prop</span>`
+    + `<div style="color:var(--text-tertiary);font-size:9px;">catbed 12 W + valves 2 W, armed only — on-demand (0x014A/0x014B)</div></td>`
+    + `<td id="eps-line-8-status" style="font-weight:bold;">--</td>`
+    + `<td id="eps-line-8-cur">--</td><td id="eps-line-8-w">--</td><td></td></tr>`;
+  // The TOTAL row is the check that would have caught the old breakdown
+  // defect, in which six per-subsystem values did not sum to power_cons.
+  html += `<tr style="border-top:1px solid var(--surface-tertiary);">`
+    + `<td style="font-weight:700;">TOTAL (switched lines)</td><td></td>`
+    + `<td id="eps-lines-total-a" style="font-weight:700;">--</td>`
+    + `<td id="eps-lines-total-w" style="font-weight:700;">--</td><td></td></tr>`;
+  html += `<tr><td style="color:var(--text-tertiary);">power_cons 0x0106 (all loads)</td><td></td><td></td>`
+    + `<td id="eps-lines-pcons" style="color:var(--text-tertiary);">--</td><td></td></tr>`;
   tbody.innerHTML = html;
 }
 
@@ -5773,13 +6595,15 @@ function param(id) {
 
 // ── Per-parameter staleness helpers ────────────────────────────────────────
 // The backend exposes `state.params_age` (id → seconds since last update from
-// the spacecraft). Anything older than ~2× its HK interval should be displayed
-// as STALE rather than as a current reading.
-const _STALE_DEFAULT_S = 8.0;          // generous baseline (HK is usually 1–5 s)
-const _STALE_PER_PARAM_S = {            // tighten for high-rate / safety params
-  // examples — extend as needed:
-  // 0x0107: 4.0,  // bus voltage (1 Hz HK)
-};
+// the spacecraft). How old is too old depends ENTIRELY on how often the
+// parameter is actually downlinked, so the threshold is derived from the
+// cadence join (PARAM_CADENCE, from /api/client-config) and the factors in
+// mcs/staleness.yaml — see the TELEMETRY STALENESS POLICY block above.
+//
+// This replaces a flat `_STALE_DEFAULT_S = 8.0`, under which every TCS cell
+// (60 s structure) carried a permanent STALE badge, every beacon parameter
+// (30 s) was STALE for 22 s in 30, and every on-demand parameter went STALE
+// 8 s after it was fetched and stayed that way forever.
 function paramAge(id) {
   if (!state.params_age) return null;
   const num = Number(id);
@@ -5788,12 +6612,43 @@ function paramAge(id) {
               : state.params_age['0x' + num.toString(16).toUpperCase().padStart(4, '0')];
   return ageStr != null ? Number(ageStr) : null;
 }
+/**
+ * Freshness of one parameter: 'fresh' | 'degraded' | 'stale' | 'disabled' |
+ * 'unknown'. Pure function of the broadcast state plus the cadence join.
+ *
+ * 'disabled' — every HK structure carrying this parameter is off, so the MCS
+ * has no source for it at all. Saying STALE there sends the operator after a
+ * link fault; the actual remedy is TC(3,5) HK_ENABLE on the named SID.
+ */
+function paramFreshnessDetail(id) {
+  const pid = Number(id);
+  const cad = PARAM_CADENCE[pid] || null;
+  const out = {verdict: 'unknown', age_s: paramAge(pid), interval_s: null,
+               sids: cad ? cad.sids.slice() : [], dead_sids: [], aperiodic: !cad};
+  const st = typeof state !== 'undefined' ? state : null;
+  if (cad) {
+    const l = liveSids(st, cad.sids);
+    out.dead_sids = l.dead.slice();
+    if (!l.live.length && out.age_s == null) {
+      // No enabled source and nothing ever received: NOT ENABLED, not stale.
+      out.verdict = 'disabled';
+      out.interval_s = cad.interval_s;
+      return out;
+    }
+    const iv = fastestSidInterval(l.live.length ? l.live : cad.sids);
+    out.interval_s = iv != null ? iv : cad.interval_s;
+  }
+  if (out.age_s == null) return out;     // unknown age → don't lie about freshness
+  out.verdict = ageVerdict(out.age_s, out.interval_s);
+  if (out.verdict === 'stale' && cad && !liveSids(st, cad.sids).live.length) {
+    out.verdict = 'disabled';            // it went quiet because the SID is off
+  }
+  return out;
+}
+function paramFreshness(id) { return paramFreshnessDetail(id).verdict; }
 function isParamStale(id) {
-  const age = paramAge(id);
-  if (age == null) return false;        // unknown age → don't lie about freshness
-  const thr = _STALE_PER_PARAM_S[Number(id)] != null
-            ? _STALE_PER_PARAM_S[Number(id)] : _STALE_DEFAULT_S;
-  return age > thr;
+  const v = paramFreshness(id);
+  return v === 'stale' || v === 'disabled';
 }
 // ── Ground limit colouring (WP-3) ──────────────────────────────────────────
 // The MCS now checks every incoming HK parameter against mcs/limits.yaml and
@@ -5831,6 +6686,10 @@ const LIMIT_ELEMENTS = {
   // TTC
   'ttc-ber': 0x050C, 'ttc-pa-temp': 0x050F, 'ttc-rate': 0x0506,
   'ttc-symrate': 0x053B,
+  // PROP — all five propulsion bands in mcs/limits.yaml were declared and
+  // none was rendered anywhere, because propulsion had no display at all.
+  'prop-tank-p': 0x0B01, 'prop-tank-mass': 0x0B02, 'prop-catbed': 0x0B05,
+  'prop-thrust': 0x0B09, 'prop-dv-remaining': 0x0B0C, 'prop-dv-rem2': 0x0B0C,
 };
 let limitBands = {};   // hex id -> {yellow_low, yellow_high, red_low, red_high, name, units}
 function limitState(id) {
@@ -5875,11 +6734,21 @@ async function loadLimitBands() {
 // Wrap a rendered telemetry value with a STALE tag when its source data is old.
 // Use like: paramCell(0x0107, fmt(param(0x0107), 'V')).
 function paramCell(id, html) {
-  const stale = isParamStale(id);
-  const age = paramAge(id);
-  if (!stale) return html;
-  const ageStr = age != null ? ` (${age.toFixed(0)}s old)` : '';
-  return `<span class="param-stale" title="No fresh HK${ageStr}"
+  const d = paramFreshnessDetail(id);
+  if (d.verdict === 'disabled') {
+    const sids = (d.dead_sids.length ? d.dead_sids : d.sids);
+    const list = sids.map(s => 'SID ' + s).join('/') || 'its HK structure';
+    return `<span class="param-stale" title="${list} is not enabled — send TC(3,5) HK_ENABLE"
+                  style="color: var(--status-stale); opacity: 0.55;">${html}</span>
+            <span class="tag stale" style="margin-left:4px; font-size:9px;
+                  background:rgba(240,180,41,.16); color:var(--status-warning);
+                  border-color:rgba(240,180,41,.5);">${esc(list)} OFF</span>`;
+  }
+  if (d.verdict !== 'stale') return html;
+  const ageStr = d.age_s != null ? ` (${d.age_s.toFixed(0)}s old` : '';
+  const ivStr = d.interval_s ? `, HK every ${d.interval_s}s)`
+              : (d.aperiodic ? ', on-demand only)' : ')');
+  return `<span class="param-stale" title="No fresh HK${ageStr}${ageStr ? ivStr : ''}"
                 style="color: var(--status-stale); opacity: 0.65;">${html}</span>
           <span class="tag stale" style="margin-left:4px; font-size:9px;">STALE</span>`;
 }
@@ -5998,8 +6867,10 @@ function updateContingencyBanner() {
 /** Apply the staleness gate to every instantiated chart, active tab or not. */
 function blankStaleChartsEverywhere() {
   for (const canvasId of Object.keys(chartInstances)) {
-    const f = tmFreshness(state, chartSubsystemOf(canvasId));
-    if (f === 'stale' || f === 'none') blankChart(canvasId, f);
+    const d = tmFreshnessDetail(state, chartSubsystemOf(canvasId));
+    if (d.verdict === 'stale' || d.verdict === 'none' || d.verdict === 'disabled') {
+      blankChart(canvasId, d.verdict, d);
+    }
   }
 }
 
@@ -6066,6 +6937,7 @@ function updateUI() {
   updateAOCS();
   updateTTC();
   updatePayload();
+  updateProp();
   updateOBDH();
   updateAlarmBadges();
   updatePassCountdown(state);
@@ -6222,7 +7094,21 @@ function updateOverview() {
 
   const aocs = state.aocs;
   const aMode = p(aocs, 'mode');
-  setText('ov-aocs-mode', aMode != null ? (AOCS_MODES[aMode] || `MODE_${aMode}`) : '--');
+  // D-1 repeated on the summary panel: the actual mode alone was the whole
+  // reason six orbits of lost nadir pointing went unnoticed.
+  const aCmd = param(0x0297), aDemoted = param(0x0298);
+  const ovModeEl = document.getElementById('ov-aocs-mode');
+  if (ovModeEl) {
+    const isDemoted = aDemoted != null ? !!aDemoted
+      : (aCmd != null && aMode != null && Number(aCmd) !== Number(aMode));
+    ovModeEl.textContent = aocsModeLabel(aMode)
+      + (isDemoted && aCmd != null ? `  (cmd ${aocsModeLabel(aCmd)})` : '');
+    ovModeEl.style.color = isDemoted ? 'var(--status-warning)' : '';
+    ovModeEl.title = isDemoted
+      ? `The ground commanded ${aocsModeLabel(aCmd)}; the spacecraft is in `
+        + `${aocsModeLabel(aMode)} (0x0298 mode_demoted set)`
+      : '';
+  }
   setText('ov-aocs-err', pf(aocs, 'att_error_deg', 3, ''));
   if (aocs) {
     setText('ov-aocs-rates', `${pf(aocs,'rate_roll',2,'')} / ${pf(aocs,'rate_pitch',2,'')} / ${pf(aocs,'rate_yaw',2,'')}`);
@@ -6287,13 +7173,13 @@ function updateOverviewSVG() {
     const svgEl = document.getElementById(s.svg);
     if (!tagEl || !svgEl) continue;
     const cls = tagEl.classList.contains('alarm') ? 'alarm' : tagEl.classList.contains('warn') ? 'warning' : 'nominal';
-    svgEl.className.baseVal = 'svg-eq-box ' + cls;
+    setSvgBoxClass(s.svg, cls);
   }
   // Update value labels
   const epsVal = document.getElementById('ov-svg-eps-val');
   if (epsVal && state.eps) epsVal.textContent = (state.eps.power_gen_W||0).toFixed(0) + ' W';
   const aocsVal = document.getElementById('ov-svg-aocs-val');
-  if (aocsVal && state.aocs) aocsVal.textContent = AOCS_MODES[state.aocs.mode] || '--';
+  if (aocsVal && state.aocs) aocsVal.textContent = aocsModeLabel(state.aocs.mode);
   const tcsVal = document.getElementById('ov-svg-tcs-val');
   if (tcsVal && state.tcs) tcsVal.textContent = (state.tcs.temp_obc_C||0).toFixed(0) + ' C';
   const obdhVal = document.getElementById('ov-svg-obdh-val');
@@ -6305,6 +7191,141 @@ function updateOverviewSVG() {
 }
 
 // ===== EPS TAB =====
+// 0x0144 eps.wing_status. Values from the EPS owner's R-3 table.
+const WING_STATUS = {
+  0x00: {label: 'BOTH WINGS STOWED — generation limited to body panels',
+         cls: 'bad', short: 'STOWED'},
+  0x01: {label: '+Y WING ONLY', cls: 'warn', short: '+Y ONLY'},
+  0x02: {label: '-Y WING ONLY', cls: 'warn', short: '-Y ONLY'},
+  0x03: {label: 'WINGS DEPLOYED', cls: 'ok', short: 'DEPLOYED'},
+  0x10: {label: '+Y WING DEPLOYING…', cls: 'warn', short: 'DEPLOYING +Y'},
+  0x20: {label: '-Y WING DEPLOYING…', cls: 'warn', short: 'DEPLOYING -Y'},
+};
+const WING_COLOURS = {ok: 'var(--status-nominal)', warn: 'var(--status-warning)',
+                      bad: 'var(--status-alarm)'};
+
+// Rolling energy integral (EPS owner R-6). One orbit is 5670 s; the samples
+// arrive at the 1 Hz broadcast rate, so the ring is bounded by time, not by
+// count, and gaps in the broadcast are integrated with their real dt rather
+// than assumed to be one second.
+// ORBIT_PERIOD_S (94 min = 5640 s) is already declared above for the eclipse
+// countdown; tools/power_budget.py quotes 5670 s. Reuse the page's constant so
+// the two halves of the console cannot disagree with each other.
+const ENERGY_WINDOW_S = ORBIT_PERIOD_S;
+const _energySamples = [];        // {t, net_w}
+let _socMin = null;
+
+function updateEpsWingsAndEnergy() {
+  const eps = state.eps || {};
+  // ── R-3: wing status, permanently visible ──
+  const wing = param(0x0144);
+  const info = wing == null ? null : (WING_STATUS[Number(wing)] || null);
+  const banner = document.getElementById('eps-wing-banner');
+  if (banner) {
+    banner.textContent = info ? `WINGS: ${info.label}`
+      : (wing == null ? 'WING STATUS — NO DATA'
+                      : `WING STATUS 0x${Number(wing).toString(16).toUpperCase()}`);
+    banner.style.color = info ? (WING_COLOURS[info.cls] || '') : 'var(--text-tertiary)';
+  }
+  setText('eps-wing-status', info ? info.short
+    : (wing == null ? '--' : `0x${Number(wing).toString(16).toUpperCase()}`));
+  const timer = param(0x0145);
+  setText('eps-wing-timer', timer ? fmtUnit(timer, 0, 's') : '--');
+  setText('eps-wing-a', fmtUnit(param(0x0146), 3, 'A'));
+  setText('eps-wing-b', fmtUnit(param(0x0147), 3, 'A'));
+  setText('eps-array-age', fmtUnit(param(0x0123), 4, ''));
+
+  // ── R-5: SADA readout, so "stuck" is distinguishable from "tracking" ──
+  const sada = param(0x0133);
+  setText('eps-sada', sada == null ? '--' : `${Number(sada).toFixed(1)}°`);
+
+  // ── R-5: per-face currents ──
+  const faces = [
+    ['+X', 0x012B], ['-X', 0x012C], ['+Y', 0x012D],
+    ['-Y', 0x012E], ['+Z', 0x012F], ['-Z', 0x0130],
+  ];
+  const fbody = document.getElementById('eps-faces-tbody');
+  if (fbody) {
+    let html = '';
+    for (let i = 0; i < faces.length; i += 2) {
+      const [l1, p1] = faces[i], [l2, p2] = faces[i + 1];
+      html += `<tr><td>${l1}</td><td>${fmtUnit(param(p1), 3, 'A')}</td>`
+            + `<td>${l2}</td><td>${fmtUnit(param(p2), 3, 'A')}</td></tr>`;
+    }
+    fbody.innerHTML = html;
+  }
+  const eclipse = param(0x0108);
+  const eclEl = document.getElementById('eps-eclipse');
+  if (eclEl) {
+    eclEl.textContent = eclipse == null ? '--' : (eclipse ? 'IN ECLIPSE' : 'sunlit');
+    eclEl.style.color = eclipse ? 'var(--status-warning)' : '';
+  }
+
+  // The three states that a single power_gen number cannot tell apart.
+  const diag = document.getElementById('eps-gen-diagnosis');
+  if (diag) {
+    const wingA = param(0x0146), wingB = param(0x0147);
+    const bodySum = faces.reduce((a, [, pid]) => {
+      const v = param(pid); return v == null ? a : a + v;
+    }, 0);
+    let txt = '', colour = 'var(--text-tertiary)';
+    if (eclipse) {
+      txt = 'ECLIPSE — zero generation is expected here.';
+    } else if (wing != null && Number(wing) === 0) {
+      txt = 'WINGS STOWED — body faces are producing, the wings are not. '
+          + 'This is not a failure and raises no alarm; it is a configuration.';
+      colour = 'var(--status-alarm)';
+    } else if (wing != null && Number(wing) === 3
+               && wingA != null && wingB != null
+               && wingA < 0.01 && wingB < 0.01 && bodySum > 0.01) {
+      txt = 'WINGS DEPLOYED but producing nothing while the body faces are — '
+          + 'check the solar-array drive (device 0x0101).';
+      colour = 'var(--status-warning)';
+    }
+    diag.textContent = txt;
+    diag.style.color = colour;
+  }
+
+  // ── R-6: rolling Wh/orbit ──
+  const gen = eps.power_gen_W, cons = eps.power_cons_W;
+  const now = Date.now() / 1000;
+  if (gen != null && cons != null) {
+    _energySamples.push({t: now, net: Number(gen) - Number(cons)});
+    while (_energySamples.length && now - _energySamples[0].t > ENERGY_WINDOW_S) {
+      _energySamples.shift();
+    }
+    setText('eps-margin-now', (Number(gen) - Number(cons)).toFixed(1) + ' W');
+  }
+  const soc = eps.soc_pct;
+  if (soc != null) _socMin = _socMin == null ? Number(soc) : Math.min(_socMin, Number(soc));
+  setText('eps-soc-min', _socMin == null ? '-- %' : _socMin.toFixed(1) + ' %');
+
+  let wh = 0;
+  for (let i = 1; i < _energySamples.length; i++) {
+    const dt = _energySamples[i].t - _energySamples[i - 1].t;
+    if (dt > 0 && dt < 30) wh += _energySamples[i].net * dt / 3600.0;
+  }
+  const span = _energySamples.length > 1
+    ? _energySamples[_energySamples.length - 1].t - _energySamples[0].t : 0;
+  const whEl = document.getElementById('eps-wh-orbit');
+  if (whEl) {
+    if (span < 60) {
+      whEl.textContent = 'accumulating…';
+      whEl.style.color = 'var(--text-tertiary)';
+    } else {
+      // Scale a partial window to a full orbit so the number is comparable
+      // with tools/power_budget.py, and say the window is partial.
+      const perOrbit = wh * (ENERGY_WINDOW_S / span);
+      whEl.textContent = `${perOrbit >= 0 ? '+' : ''}${perOrbit.toFixed(1)} Wh/orbit`;
+      whEl.style.color = perOrbit >= 0 ? 'var(--status-nominal)'
+                       : (perOrbit >= -10 ? 'var(--status-warning)' : 'var(--status-alarm)');
+    }
+  }
+  setText('eps-wh-window', span < 1 ? '--'
+    : `${fmtHms(span)} of ${fmtHms(ENERGY_WINDOW_S)}`
+      + (span < ENERGY_WINDOW_S ? ' (scaled)' : ''));
+}
+
 function updateEPS() {
   const eps = state.eps;
   const soc = p(eps, 'soc_pct', 0);
@@ -6336,7 +7357,12 @@ function updateEPS() {
     setLED(`eps-line-${i}-oc`, tripped ? 'alarm' : 'off');
   }
 
-  // Power line currents from params 0x0118-0x011F and status from 0x0110-0x0117
+  // Power line currents from params 0x0118-0x011F and status from 0x0110-0x0117.
+  // Both blocks are already in SID 1, i.e. already arriving at 1 Hz on every
+  // session — the derived watts and the TOTAL row (EPS owner R-4) cost nothing
+  // to build because the data was on the ground all along.
+  const busV = param(0x0105);
+  let totalA = 0, totalW = 0, anyLine = false;
   for (let i=0; i<8; i++) {
     const lineEnabled = param(0x0110 + i) > 0;
     const cur = param(0x0118 + i);
@@ -6346,7 +7372,27 @@ function updateEPS() {
       statusEl.style.color = lineEnabled ? 'var(--status-nominal)' : 'var(--status-stale)';
     }
     setText(`eps-line-${i}-cur`, cur != null ? cur.toFixed(3) : '--');
+    const w = (cur != null && busV != null) ? cur * busV : null;
+    setText(`eps-line-${i}-w`, w != null ? w.toFixed(1) : '--');
+    if (cur != null) { totalA += cur; anyLine = true; }
+    if (w != null) totalW += w;
   }
+  // Line 8 (propulsion) is on-demand, not SID 1.
+  const propLine = param(0x014A), propCur = param(0x014B);
+  const propStatusEl = document.getElementById('eps-line-8-status');
+  if (propStatusEl) {
+    propStatusEl.textContent = propLine == null ? '--' : (propLine ? 'ON' : 'OFF');
+    propStatusEl.style.color = propLine ? 'var(--status-nominal)' : 'var(--status-stale)';
+  }
+  setText('eps-line-8-cur', propCur != null ? propCur.toFixed(3) : '--');
+  setText('eps-line-8-w', (propCur != null && busV != null)
+    ? (propCur * busV).toFixed(1) : '--');
+  setText('eps-lines-total-a', anyLine ? totalA.toFixed(3) : '--');
+  setText('eps-lines-total-w', anyLine ? totalW.toFixed(1) : '--');
+  setText('eps-lines-pcons', pf(eps, 'power_cons_W', 1, 'W'));
+
+  // ── wings, generation detail and the energy integral ──
+  updateEpsWingsAndEnergy();
 
   // SVG diagram updates
   updateEPSSVG();
@@ -6398,7 +7444,18 @@ function updateEPSSVG() {
 
 function setSvgBoxClass(id, cls) {
   const el = document.getElementById(id);
-  if (el) el.className.baseVal = 'svg-eq-box ' + cls;
+  if (!el) return;
+  // SVG elements expose `className` as a read-only SVGAnimatedString whose
+  // `baseVal` is writable; HTML elements expose a plain string. Handle both,
+  // so a schematic helper cannot throw and take the rest of an update
+  // function down with it.
+  const next = 'svg-eq-box ' + cls;
+  if (el.className && typeof el.className === 'object' && 'baseVal' in el.className) {
+    el.className.baseVal = next;
+  } else {
+    el.setAttribute('class', next);
+    try { el.className = next; } catch (e) { /* read-only: the attribute wins */ }
+  }
 }
 
 function setText2(id, txt) {
@@ -6476,6 +7533,104 @@ function updateTCSSVG() {
 }
 
 // ===== AOCS TAB =====
+
+// Modes the ground can legitimately COMMAND and expect to be held. Losing one
+// of these is a demotion. COARSE_SUN (3) and ECLIPSE (8) are holds, not
+// destinations — the model hands itself back when the hold clears.
+const AOCS_OPERATIONAL_MODES = [4, 5, 9];      // NOMINAL, FINE_POINT, INERTIAL
+// A demotion INTO one of these is transient housekeeping (amber); a demotion
+// into anything else while an operational mode is commanded is safing (red).
+const AOCS_TRANSIENT_MODES = [6, 7, 8];        // SLEW, DESAT, ECLIPSE
+
+/**
+ * AOCS owner's D-1, the highest-value display change in the batch.
+ *
+ * In the instrumented run the spacecraft went NOMINAL -> ECLIPSE ->
+ * COARSE_SUN and stayed there for six orbits. The mode field read
+ * "COARSE_SUN", which is a perfectly healthy-looking string, and no display
+ * anywhere said that NOMINAL had been commanded and lost. Nadir pointing was
+ * silently abandoned and the console's only symptom was a generation number
+ * that looked *better* than nominal.
+ */
+function updateAocsModeRow(mode) {
+  const cmd = param(0x0297);
+  const demoted = param(0x0298);
+  setText('aocs-mode-actual', aocsModeLabel(mode));
+  const cmdEl = document.getElementById('aocs-mode-cmd');
+  const note = document.getElementById('aocs-demote-note');
+  const isDemoted = demoted != null
+    ? !!demoted
+    : (cmd != null && mode != null && Number(cmd) !== Number(mode));
+  if (cmdEl) {
+    cmdEl.textContent = cmd == null ? '' : `(cmd ${aocsModeLabel(cmd)})`;
+    cmdEl.style.color = isDemoted ? 'var(--status-warning)' : 'var(--text-tertiary)';
+  }
+  const actual = document.getElementById('aocs-mode-actual');
+  if (actual) {
+    actual.style.color = isDemoted ? 'var(--status-warning)' : 'var(--status-nominal)';
+  }
+  if (!note) return;
+  if (!isDemoted || cmd == null) {
+    note.style.display = 'none';
+    note.textContent = '';
+    return;
+  }
+  const m = Number(mode);
+  const safing = AOCS_OPERATIONAL_MODES.indexOf(Number(cmd)) >= 0
+              && AOCS_TRANSIENT_MODES.indexOf(m) < 0;
+  note.style.display = '';
+  note.textContent = safing
+    ? `NOT IN COMMANDED MODE — SAFED TO ${aocsModeLabel(m)}, `
+      + `${aocsModeLabel(cmd)} WAS COMMANDED`
+    : `TRANSIENT — ${aocsModeLabel(m)}, RETURNING TO ${aocsModeLabel(cmd)}`;
+  note.style.color = safing ? 'var(--status-alarm)' : 'var(--status-warning)';
+  if (actual) {
+    actual.style.color = safing ? 'var(--status-alarm)' : 'var(--status-warning)';
+  }
+}
+
+// 0x02C5 aocs.fine_ready — the FINE-entry precondition mask, 0 = ready. Each
+// bit is a reason AOCS_SET_MODE(5) will be refused, and the payload's capture
+// gate demands exactly mode 5, so this mask is the answer to "why can I not
+// image?". Bit meanings from telemetry/parameters.yaml.
+const AOCS_FINE_READY_BITS = [
+  {bit: 0, label: 'STAR TRACKER < 5 STARS', hint: 'The selected star tracker is not tracking enough stars'},
+  {bit: 1, label: '< 3 WHEELS', hint: 'Fewer than three wheels: a 3-of-4 pyramid still spans R^3 and flies FINE degraded (0x0299); two cannot'},
+  {bit: 2, label: 'MEKF UNCONVERGED', hint: 'The attitude estimator has not converged'},
+  {bit: 3, label: 'BODY RATES HIGH', hint: 'Body rates above the FINE entry threshold'},
+  {bit: 4, label: 'MOMENTUM > 70%', hint: 'Momentum envelope above 70% — a desaturation is coming (planning warning)'},
+  {bit: 5, label: 'PROPAGATE-ONLY', hint: 'Attitude is being propagated, not measured'},
+  {bit: 6, label: 'SLEW NOT IDLE 60 s', hint: 'The last slew has not been settled for 60 s'},
+];
+
+function updateFineReadyMask() {
+  const grid = document.getElementById('aocs-fine-ready');
+  const verdict = document.getElementById('aocs-fine-verdict');
+  const mask = param(0x02C5);
+  if (grid) {
+    const m = mask == null ? null : Number(mask);
+    grid.innerHTML = AOCS_FINE_READY_BITS.map(b => {
+      const set = m != null && (m & (1 << b.bit)) !== 0;
+      return `<div class="bit-ind${set ? ' set' : ''}" title="${esc(b.hint)}">`
+           + `<span class="bit-dot"></span><span class="bit-n">b${b.bit}</span>`
+           + `<span>${esc(b.label)}</span></div>`;
+    }).join('');
+  }
+  if (!verdict) return;
+  if (mask == null) {
+    verdict.textContent = 'FINE PRECONDITIONS — NO DATA';
+    verdict.style.color = 'var(--text-tertiary)';
+  } else if (Number(mask) === 0) {
+    verdict.textContent = 'FINE_POINT AVAILABLE';
+    verdict.style.color = 'var(--status-nominal)';
+  } else {
+    const names = AOCS_FINE_READY_BITS
+      .filter(b => (Number(mask) & (1 << b.bit)) !== 0).map(b => b.label);
+    verdict.textContent = `FINE_POINT BLOCKED — ${names.join(', ')}`;
+    verdict.style.color = 'var(--status-warning)';
+  }
+}
+
 function updateAOCS() {
   const aocs = state.aocs;
   const mode = p(aocs, 'mode');
@@ -6486,11 +7641,28 @@ function updateAOCS() {
     if (chip) chip.classList.toggle('active', i === mode);
   }
 
+  // ── D-1: commanded mode vs actual mode ──
+  updateAocsModeRow(mode);
+
   // Submode and time_in_mode from params
   const submode = param(0x0262);
   const timeInMode = param(0x0264);
   setText('aocs-submode', submode != null ? submode : '--');
   setText('aocs-time-in-mode', timeInMode != null ? timeInMode.toFixed(0)+' s' : '-- s');
+
+  // ── D-5: FINE flown on three wheels is legal but has a relaxed spec ──
+  const fineDeg = param(0x0299);
+  const fineEl = document.getElementById('aocs-fine-degraded');
+  if (fineEl) {
+    if (fineDeg == null) { fineEl.textContent = '--'; fineEl.style.color = ''; }
+    else if (fineDeg) {
+      fineEl.textContent = 'FINE (3-wheel) — relaxed jitter/deadband spec';
+      fineEl.style.color = 'var(--status-warning)';
+    } else { fineEl.textContent = '4-wheel'; fineEl.style.color = ''; }
+  }
+
+  // ── 0x02C5: why FINE_POINT would be refused ──
+  updateFineReadyMask();
 
   // Attitude
   setText('aocs-att-err', pf(aocs, 'att_error_deg', 4, ''));
@@ -6504,9 +7676,30 @@ function updateAOCS() {
   setRateGauge('aocs-pitch', rp);
   setRateGauge('aocs-yaw', ry);
 
-  // Total momentum
+  // ── Momentum (AOCS owner D-4) ──
+  // 0x025B is |h_wheel|; a four-wheel pyramid can hold it at 5000 rpm on
+  // every wheel with ZERO body momentum. What a magnetic dump removes is the
+  // BODY momentum 0x029B, and what says how close the wheels are to their
+  // stops is the envelope percentage 0x02BA — which an operator watching only
+  // 0x025B could read as "momentum = 0" while the wheels saturated.
   const mom = param(0x025B);
   setText('aocs-momentum', mom != null ? mom.toFixed(3)+' Nms' : '-- Nms');
+  setText('aocs-h-body', fmtUnit(param(0x029B), 4, 'Nms'));
+  const env = param(0x02BA);
+  setText('aocs-mom-envelope', fmtUnit(env, 1, '%'));
+  const momFill = document.getElementById('aocs-mom-fill');
+  if (momFill) {
+    const pct = env == null ? 0 : Math.max(0, Math.min(100, Number(env)));
+    momFill.style.width = pct + '%';
+    momFill.className = 'gauge-fill ' + (pct >= 90 ? 'alarm' : (pct >= 70 ? 'warn' : 'nom'));
+  }
+  const desatInh = param(0x029A), desatIneff = param(0x029C);
+  setLED('aocs-desat-inhibit-led', desatInh ? 'warn' : 'off');
+  setText('aocs-desat-inhibit-lbl', desatInh == null ? 'INHIBIT --'
+    : (desatInh ? 'INHIBITED' : 'PERMITTED'));
+  setLED('aocs-desat-ineff-led', desatIneff ? 'alarm' : 'off');
+  setText('aocs-desat-ineff-lbl', desatIneff == null ? '--'
+    : (desatIneff ? 'LAST DUMP INEFFECTIVE' : 'EFFECTIVE'));
 
   // Star trackers
   const st1s = param(0x0240);
@@ -6541,6 +7734,30 @@ function updateAOCS() {
   setText('aocs-css-x', param(0x0245) != null ? param(0x0245).toFixed(4) : '--');
   setText('aocs-css-y', param(0x0246) != null ? param(0x0246).toFixed(4) : '--');
   setText('aocs-css-z', param(0x0247) != null ? param(0x0247).toFixed(4) : '--');
+
+  // ── D-6: gyro block. 0x025D used to be hard-wired to "AOCS mode != 0" and
+  // the three S2 device commands changed nothing observable. ──
+  const gyroEn = param(0x025D), gyroUnits = param(0x0294),
+        gyroSat = param(0x0295), gyroBias = param(0x0296);
+  setLED('aocs-gyro-en-led', gyroEn ? 'on' : 'off');
+  setText('aocs-gyro-en', gyroEn == null ? '--' : (gyroEn ? 'YES' : 'NO'));
+  const unitsEl = document.getElementById('aocs-gyro-units');
+  if (unitsEl) {
+    unitsEl.textContent = gyroUnits == null ? '--' : `${gyroUnits} of 3`;
+    unitsEl.style.color = (gyroUnits != null && gyroUnits < 3)
+      ? 'var(--status-warning)' : '';
+  }
+  const satEl = document.getElementById('aocs-gyro-sat');
+  if (satEl) {
+    satEl.textContent = gyroSat == null ? '--'
+      : (gyroSat ? 'SATURATED (channel at 400 deg/s)' : 'no');
+    satEl.style.color = gyroSat ? 'var(--status-alarm)' : '';
+  }
+  const biasEl = document.getElementById('aocs-gyro-bias');
+  if (biasEl) {
+    biasEl.textContent = gyroBias == null ? '--' : `${Number(gyroBias).toFixed(4)} deg/s`;
+    biasEl.style.color = gyroBias ? 'var(--status-warning)' : '';
+  }
 
   // MTQ
   setText('aocs-mtq-x', param(0x0258) != null ? param(0x0258).toFixed(1)+' %' : '-- %');
@@ -6603,8 +7820,7 @@ function updateAOCSSVG() {
   setSvgBoxClass('aocs-svg-mtq', mtqEn ? 'nominal' : 'off');
   // Controller color based on mode
   const ctrlCls = mode===0 ? 'off' : (mode<=2 ? 'warning' : 'active');
-  const ctrlEl = document.getElementById('aocs-svg-ctrl');
-  if (ctrlEl) ctrlEl.className.baseVal = 'svg-eq-box ' + ctrlCls;
+  setSvgBoxClass('aocs-svg-ctrl', ctrlCls);
 }
 
 // ===== OVERVIEW MAP (World View) =====
@@ -6615,13 +7831,20 @@ let ovScFootprint = null;
 let ovGsMarkers = [];
 let ovNightOverlay = null;
 let PLANNER_URL = 'http://localhost:9091';
-// Fetch actual planner URL from server (supports distributed deployment)
-(async () => {
+// Fetch runtime config from the server: the planner URL (distributed
+// deployment) and the display staleness policy + cadence join, which is what
+// lets every freshness verdict on this page be derived from the parameter's
+// real downlink rate instead of from a hard-coded 5 s / 8 s / 15 s.
+async function loadClientConfig() {
   try {
     const r = await fetch('/api/client-config');
-    if (r.ok) { const d = await r.json(); if (d.planner_url) PLANNER_URL = d.planner_url; }
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d.planner_url) PLANNER_URL = d.planner_url;
+    applyStalenessConfig(d);
   } catch(e) {}
-})();
+}
+loadClientConfig();
 
 function initOverviewMap() {
   // Overview tab is shown by default, so init immediately with a small delay for DOM
@@ -7076,8 +8299,119 @@ function updateTTCRateLadder(ttc) {
 }
 
 // ===== TTC TAB =====
+
+// 0x052B ttc.tx_gate_status — why the S-band chain is or is not radiating.
+// 0xFF = everything nominal. Bit meanings from the TT&C owner's §1 table.
+const TTC_GATE_BITS = [
+  {bit: 0, label: 'PA ON',            hint: '0x0516 — the power amplifier is on'},
+  {bit: 1, label: 'ttc_tx LINE HOT',  hint: '0x0112 — the EPS ttc_tx line is energised'},
+  {bit: 2, label: 'STATION IN VIEW',  hint: 'A ground station is above the mask'},
+  {bit: 3, label: 'S-BAND RADIATING', hint: '0x0525 tx_active — TM is actually going out'},
+  {bit: 4, label: 'UHF BEACON CMD ON', hint: '0x0526 — the beacon transmitter is commanded on'},
+  {bit: 5, label: 'UHF BEACON RADIATING', hint: '0x0527 — the beacon is keying SID 11'},
+  {bit: 6, label: 'S-BAND ANT DEPLOYED', hint: '0x0520 — the antenna is deployed'},
+  {bit: 7, label: 'BEACON MODE OFF',  hint: '0x0521 clear — the TM tier is not forced to the beacon tier'},
+];
+
+/**
+ * The five-state DOWNLINK row (TT&C owner §2.1). A pure function of the gate
+ * word, so it is testable without a browser and so the reason comes from the
+ * spacecraft rather than being re-derived on the ground.
+ *
+ * BEACON ONLY takes precedence over the two INHIBITED rows when both apply,
+ * but the label keeps the inhibit reason: PA-off-plus-beacon-up is the common
+ * state after an FDIR shutdown and the operator needs to be told both.
+ */
+function downlinkState(gate) {
+  if (gate == null) return {label: 'UNKNOWN', cls: 'unknown',
+                            why: 'no tx_gate_status (0x052B) telemetry'};
+  const g = Number(gate);
+  const bit = n => (g & (1 << n)) !== 0;
+  if (bit(3)) return {label: 'TRANSMITTING', cls: 'ok', why: 'S-band chain radiating'};
+  const beacon = bit(5);
+  if (!bit(0)) {
+    return {label: beacon ? 'INHIBITED (PA OFF) — BEACON ONLY' : 'INHIBITED (PA OFF)',
+            cls: beacon ? 'warn' : 'bad',
+            why: 'the power amplifier is off (TTC_PA_ON, S8 func 66)'
+                 + (beacon ? '; the UHF beacon is still radiating SID 11' : '')};
+  }
+  if (!bit(1)) {
+    return {label: beacon ? 'INHIBITED (ttc_tx LINE OFF) — BEACON ONLY'
+                          : 'INHIBITED (ttc_tx LINE OFF)',
+            cls: beacon ? 'warn' : 'bad',
+            why: 'the EPS ttc_tx line is not energised (EPS_POWER_ON line 2)'
+                 + (beacon ? '; the UHF beacon is billed to the non-switchable ttc_rx line' : '')};
+  }
+  if (beacon) return {label: 'BEACON ONLY', cls: 'warn',
+                      why: 'the UHF beacon is radiating; the S-band chain is not'};
+  if (!bit(2)) return {label: 'NO CONTACT', cls: 'idle',
+                       why: 'no ground station in view — nothing is wrong'};
+  return {label: 'NOT RADIATING', cls: 'bad',
+          why: 'PA on, line hot and a station in view, but the chain is not radiating'};
+}
+
+const DOWNLINK_COLOURS = {
+  ok: 'var(--status-nominal)', warn: 'var(--status-warning)',
+  bad: 'var(--status-alarm)', idle: 'var(--text-tertiary)',
+  unknown: 'var(--text-tertiary)',
+};
+
 function updateTTC() {
   const ttc = state.ttc;
+
+  // ── DOWNLINK status row + gate bits (TT&C owner §2.1) ──
+  const gate = param(0x052B);
+  const dl = downlinkState(gate);
+  const dlEl = document.getElementById('ttc-downlink-state');
+  if (dlEl) {
+    dlEl.textContent = dl.label;
+    dlEl.style.color = DOWNLINK_COLOURS[dl.cls] || '';
+  }
+  setText('ttc-downlink-why', dl.why);
+  const gateGrid = document.getElementById('ttc-gate-bits');
+  if (gateGrid) {
+    const g = gate == null ? null : Number(gate);
+    gateGrid.innerHTML = TTC_GATE_BITS.map(b => {
+      // Here a SET bit is the HEALTHY state (0xFF = all nominal), the opposite
+      // polarity to the two inhibit masks — so the dot is green when set and
+      // amber when clear, and each label states what the bit asserts.
+      const set = g != null && (g & (1 << b.bit)) !== 0;
+      return `<div class="bit-ind${set ? '' : ' set'}" title="${esc(b.hint)}">`
+           + `<span class="bit-dot"></span><span class="bit-n">b${b.bit}</span>`
+           + `<span>${esc(b.label)}</span></div>`;
+    }).join('');
+  }
+  const txActive = param(0x0525);
+  setLED('ttc-txactive-led', txActive ? 'on' : 'off');
+  setText('ttc-txactive-lbl', txActive == null ? '--' : (txActive ? 'YES' : 'NO'));
+  setText('ttc-eirp', fmtUnit(param(0x052C), 1, 'dBW'));
+  const txLine = param(0x0112);
+  setLED('ttc-txline-led', txLine ? 'on' : 'off');
+  setText('ttc-txline-lbl', txLine == null ? '--' : (txLine ? 'ON' : 'OFF'));
+  // beacon_mode (0x0521) gates BOTH operational tiers and survives an
+  // application boot, so a spacecraft can sit in it for a whole session. It
+  // appeared on no display at all.
+  const beaconMode = param(0x0521);
+  const bmEl = document.getElementById('ttc-beacon-mode');
+  if (bmEl) {
+    bmEl.textContent = beaconMode == null ? '--'
+      : (beaconMode ? 'LATCHED — LOW and HIGH refused (error 0x0007)' : 'no');
+    bmEl.style.color = beaconMode ? 'var(--status-warning)' : '';
+  }
+
+  // ── UHF beacon transmitter (§2.2) — deliberately NOT dimmed with S-band ──
+  const beaconActive = param(0x0527), beaconTx = param(0x0526);
+  setLED('ttc-beacon-active-led', beaconActive ? 'on' : 'off');
+  setText('ttc-beacon-active-lbl', beaconActive == null ? '--'
+    : (beaconActive ? 'RADIATING' : 'silent'));
+  setText('ttc-beacon-tx', beaconTx == null ? '--' : (beaconTx ? 'COMMANDED ON' : 'OFF'));
+  setText('ttc-beacon-freq', fmtUnit(param(0x0529), 1, 'MHz'));
+  setText('ttc-beacon-pwr', fmtUnit(param(0x052A), 2, 'W'));
+  setText('ttc-beacon-margin', fmtUnit(param(0x0528), 1, 'dB'));
+
+  // §3.1 — say so when the RF-quality block is being fed by the back-channel.
+  const bcBadge = document.getElementById('ttc-backchannel-badge');
+  if (bcBadge) bcBadge.style.display = (txActive === 0 || txActive === false) ? '' : 'none';
 
   // Lock chain
   const carrier = param(0x0510);
@@ -7168,8 +8502,163 @@ function updateTTCSVG() {
 }
 
 // ===== PAYLOAD TAB =====
+
+// 0x0600 payload.mode. Mode 3 CALIBRATION was added this batch; a mode the
+// panel renders as "?" during every calibration is worse than useless on a
+// card that is about calibration (payload owner D-2). Values 0/1/2 are
+// unchanged bit-for-bit — the AOCS desat inhibit still keys on mode == 2.
+const PAYLOAD_MODES = {0: 'OFF', 1: 'STANDBY', 2: 'IMAGING', 3: 'CALIBRATION'};
+const PAYLOAD_MODE_COLOURS = {
+  0: 'var(--text-tertiary)', 1: 'var(--status-commanding)',
+  2: 'var(--status-nominal)', 3: 'var(--status-commanding)',
+};
+const PAYLOAD_CAL_MODES = {0: 'DARK', 1: 'FLAT', 2: 'BOTH'};
+const PAYLOAD_CAL_ABORT = {
+  0: 'completed', 1: 'detector unpowered', 2: 'shutter moved',
+  3: 'lamp state changed', 4: 'FPA left its regulation band', 5: 'operator abort',
+};
+const PAYLOAD_BAND_NAMES = ['B', 'G', 'R', 'N'];
+
+/** FPA readiness, and — the point of the block — WHY it is not ready. */
+function updateFpaReadiness() {
+  const ready = param(0x0610);
+  const det = param(0x0601), setp = param(0x0631);
+  const floor = param(0x064A), margin = param(0x064B);
+  const cooler = param(0x040C), line = param(0x0114);
+  setLED('pld-fpa-ready2', ready ? 'on' : 'off');
+  const lbl = document.getElementById('pld-fpa-ready2-lbl');
+  if (lbl) {
+    lbl.textContent = ready == null ? '--' : (ready ? 'YES' : 'NO');
+    lbl.style.color = ready ? 'var(--status-nominal)' : 'var(--status-alarm)';
+  }
+  setText('pld-fpa-det', fmtUnit(det, 1, 'C'));
+  setText('pld-fpa-setpoint', fmtUnit(setp, 1, 'C'));
+  setText('pld-fpa-floor', fmtUnit(floor, 1, 'C'));
+  const mEl = document.getElementById('pld-fpa-margin');
+  if (mEl) {
+    mEl.textContent = fmtUnit(margin, 1, 'K');
+    mEl.style.color = margin == null ? ''
+      : (margin <= 0 ? 'var(--status-alarm)'
+                     : (margin < 2 ? 'var(--status-warning)' : 'var(--status-nominal)'));
+  }
+  const cEl = document.getElementById('pld-cooler-state');
+  if (cEl) {
+    cEl.textContent = cooler == null ? '--' : (cooler ? 'ON' : 'OFF');
+    cEl.style.color = cooler ? '' : 'var(--status-warning)';
+  }
+  const lEl = document.getElementById('pld-cooler-line');
+  if (lEl) {
+    lEl.textContent = line == null ? '--' : (line ? 'ON' : 'OFF — the cooler cannot run');
+    lEl.style.color = line ? '' : 'var(--status-alarm)';
+  }
+  // The reason, in the order an operator would check it.
+  const why = document.getElementById('pld-fpa-ready-why');
+  if (!why) return;
+  let txt = '';
+  if (ready) {
+    txt = '';
+  } else if (line === 0 || line === false) {
+    txt = 'EPS line 4 (fpa_cooler) is off — energise it before anything else';
+  } else if (cooler === 0 || cooler === false) {
+    txt = 'the cooler is not running';
+  } else if (margin != null && margin <= 0) {
+    txt = 'the commanded setpoint is BELOW the achievable floor at this sink '
+        + 'temperature — the cooler physically cannot get there';
+  } else if (det != null && setp != null && det > setp) {
+    txt = 'still cooling towards the setpoint';
+  } else if (ready == null) {
+    txt = 'no payload telemetry';
+  }
+  why.textContent = txt;
+  why.style.color = txt ? 'var(--status-warning)' : '';
+}
+
+function updatePayloadCalibration() {
+  const mode = param(0x0600);
+  const mEl = document.getElementById('pld-mode');
+  if (mEl) {
+    mEl.textContent = mode == null ? '--'
+      : (PAYLOAD_MODES[mode] || `MODE ${mode}`);
+    mEl.style.color = PAYLOAD_MODE_COLOURS[mode] || '';
+  }
+  const active = param(0x062A), progress = param(0x062B);
+  setText('pld-cal-active', active == null ? '--' : (active ? 'RUNNING' : 'idle'));
+  setText('pld-cal-progress', progress == null ? '--' : `${Number(progress).toFixed(0)} %`);
+  const calMode = param(0x0644);
+  setText('pld-cal-mode', calMode == null ? '--'
+    : (PAYLOAD_CAL_MODES[calMode] || `MODE ${calMode}`));
+  // 0x0646: a band is calibrated when it holds BOTH a bias and a gain
+  // coefficient; 0x0F = fully calibrated.
+  const mask = param(0x0646);
+  const bandsEl = document.getElementById('pld-cal-bands');
+  if (bandsEl) {
+    if (mask == null) { bandsEl.textContent = '--'; bandsEl.style.color = ''; }
+    else {
+      const m = Number(mask);
+      bandsEl.textContent = PAYLOAD_BAND_NAMES
+        .map((b, i) => ((m & (1 << i)) ? b : '·')).join(' ')
+        + (m === 0x0F ? '  (fully calibrated)' : '');
+      bandsEl.style.color = m === 0x0F ? 'var(--status-nominal)'
+                                       : 'var(--status-warning)';
+    }
+  }
+  const abort = param(0x0645);
+  const row = document.getElementById('pld-cal-abort-row');
+  if (row) {
+    const show = abort != null && Number(abort) !== 0;
+    row.style.display = show ? '' : 'none';
+    if (show) {
+      setText('pld-cal-abort',
+        `${abort} — ${PAYLOAD_CAL_ABORT[abort] || 'unknown reason'}`);
+    }
+  }
+}
+
+function updatePayloadStore() {
+  const usedPct = param(0x0604), usedMb = param(0x060B), totalMb = param(0x060A);
+  setText('pld-store-used', (usedMb == null && usedPct == null) ? '--'
+    : `${usedMb != null ? usedMb.toFixed(1) : '--'} / `
+      + `${totalMb != null ? totalMb.toFixed(0) : '--'} MB`
+      + (usedPct != null ? `  (${Number(usedPct).toFixed(1)} %)` : ''));
+  const count = param(0x0648), pmb = param(0x0647);
+  setText('pld-products', count == null ? '--'
+    : `${count}` + (pmb != null ? `  (${pmb.toFixed(1)} MB)` : ''));
+
+  // D-7: the shutter is now commandable absolutely (func 119) and is a hard
+  // precondition for both capture and dark frames.
+  const shutter = param(0x063C);
+  setLED('pld-shutter-led', shutter ? 'on' : 'off');
+  setText('pld-shutter', shutter == null ? '--' : (shutter ? 'OPEN' : 'CLOSED'));
+  const readout = param(0x0649);
+  setLED('pld-readout-led', readout ? 'on' : 'off');
+  setText('pld-readout', readout == null ? '--' : (readout ? 'SCANNING' : 'idle'));
+  // 0x0607 / 0x0608 are non-zero ONLY during a commanded strip (a few seconds
+  // per capture), so they are rendered as instantaneous values gated on
+  // 0x0649 rather than as a trend that would look dead.
+  const lineRate = param(0x0607), dataRate = param(0x0608);
+  setText('pld-rates', readout
+    ? `${fmtUnit(lineRate, 0, 'lines/s')} · ${fmtUnit(dataRate, 2, 'Mb/s')}`
+    : 'idle (non-zero only during a commanded strip)');
+
+  // The planner warning the payload owner asked us to show rather than
+  // enforce: 0x02C5 bit 4 = momentum envelope >= 70 %, i.e. a desaturation is
+  // coming. It does not refuse a capture; it lets a planner avoid one.
+  const fineMask = param(0x02C5);
+  const dw = document.getElementById('pld-desat-warn');
+  if (dw) {
+    const set = fineMask != null && (Number(fineMask) & (1 << 4)) !== 0;
+    dw.textContent = fineMask == null ? '--'
+      : (set ? 'MOMENTUM >= 70 % — a desat is coming; plan around it' : 'clear');
+    dw.style.color = set ? 'var(--status-warning)' : '';
+  }
+}
+
 function updatePayload() {
   const pld = state.payload;
+
+  updateFpaReadiness();
+  updatePayloadCalibration();
+  updatePayloadStore();
 
   setText('pld-fpa-temp', pf(pld, 'fpa_temp', 1, 'C'));
   setText('pld-img-temp', pf(pld, 'imager_temp', 1, 'C'));
@@ -7213,6 +8702,262 @@ function updatePayload() {
 
   // Events
   renderSubsystemEvents('payload', 'payload-events');
+}
+
+// ===== PROP TAB (2026-08b) =====
+// The propulsion subsystem has been flying since Phase D with 28 parameters,
+// 11 commands, its own HK structure, 19 events and an operator position. The
+// console's entire propulsion display was one entry in the TRENDS dropdown.
+
+const PROP_STATES = {0: 'SAFED', 1: 'ARMED', 2: 'FIRING', 3: 'INHIBIT'};
+const PROP_STATE_LED = {0: 'off', 1: 'warn', 2: 'on', 3: 'alarm'};
+const PROP_BURN_STATUS = {0: 'IDLE', 1: 'ARMED', 2: 'FIRING', 3: 'COMPLETE', 4: 'ABORTED'};
+const PROP_ABORT_REASONS = {
+  0: 'none', 1: 'attitude error', 2: 'low feed pressure', 3: 'catbed overtemp',
+  4: 'low SoC / load shed', 5: 'eclipse', 6: 'ground command', 7: 'watchdog timeout',
+  8: 'valve fault',
+};
+const PROP_VALVE_STATES = {0: 'CLOSED', 1: 'OPEN', 2: 'FAULT'};
+
+// 0x0B15 prop.arm_inhibit_mask, bit by bit, with the action that clears it.
+// PROP_ARM is refused whenever ANY of these is set and the bit is the ONLY
+// statement of which interlock failed — so rendering the mask as "0x0481"
+// asked the operator to decode a bitmask by hand inside a collision-avoidance
+// window. The labels and order mirror parameters.yaml's description of 0x0B15.
+const PROP_INTERLOCK_BITS = [
+  {bit: 0,  label: 'CATBED',      hint: 'Catalyst bed below 180 °C — run the catbed preheat (TCS func 42) and wait'},
+  {bit: 1,  label: 'TANK P',      hint: 'Tank/feed pressure outside the operating band (0x0B01)'},
+  {bit: 2,  label: 'PROPELLANT',  hint: 'Insufficient propellant for the loaded burn (0x0B02 / 0x0B0C)'},
+  {bit: 3,  label: 'AOCS MODE',   hint: 'AOCS is not in a mode that can hold the burn attitude'},
+  {bit: 4,  label: 'ATT ERROR',   hint: 'Pointing error above the burn limit (0x0217 vs PROP_SET_LIMITS)'},
+  {bit: 5,  label: 'BATTERY SoC', hint: 'State of charge too low to fly the burn'},
+  {bit: 6,  label: 'MISSION PHASE', hint: 'Propulsion is not permitted in the current mission phase'},
+  {bit: 7,  label: 'ECLIPSE',     hint: 'In eclipse — burns are fenced off'},
+  {bit: 8,  label: 'VALVES',      hint: 'Latch valves not in the required configuration (PROP_ISO_OPEN)'},
+  {bit: 9,  label: 'INHIBIT LATCHED', hint: 'Ground or FDIR inhibit latched — clear with PROP_INHIBIT_CLR'},
+  {bit: 10, label: 'NO BURN LOADED', hint: 'No burn loaded, or PROP_SET_BURN is older than 300 s'},
+];
+
+/** Enable one HK structure from a display that depends on it. */
+function hkEnableSid(sid) {
+  sendPusCmd(3, 5, sidToHex(sid), `HK_ENABLE_SID${sid}`);
+  addEventLog('info', 'HK', `HK_ENABLE(sid=${sid}) sent — the display will populate `
+    + `once the structure starts arriving`);
+}
+
+/**
+ * "SID n not enabled" banner for a display whose source structure is off.
+ * Returns true when the banner is showing, so the caller can skip painting
+ * values it does not have.
+ */
+function updateSidBanner(bannerId, textId, subsystem) {
+  const el = document.getElementById(bannerId);
+  if (!el) return false;
+  const d = tmFreshnessDetail(state, subsystem);
+  const off = d.verdict === 'disabled';
+  el.style.display = off ? '' : 'none';
+  if (off) {
+    const sids = (d.dead_sids.length ? d.dead_sids : d.sids);
+    const txt = document.getElementById(textId);
+    if (txt) {
+      txt.textContent =
+        `HK ${sids.map(s => 'SID ' + s).join(' / ')} (${subsystem.toUpperCase()}) `
+        + `NOT ENABLED — SEND TC(3,5) HK_ENABLE. This is normal at start-up: `
+        + `simulation.yaml enables SIDs 1 and 11 only.`;
+    }
+  }
+  return off;
+}
+
+function updateProp() {
+  updateSidBanner('prop-sid-banner', 'prop-sid-banner-text', 'prop');
+
+  const st = param(0x0B00);
+  setText('prop-state', st != null ? (PROP_STATES[st] || `STATE ${st}`) : '--');
+  setLED('prop-state-led', st != null ? (PROP_STATE_LED[st] || 'off') : 'off');
+  const burnStatus = param(0x0B0D);
+  setText('prop-burn-status', burnStatus != null
+    ? (PROP_BURN_STATUS[burnStatus] || `STATUS ${burnStatus}`) : '--');
+  const abort = param(0x0B14);
+  const abortEl = document.getElementById('prop-abort-reason');
+  if (abortEl) {
+    abortEl.textContent = abort != null
+      ? `${abort} — ${PROP_ABORT_REASONS[abort] || 'unknown'}` : '--';
+    abortEl.style.color = abort ? 'var(--status-alarm)' : '';
+  }
+  const gPct = param(0x0B03), gMass = param(0x0B02);
+  setText('prop-propellant', gMass != null
+    ? `${gMass.toFixed(1)} g${gPct != null ? ` (${gPct.toFixed(1)} %)` : ''}` : '--');
+  setText('prop-dv-remaining', fmtUnit(param(0x0B0C), 2, 'm/s'));
+  const line = param(0x014A);
+  setText('prop-eps-line', line == null ? '--' : (line ? 'ON' : 'OFF'));
+  setText('prop-power', fmtUnit(param(0x0B1B), 1, 'W'));
+
+  // ── arm interlocks ──
+  const mask = param(0x0B15);
+  const grid = document.getElementById('prop-interlocks');
+  if (grid) {
+    const m = mask == null ? null : Number(mask);
+    grid.innerHTML = PROP_INTERLOCK_BITS.map(b => {
+      const set = m != null && (m & (1 << b.bit)) !== 0;
+      return `<div class="bit-ind${set ? ' set' : ''}" title="${esc(b.hint)}">`
+           + `<span class="bit-dot"></span><span class="bit-n">b${b.bit}</span>`
+           + `<span>${esc(b.label)}</span></div>`;
+    }).join('');
+  }
+  const verdict = document.getElementById('prop-arm-verdict');
+  if (verdict) {
+    if (mask == null) {
+      verdict.textContent = 'ARM INTERLOCKS — NO DATA';
+      verdict.style.color = 'var(--text-tertiary)';
+    } else if (Number(mask) === 0) {
+      verdict.textContent = 'ALL INTERLOCKS CLEAR — PROP_ARM WILL BE ACCEPTED';
+      verdict.style.color = 'var(--status-nominal)';
+    } else {
+      const names = PROP_INTERLOCK_BITS
+        .filter(b => (Number(mask) & (1 << b.bit)) !== 0).map(b => b.label);
+      verdict.textContent = `PROP_ARM REFUSED — ${names.join(', ')} `
+        + `(0x${Number(mask).toString(16).toUpperCase().padStart(4, '0')})`;
+      verdict.style.color = 'var(--status-alarm)';
+    }
+  }
+  const maskTag = document.getElementById('prop-mask-tag');
+  if (maskTag) {
+    maskTag.textContent = mask == null ? '0x0B15 --'
+      : `0x0B15 = 0x${Number(mask).toString(16).toUpperCase().padStart(4, '0')}`;
+  }
+
+  // ── tank & feed table (ground-limit coloured through LIMIT_ELEMENTS) ──
+  const tbody = document.getElementById('prop-tank-tbody');
+  if (tbody) {
+    const rows = [
+      ['Tank pressure', 0x0B01, 2, 'bar', 'prop-tank-p'],
+      ['Propellant', 0x0B02, 1, 'g', 'prop-tank-mass'],
+      ['Tank temperature', 0x0B04, 1, '°C', null],
+      ['Catbed temperature', 0x0B05, 1, '°C', 'prop-catbed'],
+      ['Thrust estimate', 0x0B09, 1, 'mN', 'prop-thrust'],
+      ['Isp', 0x0B0A, 1, 's', null],
+      ['Leak rate', 0x0B16, 3, 'mg/s', null],
+      ['Latch A', 0x0B06, null, null, null],
+      ['Latch B', 0x0B07, null, null, null],
+      ['Flow-control valve', 0x0B08, null, null, null],
+    ];
+    tbody.innerHTML = rows.map(([label, pid, dp, unit, elId]) => {
+      let cell;
+      if (dp == null) {
+        const v = param(pid);
+        cell = v == null ? '--' : (PROP_VALVE_STATES[v] || `STATE ${v}`);
+      } else {
+        cell = fmtUnit(param(pid), dp, unit);
+      }
+      const idAttr = elId ? ` id="${elId}"` : '';
+      return `<tr><td>${esc(label)} <span style="color:var(--text-tertiary)">`
+           + `0x${pid.toString(16).toUpperCase().padStart(4, '0')}</span></td>`
+           + `<td${idAttr}>${paramCell(pid, cell)}</td></tr>`;
+    }).join('');
+  }
+
+  // ── burn ──
+  const dvCmd = param(0x0B0E), dvAch = param(0x0B0F);
+  setText('prop-dv-cmd', fmtUnit(dvCmd, 3, 'm/s'));
+  setText('prop-dv-ach', fmtUnit(dvAch, 3, 'm/s'));
+  const errEl = document.getElementById('prop-dv-err');
+  if (errEl) {
+    if (dvCmd != null && dvAch != null && dvCmd !== 0) {
+      const err = dvAch - dvCmd;
+      errEl.textContent = `${err >= 0 ? '+' : ''}${err.toFixed(3)} m/s `
+        + `(${(100 * err / dvCmd).toFixed(1)} %)`;
+      errEl.style.color = Math.abs(err) > 0.05 * Math.abs(dvCmd)
+        ? 'var(--status-warning)' : 'var(--status-nominal)';
+    } else { errEl.textContent = '--'; errEl.style.color = ''; }
+  }
+  const tCmd = param(0x0B10), tEl = param(0x0B11);
+  setText('prop-burn-time', (tEl != null || tCmd != null)
+    ? `${tEl != null ? tEl.toFixed(1) : '--'} / ${tCmd != null ? tCmd.toFixed(1) : '--'} s`
+    : '--');
+  const bar = document.getElementById('prop-burn-bar');
+  if (bar) {
+    const pct = (tCmd && tEl != null) ? Math.max(0, Math.min(100, 100 * tEl / tCmd)) : 0;
+    bar.style.width = pct + '%';
+    bar.style.background = burnStatus === 4 ? 'var(--status-alarm)'
+                        : (burnStatus === 3 ? 'var(--status-nominal)'
+                                            : 'var(--status-commanding)');
+  }
+  setText('prop-att-err', fmtUnit(param(0x0217), 3, 'deg'));
+  setText('prop-aocs-mode', aocsModeLabel(param(0x020F)));
+
+  // ── dV budget ──
+  const used = param(0x0B0B), rem = param(0x0B0C);
+  setText('prop-dv-accum', fmtUnit(used, 3, 'm/s'));
+  setText('prop-dv-rem2', fmtUnit(rem, 2, 'm/s'));
+  const dvBar = document.getElementById('prop-dv-bar');
+  if (dvBar && used != null && rem != null && (used + rem) > 0) {
+    const pct = Math.max(0, Math.min(100, 100 * rem / (used + rem)));
+    dvBar.style.width = pct + '%';
+    dvBar.style.background = pct < 20 ? 'var(--status-alarm)'
+                          : (pct < 40 ? 'var(--status-warning)' : 'var(--status-nominal)');
+  }
+  setText('prop-burn-count', param(0x0B12) != null ? param(0x0B12) : '--');
+  setText('prop-on-time', fmtUnit(param(0x0B13), 1, 's'));
+  setText('prop-mass', fmtUnit(param(0x0B18), 3, 'kg'));
+  setText('prop-sma', fmtUnit(param(0x0B1A), 3, 'km'));
+  setText('prop-epoch', param(0x0B19) != null ? `v${param(0x0B19)}` : '--');
+
+  updatePropSVG();
+
+  if (activeTab === 'prop') {
+    chartTimeCounter++;
+    const t = chartTimeCounter;
+    ensureChart('prop-chart-tank', [
+      {label: 'Tank P (bar)', borderColor: '#6BB3FF'},
+      {label: 'Propellant (%)', borderColor: '#00C896'},
+    ], 'bar / %');
+    ensureChart('prop-chart-burn', [
+      {label: 'Thrust (mN)', borderColor: '#F0B429'},
+      {label: 'Att error (deg)', borderColor: '#FF6B6B'},
+    ], 'mN / deg');
+    pushChartData('prop-chart-tank', t, [param(0x0B01) || 0, param(0x0B03) || 0]);
+    pushChartData('prop-chart-burn', t, [param(0x0B09) || 0, param(0x0217) || 0]);
+  }
+
+  renderSubsystemEvents('prop', 'prop-events');
+}
+
+function updatePropSVG() {
+  const p1 = param(0x0B01), mass = param(0x0B02), catbed = param(0x0B05);
+  setText('prop-svg-p', p1 != null ? p1.toFixed(2) + ' bar' : '-- bar');
+  setText('prop-svg-prop', mass != null ? mass.toFixed(0) + ' g' : '-- g');
+  setText('prop-svg-catbed', catbed != null ? catbed.toFixed(0) + ' C' : '-- C');
+  const thrust = param(0x0B09);
+  const firing = param(0x0B00) === 2;
+  // 0x0B09 is the thrust the feed system COULD deliver; it is only physical
+  // while FIRING (see the parameter description), so do not draw it as live
+  // thrust when the valve is shut.
+  setText('prop-svg-thrust', thrust == null ? '-- mN'
+    : (firing ? thrust.toFixed(0) + ' mN' : thrust.toFixed(0) + ' mN capable'));
+
+  const valveClass = v => (v === 2 ? 'alarm' : (v === 1 ? 'nominal' : 'off'));
+  const la = param(0x0B06), lb = param(0x0B07), fcv = param(0x0B08);
+  setSvgBoxClass('prop-svg-latch-a', valveClass(la));
+  setSvgBoxClass('prop-svg-latch-b', valveClass(lb));
+  setSvgBoxClass('prop-svg-fcv', fcv === 1 ? 'nominal' : 'off');
+  setText('prop-svg-latch-a-lbl', la == null ? '--' : (PROP_VALVE_STATES[la] || la));
+  setText('prop-svg-latch-b-lbl', lb == null ? '--' : (PROP_VALVE_STATES[lb] || lb));
+  setText('prop-svg-fcv-lbl', fcv == null ? '--' : (PROP_VALVE_STATES[fcv] || fcv));
+
+  let tankCls = 'nominal';
+  if (p1 != null) {
+    if (p1 < 4.0 || p1 > 26.0) tankCls = 'alarm';
+    else if (p1 < 6.0 || p1 > 24.0) tankCls = 'warning';
+  } else tankCls = 'off';
+  setSvgBoxClass('prop-svg-tank', tankCls);
+
+  let thrCls = 'off';
+  if (catbed != null) {
+    if (catbed > 350) thrCls = 'alarm';
+    else if (catbed >= 180) thrCls = firing ? 'nominal' : 'warning';
+  }
+  setSvgBoxClass('prop-svg-thruster', thrCls);
 }
 
 // ===== OBDH TAB =====
@@ -10247,9 +11992,31 @@ setTimeout(initAlarmJournal, 300);
 const dumpChartInstances = {};
 const dumpData = {};
 
-async function requestTmDump(subsystem) {
-  const storeMap = { eps: 1, aocs: 1, tcs: 1, obdh: 1, ttc: 1, payload: 3 };
-  const storeId = storeMap[subsystem] || 1;
+// The on-board stores, from smo_simulator.tm_storage.DEFAULT_STORES /
+// SERVICE_TO_STORE. Getting the id wrong dumps the wrong tape, so the mapping
+// is written out with the routing rule that produced it rather than left as a
+// bare literal:
+//
+//   1 HK_Store       S1 verification, S3 HK, S8 function reports  (circular)
+//   2 Event_Store    S5 events
+//   3 Science_Store  image product records (S8/S13 catalogue rows)
+//   4 Alarm_Store    S12 limit checks — routed here as of 2026-08b; they used
+//                    to fall through to Science, which is why an alarm dump
+//                    came back full of image records.
+const TM_STORES = {
+  1: {name: 'HK_Store',      note: 'HK, verification, function reports'},
+  2: {name: 'Event_Store',   note: 'S5 events'},
+  3: {name: 'Science_Store', note: 'image product records'},
+  4: {name: 'Alarm_Store',   note: 'S12 limit checks'},
+};
+const DUMP_STORE_MAP = {
+  eps: 1, aocs: 1, tcs: 1, obdh: 1, ttc: 1, prop: 1,
+  payload: 3, events: 2, alarms: 4,
+};
+
+async function requestTmDump(subsystem, storeOverride) {
+  const storeId = storeOverride != null ? Number(storeOverride)
+                                        : (DUMP_STORE_MAP[subsystem] || 1);
   const statusEl = document.getElementById(subsystem + '-dump-status') ||
                    document.getElementById('payload-dump-status');
   if (statusEl) statusEl.textContent = 'Requesting dump...';

@@ -42,6 +42,8 @@ events:
   - { id: 0x020B, name: GYRO_BIAS_HIGH, severity: LOW, subsystem: aocs, description: "Gyroscope bias drift exceeds threshold" }
   - { id: 0x020C, name: CSS_DEGRADED, severity: MEDIUM, subsystem: aocs, description: "Coarse Sun Sensor multiple head failures" }
   - { id: 0x020D, name: AOCS_FAST_LOOP_BYPASSED, severity: LOW, subsystem: aocs, description: "AOCS attitude fast loop bypassed/restored (secular fidelity mode above 60x time acceleration; see aocs.fidelity_mode 0x02C6)" }
+  - { id: 0x020E, name: AOCS_DESAT_INEFFECTIVE, severity: MEDIUM, subsystem: aocs, description: "Desaturation timed out without converging: the dump could not remove the stored body momentum within desaturation.timeout_s. AOCS returns to the pre-desat mode instead of parking in DESAT" }
+  - { id: 0x020F, name: AOCS_MODE_RESTORED, severity: INFO, subsystem: aocs, description: "AOCS returned to the mode the ground commanded (aocs.commanded_mode 0x0297) after a transient or an automatic demotion" }
 
   # OBDH events (0x0300-0x03FF)
   - { id: 0x0300, name: OBDH_MODE_CHANGE, severity: MEDIUM, subsystem: obdh, description: "OBC mode transition" }
@@ -86,6 +88,18 @@ events:
   - { id: 0x060B, name: CALIBRATION_COMPLETE, severity: INFO, subsystem: payload, description: "Calibration sequence finished" }
   - { id: 0x060C, name: STORAGE_CRITICAL, severity: HIGH, subsystem: payload, description: "Payload storage above 95%" }
   - { id: 0x060D, name: COMPRESSION_ERROR, severity: MEDIUM, subsystem: payload, description: "Compression ratio anomaly detected" }
+  # 2026-08b PL-c: 0x060E and 0x060F were EMITTED by payload_basic and declared
+  # NOWHERE, so both reached the ground as "UNKNOWN"; 0x0611 the same; and
+  # 0x0610 was promised by a source comment ("will be emitted in next tick")
+  # and sent by nothing at all. This list and the model's own table
+  # (payload_basic.PAYLOAD_EVENTS) are now the same list.
+  - { id: 0x060E, name: SHUTTER_TEST_COMPLETE, severity: INFO, subsystem: payload, description: "Shutter mechanism cycle test finished" }
+  - { id: 0x060F, name: FILTER_ROTATION_COMPLETE, severity: INFO, subsystem: payload, description: "Filter wheel reached the commanded position" }
+  - { id: 0x0610, name: TRANSFER_START, severity: INFO, subsystem: payload, description: "On-board image transfer started (PAYLOAD_INITIATE_TRANSFER, func 94)" }
+  - { id: 0x0611, name: TRANSFER_COMPLETE, severity: INFO, subsystem: payload, description: "On-board image transfer finished" }
+  - { id: 0x0612, name: CALIBRATION_ABORTED, severity: MEDIUM, subsystem: payload, description: "Calibration stopped before completion and its products were discarded (reason at 0x0645)" }
+  - { id: 0x0613, name: IMAGE_CAPTURED, severity: INFO, subsystem: payload, description: "An image product was written to the store" }
+  - { id: 0x0614, name: IMAGE_RELEASED, severity: INFO, subsystem: payload, description: "An image product was deleted and its storage freed (S13.5 completion)" }
 
   # TTC events (0x0500-0x05FF)
   - { id: 0x0500, name: CARRIER_LOCK_ACQUIRED, severity: INFO, subsystem: ttc, description: "Carrier lock acquired" }

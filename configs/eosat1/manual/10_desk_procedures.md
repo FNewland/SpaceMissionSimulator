@@ -64,11 +64,11 @@ GO/NO-GO gate.  They do not execute individual steps unless marked below.
 
 | Proc ID   | Title                        | Lead | Support     | FD GO/NO-GO |
 |-----------|------------------------------|------|-------------|-------------|
-| COM-005   | AOCS Sensor Calibration      | aocs | fdir_systems | YES — before star tracker loop enable |
-| COM-006   | Reaction Wheel Commissioning | aocs | eps_tcs     | YES — before each wheel spin-up |
-| COM-007   | AOCS Mode Transition Testing | aocs | all desks   | YES — before IDLE mode (loss of control), before FINE_POINT hold |
+| COM-003   | AOCS Sensor Calibration      | aocs | fdir_systems | YES — before star tracker loop enable |
+| COM-004   | AOCS Actuator Checkout       | aocs | eps_tcs     | YES — before each wheel spin-up |
+| COM-005   | AOCS Mode Transitions        | aocs | all desks   | YES — before OFF mode (loss of control), before FINE_POINT hold |
 
-**COM-005 — AOCS Sensor Calibration**
+**COM-003 — AOCS Sensor Calibration**
 - **Lead:** aocs (AOCS engineer)
 - **Support:** fdir_systems for OBDH time reference
 - **FD GO/NO-GO required:**
@@ -77,7 +77,7 @@ GO/NO-GO gate.  They do not execute individual steps unless marked below.
 - **Key telemetry:** rates (0x0204-0x0206), att_error (0x0217), st_status (0x0240), css_valid (0x0248)
 - **Duration:** Gyro 5 min + mag 10 min + ST acquisition 2 min
 
-**COM-006 — Reaction Wheel Commissioning**
+**COM-004 — AOCS Actuator Checkout (Reaction Wheels + Magnetorquers)**
 - **Lead:** aocs (AOCS engineer)
 - **Support:** eps_tcs monitors bus voltage during spin-up transients
 - **FD GO/NO-GO required:**
@@ -85,11 +85,13 @@ GO/NO-GO gate.  They do not execute individual steps unless marked below.
   2. After all 4 wheels tested — confirm desaturation works
 - **Key telemetry:** rw_speed (0x0207-0x020A), rw_temp (0x0218-0x021B), att_error (0x0217)
 
-**COM-007 — AOCS Mode Transition Testing**
+**COM-005 — AOCS Mode Transitions**
 - **Lead:** aocs (AOCS engineer)
-- **Support:** All desks observe during IDLE test (spacecraft will drift)
+- **Support:** All desks observe during the OFF-mode test (spacecraft will drift)
 - **FD GO/NO-GO required:**
-  1. Before IDLE mode hold — critical: spacecraft uncontrolled for 30s
+  1. Before commanding mode 0 (OFF) — critical: spacecraft uncontrolled for 30 s.
+     There is no IDLE mode; the codes are 0 OFF, 1 SAFE_BOOT, 2 DETUMBLE,
+     3 COARSE_SUN, 4 NOMINAL, 5 FINE_POINT, 6 SLEW, 7 DESAT, 8 ECLIPSE, 9 INERTIAL
   2. Before FINE_POINT mode — verify attitude ready for imaging operations
   3. After full mode matrix — confirm all transitions nominal
 - **Announce on ops loop:** Mode transition + attitude error at each step
@@ -100,15 +102,18 @@ GO/NO-GO gate.  They do not execute individual steps unless marked below.
 
 | Proc ID   | Title                        | Lead | Support     | FD GO/NO-GO |
 |-----------|------------------------------|------|-------------|-------------|
-| COM-004   | TT&C Link Budget Verification| ttc  | fdir_systems | YES — before redundant transponder test |
+| COM-006   | TT&C Link Verification       | ttc  | fdir_systems | YES — before redundant transponder test |
 
-**COM-004 — TT&C Link Budget Verification**
+**COM-006 — TT&C Link Verification**
 - **Lead:** ttc (TT&C engineer)
 - **Support:** fdir_systems for OBC TC counter verification
 - **FD GO/NO-GO required:**
   1. Before redundant transponder switch — brief telemetry interruption
   2. After link budget comparison — confirm both transponders healthy
-- **Key telemetry:** rssi (0x0502), link_margin (0x0503), ber (0x050C), carrier_lock (0x0510)
+- **Key telemetry:** link_status (0x0501, LOCKED = **2**), rssi (0x0502),
+  link_margin (0x0503), ber (0x050C), carrier_lock (0x0510),
+  tx_fwd_power (0x050D), tx_active (0x0525), tx_gate_status (0x052B),
+  antenna_deployed (0x0520), beacon_mode (0x0521)
 
 ---
 
@@ -116,10 +121,10 @@ GO/NO-GO gate.  They do not execute individual steps unless marked below.
 
 | Proc ID   | Title                        | Lead | Support     | FD GO/NO-GO |
 |-----------|------------------------------|------|-------------|-------------|
-| COM-003   | OBDH Checkout                | fdir_systems | eps_tcs | YES — before NOMINAL mode transition |
+| COM-007   | OBDH Checkout                | fdir_systems | eps_tcs | YES — before NOMINAL mode transition |
 | COM-008   | FDIR Configuration & Test    | fdir_systems | ALL desks | YES — before controlled fault injection (ALL positions on console) |
 
-**COM-003 — OBDH Checkout**
+**COM-007 — OBDH Checkout**
 - **Lead:** fdir_systems (OBDH engineer)
 - **Support:** eps_tcs monitors power during mode transitions
 - **FD GO/NO-GO required:**

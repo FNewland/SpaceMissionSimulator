@@ -18,10 +18,12 @@ CONFIG_ROOT = Path(__file__).resolve().parent.parent.parent / "configs" / "eosat
 ALL_TABS = [
     "system_dashboard", "power_monitor", "fdir_panel", "contact_schedule", "procedure_panel",
     "overview", "eps", "aocs", "tcs", "obdh", "ttc",
-    "payload", "commanding", "pus", "procedures", "trends", "manual",
+    "payload", "prop", "commanding", "pus", "procedures", "trends", "manual",
 ]
 
-VALID_SUBSYSTEM_NAMES = {"eps", "aocs", "tcs", "obdh", "ttc", "payload", "fdir"}
+VALID_SUBSYSTEM_NAMES = {"eps", "aocs", "tcs", "obdh", "ttc", "payload",
+                         "prop",   # 2026-08b: propulsion gained a tab
+                         "fdir"}
 
 
 def _load_positions():
@@ -116,7 +118,11 @@ class TestAocsPosition:
     def test_visible_tabs(self):
         positions = _load_positions()
         cfg = _position_config(positions, "aocs")
-        expected = ["overview", "aocs", "commanding", "procedures", "trends", "manual"]
+        # `prop` is a read-only view for Flight Dynamics: it produces the
+        # manoeuvre vector and checks achieved dV, but funcs 108-118 are not
+        # in its allowed_func_ids, so it cannot command a burn.
+        expected = ["overview", "aocs", "prop", "commanding", "procedures",
+                    "trends", "manual"]
         assert cfg.visible_tabs == expected
 
     def test_overview_subsystems(self):

@@ -39,10 +39,62 @@ reaction_wheels:
 
 magnetorquers:
   # Anchor: NewSpace Systems NCTR-M016 class rod, 1.6 A·m² — a standard
-  # 6U-class magnetorquer. τ = m x B ≈ 4.8e-5 N·m at 30 µT: dumps a full
-  # 0.02 N·m·s wheel loading in ~5-8 min (consistent with manual §6.1).
+  # 6U-class magnetorquer. τ = m x B ≈ 4.8e-5 N·m at 30 µT.
+  #
+  # CORRECTED 2026-08b. The old comment here claimed "dumps a full 0.02 N·m·s
+  # wheel loading in ~5-8 min". That is the INSTANTANEOUS-torque figure
+  # (0.020 / 4.8e-5 = 417 s) and it is not achievable, because τ = m x B is
+  # always PERPENDICULAR to B: only the component of the stored momentum
+  # perpendicular to the local field can be removed at any instant, and the
+  # rest has to wait for the field to sweep. Measured on this model with the
+  # 0.020 N·m·s reference loading (tools: /tmp gain sweep, 1 s ticks,
+  # 450 km SSO): 0.020 -> 0.005 N·m·s in 1521 s (25 min), -> 0.001 N·m·s in
+  # 2857 s (48 min). The honest specification is therefore
+  #   "20-50 min for a full 0.02 N·m·s dump; 5-8 min only for the
+  #    perpendicular component".
+  # manual §6.1 needs the same correction (textbook owner, Phase 7).
   count: 3
   max_dipole_am2: 1.6
+  # B-dot detumble gain [A.m2 per (T/s)]. tau = m x B with m = -k*Bdot gives a
+  # rate time constant I/(k|B|^2): 0.18/(5e5 * 9e-10) = 400 s at |B| = 30 uT.
+  # Swept on the model from a 14 deg/s separation tumble: k = 5e5 reaches the
+  # 0.5 deg/s DETUMBLE exit guard in 4322 s (0.76 orbit) with the rods at
+  # 0.77 A.m2 mean; k = 1.5e6 is WORSE (4914 s) because the higher gain
+  # amplifies differentiated magnetometer noise faster than it adds damping,
+  # and k = 4e6 does not converge at all.
+  bdot_gain_am2_per_tps: 5.0e5
+
+  desaturation:
+    # Cross-product momentum dump: m = k·(h_body x B)/|B|²  ⇒  τ = −k·h_perp.
+    # k is a RATE, s⁻¹, and the ONLY sensible scale for it is the rate at which
+    # the geomagnetic field direction sweeps through the body, ω_B ≈ 2Ω ≈
+    # 2.2e-3 s⁻¹ at 450 km.
+    #
+    # The shipped value was k = 1.0 s⁻¹ — ~450x ω_B. When k >> ω_B the law
+    # nulls h_perp faster than the field moves, the momentum vector LOCKS onto
+    # B̂ and simply rides with it, and the surviving secular decay collapses to
+    # ~ω_B²/k. Measured at k = 1.0: with the 0.020 N·m·s reference loading the
+    # dump NEVER reached 0.005 N·m·s within a full orbit, and the rods idled at
+    # 0.11-0.46 A·m² (7-29 % of capability) because nearly all of the torque
+    # was being spent dragging h around with the field rather than removing it.
+    #
+    # k = 0.002 (≈ 1.8·ω_B) is the measured optimum of the two competing
+    # asymptotes (k/ω_B² when locked, 2/k when free-running).
+    gain_per_s: 0.002
+    # Stop below this body momentum instead of chattering the rods about zero.
+    deadband_nms: 5.0e-4
+    # Give up and hand control back (event AOCS_DESAT_INEFFECTIVE 0x020E)
+    # rather than parking in DESAT for ever. 3600 s ≈ 0.63 orbit, comfortably
+    # longer than the 48 min worst measured dump but bounded.
+    timeout_s: 3600.0
+    # Bang-bang alternative: scale the commanded dipole UP to the rod envelope
+    # so the rods always run flat out. MEASURED AND REJECTED — it removes
+    # h_perp even faster than the linear law, so it locks onto B̂ harder: with
+    # saturate_rods the reference dump never reached 0.005 N·m·s at ANY gain
+    # while burning 1.69 A·m² mean. Kept as a config switch because it is a
+    # good demonstration of why "run the actuator harder" is the wrong answer
+    # to a geometry-limited problem.
+    saturate_rods: false
 
 disturbances:
   # 450 km SSO, 6U with deployed wings. Magnitudes (each bounded in
@@ -85,9 +137,42 @@ sensors:
     bias_tau_s: 1800.0
     bias_ss_dps: 2.8e-5        # 0.1 deg/h steady-state bias sigma
     noise_dps: 0.0005          # post-filter per-sample floor
+    # These two were declared here but the TRUTH model ignored them: it ran a
+    # free random walk that reached ~11 deg/h of bias in an hour, ~100x the
+    # process noise the MEKF is built from. The estimate therefore walked 6.8°
+    # off truth during a single eclipse while the filter reported 0.29° 3σ —
+    # which is what tripped `aocs.att_error > 5` and demoted the spacecraft out
+    # of NOMINAL every orbit. The truth bias is now the Gauss-Markov these two
+    # numbers describe.
+    #
+    # Measurement range. A tactical-grade unit clips here, so a violent
+    # separation tumble genuinely loses rate knowledge — the reason DETUMBLE
+    # is specified on the magnetometer, not on the gyro.
+    max_rate_dps: 400.0
+    # Bias temperature coefficient about the 22 °C calibration point. Makes
+    # the existing 0x0273 gyro_temp telemetry mean something: a 30 K excursion
+    # is worth 6e-5 deg/s ≈ 0.2 deg/h, the same order as the bias instability.
+    tempco_dps_per_k: 2.0e-6
+    # Angle random walk attributed to a body axis with NO rate measurement
+    # (unit powered off, or channel saturated). The MEKF uses this so the
+    # covariance grows honestly instead of claiming arcsecond knowledge from a
+    # dead channel.
+    dead_axis_arw_dps_rtsec: 0.1
 
 num_wheels: 4
 attitude_error_deadband_deg: 0.005   # FINE control deadband (real, WP-6)
+
+# R3 (Franz, 2026-08b): FINE_POINT runs on THREE wheels. A pyramid is flown
+# four-of-four exactly so that any three still span R³ — every 3-of-4 subset of
+# this geometry has condition number 2.175. Measured: 3-wheel FINE holds
+# 0.0188 deg mean pointing error against 0.0208 deg on four wheels, with a peak
+# per-wheel torque of 4.4 µN·m against the 2 mN·m wheel limit (~450x margin).
+# What the degraded set really loses is the NULL SPACE: bias-speed regulation
+# and zero-crossing avoidance are unavailable, so short-term jitter is worse.
+# The mode is therefore permitted and flagged (aocs.fine_degraded, 0x0299) with
+# the control deadband relaxed 4x (aocs_basic._fine_degraded_db_factor —
+# AOCSConfig is a StrictModel with no free-form slot for it, so it lives in the
+# model with this derivation as its documentation).
 
 param_ids:
   att_q1: 0x0200

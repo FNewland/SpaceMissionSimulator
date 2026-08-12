@@ -146,9 +146,54 @@ def contact_stats(orbit_cfg: dict, sim_cfg: dict, epoch: datetime,
     }
 
 
+# ─────────────────────────── frame ───────────────────────────
+
+def sun_body_lvlh(beta_deg: float, phase_deg: float) -> tuple[float, float, float]:
+    """Sun unit vector in the LVLH-aligned body frame (perfect nadir hold).
+
+    This is what the AOCS publishes at 0x02B3-B5 from the true attitude
+    quaternion while holding NOMINAL, and what EPS reads (eps_basic.py:405).
+
+    P-d (2026-08b): the tool used to build the vector in the PRE-Phase-C
+    synthetic frame — (cos b cos phi, cos b sin phi, sin b), "body Z on the
+    orbit normal" — while eps.yaml had already moved `sada_axis` to 'y' to
+    match real LVLH (smo_common/attitude.lvlh_dcm: z = nadir, y = -orbit
+    normal, x ~ velocity). Feeding a Z-normal vector into a Y-axis SADA turned
+    the wing illumination law into sqrt(1 - cos^2(b) sin^2(phi)) (orbit-mean
+    ~0.84) instead of the correct cos(b) (0.645 at |beta| = 49.8 deg): the
+    tool over-read generation by ~28 % AND INVERTED the beta trend, labelling
+    the best-generation epoch the worst.
+
+    With u = r_hat, h_hat = orbit normal, w = h_hat x u (~velocity) and
+    phi = atan2(s.w, s.u) (aocs_basic._orbit_phase_from_geometry):
+
+        x_lvlh = s . w    =  cos(b) sin(phi)
+        y_lvlh = s . (-h) = -sin(b)
+        z_lvlh = s . (-u) = -cos(b) cos(phi)
+
+    Verified component-wise against ``attitude.lvlh_dcm @ sun_hat`` to 1e-14.
+    """
+    b = math.radians(beta_deg)
+    ph = math.radians(phase_deg)
+    return (math.cos(b) * math.sin(ph), -math.sin(b),
+            -math.cos(b) * math.cos(ph))
+
+
 # ─────────────────────────── profiles ───────────────────────────
 
 PROFILES = ("quiescent", "nominal", "nominal_imaging", "manoeuvre", "worst")
+
+#: Fraction of the time OUTSIDE contact windows that the TX line is held on by
+#: the auto-TX hold re-arming on operator telecommands (2026-08b P-e; see
+#: `tx_state`). `quiescent` = nobody at the console; the ops profiles assume a
+#: live instructed session. Documented in docs/plan_2026-08b/POWER_SIZING.md.
+COMMANDING_DUTY = {
+    "quiescent": 0.00,
+    "nominal": 0.25,
+    "nominal_imaging": 0.25,
+    "manoeuvre": 0.35,
+    "worst": 0.60,
+}
 
 # AOCS suite draw by mode (aocs_basic._MODE_POWER_W, Phase C brief 02 table).
 # EPS bills the AOCS line from the mode-dependent draw the AOCS model
@@ -181,15 +226,18 @@ def _make_models(cfg: dict, eol: bool) -> tuple[EPSBasicModel, TCSBasicModel]:
     tcs.configure(tcs_cfg)
     tcs.rng.seed(20260732)
     if eol:
+        # Wind the array's sunlit-hour odometer forward to the design life, and
+        # let the MODEL apply its own aging law from there — the tool no longer
+        # carries a second copy of the rate. (2026-08b: it used to hard-code
+        # 3.14e-6/h and a compounded target, neither of which matched the
+        # model's linear law or eps.yaml's annual_degradation.)
         al = cfg["eps"].get("array_losses") or {}
-        life_y = float(al.get("annual_degradation", 0.0275)) and \
-            float(al.get("design_life_years", 3.0))
-        # sa_age_factor = 1 - hours*3.14e-6; pick hours so the factor matches
-        # (1 - annual)^life.
-        target = (1.0 - float(al.get("annual_degradation", 0.0275))) ** \
-            float(al.get("design_life_years", 3.0))
-        eps._state.sa_lifetime_hours = max(0.0, (1.0 - target) / 3.14e-6)
-        eps._state.sa_age_factor = target
+        life_y = float(al.get("design_life_years", 3.0))
+        eps._state.sa_lifetime_hours = (
+            life_y * 8760.0 * EPSBasicModel.SUNLIT_FRACTION)
+        eps._state.sa_age_factor = max(
+            0.5, 1.0 - eps._state.sa_lifetime_hours
+            * eps._sa_degradation_per_hour)
     return eps, tcs
 
 
@@ -239,10 +287,27 @@ def run_profile(cfg: dict, profile: str, epoch: datetime, orbits: int,
         hi = (w["max_elevation_deg"] >= (10.0 if profile == "worst" else 30.0))
         tx_iv.append((a, b, hi))
 
+    # ── Commanding duty (2026-08b P-e) ──────────────────────────────────
+    # engine.py:1458 forces ttc_tx ON for `auto_tx_hold_s` (300 s) after EVERY
+    # accepted telecommand, re-armed per command. The pass-derived duty above
+    # therefore describes an UNATTENDED spacecraft. In a live classroom the
+    # instructor and the students command continuously, so each accepted TC
+    # re-arms the hold and the TX line is effectively always on inside a
+    # session — the real duty far exceeds the 33 % this tool derives from
+    # passes alone.
+    #
+    # Modelled honestly as an extra TX-on fraction outside contact windows,
+    # rather than left out. The `nominal`/`worst` profiles assume an
+    # instructed session; `quiescent` assumes nobody is at the console.
+    cmd_duty = COMMANDING_DUTY.get(profile, 0.0)
+    cmd_period = 600.0     # coarse duty cycle, well below one orbit
+
     def tx_state(t: float) -> tuple[bool, float]:
         for a, b, hi in tx_iv:
             if a <= t <= b:
                 return True, (hi_bps if hi else low_bps)
+        if cmd_duty > 0.0 and (t % cmd_period) < cmd_duty * cmd_period:
+            return True, low_bps       # commanding keeps the LOW tier up
         return False, low_bps
 
     params: dict[int, float] = {}
@@ -260,17 +325,18 @@ def run_profile(cfg: dict, profile: str, epoch: datetime, orbits: int,
     for i in range(steps):
         t = i * dt
         st = prop.advance(dt)
-        # sun vector in the nadir-pointing body frame (same convention as the
-        # AOCS CSS model)
+        # Sun vector in the TRUE LVLH body frame (see sun_body_lvlh). Published
+        # at 0x02B3-B5 — the channel EPS actually prefers — and mirrored onto
+        # the CSS composite 0x0245-47 for the fallback path.
         phase = AOCSBasicModel._orbit_phase_from_geometry(st)
         if st.in_eclipse or phase is None:
+            params[0x02B3] = params[0x02B4] = params[0x02B5] = 0.0
             params[0x0245] = params[0x0246] = params[0x0247] = 0.0
         else:
-            b = math.radians(st.solar_beta_deg)
-            ph = math.radians(phase)
-            params[0x0245] = math.cos(b) * math.cos(ph)
-            params[0x0246] = math.cos(b) * math.sin(ph)
-            params[0x0247] = math.sin(b)
+            sun_bx, sun_by, sun_bz = sun_body_lvlh(st.solar_beta_deg, phase)
+            params[0x02B3] = params[0x0245] = sun_bx
+            params[0x02B4] = params[0x0246] = sun_by
+            params[0x02B5] = params[0x0247] = sun_bz
 
         # TX line + tier
         on, bps = tx_state(t)

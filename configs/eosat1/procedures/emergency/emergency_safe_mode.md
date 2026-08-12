@@ -24,39 +24,40 @@ timeline back to nominal operations.
 - Any body rate > 2 deg/s --- tumbling
 - `obdh.reboot_count` (0x030A) incremented by >= 2 in 1 hour --- OBC instability
 - `tcs.temp_battery` (0x0407) outside range -10 degC to +45 degC --- thermal violation
-- `ttc.link_status` (0x0501) = UNLOCKED for > 1 pass --- communication degraded
+- `ttc.link_status` (0x0501) != 2 (not LOCKED) for > 1 pass --- communication degraded
 - `obdh.mode` (0x0300) = EMERGENCY (2) --- autonomous transition detected
 
 ## Procedure Steps
 
 ### Step 1 --- Command Emergency Mode (If Not Already Autonomous)
-**TC:** `OBC_SET_MODE(mode=2)` (Service 8, Subtype 3) --- EMERGENCY mode.
+**TC:** `OBC_SET_MODE(mode=2)` (Service 8, Subtype 1, func_id 50) --- EMERGENCY mode.
 **Verify:** `obdh.mode` (0x0300) = EMERGENCY (2) within 5s.
 **Effect:** Onboard software executes automatic load shedding sequence, reduces telemetry rate,
 disables all scheduled operations, and enables survival-only power distribution.
 **GO/NO-GO:** OBC emergency mode confirmed. If OBC not responding, proceed with manual commanding at Step 2.
 
 ### Step 2 --- Verify Automatic Load Shedding
-**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 1) --- full EPS housekeeping.
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) --- full EPS housekeeping.
+**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 27) — Payload housekeeping
 **Verify:** `payload.mode` (0x0600) = OFF.
 **Verify:** `eps.power_cons` (0x0106) < 50W.
 **Action:** If any non-essential load still active, command manually:
-**TC:** `PAYLOAD_SET_MODE(mode=0)` (Service 8, Subtype 5) --- payload OFF (if still on).
-**TC:** `HEATER_CONTROL(circuit=obc, on=false)` (Service 8, Subtype 7) --- OBC heater OFF (if needed).
-**TC:** `HEATER_CONTROL(circuit=thruster, on=false)` (Service 8, Subtype 7) --- thruster heater OFF.
+**TC:** `PAYLOAD_SET_MODE(mode=0)` (Service 8, Subtype 1, func_id 26) --- payload OFF (if still on).
+**TC:** `HEATER_OBC(on=0)` (Service 8, Subtype 1, func_id 41) --- OBC heater OFF (if needed).
+**TC:** `HEATER_THRUSTER(on=0)` (Service 8, Subtype 1, func_id 42) --- thruster heater OFF.
 **Verify:** `eps.power_cons` (0x0106) < 50W within 15s of manual commanding.
 **GO/NO-GO:** Total spacecraft power consumption confirmed below 50W.
 
 ### Step 3 --- Verify AOCS Safe-Pointing
-**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 1) --- AOCS housekeeping.
-**Check:** `aocs.mode` (0x020F) --- should be SAFE_POINT (2) or DETUMBLE (1).
-**If SAFE_POINT:** Verify `aocs.att_error` (0x0217) < 10 deg. Proceed to Step 4.
-**If DETUMBLE:** Monitor rates. If all rates < 0.1 deg/s, command SAFE_POINT:
-**TC:** `AOCS_SET_MODE(mode=2)` (Service 8, Subtype 4) --- SAFE_POINT.
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) --- AOCS housekeeping.
+**Check:** `aocs.mode` (0x020F) --- should be COARSE_SUN (3) or DETUMBLE (2).
+**If COARSE_SUN:** Verify `aocs.att_error` (0x0217) < 10 deg. Proceed to Step 4.
+**If DETUMBLE:** Monitor rates. If all rates < 0.1 deg/s, command COARSE_SUN:
+**TC:** `AOCS_SET_MODE(mode=3)` (Service 8, Subtype 1, func_id 0) --- COARSE_SUN.
 **If tumbling (rates > 2 deg/s):** Execute EMG-005 before continuing.
 **If AOCS OFF:** Command detumble first:
-**TC:** `AOCS_SET_MODE(mode=1)` (Service 8, Subtype 4) --- DETUMBLE.
-**GO/NO-GO:** AOCS in SAFE_POINT or actively detumbling with rates decreasing.
+**TC:** `AOCS_SET_MODE(mode=2)` (Service 8, Subtype 1, func_id 0) --- DETUMBLE.
+**GO/NO-GO:** AOCS in COARSE_SUN or actively detumbling with rates decreasing.
 
 ### Step 4 --- Verify Sun Acquisition and Power State
 **Verify:** `aocs.att_error` (0x0217) < 5.0 deg (sun-pointing achieved).
@@ -64,24 +65,24 @@ disables all scheduled operations, and enables survival-only power distribution.
 **Verify:** `eps.sa_b_current` (0x0104) > 0.5A --- solar array B illuminated.
 **Verify:** `eps.power_gen` (0x0107) > `eps.power_cons` (0x0106) --- power-positive.
 **Verify:** `eps.bat_soc` (0x0101) --- record value and start trend tracking.
-**TC:** `HEATER_CONTROL(circuit=battery, on=true)` (Service 8, Subtype 7) --- ensure battery thermostat active.
+**TC:** `HEATER_BATTERY(on=1)` (Service 8, Subtype 1, func_id 40) --- ensure battery thermostat active.
 **GO/NO-GO:** Power-positive state confirmed. If not, execute EMG-002.
 
 ### Step 5 --- Establish Stable Communication
-**Verify:** `ttc.link_status` (0x0501) = LOCKED.
+**Verify:** `ttc.link_status` (0x0501) = 2 (LOCKED).
 **Verify:** `ttc.rssi` (0x0502) > -120 dBm.
 **Verify:** `ttc.mode` (0x0500) = NOMINAL or SAFE.
 **Action:** If link marginal, schedule subsequent passes at high-elevation (> 20 deg) ground stations only.
-**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 1) --- TT&C subsystem housekeeping.
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) --- TT&C subsystem housekeeping.
 **GO/NO-GO:** Two-way communication stable. If unstable, reference EMG-004.
 
 ### Step 6 --- Full Housekeeping Assessment
-**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 1) --- EPS HK.
-**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 1) --- AOCS HK.
-**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 1) --- OBDH HK.
-**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 1) --- TCS HK.
-**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 1) --- TT&C HK.
-**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 1) --- Payload HK.
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) --- EPS HK.
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) --- AOCS HK.
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) --- OBDH HK.
+**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 27) --- TCS HK.
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) --- TT&C HK.
+**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 27) --- Payload HK.
 **Action:** Engineering team reviews all parameters against nominal ranges.
 **Record:** `obdh.reboot_count` (0x030A) --- note any unexpected increments.
 **Record:** All temperatures: `tcs.temp_obc` (0x0406), `tcs.temp_battery` (0x0407).
@@ -99,35 +100,35 @@ disables all scheduled operations, and enables survival-only power distribution.
 ## Orbit-by-Orbit Recovery Timeline
 
 ### Recovery Orbit R+1 --- Restore Thermal Control (SoC > 30% Required)
-**TC:** `HEATER_CONTROL(circuit=obc, on=true)` (Service 8, Subtype 7) --- restore OBC heater.
+**TC:** `HEATER_OBC(on=1)` (Service 8, Subtype 1, func_id 41) --- restore OBC heater.
 **Verify:** `tcs.temp_obc` (0x0406) trending toward nominal range (-10 degC to +40 degC).
 **Verify:** `eps.power_cons` (0x0106) increase < 10W. Spacecraft remains power-positive.
 **GO/NO-GO:** Thermal subsystem nominal, power budget accommodates added load.
 
 ### Recovery Orbit R+2 --- Restore Full AOCS (SoC > 40% Required)
-**TC:** `OBC_SET_MODE(mode=1)` (Service 8, Subtype 3) --- OBC SAFE mode (from EMERGENCY).
+**TC:** `OBC_SET_MODE(mode=1)` (Service 8, Subtype 1, func_id 50) --- OBC SAFE mode (from EMERGENCY).
 **Verify:** `obdh.mode` (0x0300) = SAFE (1) within 5s.
-**TC:** `AOCS_SET_MODE(mode=3)` (Service 8, Subtype 4) --- NADIR_POINT mode.
-**Verify:** `aocs.mode` (0x020F) = NADIR_POINT (3) within 5s.
+**TC:** `AOCS_SET_MODE(mode=4)` (Service 8, Subtype 1, func_id 0) --- NOMINAL mode.
+**Verify:** `aocs.mode` (0x020F) = NOMINAL (4) within 5s.
 **Verify:** `aocs.att_error` (0x0217) < 1.0 deg within 20 minutes.
 **Verify:** `aocs.rw1_speed` (0x0207) through `aocs.rw4_speed` (0x020A) all within limits.
 **GO/NO-GO:** Full attitude control restored, all 4 wheels operational.
 
 ### Recovery Orbit R+3 --- Restore Thruster Heater and Full Thermal (SoC > 50% Required)
-**TC:** `HEATER_CONTROL(circuit=thruster, on=true)` (Service 8, Subtype 7) --- restore thruster heater.
+**TC:** `HEATER_THRUSTER(on=1)` (Service 8, Subtype 1, func_id 42) --- restore thruster heater.
 **Verify:** `eps.power_cons` (0x0106) within nominal budget (< 90W).
 **Verify:** All temperatures within nominal ranges.
 **GO/NO-GO:** Full thermal control restored, power margin adequate.
 
 ### Recovery Orbit R+4 --- Restore OBC Nominal Mode (SoC > 55% Required)
-**TC:** `OBC_SET_MODE(mode=0)` (Service 8, Subtype 3) --- OBC NOMINAL mode.
+**TC:** `OBC_SET_MODE(mode=0)` (Service 8, Subtype 1, func_id 50) --- OBC NOMINAL mode.
 **Verify:** `obdh.mode` (0x0300) = NOMINAL (0) within 5s.
 **Verify:** Onboard scheduling resumed, housekeeping at nominal rate.
 **Verify:** No anomalous reboot counter increments: `obdh.reboot_count` (0x030A) stable.
 **GO/NO-GO:** OBC nominal operations confirmed.
 
 ### Recovery Orbit R+5 --- Restore Payload (SoC > 60% Required)
-**TC:** `PAYLOAD_SET_MODE(mode=1)` (Service 8, Subtype 5) --- payload STANDBY.
+**TC:** `PAYLOAD_SET_MODE(mode=1)` (Service 8, Subtype 1, func_id 26) --- payload STANDBY.
 **Verify:** `payload.mode` (0x0600) = STANDBY (1) within 10s.
 **Verify:** `eps.power_cons` (0x0106) within full operational budget (< 110W).
 **Verify:** Spacecraft remains power-positive across full orbit including eclipse.
@@ -145,19 +146,19 @@ disables all scheduled operations, and enables survival-only power distribution.
 
 ## Off-Nominal Handling
 - If OBC does not accept mode commands: attempt OBC reset via `HK_REQUEST(sid=3)` diagnostic, then re-command. If persistent, spacecraft remains in autonomous emergency mode until next OBC reboot cycle.
-- If multiple wheels failed during anomaly: remain in SAFE_POINT indefinitely. Nadir pointing requires minimum 3 wheels. Plan reduced-capability operations.
+- If multiple wheels failed during anomaly: remain in COARSE_SUN indefinitely. Nadir pointing requires minimum 3 wheels. Plan reduced-capability operations.
 - If SoC does not reach 30% within 10 orbits: possible solar array degradation. Reassess power budget for long-term reduced operations. Reference EMG-002.
 - If new anomaly occurs during recovery: halt recovery, return to Step 7 stabilisation hold, re-assess before continuing.
 - If `obdh.reboot_count` (0x030A) continues incrementing: suspect OBC hardware fault. Maintain emergency mode, reduce commanding to minimum, plan OBC memory patch or cold redundancy switch if available.
 
 ## Post-Conditions
 - [ ] `obdh.mode` (0x0300) = NOMINAL (0)
-- [ ] `aocs.mode` (0x020F) = NADIR_POINT (3) with `aocs.att_error` (0x0217) < 1.0 deg
+- [ ] `aocs.mode` (0x020F) = NOMINAL (4) with `aocs.att_error` (0x0217) < 1.0 deg
 - [ ] `eps.bat_soc` (0x0101) > 60% and stable
 - [ ] `eps.bus_voltage` (0x0105) > 28.0V
 - [ ] All heaters operational, temperatures within nominal ranges
 - [ ] `payload.mode` (0x0600) = STANDBY (1) or higher
-- [ ] `ttc.link_status` (0x0501) = LOCKED on scheduled passes
+- [ ] `ttc.link_status` (0x0501) = 2 (LOCKED) on scheduled passes
 - [ ] All anomaly root causes identified or formal investigation open
 - [ ] Flight Director has formally closed the emergency declaration
 - [ ] Lessons learned documented and procedure updates initiated if required

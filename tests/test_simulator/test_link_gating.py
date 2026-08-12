@@ -383,16 +383,61 @@ class TestTCGatingDuringTTCFailure:
         engine.tm_builder.build_verification_failure.assert_called_once()
 
     def test_hk_blocked_when_pa_off_despite_orbital_contact(self):
-        """HK packets should NOT reach MCS when PA is off, even during orbital contact."""
+        """TM must NOT reach the MCS when the PA is off, in contact or not.
+
+        THIS TEST USED TO PASS FOR THE WRONG REASON, and it is the reason the
+        core defect survived a year. It ticked ONCE for 1.0 s and asserted
+        ``params[0x0501] == 0`` — but the carrier-lock delay is 2.0 s, so
+        0x0501 was 0 because the lock sequence had not started yet, not
+        because the PA was off. Tick past frame sync (10.0 s) and the shipped
+        model reported LOCKED with ``pa_on = False`` and
+        ``tx_fwd_power = 0.0 W``, exactly as Franz reported.
+
+        The assertion is now on ``ttc.tx_active`` (0x0525), the parameter the
+        engine's ``downlink_active`` actually gates on, and the model is
+        ticked well past every lock threshold so the lock chain cannot mask
+        the answer either way.
+        """
         model = make_ttc_model()
         params = {0x05FF: 0}  # no override
         orbit = make_orbit_state(in_contact=True)  # in contact
 
-        # Turn PA off (link_active should become False)
         model._state.pa_on = False
-        model.tick(1.0, orbit, params)
+        for _ in range(20):          # 20 s — twice the frame-sync delay
+            model.tick(1.0, orbit, params)
 
-        assert params[0x0501] == 0, "link_active should be 0 when PA is off"
+        assert params[0x0501] == 2, (
+            "the UPLINK lock chain is unaffected by the PA: the receiver is "
+            "on its own line and must still reach LOCKED")
+        assert params[0x0525] == 0, "tx_active must be 0 when the PA is off"
+        assert params[0x050D] == 0.0, "and no forward power is being produced"
+
+    def test_tx_active_requires_the_eps_ttc_tx_line(self):
+        """Pulling the EPS ttc_tx line stops the S-band downlink.
+
+        `EPS_POWER_LINE_OFF('ttc_tx')` used to set `eps._state.transponder_tx`,
+        which had no readers anywhere in the repo. The TT&C model now reads the
+        live line state from 0x0112.
+        """
+        model = make_ttc_model()
+        orbit = make_orbit_state(in_contact=True)
+
+        params = {0x05FF: 0, 0x0112: 1}
+        for _ in range(20):
+            model.tick(1.0, orbit, params)
+        assert params[0x0525] == 1, "line hot + PA on + in contact = radiating"
+
+        params[0x0112] = 0           # EPS_POWER_LINE_OFF('ttc_tx')
+        model.tick(1.0, orbit, params)
+        assert params[0x0525] == 0, "an unpowered transmitter does not transmit"
+        assert model._state.ttc_tx_line_on is False
+
+    def test_tx_active_requires_contact(self):
+        model = make_ttc_model()
+        params = {0x05FF: 0, 0x0112: 1}
+        for _ in range(20):
+            model.tick(1.0, make_orbit_state(in_contact=False), params)
+        assert params[0x0525] == 0
 
     def test_s20_get_rejected_when_antenna_stowed(self):
         """S20.3 GET response should be dropped when antenna is stowed (no downlink)."""
@@ -525,14 +570,23 @@ class TestOnDemandTMLeak:
             "S20.3 GET response should be blocked when TTC link is down"
 
     def test_s20_get_allowed_contact_and_link_ok(self):
-        """S20.3 GET response must be allowed when in contact AND link OK."""
+        """S20.3 GET response must be allowed when the transmitter is up.
+
+        2026-08b (finding T-a): the permissive condition is now
+        ``ttc.tx_active`` (0x0525), not ``ttc.link_status`` (0x0501). The old
+        version of this test set 0x0501 = 1 = ACQUIRING and expected TM to
+        flow, which packs two defects into one line: link_status is derived
+        from the UPLINK receive chain, and ACQUIRING is not a lock.
+        """
         from smo_simulator.engine import SimulationEngine
         import struct
 
         engine = MagicMock(spec=SimulationEngine)
         engine.params = {
             0x0100: 28.5,
-            0x0501: 1,     # link status OK
+            0x0501: 2,     # LOCKED
+            0x0525: 1,     # ttc.tx_active — the S-band chain is radiating
+            0x052B: 0xDF,  # every gate permissive
         }
         engine._in_contact = True     # IN contact
         engine._override_passes = False
@@ -561,14 +615,21 @@ class TestOnDemandTMLeak:
             "S20.3 GET response should be allowed when in contact and link OK"
 
     def test_s20_get_allowed_override(self):
-        """S20.3 GET response must be allowed with override, even out of contact."""
+        """S20.3 GET response must be allowed with override, even out of contact.
+
+        The instructor pass override substitutes for the CONTACT leg of the
+        downlink gate — that is what it means. It does not substitute for the
+        PA: 0x052B bit 0 must still be set (2026-08b, finding T-a).
+        """
         from smo_simulator.engine import SimulationEngine
         import struct
 
         engine = MagicMock(spec=SimulationEngine)
         engine.params = {
             0x0100: 28.5,
-            0x0501: 1,
+            0x0501: 2,
+            0x0525: 0,     # not radiating: no station in view
+            0x052B: 0x03,  # ...but the PA is on and the ttc_tx line is hot
         }
         engine._in_contact = False    # OUT of contact
         engine._override_passes = True  # BUT override is on

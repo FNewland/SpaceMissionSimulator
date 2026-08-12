@@ -50,13 +50,16 @@ operational awareness is fully transferred to the incoming shift team.
 ## Procedure Steps
 
 ### Step 1: Review All Subsystem States
-**Action:** Request full housekeeping sweep across all subsystems:
-- `HK_REQUEST(sid=1)` — EPS housekeeping
-- `HK_REQUEST(sid=2)` — AOCS housekeeping
-- `HK_REQUEST(sid=3)` — TCS housekeeping
-- `HK_REQUEST(sid=4)` — OBDH housekeeping
-- `HK_REQUEST(sid=5)` — TTC housekeeping
-- `HK_REQUEST(sid=6)` — Payload housekeeping
+**Note:** Request a full housekeeping sweep across all subsystems. The SIDs are
+`hk_structures.yaml`'s: 1 EPS, 2 AOCS, 3 TCS, 4 Platform/OBDH, 5 Payload,
+6 TT&C. (This card previously listed them as an **Action:** bullet block, which
+the extractor cannot read, and with 5 and 6 transposed.)
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — EPS housekeeping
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — AOCS housekeeping
+**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 27) — TCS housekeeping
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) — Platform/OBDH housekeeping
+**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 27) — Payload housekeeping
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) — TT&C housekeeping
 **Verify:** `obdh.mode` (0x0300) — record and announce current OBC mode
 **Verify:** `eps.bat_soc` (0x0101), `eps.bus_voltage` (0x0105), `eps.power_gen` (0x0107),
 `eps.power_cons` (0x0106) — record power budget summary
@@ -76,7 +79,7 @@ operational awareness is fully transferred to the incoming shift team.
 **GO/NO-GO:** All subsystem states reviewed and understood by incoming team — proceed.
 
 ### Step 2: Check Pending Alarms and Anomalies
-**Action:** Review alarm buffer via OBDH HK: `HK_REQUEST(sid=4)` (Service 3, Subtype 27),
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) — Review alarm buffer via OBDH HK — ,
 or review alarm display on MCS console.
 **Verify:** `obdh.alarm_buf_fill` (0x0314) — record level
 **Verify:** `obdh.tc_rej_count` (0x0306) — record value, compare with shift start baseline
@@ -101,7 +104,7 @@ ranging session), brief incoming TT&C operator on required actions.
 **GO/NO-GO:** Contact schedule reviewed and understood — proceed.
 
 ### Step 4: Verify Stored Commands and Schedule
-**Action:** Request onboard schedule summary: `LIST_SCHEDULE` (Service 11, Subtype 17)
+**TC:** `LIST_SCHEDULE` (Service 11, Subtype 17) — Request onboard schedule summary
 **Verify:** Review all time-tagged commands in the schedule:
 - Confirm all scheduled commands are still valid and intended
 - Verify execution times against updated orbit prediction

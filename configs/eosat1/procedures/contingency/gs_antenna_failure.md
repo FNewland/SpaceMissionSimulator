@@ -22,7 +22,7 @@ shortened contact window.
 ## Required Telemetry
 | Parameter | ID | Expected Value |
 |---|---|---|
-| ttc.link_status | 0x0501 | 0 (lost) — was 1 before failure |
+| ttc.link_status | 0x0501 | 0 (NO_LINK) — was 2 (LOCKED) before failure |
 | ttc.rssi | 0x0502 | Dropped below receiver threshold |
 | ttc.link_margin | 0x0503 | Was > 3 dB before failure |
 | ttc.carrier_lock | 0x0510 | 0 (lost) — was 1 before failure |

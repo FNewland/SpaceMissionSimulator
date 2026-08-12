@@ -12,7 +12,7 @@ for mission operations.
 
 ## Prerequisites
 - [ ] LEOP phase completed successfully
-- [ ] Spacecraft in SAFE_POINT mode (sun-pointing)
+- [ ] Spacecraft in COARSE_SUN mode (sun-pointing)
 - [ ] At least 2 full orbits of continuous telemetry archived since LEOP completion
 - [ ] Bidirectional S-band link active with link margin > 3 dB
 - [ ] Battery SOC > 70% at start of procedure
@@ -27,8 +27,8 @@ for mission operations.
 **GO/NO-GO:** Bus voltage regulated within specification
 
 ### Step 2 — Battery Voltage and State of Charge
-**TC:** `GET_PARAM(0x0100)` (Service 20, Subtype 3) — battery voltage
-**TC:** `GET_PARAM(0x0101)` (Service 20, Subtype 3) — battery SOC
+**TC:** `GET_PARAM(param_id=0x0100)` (Service 20, Subtype 3) — battery voltage
+**TC:** `GET_PARAM(param_id=0x0101)` (Service 20, Subtype 3) — battery SOC
 **Verify:** `eps.bat_voltage` (0x0100) in range [14.4V, 16.8V] within 10s
 **Verify:** `eps.bat_soc` (0x0101) > 70% within 10s
 **Action:** Record values. Li-Ion 40Ah battery nominal voltage range is 14.4V (empty) to 16.8V (full).
@@ -42,7 +42,7 @@ for mission operations.
 **GO/NO-GO:** Solar array power generation within expected range
 
 ### Step 4 — Eclipse Discharge Monitoring
-**Action:** Monitor battery through a full eclipse period (~35 minutes at 500 km SSO).
+**Action:** Monitor battery through a full eclipse period (~35 minutes at the mission's 450 km SSO).
 **TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — at eclipse entry
 **Verify:** `eps.power_gen` (0x0107) = ~0W within 30s of eclipse entry
 **Verify:** `eps.bat_soc` (0x0101) decreasing at < 1.5% per minute within 60s
@@ -60,7 +60,7 @@ for mission operations.
 
 ### Step 6 — Power Budget Verification
 **Action:** Calculate total spacecraft power consumption from telemetry. Compare against power generation and battery capacity. Verify positive energy balance over one complete orbit.
-**TC:** `GET_PARAM(0x0108)` (Service 20, Subtype 3) — total load power
+**TC:** `GET_PARAM(param_id=0x0108)` (Service 20, Subtype 3) — total load power
 **Verify:** Orbit-average power generation > orbit-average power consumption
 **Verify:** End-of-eclipse SOC > 50% under nominal load
 **Action:** Document power budget with margins for commissioning and nominal operations.
@@ -76,10 +76,10 @@ for mission operations.
 
 ## Off-Nominal Handling
 - If bus voltage < 27.0V: Check battery SOC. If SOC < 30%, reduce loads immediately. Disable non-essential heaters. Verify sun-pointing attitude. If bus voltage < 26.0V, enter safe mode via `OBC_SET_MODE(mode=0)`.
-- If power generation < 35W in sunlight with good sun-pointing: Check individual array string currents via `GET_PARAM(0x0112)` and `GET_PARAM(0x0113)`. If one wing underperforming, log anomaly. Assess single-wing power budget viability.
+- If power generation < 35W in sunlight with good sun-pointing: Check individual array string currents via `GET_PARAM(param_id=0x0112)` and `GET_PARAM(param_id=0x0113)`. If one wing underperforming, log anomaly. Assess single-wing power budget viability.
 - If battery SOC < 50% at end of eclipse: Reduce operational load. Defer commissioning activities requiring high power. Re-assess power budget.
-- If charge recovery rate below prediction: Check solar array degradation. Verify battery charge controller via `GET_PARAM(0x0109)`. If charge controller fault suspected, investigate redundant path.
-- If bus voltage oscillation detected: Check regulation mode via `GET_PARAM(0x010A)`. Log anomaly for EPS engineer review. If unstable, command `OBC_SET_MODE(mode=0)` for safe mode.
+- If charge recovery rate below prediction: Check solar array degradation. Verify battery charge controller via `GET_PARAM(param_id=0x0109)`. If charge controller fault suspected, investigate redundant path.
+- If bus voltage oscillation detected: Check regulation mode via `GET_PARAM(param_id=0x010A)`. Log anomaly for EPS engineer review. If unstable, command `OBC_SET_MODE(mode=0)` for safe mode.
 
 ## Post-Conditions
 - [ ] Bus voltage confirmed regulated at 28.0V +/- 0.5V

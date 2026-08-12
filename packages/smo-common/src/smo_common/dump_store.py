@@ -263,16 +263,72 @@ def resolve_dump_file(dump_dir: Path | str, filename: str) -> Path:
 # Summarising
 # ---------------------------------------------------------------------------
 
-def summarise_dump(path: Path) -> dict[str, Any]:
+def _cuc_to_utc(cuc: int | None) -> str | None:
+    """CUC seconds -> ISO-8601 UTC, or ``None`` when absent/unrepresentable."""
+    from smo_common.protocol.ecss_packet import parse_cuc_time
+    if not cuc:
+        return None
+    try:
+        return parse_cuc_time(cuc).replace(tzinfo=timezone.utc).isoformat()
+    except (ValueError, OverflowError):  # pragma: no cover - defensive
+        return None
+
+
+def param_names(config_dir: Any) -> dict[int, str]:
+    """``param_id -> name`` from ``telemetry/parameters.yaml``; ``{}`` if absent.
+
+    Deliberately a tiny local reader rather than ``Catalogs.load()``: a dump
+    summary must stay cheap and must never fail because some *other* mission
+    catalogue is missing.
+    """
+    if not config_dir:
+        return {}
+    try:
+        import yaml
+        path = Path(config_dir) / "telemetry" / "parameters.yaml"
+        with open(path) as f:
+            data = yaml.safe_load(f) or {}
+    except Exception as e:  # noqa: BLE001 — names are a nicety, never a blocker
+        logger.debug("Parameter names unavailable for dump summary: %s", e)
+        return {}
+    out: dict[int, str] = {}
+    for p in data.get("parameters", []) or []:
+        try:
+            pid = int(p["id"]) if isinstance(p["id"], int) else int(str(p["id"]), 0)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if p.get("name"):
+            out[pid] = str(p["name"])
+    return out
+
+
+def summarise_dump(path: Path, config_dir: Any = None) -> dict[str, Any]:
     """Decode a dump far enough to describe it without any mission catalogue.
 
     Returns packet counts per PUS service/subtype, the APIDs seen, the CUC
-    time span and a CRC error count. This is the "what is actually in this
-    file" view a student needs before deciding whether to download it; the
-    full parameter-level decode (with engineering units and plots) lives in
-    ``tools/delayed_tm_viewer.py``, which needs the mission catalogues.
+    time span, a CRC error count — and, since 2026-08b, **the decoded contents
+    of every S12 on-board monitoring packet**.
+
+    Franz: *"We cannot see the contents of the S12s in delayed TM dumps."*
+    Correct, and the inconsistency was stark: ``smo_common.reporting`` already
+    ingested S12 transitions out of these very files, so ``/api/reports`` could
+    show a dump's limit violations while ``/dumps`` — the page whose entire job
+    is "what is in this file" — could say only
+    ``{"service": 12, "subtype": 9, "count": 4}``: four alarm reports, and not
+    one of the fields that says which parameter, which way it went, how far out
+    it was, or against what band.
+
+    ``config_dir`` is optional and supplies parameter NAMES only; without it
+    the tables render bare parameter ids rather than failing.
+
+    The full parameter-level decode (engineering units, plots) still lives in
+    ``tools/delayed_tm_viewer.py`` and ``smo_common.reporting``.
     """
-    from smo_common.protocol.ecss_packet import decommutate_packet, parse_cuc_time
+    from smo_common.protocol.ecss_packet import decommutate_packet
+    from smo_common.reporting.decode import (
+        decode_s12_definitions, decode_s12_transition,
+        s12_check_type_name, s12_severity_name,
+    )
 
     path = Path(path)
     store_id, ts = parse_dump_filename(path.name)
@@ -283,6 +339,10 @@ def summarise_dump(path: Path) -> dict[str, Any]:
     crc_errors = 0
     total = 0
     undecodable = 0
+    names = param_names(config_dir)
+    s12_transitions: list[dict[str, Any]] = []
+    s12_definitions: list[dict[str, Any]] = []
+    s12_undecodable = 0
 
     for raw in read_dump(path):
         total += 1
@@ -303,19 +363,36 @@ def summarise_dump(path: Path) -> dict[str, Any]:
             first_cuc = cuc if first_cuc is None else min(first_cuc, cuc)
             last_cuc = cuc if last_cuc is None else max(last_cuc, cuc)
 
-    def _utc(cuc: int | None) -> str | None:
-        if cuc is None:
-            return None
-        try:
-            return parse_cuc_time(cuc).replace(tzinfo=timezone.utc).isoformat()
-        except (ValueError, OverflowError):  # pragma: no cover - defensive
-            return None
+        # ── S12: on-board monitoring, decoded rather than merely counted ──
+        if sec.service == 12 and sec.subtype in (9, 10):
+            tr = decode_s12_transition(pkt.data_field, sec.subtype)
+            if tr is None:
+                s12_undecodable += 1
+                continue
+            tr["cuc"] = cuc or None
+            tr["utc"] = _cuc_to_utc(cuc)
+            tr["param_hex"] = f"0x{tr['param_id']:04X}"
+            tr["param_name"] = names.get(tr["param_id"], "")
+            if tr.get("check_type") is not None:
+                tr["check_type_name"] = s12_check_type_name(tr["check_type"])
+            if tr.get("severity") is not None:
+                tr["severity_name"] = s12_severity_name(tr["severity"])
+            s12_transitions.append(tr)
+        elif sec.service == 12 and sec.subtype == 13:
+            for d in decode_s12_definitions(pkt.data_field):
+                d["cuc"] = cuc or None
+                d["utc"] = _cuc_to_utc(cuc)
+                d["param_hex"] = f"0x{d['param_id']:04X}"
+                d["param_name"] = names.get(d["param_id"], "")
+                d["check_type_name"] = s12_check_type_name(d["check_type"])
+                s12_definitions.append(d)
 
     try:
         size = path.stat().st_size
     except OSError:  # pragma: no cover - defensive
         size = 0
 
+    s12_entered = sum(1 for t in s12_transitions if t.get("entered"))
     return {
         "filename": path.name,
         "store_id": store_id,
@@ -327,12 +404,24 @@ def summarise_dump(path: Path) -> dict[str, Any]:
         "apids": sorted(apids),
         "first_cuc": first_cuc,
         "last_cuc": last_cuc,
-        "first_utc": _utc(first_cuc),
-        "last_utc": _utc(last_cuc),
+        "first_utc": _cuc_to_utc(first_cuc),
+        "last_utc": _cuc_to_utc(last_cuc),
         "packet_counts": [
             {"service": s, "subtype": st, "count": n}
             for (s, st), n in sorted(counts.items())
         ],
+        # TM(12,9)/(12,10) check transitions, oldest first, fully decoded.
+        "s12_transitions": s12_transitions,
+        # TM(12,13) monitoring definition tables, flattened.
+        "s12_definitions": s12_definitions,
+        "s12_summary": {
+            "transitions": len(s12_transitions),
+            "entered": s12_entered,
+            "returned": len(s12_transitions) - s12_entered,
+            "definitions": len(s12_definitions),
+            "undecodable": s12_undecodable,
+            "named": bool(names),
+        },
     }
 
 
@@ -352,6 +441,7 @@ def register_dump_routes(
     prefix: str = "/api/dumps",
     page_path: str | None = "/dumps",
     owner: str = "",
+    config_dir: Path | str | None = None,
 ) -> Any:
     """Mount the delayed-TM dump API (and optional browser page) on ``app``.
 
@@ -362,6 +452,10 @@ def register_dump_routes(
     ``owner`` is a human-readable label for the serving process (e.g. ``MCS``)
     reported in the listing, so a student can tell which service they are
     looking at.
+
+    ``config_dir`` points at ``configs/<mission>`` and is used only to put
+    parameter NAMES on the decoded S12 tables — ``eps.bat_soc`` rather than
+    ``0x0101``. Both hosts have one to hand, so pass it.
 
     Returns ``app`` for chaining.
     """
@@ -414,7 +508,7 @@ def register_dump_routes(
             return web.json_response({"error": str(e)}, status=400)
         except FileNotFoundError:
             return web.json_response({"error": f"no such dump: {name}"}, status=404)
-        return web.json_response(summarise_dump(path))
+        return web.json_response(summarise_dump(path, config_dir=config_dir))
 
     async def handle_page(_req):
         return web.Response(text=_render_page(prefix, owner), content_type="text/html")
@@ -470,6 +564,9 @@ pre { background:var(--panel); border:1px solid var(--border); border-radius:4px
       padding:10px; overflow:auto; max-height:340px; }
 .empty { color:var(--warn); padding:14px 0; }
 .store { color:var(--dim); }
+.dim { color:var(--dim); }
+h2.sec { font-size:11px; color:var(--accent); letter-spacing:1.5px; margin:18px 0 4px; }
+.raw-toggle { color:var(--dim); cursor:pointer; font-size:11px; margin-top:16px; }
 </style>
 </head><body>
 <header>
@@ -481,7 +578,9 @@ pre { background:var(--panel); border:1px solid var(--border); border-radius:4px
   <div class="store" id="store"></div>
   <div id="list"></div>
   <h2 style="font-size:11px;color:var(--dim);letter-spacing:1.5px;">SUMMARY</h2>
-  <pre id="summary">Select "summary" on a dump above.</pre>
+  <div id="decoded"></div>
+  <details id="rawwrap"><summary class="raw-toggle">raw JSON</summary>
+  <pre id="summary">Select "summary" on a dump above.</pre></details>
 </main>
 <script>
 const API = __API__;
@@ -531,11 +630,105 @@ async function refresh() {
   }
 }
 
+// ── S12 rendering ────────────────────────────────────────────────────
+// Franz: "We cannot see the contents of the S12s in delayed TM dumps."
+// The summary used to be dropped into a <pre> as raw JSON, where an S12
+// packet appeared as {"service": 12, "subtype": 9, "count": 4} — four alarm
+// reports and not one of the fields that says which parameter moved, which
+// way, how far out it was, or against what band. The decoder existed the
+// whole time (smo_common.reporting.decode); it was simply never called here.
+const SEV_COLOUR = {INFO: "#5fb7ff", WARNING: "#f59e0b", ALARM: "#ff6b6b",
+                    HIGH: "#ff6b6b"};
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function num(v, dp) {
+  return v == null ? "--" : Number(v).toFixed(dp == null ? 3 : dp);
+}
+function utcShort(iso) {
+  if (!iso) return "--";
+  return String(iso).replace("T", " ").replace("+00:00", "Z").slice(0, 19);
+}
+
+function renderS12(d) {
+  const tr = d.s12_transitions || [];
+  const defs = d.s12_definitions || [];
+  const sum = d.s12_summary || {};
+  const counted = (d.packet_counts || [])
+    .filter((c) => c.service === 12)
+    .reduce((a, c) => a + c.count, 0);
+  if (!counted && !tr.length && !defs.length) return "";
+  let html = '<h2 class="sec">ON-BOARD MONITORING (S12) — ' +
+    `${sum.transitions || 0} transition(s), ${sum.entered || 0} out-of-limits, ` +
+    `${sum.returned || 0} return-to-nominal, ${sum.definitions || 0} definition row(s)</h2>`;
+  if (sum.undecodable) {
+    html += `<div class="empty">${sum.undecodable} S12 packet(s) too short to decode.</div>`;
+  }
+  if (tr.length) {
+    const rows = tr.map((t) => {
+      const sev = t.severity_name || "";
+      const colour = SEV_COLOUR[sev] || "var(--text)";
+      const dir = t.entered
+        ? '<span style="color:#ff6b6b">OUT OF LIMITS &darr;&uarr;</span>'
+        : '<span style="color:#3fca8a">BACK TO NOMINAL</span>';
+      const band = (t.low_limit == null && t.high_limit == null)
+        ? '<span class="dim">not reported (6-byte form)</span>'
+        : `${num(t.low_limit)} &hellip; ${num(t.high_limit)}`;
+      return `<tr>
+        <td>${utcShort(t.utc)}</td>
+        <td class="num">${t.mon_id == null ? "--" : t.mon_id}</td>
+        <td>${esc(t.param_hex)}${t.param_name ? " " + esc(t.param_name) : ""}</td>
+        <td>${dir}</td>
+        <td class="num">${num(t.value)}</td>
+        <td>${esc(t.check_type_name || "--")}</td>
+        <td style="color:${colour}">${esc(sev || "--")}</td>
+        <td class="num">${band}</td></tr>`;
+    }).join("");
+    html += `<table><tr><th>UTC</th><th>MON</th><th>PARAMETER</th>
+      <th>TRANSITION</th><th>VALUE</th><th>CHECK</th><th>SEVERITY</th>
+      <th>LIMIT BAND</th></tr>${rows}</table>`;
+  }
+  if (defs.length) {
+    const rows = defs.map((x) => `<tr>
+      <td class="num">${x.mon_id}</td>
+      <td>${esc(x.param_hex)}${x.param_name ? " " + esc(x.param_name) : ""}</td>
+      <td>${esc(x.check_type_name || "--")}</td>
+      <td>${x.enabled ? "ENABLED" : '<span class="dim">disabled</span>'}</td>
+      <td class="num">${num(x.low_limit)}</td>
+      <td class="num">${num(x.high_limit)}</td></tr>`).join("");
+    html += '<h2 class="sec">S12 DEFINITION TABLE (TM 12,13)</h2>' +
+      `<table><tr><th>MON</th><th>PARAMETER</th><th>CHECK</th><th>STATE</th>
+       <th>LOW</th><th>HIGH</th></tr>${rows}</table>`;
+  }
+  if (!sum.named) {
+    html += '<div class="dim" style="margin-top:6px;">Parameter names ' +
+      'unavailable (no mission catalogue on this host) — ids only.</div>';
+  }
+  return html;
+}
+
+function renderOverview(d) {
+  const counts = (d.packet_counts || []).map((c) =>
+    `<tr><td>S${c.service},${c.subtype}</td><td class="num">${c.count}</td></tr>`).join("");
+  return `<h2 class="sec">${esc(d.filename)}</h2>
+    <div class="dim">store ${d.store_id == null ? "--" : d.store_id}
+      &middot; ${d.packet_count} packets
+      &middot; ${d.crc_errors} CRC error(s)
+      &middot; ${utcShort(d.first_utc)} &rarr; ${utcShort(d.last_utc)}</div>
+    <table style="max-width:320px"><tr><th>SERVICE</th><th>PACKETS</th></tr>${counts}</table>`;
+}
+
 async function showSummary(name) {
+  $("decoded").innerHTML = "";
   $("summary").textContent = "decoding " + name + "…";
   try {
     const r = await fetch(API + "/summary?name=" + encodeURIComponent(name));
-    $("summary").textContent = JSON.stringify(await r.json(), null, 2);
+    const d = await r.json();
+    $("summary").textContent = JSON.stringify(d, null, 2);
+    $("decoded").innerHTML = d.error ? '<div class="empty">' + esc(d.error) + "</div>"
+                                    : renderOverview(d) + renderS12(d);
   } catch (e) {
     $("summary").textContent = "failed: " + e;
   }

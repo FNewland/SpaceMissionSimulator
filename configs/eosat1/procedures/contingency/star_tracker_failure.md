@@ -13,7 +13,7 @@ attitude determination capability and minimizes impact on mission operations.
 
 ## Prerequisites
 - [ ] Star tracker 1 failure detected — `aocs.st1_status` (0x0240) = 4 (FAILED)
-- [ ] TT&C link active — `ttc.link_status` (0x0501) = 1
+- [ ] TT&C link active — `ttc.link_status` (0x0501) = 2 (LOCKED)
 - [ ] Flight Director notified of attitude sensor anomaly
 - [ ] Spacecraft bus power is nominal — `eps.bus_voltage` (0x0105) > 27.0 V
 
@@ -46,8 +46,9 @@ attitude determination capability and minimizes impact on mission operations.
 ## Procedure Steps
 
 ### Step 1: Confirm Star Tracker 1 Failure
-**Action:** Request AOCS housekeeping: `HK_REQUEST(sid=2)` (Service 3, Subtype 27)
-**Verify:** `aocs.st1_status` (0x0240) = 4 (FAILED)
+**LABEL:** `STEP-1`
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — Request AOCS housekeeping
+**Verify:** `aocs.st1_status == 4` (0x0240, timeout 15 s) — FAILED
 **Verify:** `aocs.st1_num_stars` (0x0241) = 0
 **Verify:** `aocs.mode` (0x020F) — record current mode
 **Verify:** `aocs.att_error` (0x0217) — record current value (may be increasing)
@@ -59,29 +60,45 @@ before proceeding.
 **GO/NO-GO:** ST1 confirmed FAILED (status = 4) — proceed with redundancy switchover.
 
 ### Step 2: Power On Star Tracker 2
-**Action:** Command ST2 power on: `ST2_POWER(on=1)` (func_id 5)
+**LABEL:** `STEP-2`
+**TC:** `ST2_POWER(on=1)` (Service 8, Subtype 1, func_id 5) — Command ST2 power on
 **Verify:** Wait 60 s for ST2 boot sequence to complete.
-**Action:** Request AOCS housekeeping: `HK_REQUEST(sid=2)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — Request AOCS housekeeping
 **Verify:** `aocs.st2_status` (0x0243) transitions:
 - 0 (OFF) -> 1 (BOOT) within 5 s of power on
 - 1 (BOOT) -> 2 (TRACKING) within 60 s of power on
 **Verify:** If `aocs.st2_status` remains at 1 (BOOT) after 60 s, wait up to an additional
 60 s (total 120 s). Star tracker initialization may take longer if the attitude is
 uncertain.
-**GO/NO-GO:** If `aocs.st2_status` = 2 (TRACKING) — proceed to Step 3. If ST2 fails
-to reach TRACKING within 120 s, proceed to Step 5 (fallback).
+**BRANCH:** `aocs.st2_status == 2` -> GO `STEP-3` | NO-GO `STEP-5` (timeout 120 s)
+**Note:** GO — ST2 is TRACKING; select it as primary and isolate ST1. NO-GO — ST2
+did not acquire within 120 s; there is no second star tracker left, so jump
+STRAIGHT to the COARSE_SUN fallback. Run flat, the old card would have selected a
+star tracker that is not tracking (Step 3), powered off the only other one
+(Step 4), AND commanded the degraded fallback (Step 5) — all three arms, in that
+order, on a spacecraft that had just lost attitude reference.
 
 ### Step 3: Select Star Tracker 2 as Primary
-**Action:** Select ST2 as the primary attitude sensor: `ST_SELECT(unit=1)` (func_id 6)
-**Verify:** Wait 10 s, then request AOCS housekeeping: `HK_REQUEST(sid=2)`
+**LABEL:** `STEP-3`
+**TC:** `ST_SELECT(unit=1)` (Service 8, Subtype 1, func_id 6) — Select ST2 as the primary attitude sensor
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — AOCS housekeeping, 10 s after the select
 **Verify:** `aocs.att_error` (0x0217) begins decreasing (attitude solution improving)
-**Verify:** `aocs.st2_status` (0x0243) = 2 (TRACKING) — confirmed stable
+**Verify:** `aocs.st2_status == 2` (0x0243, timeout 15 s) — TRACKING, confirmed stable
 **Verify:** `aocs.mode` (0x020F) — AOCS should remain in or return to the pre-failure mode
 **GO/NO-GO:** ST2 selected and providing valid attitude solution — proceed to isolation.
 
 ### Step 4: Isolate Failed Star Tracker 1
-**Action:** Power off ST1 to prevent interference: `ST1_POWER(on=0)` (func_id 4)
-**Verify:** `aocs.st1_status` (0x0240) = 0 (OFF) within 5 s
+**LABEL:** `STEP-4`
+**TC:** `ST1_POWER(on=0)` (Service 8, Subtype 1, func_id 4) — Power off ST1 to prevent interference
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — AOCS housekeeping
+**Verify:** `aocs.st1_num_stars == 0` (0x0241, timeout 15 s) — ST1 is producing nothing
+**Note:** Do NOT verify `aocs.st1_status` (0x0240) = 0 (OFF) here. Measured on a
+live engine: with `st1_failed` asserted, the model applies the FAILED verdict
+AFTER the power gate, so 0x0240 stays 4 (FAILED) even once the unit is
+unpowered. That is arguably right — a failed unit that has been switched off is
+still a failed unit — but it means the OFF check can never pass on the very
+fault this card exists to handle. The star count is the honest confirmation
+that ST1 is out of the loop.
 **Verify:** `aocs.att_error` (0x0217) < 0.1 deg (fine pointing restored)
 **Verify:** `aocs.rate_roll` (0x0204) < 0.01 deg/s
 **Verify:** `aocs.rate_pitch` (0x0205) < 0.01 deg/s
@@ -89,24 +106,40 @@ to reach TRACKING within 120 s, proceed to Step 5 (fallback).
 **Action:** Log ST1 failure and ST2 activation in anomaly report.
 **Note:** Spacecraft is now operating on the single remaining star tracker. Any
 failure of ST2 will require fallback to COARSE_SUN mode (Step 5).
-**GO/NO-GO:** ST1 isolated, ST2 operational, attitude nominal — procedure complete.
-If ST2 also fails, proceed to Step 5.
+**BRANCH:** `aocs.st2_status == 2` -> GO `STEP-END` | NO-GO `STEP-5` (timeout 30 s)
+**Note:** GO — the switchover is complete and the card ends here. NO-GO — ST2 has
+also failed, and the only remaining option is the COARSE_SUN fallback.
 
 ### Step 5: Fallback — Both Star Trackers Failed, Enter COARSE_SUN Mode
-**Action:** If ST2 failed to reach TRACKING status or also failed (status = 4):
-Command AOCS to coarse sun sensor mode: `AOCS_SET_MODE(mode=3)` (func_id 0) — COARSE_SUN
-**Verify:** `aocs.mode` (0x020F) = 3 (COARSE_SUN) within 15 s
+**LABEL:** `STEP-5`
+**Note:** If ST2 failed to reach TRACKING status or also failed (status = 4):
+**TC:** `AOCS_SET_MODE(mode=3)` (Service 8, Subtype 1, func_id 0) — COARSE_SUN, the sun-safe hold
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — AOCS housekeeping
+**Verify:** `aocs.mode == 3` (0x020F, timeout 20 s) — COARSE_SUN
+**Note:** COARSE_SUN is a HOLD, not a destination: since Phase 1 it is not in the
+model's operational-mode set, so commanding it does NOT overwrite
+`aocs.commanded_mode` (0x0297), and the spacecraft will hand itself back to the
+ground's commanded mode if a star tracker recovers. Watch `aocs.mode_demoted`
+(0x0298) rather than re-commanding by hand.
 **Verify:** `aocs.css_valid` (0x0248) = 1 (sun vector valid)
 **Verify:** `aocs.css_sun_x` (0x0245), `aocs.css_sun_y` (0x0246), `aocs.css_sun_z` (0x0247)
 — sun vector is being measured
 **Verify:** `aocs.att_error` (0x0217) — will be larger in this mode (< 5 deg acceptable)
 **Action:** Notify Flight Director: "Both star trackers failed. Operating in COARSE_SUN
 mode. Fine pointing capability is LOST. Payload imaging is NOT possible."
-**Action:** Command payload to OFF if still active: `PAYLOAD_SET_MODE(mode=0)` (func_id 26)
+**Note:** Only if the payload is still powered.
+**TC:** `PAYLOAD_SET_MODE(mode=0)` (Service 8, Subtype 1, func_id 26) — payload OFF
 **Note:** COARSE_SUN mode provides sun-pointing for power safety but does not support
 nadir pointing or payload operations. This is a mission-degrading configuration.
 **GO/NO-GO:** COARSE_SUN mode active, spacecraft safe. Escalate to engineering team
 for star tracker recovery planning.
+
+### Step 6: End of Procedure
+**LABEL:** `STEP-END`
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — final AOCS housekeeping
+**Note:** Reached either after a successful ST2 switchover (Step 4 GO) or after the
+COARSE_SUN fallback (Step 5 falls through). Record which arm was taken in the
+anomaly report — they leave the spacecraft in materially different configurations.
 
 ## Verification Criteria
 - [ ] `aocs.st2_status` (0x0243) = 2 (TRACKING) — if ST2 switchover successful

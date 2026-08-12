@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <SpaceSystem xmlns="http://www.omg.org/spec/XTCE/20180204" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="EOSAT-1">
-  <Header date="2026-08-01" version="1.0" classification="Unclassified — Simulation"/>
+  <Header date="2026-08-12" version="1.0" classification="Unclassified — Simulation"/>
   <SpaceSystem name="CCSDS">
     <LongDescription>CCSDS Space Packet Protocol header definitions</LongDescription>
     <TelemetryMetaData>
@@ -1064,6 +1064,7 @@
             <ParameterRefEntry parameterRef="/EOSAT-1/EPS/eps_eps_mode"/>
             <ParameterRefEntry parameterRef="/EOSAT-1/EPS/eps_battery_heater_on"/>
             <ParameterRefEntry parameterRef="/EOSAT-1/EPS/eps_battery_heater_setpoint"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/EPS/eps_wing_status"/>
           </EntryList>
         </SequenceContainer>
       </ContainerSet>
@@ -2474,6 +2475,54 @@
             <Unit>W</Unit>
           </UnitSet>
         </IntegerParameterType>
+        <IntegerParameterType name="aocs_gyro_units_on_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_gyro_saturated_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_gyro_bias_injected_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="16" encoding="unsigned">
+            <DefaultCalibrator>
+              <PolynomialCalibrator>
+                <Term coefficient="1e-05" exponent="1"/>
+              </PolynomialCalibrator>
+            </DefaultCalibrator>
+          </IntegerDataEncoding>
+          <UnitSet>
+            <Unit>deg/s</Unit>
+          </UnitSet>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_commanded_mode_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_mode_demoted_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_fine_degraded_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_desat_inhibit_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_h_body_nms_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="16" encoding="unsigned">
+            <DefaultCalibrator>
+              <PolynomialCalibrator>
+                <Term coefficient="1e-05" exponent="1"/>
+              </PolynomialCalibrator>
+            </DefaultCalibrator>
+          </IntegerDataEncoding>
+          <UnitSet>
+            <Unit>Nms</Unit>
+          </UnitSet>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_desat_ineffective_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_wheels_commissioned_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        </IntegerParameterType>
         <FloatParameterType name="aocs_wheels_enabled_Type">
           <FloatDataEncoding sizeInBits="32"/>
         </FloatParameterType>
@@ -2885,7 +2934,7 @@
           <LongDescription>Time since last mode/target change until inside the gate</LongDescription>
         </Parameter>
         <Parameter name="aocs_fine_ready" parameterTypeRef="aocs_fine_ready_Type">
-          <LongDescription>FINE-entry precondition bitmask (0 = ready): bit0 ST&lt;5 stars, bit1 &lt;4 wheels, bit2 MEKF unconverged, bit3 rates high, bit4 momentum &gt;70%, bit5 propagate-only, bit6 slew not idle 60s</LongDescription>
+          <LongDescription>FINE-entry precondition bitmask (0 = ready): bit0 ST&lt;5 stars, bit1 &lt;3 wheels (a 3-of-4 pyramid still spans R^3 and flies FINE degraded — see aocs.fine_degraded 0x0299; two wheels cannot), bit2 MEKF unconverged, bit3 rates high, bit4 momentum &gt;70%, bit5 propagate-only, bit6 slew not idle 60s</LongDescription>
         </Parameter>
         <Parameter name="aocs_fidelity_mode" parameterTypeRef="aocs_fidelity_mode_Type">
           <LongDescription>0=full physics, 1=secular (accel bypass &gt;60x)</LongDescription>
@@ -2895,6 +2944,36 @@
         </Parameter>
         <Parameter name="aocs_power_w" parameterTypeRef="aocs_power_w_Type">
           <LongDescription>AOCS suite power draw by mode (COARSE 4 / NOMINAL 9 / FINE 15 W); EPS bills the aocs_wheels line from this</LongDescription>
+        </Parameter>
+        <Parameter name="aocs_gyro_units_on" parameterTypeRef="aocs_gyro_units_on_Type">
+          <LongDescription>Number of gyro units powered (S2 devices 0x0206-0x0208). 0 = the MEKF has no rate reference and coasts on CSS+MAG only</LongDescription>
+        </Parameter>
+        <Parameter name="aocs_gyro_saturated" parameterTypeRef="aocs_gyro_saturated_Type">
+          <LongDescription>1 = at least one gyro channel is at its measurement-range limit (rate knowledge lost on that axis)</LongDescription>
+        </Parameter>
+        <Parameter name="aocs_gyro_bias_injected" parameterTypeRef="aocs_gyro_bias_injected_Type">
+          <LongDescription>Magnitude of the injected gyro-bias fault (instructor visibility; 0 in a healthy spacecraft)</LongDescription>
+        </Parameter>
+        <Parameter name="aocs_commanded_mode" parameterTypeRef="aocs_commanded_mode_Type">
+          <LongDescription>Operational mode last commanded from ground. Every transient and every automatic demotion resolves its return path against this</LongDescription>
+        </Parameter>
+        <Parameter name="aocs_mode_demoted" parameterTypeRef="aocs_mode_demoted_Type">
+          <LongDescription>1 = the spacecraft is NOT in its commanded mode (transient or automatic demotion in progress)</LongDescription>
+        </Parameter>
+        <Parameter name="aocs_fine_degraded" parameterTypeRef="aocs_fine_degraded_Type">
+          <LongDescription>1 = FINE_POINT is running on a degraded 3-wheel set (permitted per R3, relaxed jitter/deadband spec)</LongDescription>
+        </Parameter>
+        <Parameter name="aocs_desat_inhibit" parameterTypeRef="aocs_desat_inhibit_Type">
+          <LongDescription>1 = momentum dumps are inhibited (operator latch, or asserted automatically while the payload is imaging)</LongDescription>
+        </Parameter>
+        <Parameter name="aocs_h_body_nms" parameterTypeRef="aocs_h_body_nms_Type">
+          <LongDescription>Magnitude of the stored BODY momentum |A.h_wheel| — the quantity a magnetic dump actually removes</LongDescription>
+        </Parameter>
+        <Parameter name="aocs_desat_ineffective" parameterTypeRef="aocs_desat_ineffective_Type">
+          <LongDescription>1 = the last desaturation timed out without converging (see event AOCS_DESAT_INEFFECTIVE 0x020E)</LongDescription>
+        </Parameter>
+        <Parameter name="aocs_wheels_commissioned" parameterTypeRef="aocs_wheels_commissioned_Type">
+          <LongDescription>Latched 1 once &gt;=3 wheels have been simultaneously enabled; cleared by an AOCS power-down. Lets FDIR tell a double wheel failure apart from an uncommissioned bus</LongDescription>
         </Parameter>
         <Parameter name="aocs_wheels_enabled" parameterTypeRef="aocs_wheels_enabled_Type">
           <LongDescription>Number of enabled reaction wheels</LongDescription>
@@ -3011,6 +3090,16 @@
             <ParameterRefEntry parameterRef="/EOSAT-1/AOCS/aocs_css_head_health_my"/>
             <ParameterRefEntry parameterRef="/EOSAT-1/AOCS/aocs_css_head_health_pz"/>
             <ParameterRefEntry parameterRef="/EOSAT-1/AOCS/aocs_css_head_health_mz"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/AOCS/aocs_commanded_mode"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/AOCS/aocs_mode_demoted"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/AOCS/aocs_fine_degraded"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/AOCS/aocs_desat_inhibit"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/AOCS/aocs_h_body_nms"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/AOCS/aocs_desat_ineffective"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/AOCS/aocs_wheels_commissioned"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/AOCS/aocs_gyro_units_on"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/AOCS/aocs_gyro_saturated"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/AOCS/aocs_gyro_bias_injected"/>
           </EntryList>
         </SequenceContainer>
       </ContainerSet>
@@ -3455,7 +3544,7 @@
               <LongDescription>DESAT entry at this % of the momentum envelope (default 70)</LongDescription>
             </Argument>
             <Argument name="exit_pct" argumentTypeRef="AOCS_SET_MOM_MGMT_exit_pct_ArgType" initialValue="20">
-              <LongDescription>DESAT exit below this % (default 20)</LongDescription>
+              <LongDescription>DESAT completes when the momentum envelope falls back below this % (default 20)</LongDescription>
             </Argument>
           </ArgumentList>
           <CommandContainer name="AOCS_SET_MOM_MGMT_Container">
@@ -4845,6 +4934,42 @@
         <FloatParameterType name="ttc_gs_equipment_status_Type">
           <FloatDataEncoding sizeInBits="32"/>
         </FloatParameterType>
+        <IntegerParameterType name="ttc_tx_active_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        </IntegerParameterType>
+        <FloatParameterType name="ttc_tx_gate_status_Type">
+          <FloatDataEncoding sizeInBits="32"/>
+        </FloatParameterType>
+        <FloatParameterType name="ttc_eirp_dbw_Type">
+          <FloatDataEncoding sizeInBits="32"/>
+          <UnitSet>
+            <Unit>dBW</Unit>
+          </UnitSet>
+        </FloatParameterType>
+        <FloatParameterType name="ttc_beacon_tx_on_Type">
+          <FloatDataEncoding sizeInBits="32"/>
+        </FloatParameterType>
+        <FloatParameterType name="ttc_beacon_active_Type">
+          <FloatDataEncoding sizeInBits="32"/>
+        </FloatParameterType>
+        <FloatParameterType name="ttc_beacon_link_margin_Type">
+          <FloatDataEncoding sizeInBits="32"/>
+          <UnitSet>
+            <Unit>dB</Unit>
+          </UnitSet>
+        </FloatParameterType>
+        <FloatParameterType name="ttc_beacon_dl_freq_Type">
+          <FloatDataEncoding sizeInBits="32"/>
+          <UnitSet>
+            <Unit>MHz</Unit>
+          </UnitSet>
+        </FloatParameterType>
+        <FloatParameterType name="ttc_beacon_tx_power_Type">
+          <FloatDataEncoding sizeInBits="32"/>
+          <UnitSet>
+            <Unit>W</Unit>
+          </UnitSet>
+        </FloatParameterType>
         <FloatParameterType name="ttc_pa_backup_temp_Type">
           <FloatDataEncoding sizeInBits="32"/>
           <UnitSet>
@@ -4947,6 +5072,30 @@
         <Parameter name="ttc_gs_equipment_status" parameterTypeRef="ttc_gs_equipment_status_Type">
           <LongDescription>GS equipment health bitmask, SET bit = healthy: bit0 antenna+tracking, bit1 LNA, bit2 uplink HPA, bit3 reference oscillator+feed. 15 = all healthy</LongDescription>
         </Parameter>
+        <Parameter name="ttc_tx_active" parameterTypeRef="ttc_tx_active_Type">
+          <LongDescription>S-band prime downlink radiating (0=inhibited, 1=transmitting). AND of: PA on and not in thermal shutdown, transponder alive, EPS ttc_tx line on, station in view. This is the gate on every TM packet except the UHF beacon's SID 11</LongDescription>
+        </Parameter>
+        <Parameter name="ttc_tx_gate_status" parameterTypeRef="ttc_tx_gate_status_Type">
+          <LongDescription>Downlink gate breakdown, SET bit = permissive: bit0 PA on, bit1 EPS ttc_tx line on, bit2 station in view, bit3 S-band radiating, bit4 UHF beacon TX commanded on, bit5 UHF beacon radiating, bit6 S-band antenna deployed, bit7 beacon MODE off. 0xDF = transmitting normally</LongDescription>
+        </Parameter>
+        <Parameter name="ttc_eirp_dbw" parameterTypeRef="ttc_eirp_dbw_Type">
+          <LongDescription>Live S-band EIRP at the COMMANDED PA power = ttc.yaml eirp_dbw + 10*log10(P/pa_ref_power_w). Moves 3.01 dB down at LOW and 3.98 dB up at HIGH — the proof that TTC_SET_TX_POWER (S8 func 68) reaches the link and not just telemetry 0x050D</LongDescription>
+        </Parameter>
+        <Parameter name="ttc_beacon_tx_on" parameterTypeRef="ttc_beacon_tx_on_Type">
+          <LongDescription>UHF beacon transmitter commanded on (TTC_BEACON_TX_ON/OFF, S8 funcs 97/98). 0=off, 1=on</LongDescription>
+        </Parameter>
+        <Parameter name="ttc_beacon_active" parameterTypeRef="ttc_beacon_active_Type">
+          <LongDescription>UHF beacon actually radiating to a station now (commanded on AND in contact AND its link closes). Independent of ttc.tx_active by construction — that independence is the reason the beacon is a second box</LongDescription>
+        </Parameter>
+        <Parameter name="ttc_beacon_link_margin" parameterTypeRef="ttc_beacon_link_margin_Type">
+          <LongDescription>UHF beacon link margin against its OWN budget: 437.5 MHz, 1 W into a 0 dBi dipole, 1 kbps, conv+RS, to a -8 dB/K Yagi station. Typically ~27 dB — compare with the S-band LOW rung's ~46 dB and read off where the difference comes from</LongDescription>
+        </Parameter>
+        <Parameter name="ttc_beacon_dl_freq" parameterTypeRef="ttc_beacon_dl_freq_Type">
+          <LongDescription>UHF beacon downlink frequency (435-438 MHz amateur-satellite segment; 437.5 MHz as flown)</LongDescription>
+        </Parameter>
+        <Parameter name="ttc_beacon_tx_power" parameterTypeRef="ttc_beacon_tx_power_Type">
+          <LongDescription>UHF beacon RF output (1.0 W = 30 dBm, EnduroSat UHF Type II typical). 0 W when the beacon transmitter is commanded off</LongDescription>
+        </Parameter>
         <Parameter name="ttc_pa_backup_temp" parameterTypeRef="ttc_pa_backup_temp_Type">
           <LongDescription>Backup power amplifier temperature</LongDescription>
         </Parameter>
@@ -4978,6 +5127,7 @@
             <ParameterRefEntry parameterRef="/EOSAT-1/TTC/ttc_frame_sync"/>
             <ParameterRefEntry parameterRef="/EOSAT-1/TTC/ttc_cmd_rx_count"/>
             <ParameterRefEntry parameterRef="/EOSAT-1/TTC/ttc_pa_on"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/TTC/ttc_tx_active"/>
             <ParameterRefEntry parameterRef="/EOSAT-1/TTC/ttc_eb_n0"/>
             <ParameterRefEntry parameterRef="/EOSAT-1/TTC/ttc_agc_level"/>
             <ParameterRefEntry parameterRef="/EOSAT-1/TTC/ttc_doppler_hz"/>
@@ -5560,6 +5710,57 @@
         <FloatParameterType name="payload_bias_frame_cnt_Type">
           <FloatDataEncoding sizeInBits="32"/>
         </FloatParameterType>
+        <IntegerParameterType name="payload_cal_mode_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="payload_cal_abort_reason_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="payload_cal_valid_mask_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="payload_product_mb_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="32" encoding="unsigned">
+            <DefaultCalibrator>
+              <PolynomialCalibrator>
+                <Term coefficient="0.01" exponent="1"/>
+              </PolynomialCalibrator>
+            </DefaultCalibrator>
+          </IntegerDataEncoding>
+          <UnitSet>
+            <Unit>MB</Unit>
+          </UnitSet>
+        </IntegerParameterType>
+        <IntegerParameterType name="payload_product_count_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="16" encoding="unsigned"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="payload_readout_active_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="payload_cooler_floor_c_Type" signed="true">
+          <IntegerDataEncoding sizeInBits="16" encoding="twosComplement">
+            <DefaultCalibrator>
+              <PolynomialCalibrator>
+                <Term coefficient="0.01" exponent="1"/>
+              </PolynomialCalibrator>
+            </DefaultCalibrator>
+          </IntegerDataEncoding>
+          <UnitSet>
+            <Unit>C</Unit>
+          </UnitSet>
+        </IntegerParameterType>
+        <IntegerParameterType name="payload_cooler_margin_k_Type" signed="true">
+          <IntegerDataEncoding sizeInBits="16" encoding="twosComplement">
+            <DefaultCalibrator>
+              <PolynomialCalibrator>
+                <Term coefficient="0.01" exponent="1"/>
+              </PolynomialCalibrator>
+            </DefaultCalibrator>
+          </IntegerDataEncoding>
+          <UnitSet>
+            <Unit>K</Unit>
+          </UnitSet>
+        </IntegerParameterType>
       </ParameterTypeSet>
       <ParameterSet>
         <Parameter name="payload_mode" parameterTypeRef="payload_mode_Type"/>
@@ -5709,6 +5910,30 @@
         <Parameter name="payload_bias_frame_cnt" parameterTypeRef="payload_bias_frame_cnt_Type">
           <LongDescription>Flat/bias frames acquired in the current/last calibration</LongDescription>
         </Parameter>
+        <Parameter name="payload_cal_mode" parameterTypeRef="payload_cal_mode_Type">
+          <LongDescription>Requested calibration phase set (0=DARK, 1=FLAT, 2=BOTH)</LongDescription>
+        </Parameter>
+        <Parameter name="payload_cal_abort_reason" parameterTypeRef="payload_cal_abort_reason_Type">
+          <LongDescription>Why the last calibration stopped (0=none/completed, 1=detector unpowered, 2=shutter moved, 3=lamp state changed, 4=FPA left its band, 5=operator abort)</LongDescription>
+        </Parameter>
+        <Parameter name="payload_cal_valid_mask" parameterTypeRef="payload_cal_valid_mask_Type">
+          <LongDescription>Bands with BOTH a bias and a gain coefficient (bits 0-3 blue/green/red/nir; 0x0F = fully calibrated)</LongDescription>
+        </Parameter>
+        <Parameter name="payload_product_mb" parameterTypeRef="payload_product_mb_Type">
+          <LongDescription>Volume occupied by CATALOGUED image products (distinct from mem_used_mb, which includes the store's pre-existing fill)</LongDescription>
+        </Parameter>
+        <Parameter name="payload_product_count" parameterTypeRef="payload_product_count_Type">
+          <LongDescription>Number of image products held in the catalogue</LongDescription>
+        </Parameter>
+        <Parameter name="payload_readout_active" parameterTypeRef="payload_readout_active_Type">
+          <LongDescription>1 while a commanded strip is being read out (imaging no longer produces data on its own)</LongDescription>
+        </Parameter>
+        <Parameter name="payload_cooler_floor_c" parameterTypeRef="payload_cooler_floor_c_Type">
+          <LongDescription>Coldest FPA temperature the cooler can hold at the present sink and load</LongDescription>
+        </Parameter>
+        <Parameter name="payload_cooler_margin_k" parameterTypeRef="payload_cooler_margin_k_Type">
+          <LongDescription>Commanded setpoint minus achievable floor; &lt;= 0 means the setpoint is out of reach</LongDescription>
+        </Parameter>
       </ParameterSet>
       <ContainerSet>
         <SequenceContainer name="HK_Payload_SID5">
@@ -5743,6 +5968,14 @@
             <ParameterRefEntry parameterRef="/EOSAT-1/Payload/payload_transfer_active"/>
             <ParameterRefEntry parameterRef="/EOSAT-1/Payload/payload_transfer_progress"/>
             <ParameterRefEntry parameterRef="/EOSAT-1/Payload/payload_integration_time_ms"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/Payload/payload_cal_mode"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/Payload/payload_cal_abort_reason"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/Payload/payload_cal_valid_mask"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/Payload/payload_product_mb"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/Payload/payload_product_count"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/Payload/payload_readout_active"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/Payload/payload_cooler_floor_c"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/Payload/payload_cooler_margin_k"/>
           </EntryList>
         </SequenceContainer>
       </ContainerSet>
@@ -5755,6 +5988,7 @@
             <Enumeration value="0" label="OFF" shortDescription="Imager off, cooler released"/>
             <Enumeration value="1" label="STANDBY" shortDescription="FPA cooler on, detector idle"/>
             <Enumeration value="2" label="IMAGING" shortDescription="Detector integrating; capture enabled"/>
+            <Enumeration value="3" label="CALIBRATION" shortDescription="Radiometric calibration; capture disabled, shutter and lamp gated by the cal sequencer"/>
           </EnumerationList>
         </EnumeratedArgumentType>
         <IntegerArgumentType name="PAYLOAD_SET_SCENE_scene_id_ArgType" signed="false">
@@ -5880,9 +6114,9 @@
         <EnumeratedArgumentType name="PAYLOAD_START_CALIBRATION_mode_ArgType">
           <IntegerDataEncoding sizeInBits="8" encoding="unsigned" byteOrder="mostSignificantByteFirst"/>
           <EnumerationList>
-            <Enumeration value="0" label="DARK" shortDescription="Dark frames only (shutter closed)"/>
-            <Enumeration value="1" label="FLAT" shortDescription="Flat field only (cal lamp)"/>
-            <Enumeration value="2" label="BOTH" shortDescription="Dark then flat (legacy sequence)"/>
+            <Enumeration value="0" label="DARK" shortDescription="Dark frames only — shutter CLOSED, lamp OFF (produces the bias half)"/>
+            <Enumeration value="1" label="FLAT" shortDescription="Flat field only — shutter OPEN, lamp ON (produces the gain half)"/>
+            <Enumeration value="2" label="BOTH" shortDescription="Dark then flat; the sequencer drives the optics across the phase boundary"/>
           </EnumerationList>
         </EnumeratedArgumentType>
         <EnumeratedArgumentType name="PAYLOAD_SET_COMPRESSION_algorithm_ArgType">
@@ -5918,7 +6152,7 @@
         </EnumeratedArgumentType>
         <IntegerArgumentType name="PAYLOAD_CYCLE_SHUTTER_cycles_ArgType" signed="false">
           <UnitSet>
-            <Unit>cycles</Unit>
+            <Unit>transitions</Unit>
           </UnitSet>
           <IntegerDataEncoding sizeInBits="8" encoding="unsigned" byteOrder="mostSignificantByteFirst"/>
           <ValidRange minInclusive="1" maxInclusive="100"/>
@@ -5937,10 +6171,10 @@
       </ArgumentTypeSet>
       <MetaCommandSet>
         <MetaCommand name="PAYLOAD_SET_MODE">
-          <LongDescription>Set payload mode</LongDescription>
+          <LongDescription>Set payload mode. Modes 1 (STANDBY), 2 (IMAGING) and 3 (CALIBRATION) all request the FPA cooler; mode 0 releases it. The request now drives BOTH the TCS cooler flag and the EPS `fpa_cooler` power line (2026-08b PL-a) — previously this path set a flag against a dark line and the detector never cooled, so FPA READY (0x0610) stayed NO forever with no error.</LongDescription>
           <ArgumentList>
             <Argument name="mode" argumentTypeRef="PAYLOAD_SET_MODE_mode_ArgType" initialValue="0">
-              <LongDescription>0=off, 1=standby, 2=imaging</LongDescription>
+              <LongDescription>0=off, 1=standby, 2=imaging, 3=calibration</LongDescription>
             </Argument>
           </ArgumentList>
           <CommandContainer name="PAYLOAD_SET_MODE_Container">
@@ -5982,7 +6216,7 @@
           </CommandContainer>
         </MetaCommand>
         <MetaCommand name="PAYLOAD_DOWNLOAD_IMAGE">
-          <LongDescription>Queue image for downlink</LongDescription>
+          <LongDescription>Report one stored image product. 2026-08b PL-c: the handler called the model and threw the result away, so no image metadata ever reached the ground on this func. It now answers with a TM(8,2) 20-octet product summary (same layout as PAYLOAD_GET_IMAGE_CATALOG's entries), or an S1.8 refusal if the scene is not in the catalogue.</LongDescription>
           <ArgumentList>
             <Argument name="scene_id" argumentTypeRef="PAYLOAD_DOWNLOAD_IMAGE_scene_id_ArgType" initialValue="0">
               <LongDescription>Scene ID to download</LongDescription>
@@ -6026,7 +6260,8 @@
           </CommandContainer>
         </MetaCommand>
         <MetaCommand name="PAYLOAD_GET_IMAGE_CATALOG">
-          <LongDescription>Request stored image catalog</LongDescription>
+          <LongDescription>Request the stored image catalogue. 2026-08b PL-c: this now RETURNS something. The handler called the model and discarded the result, so the one command whose entire purpose is to tell the ground what is on board produced no telemetry at all.
+TM(8,2) reply, built like PROP_GET_STATUS (func 118): shown(2) + held(2) + product_mb x100 (4) + free_mb x100 (4), followed by `shown` 20-octet product summaries of scene_id(2) lat(4, 1e-4 deg) lon(4, 1e-4 deg) size_kb(4) lines(2) quality(1, %) status(1, 0=OK/1=PARTIAL/2=CORRUPT) flags(1) segment(1). flags bit 0 = the strip was flown on a 3-wheel (degraded) FINE set, bit 1 = a product checksum has been computed. At most 32 summaries per report; `held` is the true count.</LongDescription>
           <CommandContainer name="PAYLOAD_GET_IMAGE_CATALOG_Container">
             <EntryList>
               <FixedValueEntry name="func_id" binaryValue="20" sizeInBits="8"/>
@@ -6103,7 +6338,22 @@
           </CommandContainer>
         </MetaCommand>
         <MetaCommand name="PAYLOAD_START_CALIBRATION">
-          <LongDescription>Begin calibration sequence (dark frame / flat field / both)</LongDescription>
+          <LongDescription>Begin a radiometric calibration sequence (dark frame / flat field / both).
+PRECONDITIONS (2026-08b PL-d — the gate is on the OPTICS, not on a mode word; the old rule was &quot;must be in IMAGING mode&quot;, which required the shutter to be open onto the scene before a dark frame could be asked for). Refused with S1.8 unless:
+
+  * payload mode is 1 STANDBY or 3 CALIBRATION — never 0 OFF and never
+    2 IMAGING (error 0x0021);
+  * the FPA is thermally ready, 0x0610 == 1 (0x0022) — dark current
+    roughly doubles every 6-8 K, so coefficients taken off setpoint
+    describe a different detector;
+  * DARK and BOTH: shutter CLOSED, 0x063C == 0 (0x0023) and the
+    calibration lamp OFF, 0x0615 == 0 (0x0024);
+  * FLAT: shutter OPEN and lamp ON;
+  * the devices involved are powered — FPA 0x0600, shutter 0x0603, and
+    the lamp 0x0602 for FLAT/BOTH (0x0007).
+
+A BOTH run starts in the dark configuration and the on-board sequencer opens the shutter and lights the lamp itself at the DARK -&gt; FLAT transition; no ground step can land between two phases 15 s apart. Changing the optics under a running sequence ABORTS it (event 0x0612, reason at 0x0645) rather than completing over invalid frames.
+Completion sets the per-band coefficients; 0x0646 cal_valid_mask marks the bands that now have BOTH a bias and a gain, so a DARK run completes an earlier FLAT run and vice versa.</LongDescription>
           <ArgumentList>
             <Argument name="mode" argumentTypeRef="PAYLOAD_START_CALIBRATION_mode_ArgType" initialValue="2">
               <LongDescription>0=dark only, 1=flat only, 2=both (COM-011 step 2 uses DARK)</LongDescription>
@@ -6157,10 +6407,11 @@
           </CommandContainer>
         </MetaCommand>
         <MetaCommand name="PAYLOAD_CYCLE_SHUTTER">
-          <LongDescription>Run a shutter mechanism cycle test (COM-011 dark-frame prep)</LongDescription>
+          <LongDescription>Run a shutter mechanism EXERCISE. This is a mechanism health test, not a way to reach a position — use PAYLOAD_SET_SHUTTER (func 119) for that.
+2026-08b PL-d: `cycles` counts TRANSITIONS of the blade, one per model tick, and the mechanism is driven entirely by the model. Previously the command handler toggled once AND the tick toggled once per remaining count, so cycles=1 moved the blade twice, the shutter always ended where it started, and the shutter could never be commanded closed at all.</LongDescription>
           <ArgumentList>
             <Argument name="cycles" argumentTypeRef="PAYLOAD_CYCLE_SHUTTER_cycles_ArgType" initialValue="1">
-              <LongDescription>Number of open/close cycles (1-100)</LongDescription>
+              <LongDescription>Number of blade transitions (1-100). An ODD count ends on the opposite position from the start; an EVEN count returns to it.</LongDescription>
             </Argument>
           </ArgumentList>
           <CommandContainer name="PAYLOAD_CYCLE_SHUTTER_Container">
@@ -6171,7 +6422,8 @@
           </CommandContainer>
         </MetaCommand>
         <MetaCommand name="PAYLOAD_INITIATE_TRANSFER">
-          <LongDescription>Start the on-board image transfer engine for a stored scene — the bridge to the S13_CREATE_TRANSFER ground workflow (textbook section 6.7).</LongDescription>
+          <LongDescription>Start the on-board image transfer engine for a stored scene — the bridge to the S13_CREATE_TRANSFER ground workflow (textbook section 6.7).
+2026-08b PL-c: raises event 0x0610 TRANSFER_START (promised by a source comment and previously emitted by nothing) and answers with a TM(8,2) report of scene_id(2) + bytes_total(4) + blocks(4) + crc32(4) — the three numbers the ground needs to plan and verify a dump, all of which used to be computed on board and then dropped. The transfer drains at the ACTIVE TM information rate (0x0506) and only while the downlink is up (0x0501), not at the old hard-coded 10 Mbps: it stalls at loss of signal and resumes on the next pass.</LongDescription>
           <ArgumentList>
             <Argument name="scene_id" argumentTypeRef="PAYLOAD_INITIATE_TRANSFER_scene_id_ArgType" initialValue="1">
               <LongDescription>Stored scene to transfer</LongDescription>
@@ -6942,6 +7194,20 @@
         <IntegerArgumentType name="uint8_ArgType" signed="false">
           <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
         </IntegerArgumentType>
+        <EnumeratedArgumentType name="AOCS_SET_DESAT_INHIBIT_inhibit_ArgType">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned" byteOrder="mostSignificantByteFirst"/>
+          <EnumerationList>
+            <Enumeration value="0" label="ALLOW"/>
+            <Enumeration value="1" label="INHIBIT"/>
+          </EnumerationList>
+        </EnumeratedArgumentType>
+        <EnumeratedArgumentType name="PAYLOAD_SET_SHUTTER_position_ArgType">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned" byteOrder="mostSignificantByteFirst"/>
+          <EnumerationList>
+            <Enumeration value="0" label="CLOSED" shortDescription="Blade across the aperture — the dark-frame configuration"/>
+            <Enumeration value="1" label="OPEN" shortDescription="Light path open — required for capture and for flat fields"/>
+          </EnumerationList>
+        </EnumeratedArgumentType>
       </ArgumentTypeSet>
       <MetaCommandSet>
         <MetaCommand name="S2_EPS_BATTERY_HEATER">
@@ -8008,6 +8274,55 @@
             </EntryList>
           </CommandContainer>
         </MetaCommand>
+        <MetaCommand name="AOCS_SET_DESAT_INHIBIT">
+          <LongDescription>Inhibit/allow momentum desaturation. A dump drops fine pointing, so it must not pre-empt an imaging strip; the inhibit is also asserted AUTOMATICALLY while payload.mode is IMAGING</LongDescription>
+          <ArgumentList>
+            <Argument name="inhibit" argumentTypeRef="AOCS_SET_DESAT_INHIBIT_inhibit_ArgType" initialValue="1">
+              <LongDescription>0=allow desaturation, 1=inhibit</LongDescription>
+            </Argument>
+          </ArgumentList>
+          <CommandContainer name="AOCS_SET_DESAT_INHIBIT_Container">
+            <EntryList>
+              <FixedValueEntry name="func_id" binaryValue="60" sizeInBits="8"/>
+              <ArgumentRefEntry argumentRef="inhibit"/>
+            </EntryList>
+          </CommandContainer>
+        </MetaCommand>
+        <MetaCommand name="PAYLOAD_SET_SHUTTER">
+          <LongDescription>Drive the shutter to an ABSOLUTE position.
+2026-08b PL-d: there was no absolute shutter command anywhere in this catalogue — PAYLOAD_CYCLE_SHUTTER was the only shutter TC, and a relative toggle cannot reach a KNOWN state. That is what COM-011 step 2 (&quot;cycle to CLOSED, verify 0x063C == 0 within 10 s&quot;) needs, what a dark frame needs, and what PAYLOAD_CAPTURE now checks before acquiring.
+Idempotent: commanding CLOSED twice leaves it CLOSED. Refused (0x0007) when the shutter mechanism device 0x0603 is unpowered, and (0x0005) while a PAYLOAD_CYCLE_SHUTTER exercise is running.</LongDescription>
+          <DefaultSignificance consequenceLevel="caution"/>
+          <ArgumentList>
+            <Argument name="position" argumentTypeRef="PAYLOAD_SET_SHUTTER_position_ArgType" initialValue="1">
+              <LongDescription>0=closed, 1=open</LongDescription>
+            </Argument>
+          </ArgumentList>
+          <CommandContainer name="PAYLOAD_SET_SHUTTER_Container">
+            <EntryList>
+              <FixedValueEntry name="func_id" binaryValue="77" sizeInBits="8"/>
+              <ArgumentRefEntry argumentRef="position"/>
+            </EntryList>
+          </CommandContainer>
+        </MetaCommand>
+        <MetaCommand name="TTC_BEACON_TX_ON">
+          <LongDescription>Switch the UHF bootloader beacon TRANSMITTER on. This is the second radio, not a mode of the S-band transponder: separate band (437.5 MHz, in the 435-438 MHz amateur-satellite segment), separate PA (1 W RF), separate deployable dipole and separate link budget. It carries HK SID 11 only, and it keeps carrying it when the S-band prime chain is dead - PA off, ttc_tx line pulled, transponder failed or patch stowed. That independence is the entire reason a spacecraft carries one.</LongDescription>
+          <DefaultSignificance consequenceLevel="caution"/>
+          <CommandContainer name="TTC_BEACON_TX_ON_Container">
+            <EntryList>
+              <FixedValueEntry name="func_id" binaryValue="61" sizeInBits="8"/>
+            </EntryList>
+          </CommandContainer>
+        </MetaCommand>
+        <MetaCommand name="TTC_BEACON_TX_OFF">
+          <LongDescription>Switch the UHF bootloader beacon transmitter off. CAUTION: this removes the mission's last independent downlink. With the beacon off, an S-band failure leaves the spacecraft unable to tell the ground that the OBC is alive, and recovery depends entirely on the uplink still working. Use only for RFI de-confliction or a deliberate radio-silence exercise.</LongDescription>
+          <DefaultSignificance consequenceLevel="caution"/>
+          <CommandContainer name="TTC_BEACON_TX_OFF_Container">
+            <EntryList>
+              <FixedValueEntry name="func_id" binaryValue="62" sizeInBits="8"/>
+            </EntryList>
+          </CommandContainer>
+        </MetaCommand>
         <MetaCommand name="SET_TIME">
           <LongDescription>Set spacecraft time</LongDescription>
           <ArgumentList>
@@ -8165,13 +8480,16 @@
           </CommandContainer>
         </MetaCommand>
         <MetaCommand name="S13_CREATE_TRANSFER">
-          <LongDescription>Create download transfer session for image</LongDescription>
+          <LongDescription>Create a download transfer session for a STORED image product.
+2026-08b PL-c: the session is now bound to a real catalogue entry. A scene that is not in the payload's image catalogue is REFUSED (S1.8 error 0x0003 plus a TM(13,4) NAK) — previously a transfer for scene 9999 against an EMPTY catalogue returned transfer_id 1, 4 MB and ACTIVE, so the ground could open, run and complete the download of an image that had never been taken. Use PAYLOAD_GET_IMAGE_CATALOG (S8 func 32) to see what is actually on board.
+The session is sized from the product's own COMPRESSED size, so `size_mb` is now advisory: it is ignored whenever the scene is catalogued.
+TM(13,2) response: transfer_id(2) + total_blocks(4) + crc32(4). The last two fields are appended, so a decoder that reads only the transfer id is unaffected; `crc32` is the checksum the instrument computed over the product at capture, and the ground should recompute it over the received blocks — a CORRUPT product (catalogue status 2) will not match, which is how a corrupted image is now diagnosable.</LongDescription>
           <ArgumentList>
             <Argument name="scene_id" argumentTypeRef="uint16_ArgType">
-              <LongDescription>Scene ID to download</LongDescription>
+              <LongDescription>Scene ID to download (must be in the payload image catalogue)</LongDescription>
             </Argument>
             <Argument name="size_mb" argumentTypeRef="uint16_ArgType">
-              <LongDescription>Image size in MB (0=configured payload image size, 4 MB)</LongDescription>
+              <LongDescription>Advisory only; ignored for a catalogued scene. 0 = configured payload image size (4 MB)</LongDescription>
             </Argument>
           </ArgumentList>
           <CommandContainer name="S13_CREATE_TRANSFER_Container">
@@ -8182,7 +8500,7 @@
           </CommandContainer>
         </MetaCommand>
         <MetaCommand name="S13_DOWNLOAD_SEGMENT">
-          <LongDescription>Request segment of image data (1024 bytes per block)</LongDescription>
+          <LongDescription>Request one 1024-byte segment of image data. The bytes are DERIVED from the product (a keyed stream over the catalogue entry's data_seed), so the same segment requested twice is identical and the whole product checksums to the crc32 that S13_CREATE_TRANSFER reported. They used to be a `(segment_num + i) % 256` ramp identical for every scene.</LongDescription>
           <ArgumentList>
             <Argument name="transfer_id" argumentTypeRef="uint16_ArgType">
               <LongDescription>Transfer session ID</LongDescription>
@@ -8199,7 +8517,7 @@
           </CommandContainer>
         </MetaCommand>
         <MetaCommand name="S13_END_TRANSFER">
-          <LongDescription>Complete transfer session and free resources</LongDescription>
+          <LongDescription>Complete transfer session and free resources. 2026-08b PL-c: it now really does free them — a session whose blocks were ALL sent deletes the product and returns its storage (event 0x0614, 0x0647/0x0648 fall). Previously nothing was freed, so a spacecraft could downlink its entire store and still report it full. A partial or aborted session leaves the product on board, which is the &quot;the pass dropped, re-dump next orbit&quot; case this service exists for.</LongDescription>
           <ArgumentList>
             <Argument name="transfer_id" argumentTypeRef="uint16_ArgType">
               <LongDescription>Transfer session ID</LongDescription>

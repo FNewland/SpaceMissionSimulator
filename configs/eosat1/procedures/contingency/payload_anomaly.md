@@ -21,7 +21,9 @@ damage above +25 deg-C.
 ## Procedure Steps
 
 ### Step 1 — Confirm FPA Temperature Exceedance
-**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 25)
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 27) — TCS housekeeping
+**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 27) — Payload housekeeping
 **Verify:** `payload.fpa_temp` (0x0601) — record current value
 **Verify:** `tcs.temp_fpa` (0x0408) — cross-check with TCS sensor (values should agree within 2 deg-C)
 **GO/NO-GO:** If FPA temp > -15 deg-C or rising > 0.5 deg-C/min, confirm anomaly and proceed
@@ -33,13 +35,18 @@ damage above +25 deg-C.
 **GO/NO-GO:** Payload confirmed OFF — proceed to cooler assessment
 
 ### Step 3 — Verify Cooler Status and Power
-**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 25)
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — EPS housekeeping
+**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 27) — TCS housekeeping
 **Verify:** `tcs.cooler_fpa` (0x040C) = 1 (active) — if 0, cooler has failed or been commanded off
 **Verify:** `eps.power_gen` (0x0107) vs `eps.power_cons` (0x0106) — confirm positive power margin >= 10W for cooler
 **GO/NO-GO:** If cooler is inactive, command `SET_PARAM(param_id=tcs.cooler_fpa, value=1)` and verify activation within 15s. If cooler cannot activate, escalate to ground for hardware investigation.
 
 ### Step 4 — Monitor Cooldown Period
-**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 25) — repeat every 60s for up to 20 minutes
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) — repeat every 60s for up to 20 minutes
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — EPS housekeeping
+**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 27) — TCS housekeeping
+**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 27) — Payload housekeeping
 **Verify:** `payload.fpa_temp` (0x0601) trending downward at >= 0.3 deg-C/min
 **Verify:** `tcs.temp_fpa` (0x0408) consistent with payload sensor
 **Verify:** `eps.bat_soc` (0x0101) remains > 25% during cooler operation
@@ -53,7 +60,9 @@ damage above +25 deg-C.
 **GO/NO-GO:** FPA temperature stable and payload in standby — proceed to imaging readiness check
 
 ### Step 6 — Validate Imaging Readiness
-**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 25) — wait 120s after standby entry
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) — wait 120s after standby entry
+**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 27) — TCS housekeeping
+**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 27) — Payload housekeeping
 **Verify:** `payload.fpa_temp` (0x0601) < -20 deg-C and stable
 **Verify:** `tcs.cooler_fpa` (0x040C) = 1 (active, nominal current draw)
 **GO/NO-GO:** If FPA temp stable below -20 deg-C, payload may be commanded to IMAGING for next scheduled acquisition. If temp is still rising, keep in STANDBY and escalate to ground.

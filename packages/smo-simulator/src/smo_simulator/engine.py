@@ -1498,43 +1498,125 @@ class SimulationEngine:
 
     @property
     def downlink_active(self) -> bool:
-        """TM downlink: requires orbital contact AND TTC link_active, OR override.
+        """S-band TM downlink: is the prime transmitter actually radiating?
 
-        Downlink requires:
-        1. Spacecraft in orbital view with ground station (_in_contact), AND
-        2. TTC transponder/PA functional (param 0x0501), OR
-        3. Instructor override (pass prediction) is active
+        Gated on ``ttc.tx_active`` (0x0525) — PA commanded on and out of
+        thermal shutdown, the selected transponder alive, the EPS ``ttc_tx``
+        power line hot, and a station in view. ``TTCBasicModel.tick`` computes
+        it; 0x052B carries the per-condition breakdown a console renders as
+        TRANSMITTING / INHIBITED (PA OFF) / INHIBITED (ttc_tx LINE OFF) /
+        NO CONTACT / BEACON ONLY.
 
-        Note: During startup, TTC may not have ticked yet, so we default to True
-        to ensure HK is emitted. The actual link status (0x0501) gates RF transmission
-        in the real hardware, but in simulation we always want to queue TM for downlink.
+        WHAT THIS USED TO BE, and why it was wrong (2026-08b, finding T-a).
+        It read 0x0501 ``link_status``, which the TT&C model derives from
+        ``frame_sync``/``carrier_lock`` — i.e. from the UPLINK RECEIVE chain.
+        It was a receiver-lock gate wearing a downlink label, and it was the
+        only thing in the whole TM path that even pretended to look at the
+        transmitter: ``pa_on`` was read in exactly four places (forward-power
+        reporting, the link-budget branch, the PA thermal load and HK 0x0516),
+        none of them on the path a packet takes. Result, reproduced on the
+        shipped build: ``pa_on = False``, ``tx_fwd_power = 0.0 W``,
+        ``link_status = LOCKED``, telemetry live. Two further faults sat in
+        the same three lines:
 
-        This mirrors uplink_active which also requires BOTH contact AND link.
+        * ``bool(link_status)`` treated ACQUIRING(1) as link-OK, so full-rate
+          TM flowed on carrier lock alone with no frame sync;
+        * the ``is not None else True`` default failed **open** — before the
+          TT&C model's first tick, a spacecraft with no transmitter at all was
+          considered to be transmitting. It now fails **closed**, which is the
+          direction a safety gate is allowed to be wrong in.
+
+        The instructor pass override is no longer OR-ed in blindly. Keeping
+        the blanket OR would have re-opened the whole defect for any session
+        running with the override on — PA off, line dead, telemetry flowing.
+        It now substitutes for the CONTACT leg only, which is all it ever
+        meant ("pretend a station is in view"), and it still cannot
+        manufacture a transmitter: 0x052B bits 0 and 1 (PA on, ``ttc_tx`` line
+        hot) must both be set. In a running simulator the override is
+        published to 0x05FF and the TT&C model raises ``tx_active`` by itself;
+        this branch is what keeps a harness that sets the flag directly, and
+        an override toggled between ticks, behaving sensibly.
+
+        The UHF beacon transmitter is deliberately NOT part of this. It has
+        its own gate (``beacon_active``, 0x0527), carries HK SID 11 only, and
+        emits through ``TTCBasicModel._tick_beacon_emission`` precisely so it
+        survives everything above — Franz's ruling R2.
         """
-        # Check TTC link status
-        link_status = self.params.get(0x0501)
-        ttc_link_ok = link_status if link_status is not None else True
-
-        # Downlink requires: (orbital contact AND TTC link OK) OR override
-        return ((self._in_contact and bool(ttc_link_ok)) or self._override_passes)
+        tx_active = self.params.get(0x0525)
+        if tx_active is None:
+            # Fail closed: no 0x0525 means the TT&C model has not ticked, and
+            # a spacecraft whose transmitter state is unknown is not one you
+            # may assume is transmitting.
+            return False
+        if tx_active:
+            return True
+        # ── The bootloader downlink is the UHF beacon radio ──────────────
+        # While the OBC is in the bootloader (``obdh.sw_image`` 0x0311 == 0)
+        # the S-band chain is inhibited by construction — ``_enter_bootloader
+        # _mode`` sets pa_on False, the antenna stowed and the ttc_tx line
+        # cold — and the beacon transmitter is the only thing on the air.
+        # That is the architecture, and it is also how a real bootloader
+        # works: its comms live on the beacon radio, so the LEOP link carries
+        # both the beacon and the command verification for the handful of
+        # commands the bootloader accepts. It cannot carry anything else,
+        # because `_emit_hk_packets` already restricts bootloader HK to SIDs
+        # 10 and 11 and the bootloader has no storage, dump or playback
+        # service to generate the rest.
+        #
+        # Once the application boots this branch closes and the S-band chain
+        # is the only downlink again, which is where Franz's finding lives:
+        # in nominal operations, PA off means no telemetry.
+        if int(self.params.get(0x0311, 1)) == 0 and self.params.get(0x0527):
+            return True
+        # `tx_active` is a snapshot from the last TT&C tick, and two of its
+        # three legs can legitimately change between that tick and this call:
+        #   * `_arm_auto_tx_hold` energises the `ttc_tx` line at TC-ACCEPTANCE
+        #     time, so the S1.1/S1.3/S1.7 for the very command that powered
+        #     the transmitter would otherwise be dropped against a param that
+        #     is one tick stale;
+        #   * the instructor pass override is a ground-side flag that stands
+        #     in for "a station is in view".
+        # Both are granted a one-tick grace. THE PA IS NOT, ever: bit 0 of
+        # 0x052B must be set. That asymmetry is the whole fix — a stale power
+        # line or an artificial pass is a bookkeeping lag, whereas a
+        # transmitter an operator has switched off is the thing Franz asked us
+        # to stop lying about.
+        gate = self.params.get(0x052B)
+        if gate is None or not (int(gate) & 0x01):
+            return False
+        return bool(self._override_passes
+                    or getattr(self, "_auto_tx_remaining", 0.0) > 0.0)
 
     @property
     def uplink_active(self) -> bool:
-        """TC uplink: requires orbital contact AND TTC link status OK, OR override.
+        """TC uplink: has the ground station's uplink locked to the spacecraft?
 
-        Checks both orbital contact and TTC transponder/PA status via param 0x0501.
-        TTC failures (transponder, PA off, antenna stowed, wrong band, etc.) block
-        uplink even if spacecraft is in orbital view.
+        This is the half of the old shared gate that genuinely WAS about the
+        lock chain, and it keeps it: 0x0501 ``link_status`` is derived from
+        carrier lock and frame sync, which is exactly the right question for
+        "can this spacecraft receive and act on a telecommand". Splitting it
+        away from ``downlink_active`` is what lets each gate mean one thing.
 
-        Override (pass prediction forced by instructor) allows uplink regardless.
+        Two changes (2026-08b, finding T-a):
+
+        * **LOCKED(2) is required, not merely truthy.** ``bool(link_status)``
+          also accepted ACQUIRING(1) — carrier lock without bit or frame sync
+          — so telecommands were dispatched during an acquisition sequence
+          that has not yet produced a decodable frame. The lock ladder exists
+          to be climbed; accepting rung 1 as rung 2 discards it.
+        * **It fails closed before the first tick**, for the same reason
+          ``downlink_active`` does.
+
+        The instructor pass override still forces the uplink, because that is
+        what the override is FOR: it lets an instructor command outside a real
+        pass. It no longer forces the downlink.
         """
-        # Check if TTC link is active via param 0x0501 (set by TTC model)
-        # Default to True during startup before TTC ticks
+        if self._override_passes:
+            return True
         link_status = self.params.get(0x0501)
-        ttc_link_ok = link_status if link_status is not None else True
-
-        # Uplink requires: (orbital contact AND TTC link OK) OR override
-        return ((self._in_contact and bool(ttc_link_ok)) or self._override_passes)
+        if link_status is None:
+            return False
+        return bool(self._in_contact) and int(link_status) >= 2  # 2 = LOCKED
 
     # Rate-limit for the tick-fault traceback (roadmap N-1: a crash loop must
     # not fill the disk with identical stack traces).
@@ -1877,6 +1959,29 @@ class SimulationEngine:
             active_subsystems = _ALWAYS_ON | {"tcs"}
         else:
             active_subsystems = set(self.subsystems.keys())
+
+        # ── Stale attitude-derived telemetry (2026-08b P-c) ──
+        # 0x02B3-B5 is the TRUE sun vector in the body frame, published by the
+        # AOCS model and consumed unconditionally by EPS (eps_basic.py:405) as
+        # its PREFERRED illumination source. When AOCS is not in
+        # active_subsystems the parameter is never refreshed — but it was never
+        # CLEARED either, so the last value AOCS wrote stayed in self.params
+        # forever and EPS kept computing generation from an attitude the
+        # spacecraft no longer has. Reproduced live: after an OBC reboot
+        # reverted the phase 4 -> 3, the sun vector froze and generation sat
+        # pinned at ~122 W through orbit-phase changes that should have moved
+        # it by tens of watts.
+        #
+        # Clearing it makes EPS fall back to its honest tumbling model (the
+        # `sun_mag < 0.01` branch: Cauchy 1/4 projection over the real panel
+        # areas), which is the right physics for a spacecraft whose attitude
+        # control is not running.
+        # The CSS composite 0x0245-47 is EPS's fallback when 0x02B3-B5 is zero
+        # and is published by the same un-ticked model, so it must be cleared
+        # with it — otherwise the staleness simply moves one branch down.
+        if "aocs" not in active_subsystems:
+            for _stale in (0x02B3, 0x02B4, 0x02B5, 0x0245, 0x0246, 0x0247):
+                self.params[_stale] = 0.0
 
         for name, model in self.subsystems.items():
             if name not in active_subsystems:
@@ -3107,6 +3212,14 @@ class SimulationEngine:
         'failure_inject', 'failure_clear', 'failure_clear_all',
         'override_passes', 'set_phase', 'pause_scenario', 'start_separation',
         'save_breakpoint', 'load_breakpoint', 'start_scenario', 'stop_scenario',
+        # 2026-08b Phase 2c: a first-class battery-SoC override, so an
+        # instructor can keep a lesson running when the battery is running
+        # down. Deliberately NOT a fake failure — nothing existing did this:
+        # scenario initial_conditions.soc_pct fires only at scenario start,
+        # inject_failure('undervoltage') only DRAINS, set_parameter is
+        # overwritten by EPS on the next tick, and breakpoints are far too
+        # blunt.
+        'set_battery_soc',
     })
 
     # Numeric fields validated (and range-checked) before enqueueing, so a
@@ -3115,6 +3228,7 @@ class SimulationEngine:
     _INSTRUCTOR_NUMERIC_FIELDS = {
         'set_speed': [('value', 0.0, None)],
         'set_phase': [('phase', 0, 6)],
+        'set_battery_soc': [('soc_pct', 0.0, 100.0)],
         'failure_inject': [('magnitude', None, None),
                            ('duration_s', 0.0, None),
                            ('onset_duration_s', 0.0, None)],
@@ -3327,6 +3441,46 @@ class SimulationEngine:
                     'severity': 2,
                     'description': f"Phase change: {old_phase} -> {new_phase}",
                 })
+        elif t == 'set_battery_soc':
+            # ── Battery SoC override (2026-08b Phase 2c, Franz's request) ──
+            # "allow us to set the battery level higher than it currently is,
+            # to allow us to continue running a sim where the battery is
+            # getting low."
+            #
+            # A first-class instructor command rather than a fake failure,
+            # because it is not a fault: it is the instructor editing the
+            # world. It runs on the tick thread via instr_queue, so there is
+            # no threading hazard, and voltage / bus voltage re-derive from
+            # SoC on the same tick.
+            eps = self.subsystems.get("eps")
+            if eps is None or not hasattr(eps, '_state'):
+                logger.warning("set_battery_soc: no EPS model loaded")
+                return
+            try:
+                soc = float(cmd.get('soc_pct', eps._state.bat_soc_pct))
+            except (TypeError, ValueError):
+                logger.warning("set_battery_soc soc_pct %r is not a number",
+                               cmd.get('soc_pct'))
+                self.instr_cmd_rejects += 1
+                return
+            soc = max(0.0, min(100.0, soc))
+            old_soc = eps._state.bat_soc_pct
+            eps._state.bat_soc_pct = soc
+            eps._state.bat_dod_pct = 100.0 - soc
+            # The SOC_LOW / SOC_CRITICAL / CHARGE_COMPLETE events are EDGE
+            # triggered off _prev_soc. Without moving it too, a jump from 15 %
+            # to 90 % makes the next tick look like a discharge edge and fires
+            # a bogus alarm — an override that lies in the event log is worse
+            # than no override.
+            eps._state._prev_soc = soc
+            self._emit_event({
+                'event_id': 0x0054,
+                'severity': 2,
+                'description': (f"INSTRUCTOR OVERRIDE: battery SoC set "
+                                f"{old_soc:.1f} % -> {soc:.1f} % (not physics)"),
+            })
+            logger.info("Instructor override: battery SoC %.1f -> %.1f %%",
+                        old_soc, soc)
         elif t == 'pause_scenario':
             # Pause active scenario by setting speed to 0, but keep state intact
             if hasattr(self, '_scenario_engine') and self._scenario_engine.is_active():
@@ -3834,6 +3988,31 @@ class SimulationEngine:
                 'tm_coding': self._current_tm_coding(),
                 'symbol_rate_bd': round(p.get(0x053B, 0), 1),
                 'downlink_mode': bool(p.get(0x053C, 0)),
+                # ── Transmitter state (2026-08b, findings T-a / 6, ruling R2)
+                # These were all missing, which is why neither the RF bridge
+                # nor the MCS *could* gate or explain on TX state, and why the
+                # MCS's `_demotion_reason` antenna branch was dead code: it
+                # tested a field the snapshot never carried. A console cannot
+                # tell an operator "the PA is off" from data it is not given.
+                'pa_on': bool(p.get(0x0516, 0)),
+                'tx_active': bool(p.get(0x0525, 0)),
+                'tx_gate_status': int(p.get(0x052B, 0)),
+                'eirp_dbw': round(p.get(0x052C, 0), 2),
+                'antenna_deployed': bool(p.get(0x0520, 0)),
+                # `beacon_mode` is the S-band RATE LADDER rung; `beacon_tx_on`
+                # and `beacon_active` are the separate UHF TRANSMITTER. Both
+                # are published because both gate something and they are
+                # routinely confused.
+                'beacon_mode': bool(p.get(0x0521, 0)),
+                'beacon_tx_on': bool(p.get(0x0526, 0)),
+                'beacon_active': bool(p.get(0x0527, 0)),
+                'beacon_margin_dB': round(p.get(0x0528, 0), 1),
+                'beacon_dl_freq_mhz': round(p.get(0x0529, 0), 3),
+                'beacon_tx_power_W': round(p.get(0x052A, 0), 2),
+                # The EPS line the S-band chain hangs off (eps.pl_ttc_tx).
+                # Mirrored here so the TT&C tab does not have to reach into
+                # the EPS block to explain an inhibited downlink.
+                'ttc_tx_line_on': bool(p.get(0x0112, 0)),
             },
             'payload': {
                 'mode': int(p.get(0x0600, 0)),

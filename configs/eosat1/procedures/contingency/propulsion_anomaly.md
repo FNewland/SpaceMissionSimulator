@@ -29,7 +29,7 @@ Any of:
 ## Procedure Steps
 
 ### Step 1 --- Read Full Propulsion Telemetry
-**TC:** `HK_ENABLE` SID=9 (Service 3, Subtype 5) --- ensure the PROP structure is live
+**TC:** `HK_ENABLE(sid=9)` (Service 3, Subtype 5) --- ensure the PROP structure is live
 **Verify:** Capture and record ALL of: `prop.state` (0x0B00),
 `prop.tank_pressure` (0x0B01) + trend, `prop.propellant_mass` (0x0B02),
 `prop.tank_temp` (0x0B04), `prop.catbed_temp` (0x0B05), valve states
@@ -40,7 +40,7 @@ leak; pressure and mass falling together = propellant leak; pressure rising
 = thermal (check 0x0B04 and heater states).
 
 ### Step 2 --- Isolate
-**TC:** `PROP_ISO_CLOSE` branch=2 (Service 8, Subtype 1) func_id = 114 --- close BOTH latch-valve branches
+**TC:** `PROP_ISO_CLOSE(branch=2)` (Service 8, Subtype 1) func_id = 114 --- close BOTH latch-valve branches
 **Verify:** `prop.latch_a_state` (0x0B06) = 0 and `prop.latch_b_state`
 (0x0B07) = 0. A branch reporting 2 (fault) did NOT close — it is stuck:
 close the other branch, note that isolation is partial, and treat the
@@ -62,7 +62,7 @@ has effectively lost its debris-avoidance capability and the conjunction
 posture changes (screening thresholds, earlier decisions).
 
 ### Step 4 --- Inhibit and Ticket
-**TC:** `PROP_INHIBIT_SET` on=1 (Service 8, Subtype 1) func_id = 116 --- latch the ground inhibit while the anomaly is open
+**TC:** `PROP_INHIBIT_SET(on=1)` (Service 8, Subtype 1) func_id = 116 --- latch the ground inhibit while the anomaly is open
 **Verify:** `prop.arm_inhibit_mask` (0x0B15) bit 9 set.
 **Record:** Anomaly ticket: trigger, telemetry capture, isolation state,
 bounded dV. Underperformance (0x080C) with nominal pressure indicates catbed

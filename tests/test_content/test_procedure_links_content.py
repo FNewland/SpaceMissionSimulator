@@ -21,7 +21,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = REPO_ROOT / "configs" / "eosat1"
 PROC_DIR = CONFIG_DIR / "procedures"
 
-VALID_KINDS = {"activity_type", "steps_file", "markdown"}
+#: `advisory` is the fourth kind (2026-08b Phase 5): the document DECLARES that
+#: it commands nothing, so it is deliberately not offered for execution.
+#: `smo_mcs.server._resolve_runnable` returns None for any kind it does not
+#: know, so an advisory card is not-runnable there without an MCS change.
+VALID_KINDS = {"activity_type", "steps_file", "markdown", "advisory"}
+ADVISORY_KIND = "advisory"
 
 
 def _index() -> list[dict]:
@@ -34,7 +39,14 @@ def _activity_types() -> dict[str, dict]:
     return {a["name"]: a for a in data["activity_types"]}
 
 
-LINKED = [e for e in _index() if e.get("runnable")]
+ALL_LINKED = [e for e in _index() if e.get("runnable")]
+#: Entries offered for EXECUTION. Advisory entries carry a `runnable:` mapping
+#: to declare that they are NOT executable, so they must be excluded from every
+#: check that resolves a link to steps.
+LINKED = [e for e in ALL_LINKED
+          if e["runnable"].get("kind") != ADVISORY_KIND]
+ADVISORY = [e for e in ALL_LINKED
+            if e["runnable"].get("kind") == ADVISORY_KIND]
 
 
 # ── runnable: links ─────────────────────────────────────────────────
@@ -45,13 +57,17 @@ def test_exemplar_links_are_present():
     assert {"NOM-002", "NOM-003", "NOM-008", "NOM-009"} <= linked_ids
 
 
-@pytest.mark.parametrize("entry", LINKED, ids=[e["id"] for e in LINKED])
+@pytest.mark.parametrize("entry", ALL_LINKED, ids=[e["id"] for e in ALL_LINKED])
 def test_link_is_well_formed(entry):
     link = entry["runnable"]
     assert isinstance(link, dict), f"{entry['id']}: runnable must be a mapping"
     assert link.get("kind") in VALID_KINDS, f"{entry['id']}: {link}"
     if link["kind"] in ("activity_type", "steps_file"):
         assert link.get("ref"), f"{entry['id']}: {link['kind']} needs a ref"
+    if link["kind"] == ADVISORY_KIND:
+        assert link.get("reason"), (
+            f"{entry['id']}: an advisory card must say WHY it commands nothing "
+            f"— that is the whole point of declaring it")
 
 
 @pytest.mark.parametrize("entry", LINKED, ids=[e["id"] for e in LINKED])
@@ -90,6 +106,20 @@ def test_markdown_linked_documents_carry_tc_annotations():
             continue
         text = (PROC_DIR / entry["file"]).read_text(encoding="utf-8")
         assert "**TC:**" in text, entry["id"]
+
+
+def test_advisory_cards_really_command_nothing():
+    """A card that declares itself advisory must extract zero commands.
+
+    Otherwise `advisory` becomes an escape hatch from the zero-command gate
+    rather than a statement of fact."""
+    for entry in ADVISORY:
+        text = (PROC_DIR / entry["file"]).read_text(encoding="utf-8")
+        steps = from_markdown(text)
+        commands = [s for s in steps if s.get("type") == "command"]
+        assert not commands, (
+            f"{entry['id']} declares itself advisory but extracts "
+            f"{len(commands)} command step(s)")
 
 
 def test_unlinked_procedures_stay_documents():

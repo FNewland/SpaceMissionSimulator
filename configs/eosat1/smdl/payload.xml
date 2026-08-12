@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="Payload" Creator="EOSAT-1 SMDL Generator" Date="2026-08-01" Version="1.0">
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="Payload" Creator="EOSAT-1 SMDL Generator" Date="2026-08-12" Version="1.0">
   <Description>SMP2 model catalogue for Payload subsystem</Description>
   <Type Name="UInt8" Uuid="7981e083-ea41-5360-ad7d-c285223a099c" xsi:type="Integer" Size="1" Signed="false"/>
   <Type Name="UInt16" Uuid="64b04f7d-63c1-5e74-90d1-38d9516374dc" xsi:type="Integer" Size="2" Signed="false"/>
@@ -162,8 +162,32 @@
     <Field Name="payload_bias_frame_cnt" Uuid="14b47a59-bc7c-5aa0-a88a-57b846569cb7" Type="Float32" Kind="Output" View="true">
       <Description>Flat/bias frames acquired in the current/last calibration</Description>
     </Field>
+    <Field Name="payload_cal_mode" Uuid="431962e8-8cae-5f43-8b47-e75b37992787" Type="UInt8" Kind="Output" View="true">
+      <Description>Requested calibration phase set (0=DARK, 1=FLAT, 2=BOTH)</Description>
+    </Field>
+    <Field Name="payload_cal_abort_reason" Uuid="8e5bf56e-4ecd-50f2-a728-f83a29b98a3c" Type="UInt8" Kind="Output" View="true">
+      <Description>Why the last calibration stopped (0=none/completed, 1=detector unpowered, 2=shutter moved, 3=lamp state changed, 4=FPA left its band, 5=operator abort)</Description>
+    </Field>
+    <Field Name="payload_cal_valid_mask" Uuid="0e4e82be-3ec0-58a4-aeba-af83d23a2e13" Type="UInt8" Kind="Output" View="true">
+      <Description>Bands with BOTH a bias and a gain coefficient (bits 0-3 blue/green/red/nir; 0x0F = fully calibrated)</Description>
+    </Field>
+    <Field Name="payload_product_mb" Uuid="10685110-e5f0-525b-9a30-5f53efcc5641" Type="UInt32" Kind="Output" View="true">
+      <Description>Volume occupied by CATALOGUED image products (distinct from mem_used_mb, which includes the store's pre-existing fill) [MB]</Description>
+    </Field>
+    <Field Name="payload_product_count" Uuid="78456cc3-add8-55e2-a5bd-4b81964ddefe" Type="UInt16" Kind="Output" View="true">
+      <Description>Number of image products held in the catalogue</Description>
+    </Field>
+    <Field Name="payload_readout_active" Uuid="3aa26c46-602b-5713-bebd-ebe6d08b4558" Type="UInt8" Kind="Output" View="true">
+      <Description>1 while a commanded strip is being read out (imaging no longer produces data on its own)</Description>
+    </Field>
+    <Field Name="payload_cooler_floor_c" Uuid="afadf65f-1ec3-573d-ac82-a435e306d3b0" Type="Int16" Kind="Output" View="true">
+      <Description>Coldest FPA temperature the cooler can hold at the present sink and load [C]</Description>
+    </Field>
+    <Field Name="payload_cooler_margin_k" Uuid="cf772e70-c0af-57f0-89eb-3ed7f988d853" Type="Int16" Kind="Output" View="true">
+      <Description>Commanded setpoint minus achievable floor; &lt;= 0 means the setpoint is out of reach [K]</Description>
+    </Field>
     <Field Name="tc_PAYLOAD_SET_MODE_mode" Uuid="368ac496-dae5-5a4f-8339-a72d1173c7a3" Type="UInt8" Kind="Input">
-      <Description>0=off, 1=standby, 2=imaging | default 0 | 0=OFF | 1=STANDBY | 2=IMAGING</Description>
+      <Description>0=off, 1=standby, 2=imaging, 3=calibration | range [0, 3] | default 0 | 0=OFF | 1=STANDBY | 2=IMAGING | 3=CALIBRATION</Description>
     </Field>
     <Field Name="tc_PAYLOAD_SET_SCENE_scene_id" Uuid="e98849b1-ce65-58a5-98a0-9b03f8ec58b5" Type="UInt16" Kind="Input">
       <Description>range [0, 65535] | default 0</Description>
@@ -217,7 +241,7 @@
       <Description>Filter wheel position 0-3 | default 0 | 0=CLEAR | 1=ND2 | 2=DIFFUSER | 3=DARK</Description>
     </Field>
     <Field Name="tc_PAYLOAD_CYCLE_SHUTTER_cycles" Uuid="d461b6b2-4a0f-5062-93e4-fbff47c8522c" Type="UInt8" Kind="Input">
-      <Description>Number of open/close cycles (1-100) | [cycles] | range [1, 100] | default 1</Description>
+      <Description>Number of blade transitions (1-100). An ODD count ends on the opposite position from the start; an EVEN count returns to it. | [transitions] | range [1, 100] | default 1</Description>
     </Field>
     <Field Name="tc_PAYLOAD_INITIATE_TRANSFER_scene_id" Uuid="f80cc2f2-10fc-50ee-ae78-23cbe91e99f7" Type="UInt16" Kind="Input">
       <Description>Stored scene to transfer | range [1, 65535] | default 1</Description>

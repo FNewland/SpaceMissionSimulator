@@ -12,7 +12,7 @@ unless an anomaly is detected. It is executed at least once per ground contact
 and serves as the primary tool for early anomaly detection and trend analysis.
 
 ## Prerequisites
-- [ ] TTC link established: `ttc.link_status` (0x0501) = 1
+- [ ] TTC link established: `ttc.link_status` (0x0501) = 2 (LOCKED)
 - [ ] MCS limit checker database loaded with current limit sets
 - [ ] Previous pass HK baseline available for trend comparison
 - [ ] Operator has access to trending display and anomaly log
@@ -20,12 +20,12 @@ and serves as the primary tool for early anomaly detection and trend analysis.
 ## Procedure Steps
 
 ### Step 1 --- Request All Housekeeping Packets
-**TC:** `HK_REQUEST` SID=1 (Service 3, Subtype 25) --- EPS housekeeping
-**TC:** `HK_REQUEST` SID=2 (Service 3, Subtype 25) --- AOCS housekeeping
-**TC:** `HK_REQUEST` SID=3 (Service 3, Subtype 25) --- TCS housekeeping
-**TC:** `HK_REQUEST` SID=4 (Service 3, Subtype 25) --- OBDH housekeeping
-**TC:** `HK_REQUEST` SID=5 (Service 3, Subtype 25) --- TTC housekeeping
-**TC:** `HK_REQUEST` SID=6 (Service 3, Subtype 25) --- Payload housekeeping
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) --- EPS housekeeping
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) --- AOCS housekeeping
+**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 27) --- TCS housekeeping
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) --- OBDH housekeeping
+**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 27) --- Payload housekeeping
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) --- TT&C housekeeping
 **Verify:** All 6 HK packets received within 30 s
 **Action:** If any packet missing, re-request once after 15 s timeout.
 
@@ -39,7 +39,7 @@ and serves as the primary tool for early anomaly detection and trend analysis.
 **Flag:** If SoC trending downward over multiple passes, investigate power balance.
 
 ### Step 3 --- AOCS Health Assessment
-**Verify:** `aocs.mode` (0x020F) = 0 (NOMINAL / NADIR_POINT)
+**Verify:** `aocs.mode` (0x020F) = 0 (NOMINAL / NOMINAL)
 **Verify:** `aocs.att_error` (0x0217) < 1.0 deg
 **Verify:** `aocs.rate_roll` (0x0204) < 0.05 deg/s
 **Verify:** `aocs.rate_pitch` (0x0205) < 0.05 deg/s
@@ -73,7 +73,7 @@ and serves as the primary tool for early anomaly detection and trend analysis.
   event log for cause.
 
 ### Step 6 --- TTC Health Assessment
-**Verify:** `ttc.link_status` (0x0501) = 1 (LINK_UP)
+**Verify:** `ttc.link_status` (0x0501) = 2 (LOCKED)
 **Verify:** `ttc.rssi` (0x0502) > -105 dBm
 **Verify:** `ttc.link_margin` (0x0503) > 2.0 dB
 **Trend:** RSSI should follow expected pass profile (increase to TCA, decrease

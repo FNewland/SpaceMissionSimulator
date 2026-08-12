@@ -53,13 +53,65 @@ steps:
       data: [0x03]  # wheel 3
 
   - step_id: 6
-    name: "AOCS Safe Mode"
-    description: "Enter safe mode"
+    name: "AOCS Rate Damping"
+    description: "Enter DETUMBLE — with every wheel disabled the magnetorquers
+      are the only actuator left, and DETUMBLE is the magnetic-only rate
+      damper. (Unlike safe_mode_entry / emergency_power_down, mode 2 IS the
+      right target HERE, because steps 2-5 have just removed the wheels this
+      procedure exists to cycle. Those two files commanded mode 2 with the
+      wheels healthy, which threw away the solar-array geometry for nothing;
+      they now command 0x03 COARSE_SUN.)"
     delay_s: 3.0
     command: "s8_command"
     params:
       func_id: 0  # AOCS_SET_MODE
-      data: [0x02]  # mode = 2 (safe)
+      data: [0x02]  # mode = 2 (DETUMBLE — magnetic-only rate damping)
 
-timeout_s: 30.0
+  # A reset that only takes things away is not a recovery. Steps 7-10 bring the
+  # wheels back, which is the whole point of a SOFT reset (cycle the assembly,
+  # do not abandon it). Without them the procedure left the spacecraft with
+  # four disabled wheels for ever: it could damp rates and sun-point on the
+  # rods, but it could never return to NOMINAL, and `aocs_wheel_failure_dual`
+  # stayed permanently triggered on a spacecraft whose wheels were healthy.
+  # Once they are back, the model's own chain takes over —
+  # DETUMBLE -> COARSE_SUN -> the mode the ground last commanded (0x0297).
+  - step_id: 7
+    name: "Re-enable Wheel 0"
+    description: "Bring reaction wheel 0 back after the reset"
+    delay_s: 8.0
+    command: "s8_command"
+    params:
+      func_id: 3  # AOCS_ENABLE_WHEEL
+      data: [0x00]
+
+  - step_id: 8
+    name: "Re-enable Wheel 1"
+    description: "Bring reaction wheel 1 back after the reset"
+    delay_s: 8.5
+    command: "s8_command"
+    params:
+      func_id: 3  # AOCS_ENABLE_WHEEL
+      data: [0x01]
+
+  - step_id: 9
+    name: "Re-enable Wheel 2"
+    description: "Bring reaction wheel 2 back after the reset"
+    delay_s: 9.0
+    command: "s8_command"
+    params:
+      func_id: 3  # AOCS_ENABLE_WHEEL
+      data: [0x02]
+
+  - step_id: 10
+    name: "Re-enable Wheel 3"
+    description: "Bring reaction wheel 3 back after the reset"
+    delay_s: 9.5
+    command: "s8_command"
+    params:
+      func_id: 3  # AOCS_ENABLE_WHEEL
+      data: [0x03]
+
+# Raised from 30 s: the last step now fires at T+9.5 s and the wheels need to
+# spin back up before the procedure can honestly claim to have completed.
+timeout_s: 60.0
 max_retries: 1

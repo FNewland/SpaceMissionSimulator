@@ -12,7 +12,12 @@ establish rate damping, and transition to active pointing control.
 
 ## Prerequisites
 - [ ] Sequential power-on complete (LEOP-007)
-- [ ] AOCS in DETUMBLE or SAFE mode (mode 1 or 2)
+- [ ] AOCS in DETUMBLE (mode 2) or COARSE_SUN (mode 3) — `aocs.mode` (0x020F).
+      NOTE: this card used the pre-Phase-C 5-mode numbering throughout
+      (1=DETUMBLE, 2=SAFE, 3=NADIR). The canonical codes are in
+      `configs/eosat1/aocs/aocs_mode_codes.yaml`: 0 OFF, 1 SAFE_BOOT,
+      2 DETUMBLE, 3 COARSE_SUN, 4 NOMINAL, 5 FINE_POINT, 6 SLEW, 7 DESAT,
+      8 ECLIPSE, 9 INERTIAL. There is no mode named NADIR or SAFE.
 - [ ] Body rates < 1 deg/s on all axes
 - [ ] `eps.bat_soc` (0x0101) > 60%
 - [ ] OBC in NOMINAL mode
@@ -26,14 +31,16 @@ establish rate damping, and transition to active pointing control.
 ### Step 1 — Magnetometer A (Primary) Check
 **TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27)
 **Action:** AOCS reads magnetometer A (primary). Verify field vector magnitude 25-65 uT (typical LEO range).
-**Verify:** `aocs.mag_a_x` (0x0200), `aocs.mag_a_y` (0x0201), `aocs.mag_a_z` (0x0202) responding within 10s
+**Verify:** `aocs.mag_a_x` (0x0223), `aocs.mag_a_y` (0x0224), `aocs.mag_a_z` (0x0225)
+responding within 10 s. (These were cited as 0x0200-0x0202, which are
+`aocs.att_q1`-`q3` — the attitude quaternion, not the magnetometer.)
 **Verify:** Field magnitude sqrt(x^2+y^2+z^2) in range [25, 65] uT within 10s
 **GO/NO-GO:** Magnetometer A providing valid field vector
 
 ### Step 2 — Magnetometer B (Backup) Check
 **Action:** AOCS reads magnetometer B (backup). Verify field vector and compare with A.
 **Verify:** Magnetometer B field vector agrees with A within 5% within 10s
-**TC:** `SET_MAG_SELECT(mag=A)` (Service 8, func_id 7) — select magnetometer A as primary
+**TC:** `MAG_SELECT(unit=0)` (Service 8, Subtype 1, func_id 7) — select magnetometer A (unit 0) as primary
 **GO/NO-GO:** Both magnetometers operational, A selected as primary
 
 ### Step 3 — Coarse Sun Sensor Check
@@ -93,7 +100,7 @@ establish rate damping, and transition to active pointing control.
 ### Phase 4 — Rate Damping Verification
 
 ### Step 11 — Detumble Mode Verification
-**TC:** `SET_AOCS_MODE(mode=1)` (Service 8) — DETUMBLE (if not already)
+**TC:** `AOCS_SET_MODE(mode=2)` (Service 8, Subtype 1, func_id 0) — DETUMBLE (if not already)
 **Action:** AOCS monitors body rates decreasing (target < 0.1 deg/s in all axes).
 **Verify:** `aocs.rate_roll` (0x0204) < 0.1 deg/s within 900s
 **Verify:** `aocs.rate_pitch` (0x0205) < 0.1 deg/s within 900s
@@ -105,16 +112,20 @@ establish rate damping, and transition to active pointing control.
 
 ### Phase 5 — Pointing Control
 
-### Step 12 — SAFE Mode (Sun-Pointing)
-**TC:** `SET_AOCS_MODE(mode=2)` (Service 8) — SAFE/Sun-pointing
-**Action:** When rates < 0.1 deg/s, AOCS commands SAFE mode (mode 2) for sun-pointing.
+### Step 12 — COARSE_SUN Mode (Sun-Pointing)
+**TC:** `AOCS_SET_MODE(mode=3)` (Service 8, Subtype 1, func_id 0) — COARSE_SUN (sun-pointing)
+**Action:** When rates < 0.1 deg/s, AOCS commands COARSE_SUN (mode 3) for sun-pointing.
+**Note:** COARSE_SUN is a HOLD, not a destination. Since the Phase 1 mode-management
+fix the model hands itself back to the commanded mode once sun lock and the star
+tracker recover, so `aocs.commanded_mode` (0x0297) and `aocs.mode_demoted` (0x0298)
+are the pair to watch here, not `aocs.mode` alone.
 **Verify:** `aocs.att_error` (0x0217) decreasing towards 0 within 120s
 **Action:** Verify solar array illumination increasing (EPS power_gen should increase).
 **Verify:** `eps.power_gen` increasing within 120s
 **GO/NO-GO:** Sun-pointing achieved, power generation optimal
 
-### Step 13 — NADIR Mode (Nadir-Pointing)
-**TC:** `SET_AOCS_MODE(mode=3)` (Service 8) — NADIR pointing for imaging
+### Step 13 — NOMINAL Mode (Nadir-Pointing)
+**TC:** `AOCS_SET_MODE(mode=4)` (Service 8, Subtype 1, func_id 0) — NOMINAL (nadir pointing for imaging)
 **Verify:** `aocs.att_error` (0x0217) < 1 deg within 300s
 **Action:** FD records pointing performance for commissioning report.
 **GO/NO-GO:** Nadir pointing accuracy < 1 deg confirmed

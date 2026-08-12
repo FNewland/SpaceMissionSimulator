@@ -41,6 +41,48 @@ class TTCState:
     # Phase E WP-2: last commanded TTC_SET_TX_POWER level (0=LOW, 1=NOMINAL,
     # 2=HIGH); 1 at power-up (pa_nominal_power_w).
     tx_power_level: int = 1
+    # Live EIRP (dBW) at the commanded PA power. Derived, not configured —
+    # see _effective_eirp_dbw(). Reported at 0x052C so an operator can SEE
+    # that TTC_SET_TX_POWER did something to the link (2026-08b, T-b).
+    eirp_dbw: float = 10.0
+
+    # ── S-band downlink gate (2026-08b, finding T-a) ────────────────────
+    # THE parameter that says whether the prime chain is radiating. Before
+    # this existed, NOTHING anywhere in the TM chain read the transmitter
+    # state: `pa_on` was read in four places (tx_fwd_power reporting, the
+    # link-budget branch, the PA thermal load and HK 0x0516) and none of them
+    # was on the path a telemetry packet takes. The engine's `downlink_active`
+    # gated on 0x0501 link_status, which is derived from frame_sync — i.e. the
+    # UPLINK RECEIVE chain — so it was a receiver-lock gate wearing a downlink
+    # label, and telemetry flowed happily with the PA off and 0.0 W of forward
+    # power. `tx_active` is the real gate: PA up AND the EPS ttc_tx line hot
+    # AND a station in view.
+    tx_active: bool = False
+    # Last seen state of the EPS `ttc_tx` power line (shared param 0x0112).
+    # EPS_POWER_LINE_OFF('ttc_tx') used to set `eps._state.transponder_tx`,
+    # which had no readers anywhere in the repo — a dead flag. The TT&C model
+    # now reads the live line state, so pulling the line really does stop the
+    # downlink.
+    ttc_tx_line_on: bool = True
+
+    # ── UHF bootloader beacon TRANSMITTER (Franz's ruling R2) ───────────
+    # A SECOND RADIO. Not `beacon_mode` (which is a rung of the S-band rate
+    # ladder, further down this dataclass) and not the BEACON tier. Its own
+    # PA, band, antenna, budget and power draw; carries HK SID 11 and nothing
+    # else; survives the S-band PA being switched off, which is the whole
+    # reason a real spacecraft carries one.
+    beacon_tx_on: bool = True        # commanded state (TTC_BEACON_TX_ON/OFF)
+    beacon_active: bool = False      # actually radiating to a station now
+    beacon_margin_db: float = 0.0    # UHF link margin, its own budget
+    beacon_eb_n0_db: float = 0.0
+    beacon_tx_power_w: float = 0.0   # RF watts out of the UHF PA right now
+    beacon_temp: float = 25.0        # its own (small) thermal contribution
+    _beacon_timer: float = 0.0       # seconds since the last beacon packet
+
+    # Last seen OBDH software image (0x0311). Used to detect the
+    # bootloader -> application transition, which un-inhibits the S-band PA
+    # (2026-08b, finding 3). -1 = not yet observed.
+    _prev_sw_image: int = -1
 
     # ── BER / Eb-N0 ──
     ber: float = -10.0  # log10 scale (1e-10)
@@ -175,9 +217,22 @@ class TTCBasicModel(SubsystemModel):
         self._required_eb_n0 = 9.6
         self._applied_tier: int | None = None
         self._pa_max_power_w = 5.0
+        self._pa_low_power_w = 1.0
         self._pa_nominal_power_w = 2.0
+        # RF watts the config's eirp_dbw was quoted at. EIRP scales as
+        # 10*log10(P / P_ref) about this point, which is what makes
+        # TTC_SET_TX_POWER a real command instead of a telemetry change.
+        self._pa_ref_power_w = 2.0
         self._pa_shutdown_temp = 70.0
         self._pa_tau = 60.0  # PA thermal time constant (seconds)
+        # ── UHF beacon transmitter (ruling R2) ──
+        self._beacon_cfg: dict[str, Any] = dict(self.DEFAULT_BEACON)
+        # Safe-mode edge detection: entering SC_SAFE must actually COMMAND the
+        # configured safe tier. ttc.yaml documents LOW as "safe mode, FDIR
+        # fallback" but `_safe_tier` was only ever read in `_effective_tier`'s
+        # last-resort branch, so safe-mode entry left the commanded tier
+        # wherever the operator had put it (2026-08b, finding 4).
+        self._prev_sc_safe: bool | None = None
         self._was_in_contact = False
 
     # S-band near-Earth allocations (CCSDS 401.0-B). These are the bands the
@@ -221,6 +276,21 @@ class TTCBasicModel(SubsystemModel):
          "requires_antenna": True, "requires_downlink_mode": True,
          "min_elevation_deg": 10.0},
     ]
+
+    # ── UHF bootloader beacon transmitter (Franz's ruling R2) ───────────
+    # Fallback used only when `configure()` is given no `beacon` block;
+    # `configs/eosat1/subsystems/ttc.yaml` is the source of truth and cites
+    # the flight hardware behind every number.
+    DEFAULT_BEACON: dict[str, Any] = {
+        "enabled": True,
+        "dl_freq_mhz": 437.5, "band_mhz": (435.0, 438.0),
+        "rf_power_w": 1.0, "sc_gain_dbi": 0.0, "gs_g_t_db": -8.0,
+        "bps": 1000, "coding_gain_db": 7.5, "required_eb_n0_db": 9.6,
+        "atmospheric_loss_db": 0.2, "polarization_loss_db": 3.0,
+        "implementation_loss_db": 2.0,
+        "dc_power_w": 1.8, "standby_dc_power_w": 0.2,
+        "eps_line": "ttc_rx", "hk_sid": 11,
+    }
 
     # ── Ladder helpers ──────────────────────────────────────────────────
 
@@ -316,6 +386,83 @@ class TTCBasicModel(SubsystemModel):
             return self._gt_derate_30
         return 0.0
 
+    # ── EIRP from the commanded PA power (2026-08b, finding T-b) ────────
+
+    def _effective_eirp_dbw(self, power_w: float | None = None) -> float:
+        """S-band EIRP (dBW) at the CURRENTLY COMMANDED PA power.
+
+        ``eirp_dbw`` in ttc.yaml is the REFERENCE EIRP, quoted at
+        ``pa_ref_power_w`` watts of RF output (2.0 W = 33 dBm, the EnduroSat
+        S-band transceiver's top of range and the point POWER_SIZING.md §2.3
+        sized the ttc_tx line's HIGH tier against). A PA that is commanded to
+        a different operating point radiates a different EIRP, and the
+        difference is exactly 10*log10(P/P_ref):
+
+            LOW      1.0 W  ->  -3.01 dB
+            NOMINAL  2.0 W  ->   0.00 dB   (the reference)
+            HIGH     5.0 W  ->  +3.98 dB
+
+        Before this, ``_eirp`` was a fixed config constant used at :334 and
+        :801 and never derived from ``_pa_nominal_power_w``, so
+        TTC_SET_TX_POWER (S8 func 68) moved telemetry 0x050D and nothing
+        else — margin, Eb/N0, BER and the whole RF pipeline were identical at
+        every level, and FDIR's `ttc_reduce_power` "reduce TX power" recovery
+        was a no-op on the link it exists to protect.
+        """
+        p = self._pa_nominal_power_w if power_w is None else float(power_w)
+        ref = max(float(self._pa_ref_power_w), 1e-6)
+        if p <= 0.0:
+            # A PA commanded to zero radiates nothing. Clamp rather than
+            # return -inf so downstream arithmetic stays finite; the real
+            # "not transmitting" answer is `tx_active`, not a small EIRP.
+            return self._eirp - 60.0
+        return self._eirp + 10.0 * math.log10(p / ref)
+
+    # ── UHF beacon link budget (Franz's ruling R2) ──────────────────────
+
+    def beacon_link_budget(self, range_km: float,
+                           elevation_deg: float) -> dict[str, float]:
+        """Deterministic link budget for the UHF beacon transmitter.
+
+        Deliberately a SEPARATE method from `link_margin_for`, with its own
+        frequency, EIRP, antenna gain, G/T and loss column, because it is a
+        separate radio talking to a separate ground antenna. Sharing the
+        S-band routine "with a few parameters overridden" is how the beacon
+        came to be modelled as rung 0 of the S-band ladder in the first place.
+
+        The contrast against the S-band budget at the same geometry is the
+        teaching point (docs/LINK_BUDGET_AND_RATES.md §9.3): UHF wins ~14 dB
+        of path loss and gives back ~28 dB of G/T, ~3 dB of spacecraft
+        antenna gain and ~2.7 dB of polarisation mismatch.
+        """
+        b = self._beacon_cfg
+        f_hz = float(b["dl_freq_mhz"]) * 1e6
+        fspl = (20 * math.log10(max(range_km, 1e-3) * 1000.0)
+                + 20 * math.log10(f_hz) - 147.55)
+        # Same cosec(elevation) scaling law as the S-band chain, applied to
+        # the beacon's own (much smaller) zenith figure.
+        el = max(float(elevation_deg), 1.0)
+        atm = float(b["atmospheric_loss_db"])
+        if el < 30.0:
+            atm = atm * math.sin(math.radians(30.0)) / math.sin(math.radians(el))
+        losses = (atm + float(b["polarization_loss_db"])
+                  + float(b["implementation_loss_db"]))
+        gt_eff = float(b["gs_g_t_db"]) - self._gt_derate_db(elevation_deg)
+        eirp = 10.0 * math.log10(max(float(b["rf_power_w"]), 1e-6))
+        c_n0 = eirp + float(b["sc_gain_dbi"]) - fspl - losses + gt_eff + 228.6
+        eb_n0 = c_n0 - 10 * math.log10(max(float(b["bps"]), 1.0))
+        required = float(b["required_eb_n0_db"]) - float(b["coding_gain_db"])
+        return {
+            "eirp_dbw": eirp,
+            "fspl_db": fspl,
+            "losses_db": losses,
+            "gt_eff_db": gt_eff,
+            "c_n0_dbhz": c_n0,
+            "eb_n0_db": eb_n0,
+            "required_eb_n0_db": required,
+            "margin_db": eb_n0 - required,
+        }
+
     def link_margin_for(self, tier_index: int, range_km: float,
                         elevation_deg: float,
                         gs_gt_db: float | None = None) -> dict[str, float]:
@@ -331,7 +478,11 @@ class TTCBasicModel(SubsystemModel):
         losses = (self._atmospheric_loss_at(elevation_deg)
                   + self._polarization_loss + self._implementation_loss)
         gt_eff = gt - self._gt_derate_db(elevation_deg)
-        c_n0 = (self._eirp + self._sc_gain - fspl - losses + gt_eff + 228.6)
+        # EIRP at the COMMANDED PA power, not the config constant — so the
+        # tool, the tests and the flying model all move together when
+        # TTC_SET_TX_POWER is sent (2026-08b, finding T-b).
+        c_n0 = (self._effective_eirp_dbw() + self._sc_gain
+                - fspl - losses + gt_eff + 228.6)
         eb_n0 = c_n0 - 10 * math.log10(float(t["bps"]))
         cg = float(t.get("coding_gain_db", self._coding_gain))
         mod = self.MODULATION_INDEX.get(
@@ -552,9 +703,26 @@ class TTCBasicModel(SubsystemModel):
         self._gt_derate_30 = float(config.get("gt_derate_below_30deg_db", 0.5))
         self._required_eb_n0 = float(config.get("required_eb_n0_db", 9.6))
         self._pa_max_power_w = config.get("pa_max_power_w", 5.0)
+        self._pa_low_power_w = config.get("pa_low_power_w", 1.0)
         self._pa_nominal_power_w = config.get("pa_nominal_power_w", 2.0)
+        # The EIRP reference. Defaults to the NOMINAL operating point so a
+        # config that predates this key behaves exactly as before at power-up.
+        self._pa_ref_power_w = float(config.get(
+            "pa_ref_power_w", self._pa_nominal_power_w) or 2.0)
         self._pa_shutdown_temp = config.get("pa_shutdown_temp_c", 70.0)
         self._pa_tau = config.get("pa_thermal_tau_s", 60.0)
+
+        # ── UHF beacon transmitter (Franz's ruling R2) ──
+        beacon = config.get("beacon") or {}
+        if hasattr(beacon, "model_dump"):
+            beacon = beacon.model_dump()
+        self._beacon_cfg = dict(self.DEFAULT_BEACON)
+        self._beacon_cfg.update({k: v for k, v in dict(beacon).items()
+                                 if v is not None})
+        # A disabled beacon transmitter is a spacecraft without the second
+        # radio — legal (it is a config choice), and then the S-band chain
+        # really is the only downlink and SID 11 dies with the PA.
+        self._state.beacon_tx_on = bool(self._beacon_cfg.get("enabled", True))
         # Power up on the default operational tier, not the top of the ladder.
         self._state.data_rate_mode = self._default_tier
         self._apply_tier(self._state, self._default_tier)
@@ -575,6 +743,12 @@ class TTCBasicModel(SubsystemModel):
             "antenna_deployed": 0x0520, "beacon_mode": 0x0521,
             "bytes_tx": 0x051E, "bytes_rx": 0x051F,
             "cmd_decode_timer": 0x0522,
+            # Downlink gating (T-a) and the UHF beacon transmitter (R2).
+            # 0x0523 was already ttc.active_gs, hence 0x0525 for tx_active.
+            "tx_active": 0x0525, "beacon_tx_on": 0x0526,
+            "beacon_active": 0x0527, "beacon_link_margin": 0x0528,
+            "beacon_dl_freq": 0x0529, "beacon_tx_power": 0x052A,
+            "tx_gate_status": 0x052B, "eirp_dbw": 0x052C,
         })
 
     # ─── S2 device-access power gates ────────────────────────────────
@@ -638,6 +812,95 @@ class TTCBasicModel(SubsystemModel):
         antenna cannot be moved/deployed (already-deployed state is kept)."""
         return s.device_states.get(0x0404, True)
 
+    # ── Beacon emission and safe-mode tier (2026-08b) ───────────────────
+
+    def _tick_beacon_emission(self, dt: float, s: TTCState,
+                              shared_params: dict[int, float]) -> None:
+        """Put HK SID 11 on the UHF beacon when the S-band chain is down.
+
+        WHY THE MODEL EMITS THIS ITSELF, rather than letting the OBC's HK
+        scheduler do it: the engine's `_enqueue_tm` funnels every packet
+        through a single `downlink_active` boolean, so there is no per-SID
+        seam there. The beacon is a separate radio with its own framing that
+        lives in the bootloader — having it emit its own packet on its own
+        cadence is the honest model of that box, and it is the only way to
+        make SID 11 survive an S-band outage without letting everything else
+        survive it too.
+
+        No double-emission: when `tx_active` is true the OBC scheduler is
+        already sending SID 11 (subject to HK enable), so the beacon holds
+        off. It transmits only in the gap the S-band chain leaves.
+        """
+        b = self._beacon_cfg
+        if not (s.beacon_active and not s.tx_active):
+            # Keep the cadence phase-locked to the moment the beacon becomes
+            # the only downlink, so the first beacon after an S-band failure
+            # arrives one interval later rather than immediately.
+            s._beacon_timer = 0.0
+            return
+        engine = getattr(self, "_engine", None)
+        if engine is None:
+            return
+        sid = int(b.get("hk_sid", 11))
+        interval = float(getattr(engine, "_hk_intervals", {}).get(sid, 30.0))
+        s._beacon_timer += dt
+        if s._beacon_timer < interval:
+            return
+        s._beacon_timer = 0.0
+        # An operator who has disabled SID 11 has disabled the beacon's
+        # content; the radio is still keyed but there is nothing to say.
+        if not getattr(engine, "_hk_enabled", {}).get(sid, True):
+            return
+        try:
+            from smo_simulator.engine import _put_tm
+            pkt = engine.tm_builder.build_hk_packet(
+                sid, shared_params,
+                hk_structure=getattr(engine, "_hk_structures", {}).get(sid))
+            if pkt:
+                # Straight onto the outbound queue: engine._enqueue_tm would
+                # test downlink_active, which is False by construction here —
+                # that is the whole point of the beacon being a second radio.
+                _put_tm(engine, pkt)
+                logger.debug(
+                    "UHF beacon: SID %d emitted on %.1f MHz (%.1f dB margin) "
+                    "while the S-band chain is inactive",
+                    sid, float(b["dl_freq_mhz"]), s.beacon_margin_db)
+        except Exception as e:  # noqa: BLE001 — never let the beacon kill a tick
+            logger.debug("UHF beacon emission skipped: %s", e)
+
+    def _apply_safe_mode_tier(self, s: TTCState) -> None:
+        """Command the configured safe tier on entry into SC_SAFE.
+
+        Edge-triggered: only the 0 -> 1 transition acts, so an operator can
+        still select a different tier while safe mode persists, and leaving
+        safe mode does not yank the rate back.
+        """
+        engine = getattr(self, "_engine", None)
+        if engine is None:
+            return
+        try:
+            # 0 == SC_SAFE (engine.py's authoritative sc_mode convention).
+            safe = int(getattr(engine, "sc_mode", 1)) == 0
+        except (TypeError, ValueError):
+            return
+        if self._prev_sc_safe is None:
+            # First tick: adopt the current mode without commanding anything,
+            # so a run that STARTS in SAFE (every run does — sc_mode is SAFE
+            # until the spacecraft is commissioned) does not fight the
+            # bootloader's beacon tier.
+            self._prev_sc_safe = safe
+            return
+        if safe and not self._prev_sc_safe:
+            if not s.beacon_mode and s.data_rate_mode != self._safe_tier:
+                logger.info(
+                    "SAFE mode entry: TM rate tier commanded to the safe tier "
+                    "%s (%d bps) from %s",
+                    self.tier_name(self._safe_tier),
+                    self.tier_bps(self._safe_tier),
+                    self.tier_name(s.data_rate_mode))
+                s.data_rate_mode = self._safe_tier
+        self._prev_sc_safe = safe
+
     def tick(self, dt: float, orbit_state: Any,
              shared_params: dict[int, float]) -> None:
         s = self._state
@@ -672,14 +935,53 @@ class TTCBasicModel(SubsystemModel):
         # loss of the uplink RX chain).
         lna_on = self._device_lna_on(s)
 
+        # ── EPS `ttc_tx` power line (2026-08b, finding T-a) ──
+        # 0x0112 is eps.pl_ttc_tx, published every EPS tick straight from
+        # `power_lines`. That is the LIVE truth about the line;
+        # `eps._state.transponder_tx` is a parallel flag that no code anywhere
+        # in the repo reads and that the engine's auto-TX hold does not even
+        # update, so it must not be believed. Absent (standalone model, no EPS
+        # in the run) => treat the line as present: a spacecraft without an
+        # EPS model is not a spacecraft with its transmitter unpowered.
+        line = shared_params.get(0x0112)
+        s.ttc_tx_line_on = True if line is None else bool(line)
+
+        # ── Leaving the bootloader un-inhibits the S-band PA ─────────────
+        # `_enter_bootloader_mode` (engine.py:631) sets `pa_on = False`: in
+        # the bootloader the S-band chain is deliberately dark and the UHF
+        # beacon is the only downlink. Nothing performed the reverse, so the
+        # application booted with its transmitter still inhibited — an
+        # asymmetry that was invisible while nothing read `pa_on` (2026-08b,
+        # finding 3) and would otherwise have meant every commissioning
+        # sequence in the repo boots into silence.
+        #
+        # Edge-triggered on the 0 -> 1 transition of obdh.sw_image (0x0311),
+        # so it is the boot that lifts the inhibit, not a periodic re-arm: an
+        # operator who sends TTC_PA_DISABLE afterwards keeps the PA off, and a
+        # thermal shutdown is never overridden.
+        sw_image = shared_params.get(0x0311)
+        if sw_image is not None:
+            sw = int(sw_image)
+            if (s._prev_sw_image == 0 and sw != 0
+                    and not s.pa_on and not s.pa_overheat_shutdown):
+                s.pa_on = True
+                logger.info(
+                    "Application boot: S-band PA inhibit lifted "
+                    "(the bootloader had it off; the UHF beacon carried the "
+                    "downlink until now)")
+            s._prev_sw_image = sw
+
         # TX capability (PA must be on and not in thermal shutdown).
         # This affects downlink / link budget only — uplink lock
         # acquisition works off the RX chain which is always powered.
-        can_transmit = s.pa_on and not s.pa_overheat_shutdown and rx_available
+        can_transmit = (s.pa_on and not s.pa_overheat_shutdown
+                        and rx_available and s.ttc_tx_line_on)
         if can_transmit:
             s.tx_fwd_power = self._pa_nominal_power_w
         else:
             s.tx_fwd_power = 0.0
+        s.eirp_dbw = (self._effective_eirp_dbw() if can_transmit
+                      else self._effective_eirp_dbw(0.0))
 
         # ── Uplink timeout tracking ──
         if in_contact and s.frame_sync:
@@ -726,6 +1028,71 @@ class TTCBasicModel(SubsystemModel):
             s.elevation_deg = orbit_state.gs_elevation_deg
             s.azimuth_deg = orbit_state.gs_azimuth_deg
             s.range_km = orbit_state.gs_range_km
+
+        # ── THE S-BAND DOWNLINK GATE (2026-08b, finding T-a) ────────────
+        # Everything the prime chain sends — real-time HK, playback, image
+        # dumps, S1 verification, on-demand reads — is gated on this one
+        # boolean, and it is the first thing in the mission that reads the
+        # transmitter state on the TM path at all. Three conditions, each of
+        # which an operator can cause and each of which they must be able to
+        # see (0x052B carries them individually):
+        #   * can_transmit — PA commanded on, not in thermal shutdown, the
+        #     selected transponder alive and its S2 device powered, AND the
+        #     ttc_tx line hot;
+        #   * in_contact  — no station in view means nothing is received, and
+        #     the sim's downlink gate has always modelled the ground end;
+        # It deliberately does NOT require frame_sync. The downlink is
+        # one-way: a spacecraft transmits whether or not the ground has
+        # acquired its uplink, and gating TM on the RECEIVE lock chain is
+        # precisely the mislabelling this fix removes.
+        s.tx_active = bool(can_transmit and in_contact)
+
+        # ── UHF BEACON TRANSMITTER (Franz's ruling R2) ──────────────────
+        # The second radio. It shares NONE of the failure modes above: not
+        # the S-band PA, not the ttc_tx line, not the deployable patch, not
+        # the transponder, not the uplink lock chain. That independence is
+        # the entire reason it exists, and it is why `beacon_active` is
+        # computed here from its own state rather than derived from
+        # `tx_active`. It still needs a station in view — a beacon nobody is
+        # listening to is not "active" in any useful sense — and it needs its
+        # link to close, which on 1 W at 1 kbps it does everywhere.
+        b = self._beacon_cfg
+        if (bool(b.get("enabled", True)) and s.beacon_tx_on
+                and in_contact and s.range_km > 0):
+            budget = self.beacon_link_budget(s.range_km, s.elevation_deg)
+            s.beacon_margin_db = budget["margin_db"]
+            s.beacon_eb_n0_db = budget["eb_n0_db"]
+            s.beacon_active = budget["margin_db"] > 0.0
+            s.beacon_tx_power_w = float(b["rf_power_w"])
+        else:
+            s.beacon_margin_db = 0.0
+            s.beacon_eb_n0_db = 0.0
+            s.beacon_active = False
+            s.beacon_tx_power_w = (float(b["rf_power_w"])
+                                   if (bool(b.get("enabled", True))
+                                       and s.beacon_tx_on) else 0.0)
+
+        # ── Beacon housekeeping emission ───────────────────────────────
+        # The beacon carries HK SID 11 and nothing else. When the S-band
+        # chain is up the OBC's own HK scheduler emits SID 11 along with
+        # everything else, so the beacon stays quiet and there is no
+        # duplication; when the S-band chain is DOWN the beacon is the only
+        # thing on the air, and it keeps SID 11 coming. That is the exact
+        # behaviour ruling R2 asks for: "gates ONLY the beacon housekeeping
+        # (SID 11); everything else stays on the S-band chain and dies with
+        # the PA."
+        self._tick_beacon_emission(dt, s, shared_params)
+
+        # ── Safe mode commands the safe tier (2026-08b, finding 4) ──────
+        # ttc.yaml documents `safe_tier: LOW` as "safe mode, FDIR fallback,
+        # antenna stowed", but `_safe_tier` was only ever read in
+        # `_effective_tier`'s last-resort branch, so entering SC_SAFE left the
+        # COMMANDED tier wherever the operator had put it — a spacecraft that
+        # dropped into safe mode mid-dump stayed commanded to HIGH and jumped
+        # straight back to 128 kbps the moment the elevation gate reopened.
+        # Edge-triggered on entry only, so an operator may still command a
+        # different tier while safe mode persists.
+        self._apply_safe_mode_tier(s)
 
         # ── TM data-rate ladder: resolve the ACTIVE tier (defect #85) ──
         # Runs AFTER link_active/elevation are updated so the HIGH tier's
@@ -798,7 +1165,9 @@ class TTCBasicModel(SubsystemModel):
                 - 147.55
             )
             s.rssi_dbm = (
-                self._eirp
+                # EIRP at the COMMANDED PA power (2026-08b, T-b): selecting
+                # LOW really does drop the received level by 3 dB now.
+                self._effective_eirp_dbw()
                 + self._sc_gain
                 - fspl
                 + 30.0
@@ -928,6 +1297,31 @@ class TTCBasicModel(SubsystemModel):
             + self.rng.gauss(0, 0.02)
         )
 
+        # ── UHF beacon thermal node (ruling R2) ──
+        # Its own node, because it is its own box. The dissipation is
+        # (DC in - RF out) while keying, and the duty is tiny: SID 11 is
+        # 28 bytes at 1000 bps = 0.224 s in every 30 s beacon interval, i.e.
+        # 0.75 %. So the beacon runs a couple of degrees above ambient and
+        # never approaches a thermal limit — which is exactly the point of a
+        # lifeline transmitter, and the contrast with the S-band PA's 70 C
+        # auto-shutdown is worth a student's attention.
+        bcfg = self._beacon_cfg
+        beacon_duty = 0.0
+        if s.beacon_active:
+            interval = 30.0
+            engine = getattr(self, "_engine", None)
+            if engine is not None:
+                interval = float(getattr(engine, "_hk_intervals", {}).get(
+                    int(bcfg.get("hk_sid", 11)), 30.0)) or 30.0
+            beacon_duty = min(1.0, (28.0 * 8.0 / max(float(bcfg["bps"]), 1.0))
+                              / max(interval, 1e-3))
+        beacon_diss = beacon_duty * max(
+            float(bcfg["dc_power_w"]) - float(bcfg["rf_power_w"]), 0.0)
+        s.beacon_temp += (
+            (25.0 + beacon_diss * 3.0 - s.beacon_temp) / 300.0 * dt
+            + self.rng.gauss(0, 0.01)
+        )
+
         # ── Event generation (edge detection) ──
         self._generate_ttc_events()
 
@@ -971,6 +1365,47 @@ class TTCBasicModel(SubsystemModel):
         shared_params[p.get("cmd_rx_count", 0x0513)] = s.cmd_rx_count
         shared_params[p.get("pa_on", 0x0516)] = 1 if s.pa_on else 0
         shared_params[p.get("eb_n0", 0x0519)] = s.eb_n0
+        # ── Downlink gate (T-a) and the UHF beacon transmitter (R2) ──
+        # 0x0525 is THE parameter the engine's downlink_active gates on. It
+        # must be published unconditionally and every tick: an absent 0x0525
+        # means "the TT&C model has not ticked", and the engine treats that as
+        # NOT transmitting (fails closed), which is the safe direction and the
+        # opposite of what the old link-status gate did.
+        shared_params[p.get("tx_active", 0x0525)] = 1 if s.tx_active else 0
+        shared_params[p.get("beacon_tx_on", 0x0526)] = (
+            1 if s.beacon_tx_on else 0)
+        shared_params[p.get("beacon_active", 0x0527)] = (
+            1 if s.beacon_active else 0)
+        shared_params[p.get("beacon_link_margin", 0x0528)] = s.beacon_margin_db
+        shared_params[p.get("beacon_dl_freq", 0x0529)] = float(
+            self._beacon_cfg["dl_freq_mhz"])
+        shared_params[p.get("beacon_tx_power", 0x052A)] = s.beacon_tx_power_w
+        # 0x052B — the WHY behind 0x0525, in one byte, so a console can render
+        # "INHIBITED (ttc_tx LINE OFF)" rather than a bare red light. A SET
+        # bit is the healthy/permissive state:
+        #   bit0 PA commanded on          bit4 UHF beacon commanded on
+        #   bit1 EPS ttc_tx line hot      bit5 UHF beacon radiating
+        #   bit2 station in view          bit6 S-band antenna deployed
+        #   bit3 S-band chain radiating   bit7 beacon MODE (rate ladder) OFF
+        gate = 0
+        if s.pa_on and not s.pa_overheat_shutdown:
+            gate |= 0x01
+        if s.ttc_tx_line_on:
+            gate |= 0x02
+        if in_contact:
+            gate |= 0x04
+        if s.tx_active:
+            gate |= 0x08
+        if s.beacon_tx_on:
+            gate |= 0x10
+        if s.beacon_active:
+            gate |= 0x20
+        if s.antenna_deployed:
+            gate |= 0x40
+        if not s.beacon_mode:
+            gate |= 0x80
+        shared_params[p.get("tx_gate_status", 0x052B)] = float(gate)
+        shared_params[p.get("eirp_dbw", 0x052C)] = s.eirp_dbw
         # Phase 4: Flight hardware params
         shared_params[0x051A] = s.agc_level_db
         shared_params[0x051B] = s.doppler_hz
@@ -1317,20 +1752,36 @@ class TTCBasicModel(SubsystemModel):
             # pa_max_power_w is 5.0): 0=LOW 1.0 W, 1=NOMINAL 2.0 W,
             # 2=HIGH 5.0 W. Unknown codes REJECTED (0x0003), never clamped.
             if "level" in cmd:
+                # 2026-08b: the watts come from ttc.yaml (pa_low/nominal/max
+                # _power_w) instead of being code constants, because the EIRP
+                # is now DERIVED from them — retuning the ladder to the
+                # researched 0.25/1/2 W is then a config change and the link
+                # budget follows automatically.
                 level_table = {
-                    0: 1.0,                      # LOW
-                    1: 2.0,                      # NOMINAL (pa_nominal_power_w)
-                    2: self._pa_max_power_w,     # HIGH (5.0 W ceiling)
+                    0: self._pa_low_power_w,     # LOW
+                    1: self._pa_ref_power_w,     # NOMINAL == the EIRP ref
+                    2: self._pa_max_power_w,     # HIGH (ceiling)
                 }
                 lvl = int(cmd.get("level", 1))
                 if lvl not in level_table:
                     return {"success": False, "error_code": 0x0003,
                             "message": f"Unknown TX power level {lvl} "
-                                       "(0=LOW 1 W, 1=NOMINAL 2 W, "
-                                       "2=HIGH 5 W)"}
+                                       f"(0=LOW {level_table[0]:g} W, "
+                                       f"1=NOMINAL {level_table[1]:g} W, "
+                                       f"2=HIGH {level_table[2]:g} W)"}
                 self._pa_nominal_power_w = level_table[lvl]
                 self._state.tx_power_level = lvl
-                return {"success": True, "power_w": level_table[lvl]}
+                # The link moves with the PA now: report the EIRP the
+                # operator just bought so S1.7 says something real.
+                eirp = self._effective_eirp_dbw()
+                logger.info(
+                    "TTC TX power level %d = %.2f W RF -> EIRP %.2f dBW "
+                    "(%+.2f dB about the %.2f W reference)",
+                    lvl, level_table[lvl], eirp, eirp - self._eirp,
+                    self._pa_ref_power_w)
+                return {"success": True, "power_w": level_table[lvl],
+                        "eirp_dbw": eirp,
+                        "delta_db": eirp - self._eirp}
             # Legacy internal form (watts) — kept for scenario scripts.
             power = float(cmd.get("power_w", self._pa_nominal_power_w))
             if 0.0 < power <= self._pa_max_power_w:
@@ -1366,8 +1817,56 @@ class TTCBasicModel(SubsystemModel):
             return {"success": True}
 
         elif command == "set_beacon_mode":
-            self._state.beacon_mode = bool(cmd.get("on", True))
-            return {"success": True}
+            # BEACON *MODE* — a rung of the S-band TM rate ladder, NOT the UHF
+            # beacon transmitter (that is beacon_tx_on / TTC_BEACON_TX_ON).
+            on = bool(cmd.get("on", True))
+            was = self._state.beacon_mode
+            self._state.beacon_mode = on
+            if on:
+                self._state.data_rate_mode = self._beacon_tier
+            elif was:
+                # LEAVING beacon mode must reset the COMMANDED tier, not just
+                # the flag (2026-08b, finding 3). Before this, exit left
+                # data_rate_mode pinned at BEACON: `_exit_bootloader_mode`
+                # only resets it `if not beacon_mode`, which is False at the
+                # moment of exit, and nothing else ever wrote it. The console
+                # then reported commanded=BEACON / active=LOW indefinitely and
+                # the demotion display could never clear. The safe tier is the
+                # right landing point — LOW is the routine operations rate and
+                # works with the antenna still stowed.
+                self._state.data_rate_mode = self._safe_tier
+                logger.info(
+                    "Beacon mode OFF: commanded TM tier reset to %s (%d bps)",
+                    self.tier_name(self._safe_tier),
+                    self.tier_bps(self._safe_tier))
+            return {"success": True, "beacon_mode": on,
+                    "data_rate_mode": self._state.data_rate_mode}
+
+        elif command in ("beacon_tx_on", "beacon_tx_off", "set_beacon_tx"):
+            # The UHF BEACON TRANSMITTER (Franz's ruling R2) — the second
+            # radio, not the rate-ladder rung above. Switching it off silences
+            # HK SID 11 when the S-band chain is down, which is the only thing
+            # it carries; it has no effect at all while the S-band chain is up.
+            if command == "beacon_tx_on":
+                on = True
+            elif command == "beacon_tx_off":
+                on = False
+            else:
+                on = bool(cmd.get("on", True))
+            if on and not bool(self._beacon_cfg.get("enabled", True)):
+                return {"success": False, "error_code": 0x0007,
+                        "message": "No UHF beacon transmitter is fitted "
+                                   "(ttc.yaml beacon.enabled = false)"}
+            self._state.beacon_tx_on = on
+            if not on:
+                self._state.beacon_active = False
+                self._state.beacon_tx_power_w = 0.0
+                logger.warning(
+                    "UHF beacon transmitter OFF — HK SID 11 will not survive "
+                    "an S-band outage while this is commanded off")
+            return {"success": True, "beacon_tx_on": on,
+                    "dl_freq_mhz": float(self._beacon_cfg["dl_freq_mhz"]),
+                    "rf_power_w": float(self._beacon_cfg["rf_power_w"])}
 
         elif command == "set_ul_freq":
             # S-band near-Earth allocation (CCSDS 401.0-B), matching

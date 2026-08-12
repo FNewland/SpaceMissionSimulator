@@ -118,14 +118,19 @@ async def test_imaging_activity_executes_on_board_at_planned_time():
         })
         body = await resp.json()
         assert resp.status == 200
-        assert body["count"] == 2  # set-mode + capture
+        # 2026-08b PL-a: three commandable steps now, not two. The sequence
+        # gained an AOCS_SET_MODE(5 = FINE_POINT) at the front — without it
+        # the payload's own capture gate refused every planner-scheduled
+        # image ("Capture refused: AOCS not in FINE_POINT"), and
+        # activity_types.yaml's precondition asked for mode 1 (SAFE_BOOT).
+        assert body["count"] == 3  # aocs-fine + payload-set-mode + capture
 
         # 3. Simulator side: uplink each frame into the real engine.
         frames = writer.frames()
-        assert len(frames) == 2
+        assert len(frames) == 3
         for raw in frames:
             engine._dispatch_tc(raw)
-        assert engine._tc_scheduler.get_status()["count"] == 2
+        assert engine._tc_scheduler.get_status()["count"] == 3
 
         # Nothing fires before the planned time.
         due = engine._tc_scheduler.tick(start_cuc - 10)
@@ -151,7 +156,7 @@ async def test_imaging_activity_executes_on_board_at_planned_time():
             if p and p.secondary and p.secondary.service == 1 \
                     and p.secondary.subtype == 7:
                 completions += 1
-        assert completions >= 2  # both embedded commands completed
+        assert completions >= 3  # all three embedded commands completed
     finally:
         await client.close()
 

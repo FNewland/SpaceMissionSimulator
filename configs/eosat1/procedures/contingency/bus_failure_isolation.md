@@ -15,7 +15,7 @@ of operating on a single-string bus.
 
 ## Prerequisites
 - [ ] Housekeeping data missing from one or more subsystems for > 30 s
-- [ ] TT&C link active — `ttc.link_status` (0x0501) = 1
+- [ ] TT&C link active — `ttc.link_status` (0x0501) = 2 (LOCKED)
 - [ ] OBC is responsive to commands — `obdh.mode` (0x0300) can be queried
 - [ ] Flight Director notified and authorizes bus investigation
 - [ ] OBC application software is running — `obdh.sw_image` (0x0311) = 1
@@ -33,7 +33,7 @@ of operating on a single-string bus.
 | eps.bat_soc | 0x0101 | Record current value |
 | aocs.mode | 0x020F | Verify after switchover |
 | payload.mode | 0x0600 | Verify after switchover |
-| ttc.link_status | 0x0501 | 1 (active) |
+| ttc.link_status | 0x0501 | 2 (LOCKED) |
 
 ## Required Commands
 | Command | Service | Subtype | Func ID | Description |
@@ -45,14 +45,14 @@ of operating on a single-string bus.
 ## Procedure Steps
 
 ### Step 1: Detect and Characterize Missing Housekeeping
-**Action:** Request individual HK reports from each subsystem to determine which
-are affected:
-- `HK_REQUEST(sid=1)` — EPS
-- `HK_REQUEST(sid=2)` — AOCS
-- `HK_REQUEST(sid=3)` — TCS
-- `HK_REQUEST(sid=4)` — OBDH
-- `HK_REQUEST(sid=5)` — TTC
-- `HK_REQUEST(sid=6)` — Payload
+**Note:** Request individual HK reports from each subsystem to determine which
+**Note:** are affected:
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — EPS
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — AOCS
+**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 27) — TCS
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) — OBDH
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) — TTC
+**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 27) — Payload
 **Verify:** Record which SID responses are received and which are missing within 15 s.
 **Action:** Categorize the failure pattern:
 - **OBDH responds but other subsystems missing:** CAN bus connecting external
@@ -66,7 +66,7 @@ are affected:
 **GO/NO-GO:** Missing HK confirmed from multiple subsystems — proceed to bus diagnosis.
 
 ### Step 2: Diagnose Bus Status
-**Action:** Request OBDH housekeeping: `HK_REQUEST(sid=4)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) — Request OBDH housekeeping
 **Verify:** `obdh.active_bus` (0x030E) — record which bus is currently active:
 - 0 = Bus A
 - 1 = Bus B
@@ -97,28 +97,28 @@ as likely cause) — proceed to switchover.
 ### Step 3: Command Bus Switchover
 **Action:** Notify all console positions: "CAN bus switchover imminent. Expect
 brief HK gap of 5-10 seconds."
-**Action:** Command switchover to the redundant bus:
-- If currently on Bus A (0x030E = 0):
-  `OBC_SELECT_BUS(bus=1)` (func_id 54) — switch to Bus B
-- If currently on Bus B (0x030E = 1):
-  `OBC_SELECT_BUS(bus=0)` (func_id 54) — switch to Bus A
+**Note:** Command switchover to the redundant bus:
+**Note:** - If currently on Bus A (0x030E = 0):
+**TC:** `OBC_SELECT_BUS(bus=1)` (Service 8, Subtype 1, func_id 54) — switch to Bus B
+**Note:** - If currently on Bus B (0x030E = 1):
+**TC:** `OBC_SELECT_BUS(bus=0)` (Service 8, Subtype 1, func_id 54) — switch to Bus A
 **CAUTION:** This command will briefly interrupt all CAN bus communications during
 the switchover. Subsystem HK will be unavailable for 5-10 seconds. This is normal.
 **Verify:** Wait 15 s for switchover to complete.
-**Action:** Request OBDH housekeeping: `HK_REQUEST(sid=4)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) — Request OBDH housekeeping
 **Verify:** `obdh.active_bus` (0x030E) reflects the new bus
 **Verify:** `obdh.bus_a_status` (0x030F) — record updated status
 **Verify:** `obdh.bus_b_status` (0x0310) — record updated status
 **GO/NO-GO:** Bus switchover confirmed — proceed to verification.
 
 ### Step 4: Verify All Housekeeping Resumes on New Bus
-**Action:** Request HK from all subsystems:
-- `HK_REQUEST(sid=1)` — EPS
-- `HK_REQUEST(sid=2)` — AOCS
-- `HK_REQUEST(sid=3)` — TCS
-- `HK_REQUEST(sid=4)` — OBDH
-- `HK_REQUEST(sid=5)` — TTC
-- `HK_REQUEST(sid=6)` — Payload
+**Note:** Request HK from all subsystems:
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — EPS
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — AOCS
+**TC:** `HK_REQUEST(sid=3)` (Service 3, Subtype 27) — TCS
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) — OBDH
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) — TTC
+**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 27) — Payload
 **Verify:** All six SID responses received within 15 s.
 **Verify:** Telemetry values are consistent and sensible:
 - No stuck values or unexpected zeros

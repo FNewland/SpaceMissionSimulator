@@ -89,8 +89,18 @@ class MEKF6:
 
     # ── propagate ────────────────────────────────────────────────────
 
-    def propagate(self, omega_meas: np.ndarray, h: float) -> None:
-        """Propagate with a bias-corrected gyro measurement over step h."""
+    def propagate(self, omega_meas: np.ndarray, h: float,
+                  arw_axis=None) -> None:
+        """Propagate with a bias-corrected gyro measurement over step h.
+
+        ``arw_axis`` optionally supplies a per-axis angle-random-walk density
+        [rad/√s] for the Q attitude block. A body axis whose gyro unit is
+        powered off contributes no rate measurement at all, so the filter has
+        to be told its attitude error now grows at the UNKNOWN body rate and
+        not at a healthy channel's ARW — otherwise switching the gyros off
+        leaves the covariance claiming arcsecond knowledge while the estimate
+        walks away (coherence review §2.6).
+        """
         if h <= 0:
             return
         w = np.asarray(omega_meas, float) - self.b
@@ -108,7 +118,10 @@ class MEKF6:
         F[3:, 3:] = -np.eye(3) / self._tau_b
         Phi = np.eye(6) + F * h + (F @ F) * (h * h / 2.0)
         Q = np.zeros((6, 6))
-        Q[:3, :3] = np.eye(3) * (self._arw ** 2 * h)
+        if arw_axis is None:
+            Q[:3, :3] = np.eye(3) * (self._arw ** 2 * h)
+        else:
+            Q[:3, :3] = np.diag(np.asarray(arw_axis, float) ** 2 * h)
         Q[3:, 3:] = np.eye(3) * (self._q_b * h)
         self.P = Phi @ self.P @ Phi.T + Q
         self.P = 0.5 * (self.P + self.P.T)

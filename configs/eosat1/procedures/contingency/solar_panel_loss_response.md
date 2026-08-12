@@ -16,7 +16,7 @@ reduced power generation.
 ## Prerequisites
 - [ ] EPS telemetry (SID 1) is being received at >= 0.5 Hz
 - [ ] Spacecraft is in sunlit phase — `eps.eclipse_flag` (0x0108) = 0
-- [ ] AOCS is in NADIR_POINT or known attitude mode — `aocs.mode` (0x020F) known
+- [ ] AOCS is in NOMINAL or known attitude mode — `aocs.mode` (0x020F) known
 - [ ] Current attitude is nominal — `aocs.att_error` (0x0217) < 2.0 deg
 - [ ] Per-panel current baseline values are available for current attitude and illumination
 
@@ -50,7 +50,7 @@ reduced power generation.
 ## Procedure Steps
 
 ### Step 1: Detect and Confirm Power Generation Anomaly
-**Action:** Request EPS housekeeping: `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — Request EPS housekeeping
 **Verify:** `eps.power_gen` (0x0107) — compare to expected value for current attitude
 and illumination. If shortfall > 15%, proceed with investigation.
 **Verify:** `eps.eclipse_flag` (0x0108) = 0 — confirm spacecraft is in sunlit phase.
@@ -61,7 +61,7 @@ If in eclipse, wait for sunlit phase before assessing panel performance.
 **GO/NO-GO:** Power generation shortfall confirmed during sunlit phase — proceed.
 
 ### Step 2: Identify Affected Panel(s) via Per-Panel Current Analysis
-**Action:** Request EPS housekeeping: `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — Request EPS housekeeping
 Sample 3 times at 30 s intervals for trend confirmation.
 **Verify:** `eps.sa_px_current` (0x012B) — +X face current
 **Verify:** `eps.sa_mx_current` (0x012C) — -X face current
@@ -80,8 +80,8 @@ attitude) will naturally show ~0 A and should not be flagged.
 **GO/NO-GO:** Affected panel(s) identified — proceed to impact assessment.
 
 ### Step 3: Rule Out Attitude Error as Root Cause
-**Action:** Request AOCS housekeeping: `HK_REQUEST(sid=2)` (Service 3, Subtype 27)
-**Verify:** `aocs.mode` (0x020F) = 3 (NADIR_POINT) or 2 (SAFE_POINT)
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — Request AOCS housekeeping
+**Verify:** `aocs.mode` (0x020F) = 3 (NOMINAL) or 2 (COARSE_SUN)
 **Verify:** `aocs.att_error` (0x0217) < 2.0 deg — confirms attitude is nominal
 **Action:** If `aocs.att_error` > 5.0 deg, the power shortfall may be caused by
 poor solar array illumination due to attitude error. Execute CTG-005 (AOCS Anomaly
@@ -93,7 +93,7 @@ Recovery) first, then return to this procedure at Step 1.
 — proceed to power budget recalculation.
 
 ### Step 4: Recalculate Power Budget with Degraded Generation
-**Action:** Request EPS housekeeping: `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — Request EPS housekeeping
 **Verify:** `eps.power_gen` (0x0107) — actual degraded generation (sunlit)
 **Verify:** `eps.power_cons` (0x0106) — current total consumption
 **Action:** Calculate instantaneous power margin = generation - consumption.
@@ -112,17 +112,17 @@ projected, proceed to Step 5.
 to match available generation" on the operations loop.
 
 **Step 5a — Reduce Payload to STANDBY:**
-**Action:** `PAYLOAD_SET_MODE(mode=1)` (func_id 26) — reduce from IMAGING to STANDBY
+**TC:** `PAYLOAD_SET_MODE(mode=1)` (Service 8, Subtype 1, func_id 26) — reduce from IMAGING to STANDBY
 **Verify:** `payload.mode` (0x0600) = 1 (STANDBY) within 10 s
 **Verify:** `eps.power_cons` (0x0106) decreases by >= 12 W
 
 **Step 5b — If margin still insufficient, disable FPA cooler:**
-**Action:** `FPA_COOLER(on=0)` (func_id 43)
+**TC:** `FPA_COOLER(on=0)` (Service 8, Subtype 1, func_id 43)
 **Verify:** `tcs.cooler_fpa` (0x040C) = 0 within 5 s
 **Verify:** `eps.power_cons` (0x0106) decreases by ~15 W
 
 **Step 5c — If margin still insufficient, shut down payload completely:**
-**Action:** `PAYLOAD_SET_MODE(mode=0)` (func_id 26) — full payload OFF
+**TC:** `PAYLOAD_SET_MODE(mode=0)` (Service 8, Subtype 1, func_id 26) — full payload OFF
 **Verify:** `payload.mode` (0x0600) = 0 (OFF) within 10 s
 
 **Action:** Recalculate orbit-averaged power budget with reduced loads.
@@ -131,22 +131,22 @@ to match available generation" on the operations loop.
 
 ### Step 6: Consider Attitude Optimisation for Power Recovery
 **Action:** If the degraded panel(s) are on a face that receives maximum illumination
-in NADIR_POINT mode, consider temporarily switching to SAFE_POINT (sun-optimal) to
+in NOMINAL mode, consider temporarily switching to COARSE_SUN (sun-optimal) to
 maximise generation from undamaged panels.
-**Action:** `AOCS_SET_MODE(mode=2)` (func_id 0) — SAFE_POINT
+**TC:** `AOCS_SET_MODE(mode=2)` (Service 8, Subtype 1, func_id 0) — COARSE_SUN
 **Verify:** `aocs.mode` (0x020F) = 2 within 15 s
 **Action:** Wait 120 s for new attitude to stabilise, then request EPS HK.
-**Verify:** `eps.power_gen` (0x0107) — compare to NADIR_POINT generation.
-**Note:** SAFE_POINT sacrifices nadir pointing (no payload imaging) but may improve
+**Verify:** `eps.power_gen` (0x0107) — compare to NOMINAL generation.
+**Note:** COARSE_SUN sacrifices nadir pointing (no payload imaging) but may improve
 power generation by up to 30% depending on which panel(s) are lost.
-**GO/NO-GO:** If SAFE_POINT provides significantly better power margin, maintain
+**GO/NO-GO:** If COARSE_SUN provides significantly better power margin, maintain
 this mode until battery is sufficiently charged. If no improvement, return to
-NADIR_POINT: `AOCS_SET_MODE(mode=3)`.
+NOMINAL: `AOCS_SET_MODE(mode=3)`.
 
 ### Step 7: Establish Long-Term Monitoring and Operations Plan
 **Action:** Record the following as the new degraded baseline:
 - Per-panel currents (0x012B-0x0130) for each illuminated face
-- Total power generation in NADIR_POINT and SAFE_POINT modes
+- Total power generation in NOMINAL and COARSE_SUN modes
 - Orbit-averaged power budget with reduced operations
 **Action:** Schedule daily trend monitoring — check if degradation is progressive
 (worsening) or stable.
@@ -171,7 +171,7 @@ complete.
 - [ ] `eps.bus_voltage` (0x0105) > 27.0 V
 
 ## Off-Nominal Handling
-- If all panels on sun-facing side are lost: Switch to SAFE_POINT immediately.
+- If all panels on sun-facing side are lost: Switch to COARSE_SUN immediately.
   If total generation < 15 W, command `OBC_SET_MODE(mode=2)` for EMERGENCY. This
   is a mission-critical anomaly — escalate immediately.
 - If degradation is progressive (> 5% per day): Suspect radiation damage, thermal
