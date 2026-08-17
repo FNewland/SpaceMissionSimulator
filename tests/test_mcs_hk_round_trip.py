@@ -26,7 +26,7 @@ def _build_eps_hk_packet(values: dict[int, float]) -> bytes:
     hk_defs = load_hk_structures(CONFIG_DIR)
     eps_def = next(h for h in hk_defs if h.sid == 1)
     structure = [(p.param_id, p.pack_format, p.scale) for p in eps_def.parameters]
-    builder = TMBuilder(apid=100)
+    builder = TMBuilder(apid=100, time_source=lambda: 1000.0)
     # Default any missing params to 0 so the pack succeeds
     full_params = {pid: values.get(pid, 0.0) for pid, _, _ in structure}
     pkt = builder.build_hk_packet(sid=1, params=full_params, hk_structure=structure)
@@ -94,7 +94,7 @@ async def test_hk_packet_round_trip_populates_mcs_cache():
 async def test_unknown_sid_does_not_corrupt_cache():
     """A packet for an unknown SID must not crash and must not poison the cache."""
     server = MCSServer(config_dir=CONFIG_DIR)
-    builder = TMBuilder(apid=100)
+    builder = TMBuilder(apid=100, time_source=lambda: 1000.0)
     # Forge an SID-99 HK packet with an empty payload after the SID header
     import struct
     fake_data = struct.pack(">H", 99)
@@ -112,7 +112,7 @@ async def test_unknown_sid_does_not_corrupt_cache():
 async def test_s20_param_value_report_populates_cache():
     """S20.2 on-demand parameter reports must also land in _param_cache."""
     server = MCSServer(config_dir=CONFIG_DIR)
-    builder = TMBuilder(apid=100)
+    builder = TMBuilder(apid=100, time_source=lambda: 1000.0)
     pkt = builder.build_param_value_report(param_id=0x0143, value=1.234)
     parsed = decommutate_packet(pkt)
     assert parsed is not None
@@ -130,7 +130,7 @@ async def test_sid7_aocs_determination_round_trip():
     hk_defs = load_hk_structures(CONFIG_DIR)
     d7 = next(h for h in hk_defs if h.sid == 7)
     structure = [(p.param_id, p.pack_format, p.scale) for p in d7.parameters]
-    builder = TMBuilder(apid=100)
+    builder = TMBuilder(apid=100, time_source=lambda: 1000.0)
     inputs = {
         0x02A7: 51.7,     # knowledge_err_3sig arcsec (scale 10, H)
         0x02A8: 0.062,    # control_err deg (scale 1000, H)

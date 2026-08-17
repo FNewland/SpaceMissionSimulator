@@ -19,12 +19,14 @@ from aiohttp.test_utils import TestClient, TestServer
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "packages" / "smo-common" / "src"))
 
-from smo_common.protocol.ecss_packet import datetime_to_cuc  # noqa: E402
+from smo_common.protocol.ecss_packet import datetime_to_cuc_seconds  # noqa: E402
 from smo_common.reporting import register_report_routes  # noqa: E402
 from smo_common.telemetry.tm_builder import TMBuilder  # noqa: E402
 
 CONFIG_DIR = REPO / "configs" / "eosat1"
-T0_CUC = datetime_to_cuc(datetime(2026, 3, 10, 4, 0, 0))
+# `datetime_to_cuc` now returns (coarse, fine); this test does arithmetic
+# on the value, so it wants the full-precision scalar form.
+T0_CUC = datetime_to_cuc_seconds(datetime(2026, 3, 10, 4, 0, 0))
 PERIOD = {"kind": "absolute", "start": "2026-03-10T04:00:00Z",
           "end": "2026-03-10T04:02:00Z"}
 

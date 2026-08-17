@@ -46,7 +46,9 @@ def _fire_due(engine, at_cuc):
 
 class TestS11StoreAndFire:
     def test_full_packet_payload_is_stored_and_acked(self, engine):
-        cuc = engine._get_cuc_time()
+        # Onboard CUC is full-precision seconds; the S11 wire field is u32
+        # whole seconds.
+        cuc = int(engine._get_cuc_time())
         inner = build_tc_packet(apid=1, service=17, subtype=1, data=b"",
                                 seq_count=70)
         outer = build_tc_packet(
@@ -77,7 +79,9 @@ class TestS11StoreAndFire:
         self._fine_pointing_ok(payload)
         images_before = payload._state.image_count
 
-        cuc = engine._get_cuc_time()
+        # Onboard CUC is full-precision seconds; the S11 wire field is u32
+        # whole seconds.
+        cuc = int(engine._get_cuc_time())
         inner_data = bytes([28]) + struct.pack(">ff", 45.5, -75.25)
         inner = build_tc_packet(apid=1, service=8, subtype=1,
                                 data=inner_data, seq_count=77)
@@ -119,7 +123,9 @@ class TestS11StoreAndFire:
         self._fine_pointing_ok(payload)
         images_before = payload._state.image_count
 
-        cuc = engine._get_cuc_time()
+        # Onboard CUC is full-precision seconds; the S11 wire field is u32
+        # whole seconds.
+        cuc = int(engine._get_cuc_time())
         set_mode = build_tc_packet(apid=1, service=8, subtype=1,
                                    data=bytes([26, 2]), seq_count=80)
         capture = build_tc_packet(
@@ -147,7 +153,9 @@ class TestS11StoreAndFire:
         payload._state.fpa_ready = True
         images_before = payload._state.image_count
 
-        cuc = engine._get_cuc_time()
+        # Onboard CUC is full-precision seconds; the S11 wire field is u32
+        # whole seconds.
+        cuc = int(engine._get_cuc_time())
         outer = build_tc_packet(
             apid=1, service=11, subtype=4,
             data=struct.pack(">I", cuc + 5) + bytes([8, 1, 28]),

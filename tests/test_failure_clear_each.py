@@ -96,9 +96,13 @@ CASES = [
     ("aocs", "multi_wheel_failure", {"wheels": [0, 1]},
      lambda m: m._state.active_wheels[0] is False and m._state.active_wheels[1] is False,
      lambda m: m._bearing_degradation[0] == 0.0 and m._bearing_degradation[1] == 0.0),
+    # gyro_bias is injected into the PERSISTENT offset `_gyro_bias_inject`,
+    # not into the Gauss-Markov state `_gyro_bias` (which mean-reverts with
+    # tau = 1800 s and would heal the fault by itself in ~30 min). The clear
+    # must zero both.
     ("aocs", "gyro_bias", {"axis": 0, "bias": 0.05},
-     lambda m: abs(m._gyro_bias[0]) > 0.0,
-     lambda m: m._gyro_bias[0] == 0.0),
+     lambda m: abs(m._gyro_bias_inject[0]) > 0.0,
+     lambda m: m._gyro_bias_inject[0] == 0.0 and m._gyro_bias[0] == 0.0),
     ("aocs", "st_failure", {"unit": 1},
      lambda m: m._state.st1_failed is True,
      lambda m: m._state.st1_failed is False),

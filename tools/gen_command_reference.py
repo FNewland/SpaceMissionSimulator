@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import date
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -35,6 +34,8 @@ for _pkg in ("smo-common",):
         sys.path.insert(0, str(_src))
 
 import yaml  # noqa: E402
+
+from source_revision import source_revision  # noqa: E402
 
 from smo_common.commanding import (EncodeError, encode, field_default,  # noqa: E402
                                    field_width, load_catalog)
@@ -218,7 +219,10 @@ def build_document(catalog) -> str:
     lines.append("")
     lines.append("**Document ID:** EOSAT1-UM-REF-010  ")
     lines.append("**Issue:** 2.0  ")
-    lines.append(f"**Date:** {date.today().isoformat()}  ")
+    # Source-derived, not wall-clock: the generated file must be a pure
+    # function of its input, or every calendar day is a spurious diff.
+    rev = source_revision([CONFIG / "commands" / "tc_catalog.yaml"])
+    lines.append(f"**Source revision:** `tc_catalog.yaml@{rev}`  ")
     lines.append("**Classification:** UNCLASSIFIED — For Simulation Use Only")
     lines.append("")
     lines.append("> **GENERATED FILE — DO NOT EDIT BY HAND.**  ")

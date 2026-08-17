@@ -24,8 +24,20 @@ fpa_cooler_power_w: 15.0
 # (payload_basic.py, scene-dependent ratio 1.5-4.0) stores 1.0-2.7 MB of it,
 # so the planner's `imaging_pass data_volume_mb: 4` is the uncompressed worst
 # case. `data_rate_mbps` / `line_rate_hz` below describe the focal-plane
-# READOUT, not the whole 120 s acquisition window: a 4 MB frame is 0.4 s of
-# readout inside a window that is mostly slew, settle and cooler stabilisation.
+# READOUT, not the whole 120 s acquisition window: a 4 MB frame is ~0.33 s of
+# readout at 96 Mbps inside a window that is mostly slew, settle and cooler
+# stabilisation. (The COMMANDED strip length the model scans is
+# lines / line_rate_hz = 2048 / 244 = 8.4 s, 60 km along-track.)
+#
+# NOT rescaled by the 240 km swath ruling (2026-08), and this is a KNOWN
+# INCONSISTENCY, recorded rather than hidden: the focal-plane geometry below
+# (8192 px x 4 bands x 12 bit x 2048 lines) implies a 100.7 MB raw frame,
+# so `image_size_mb: 4.0` is a courseware abstraction ~25x smaller than the
+# physical frame. It was already ~15x smaller under the old 5000-px geometry
+# (61 MB), so the ruling widens an existing gap rather than creating one.
+# Changing it is a downlink-lesson decision (defect #82), not a payload-optics
+# one: at 100.7 MB an image needs ~4.4 h of effective contact and no plan
+# would close. Left at 4.0 MB deliberately — see the report in defect #82.
 image_size_mb: 4.0
 # Store deliberately NOT rescaled with the image (see defect #82): keeping
 # 20 GB makes DOWNLINK, not storage, the binding constraint - which is the
@@ -38,8 +50,45 @@ total_storage_mb: 20000.0
 # "segment 0-79" documentation was never executable — valid range is 0-7,
 # and PAYLOAD_MARK_BAD_SEGMENT's catalogue range now says so).
 num_memory_segments: 8
-line_rate_hz: 500.0
-data_rate_mbps: 80.0
+
+# ── Optical / focal-plane geometry (single source for swath and GSD) ──
+#
+# OWNER RULING (2026-08): the instrument swath is 240 km, as the courseware
+# has always said. The model used to hard-code ifov = 20 urad x 5000 pixels
+# = 0.1 rad, giving 45 km at 450 km altitude — a narrow, high-resolution
+# instrument that the book never described. The numbers below re-derive a
+# 6U-class WIDE-FIELD multispectral pushbroom that actually produces 240 km,
+# and every geometric quantity the model reports is now computed from them
+# rather than from separate magic constants.
+#
+# Derivation (all at the orbit.yaml altitude, 450 km):
+#   detector array width   = 8192 px x 5.5 um            = 45.056 mm
+#   half-FOV               = atan((45.056/2) / 84.5)     = 14.928 deg
+#   full FOV               = 29.856 deg
+#   swath  = 2 * 450 km * tan(14.928 deg)                = 239.9 km   -> 240 km
+#   GSD    = 450 km * 5.5 um / 84.5 mm                   = 29.3 m
+#
+# A 240 km swath from a 450 km LEO is a wide-FOV OCEAN-COLOUR imager, not a
+# high-resolution one: holding the old ~9 m GSD would need 240 km / 9 m =
+# ~26 600 across-track pixels per band (a 146 mm focal-plane array), which is
+# not a 6U instrument. 8192 px @ 5.5 um is a real linear-array format, so the
+# resolution — not the pixel count — is what gives: GSD in the tens of metres
+# (29 m, between Landsat's 30 m and Sentinel-2's 10-60 m) is the physically
+# sensible compromise and is exactly right for chlorophyll/current mapping.
+pixels_across_track: 8192        # across-track pixels per band
+pixel_pitch_um: 5.5              # detector pitch
+focal_length_mm: 84.5            # telescope effective focal length
+bits_per_pixel: 12               # detector ADC depth (raw, pre-compression)
+
+# Focal-plane READOUT rates, derived from the geometry above (not free
+# parameters — they follow from square pixels and the ground velocity):
+#   ground velocity at 450 km = sqrt(mu/r) * Re/r = 7.140 km/s
+#   line_rate = v_ground / GSD = 7140 m/s / 29.29 m  = 243.8 Hz -> 244 Hz
+#   data_rate = 8192 px x 4 bands x 12 bit x 244 Hz  = 95.9 Mbps -> 96 Mbps
+# (was 500 Hz / 80 Mbps, which matched neither the old 5000-px geometry nor
+# any ground velocity — 5000 px x 4 x 12 x 500 Hz would have been 120 Mbps.)
+line_rate_hz: 244.0
+data_rate_mbps: 96.0
 
 param_ids:
   pli_mode: 0x0600

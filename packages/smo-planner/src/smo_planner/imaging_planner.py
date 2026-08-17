@@ -43,14 +43,21 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from smo_planner.utils import parse_iso as _parse_iso
+from smo_planner.utils import parse_iso as _parse_iso, iso_sort_key as _iso_key
 
 logger = logging.getLogger(__name__)
 
 # Camera/orbit fallbacks — overridden from planner.yaml / orbit.yaml.
 ALTITUDE_KM = 450.0
-FOV_DEG = 15.0
-SWATH_KM = 2.0 * ALTITUDE_KM * math.tan(math.radians(FOV_DEG / 2.0))  # ~118 km
+# Full across-track field of view of the instrument. OWNER RULING (2026-08):
+# the swath is 240 km. The FOV is the one implied by the focal-plane geometry
+# in subsystems/payload.yaml (8192 px x 5.5 um on an 84.5 mm telescope):
+#   FOV = 2 * atan((8192 * 5.5 um / 2) / 84.5 mm) = 29.856 deg
+#   SWATH = 2 * 450 km * tan(29.856/2) = 239.9 km  -> the 240 km swath
+# (was 15.0 deg / 118 km, which matched neither the courseware nor the
+# simulator's own 45 km.)
+FOV_DEG = 29.856
+SWATH_KM = 2.0 * ALTITUDE_KM * math.tan(math.radians(FOV_DEG / 2.0))  # ~240 km
 MIN_SOLAR_ELEVATION_DEG = 10.0
 IMAGING_DURATION_S = 120  # seconds per imaging pass
 IMAGING_POWER_W = 60
@@ -329,7 +336,10 @@ class ImagingPlanner:
         """Roll angle needed to see a point *cross_track_km* off the track.
 
         Flat-Earth small-angle form (atan(d/h)); at 450 km altitude and the
-        ~60 km half-swath this is within 0.1 deg of the spherical solution.
+        120 km half-swath (240 km swath, owner ruling 2026-08) this gives
+        14.931 deg against 14.892 deg spherical — within 0.04 deg, so the
+        flat form is kept. Equivalently the flat swath 2*h*tan(FOV/2) =
+        239.9 km against a 240.6 km spherical ground arc: 0.3%.
         """
         if alt_km <= 0:
             return 90.0
@@ -440,8 +450,8 @@ class ImagingPlanner:
         for tid in list(active):
             _close(tid)
 
-        opportunities.sort(key=lambda o: o.get("start_utc", ""))
-        rejected.sort(key=lambda o: o.get("start_utc", ""))
+        opportunities.sort(key=lambda o: _iso_key(o.get("start_utc")))
+        rejected.sort(key=lambda o: _iso_key(o.get("start_utc")))
 
         if self.enforce_revisit:
             opportunities, revisit_rejects = self._apply_revisit(opportunities)
@@ -457,7 +467,7 @@ class ImagingPlanner:
 
         if include_infeasible:
             merged = opportunities + rejected
-            merged.sort(key=lambda o: o.get("start_utc", ""))
+            merged.sort(key=lambda o: _iso_key(o.get("start_utc")))
             return merged
         return opportunities
 

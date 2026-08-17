@@ -1538,17 +1538,19 @@ class EPSBasicModel(SubsystemModel):
         self._bat_temp_env = temp_c
 
     def _get_time(self) -> float:
-        """Return current mission time.
+        """MET in seconds — model-INTERNAL time only.
 
-        Engine-hosted: the engine's sim time (deterministic under a pinned
-        t0_epoch, plan A-2). Standalone fallback: wall clock.
+        It used to return ``sim_time.timestamp()``, a Unix epoch value. This
+        is not a packet timestamp and never reaches the wire: its only use is
+        the third element of the ``_model_event_queue`` tuple, which the
+        engine discards (the S5 packet is stamped with onboard CUC by the TM
+        builder). So it is expressed as MET — seconds since t0_epoch, taken
+        from the engine's single definition (spec Part C.7). Standalone (no
+        engine) it is 0.0; a wall clock here would break determinism.
         """
         eng = getattr(self, "_engine", None)
-        sim_time = getattr(eng, "_sim_time", None)
-        if sim_time is not None:
-            return sim_time.timestamp()
-        import time
-        return time.time()
+        met = getattr(eng, "met_s", None)
+        return float(met) if met is not None else 0.0
 
     def _switch_load(self, load_id: int, state: bool) -> dict[str, Any]:
         """Switch individual load/power line on/off."""

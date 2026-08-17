@@ -51,19 +51,19 @@ safety margins.
 **GO/NO-GO:** All body rates are below 0.1 deg/s — proceed to restore pointing
 
 ### Step 6 — Restore NOMINAL Mode (Nadir Pointing)
-**TC:** `AOCS_SET_MODE(mode=4)` (Service 8, Subtype 1)
+**TC:** `AOCS_SET_MODE(mode=4)` (Service 8, Subtype 1, func_id 0)
 **Verify:** `aocs.mode` (0x020F) = 4 (NOMINAL) within 10s
 **Verify:** `aocs.att_error` (0x0217) converges below 1.0 deg within 120s
 **GO/NO-GO:** Attitude error < 1.0 deg and stable — recovery complete
 
 ### Step 7 — Escalation: Command DETUMBLE if Multi-Wheel Failure
-**TC:** `AOCS_SET_MODE(mode=1)` (Service 8, Subtype 1)
-**Verify:** `aocs.mode` (0x020F) = 1 (DETUMBLE) within 5s
+**TC:** `AOCS_SET_MODE(mode=2)` (Service 8, Subtype 1, func_id 0)
+**Verify:** `aocs.mode` (0x020F) = 2 (DETUMBLE) within 5s
 **Verify:** `aocs.rate_roll` (0x0204), `aocs.rate_pitch` (0x0205), `aocs.rate_yaw` (0x0206) — all trending toward 0 within 300s
 **GO/NO-GO:** If rates do not decrease below 2.0 deg/s within 300s, escalate to EMG-001
 
 ## Off-Nominal Handling
-- If attitude error exceeds 15 deg at any step: Immediately command `AOCS_SET_MODE(mode=1)` for DETUMBLE
+- If attitude error exceeds 15 deg at any step: Immediately command `AOCS_SET_MODE(mode=2)` for DETUMBLE
 - If two or more reaction wheels are flagged: Execute Step 7 directly and notify Flight Dynamics
 - If EPS bus voltage drops below 26.5V during recovery: Execute CTG-005 (EPS Safe Mode Recovery)
 - If star tracker remains blinded after DETUMBLE: Execute CTG-007 for wheel assessment, plan ground intervention

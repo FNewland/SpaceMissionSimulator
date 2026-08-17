@@ -62,6 +62,13 @@ alarm_procedures:
     0x0319: CTG-016   # seu_count        → Memory Segment Failure
     0x031C: CTG-010   # stack_usage      → OBDH Watchdog Recovery
     0x031D: CTG-010   # heap_usage       → OBDH Watchdog Recovery
+    # A stale onboard clock is not a fault to be contained, it is a clock to
+    # be re-synchronised, so the response is the nominal clock-synchronisation
+    # card rather than a contingency.  CTG-027 covers the case where the GPS
+    # itself is the problem; here the GPS may be healthy and simply unused
+    # (e.g. straight after a reboot, where time_ref is NONE and the age reads
+    # the never-synced sentinel).  See TIME_ARCHITECTURE.md Part B.
+    0x0A14: NOM-008   # time_since_sync_s → Clock Synchronisation
 
     # ── TTC ───────────────────────────────────────────────────────────
     0x0506: CTG-003   # tm_data_rate     → TTC Link Loss Recovery

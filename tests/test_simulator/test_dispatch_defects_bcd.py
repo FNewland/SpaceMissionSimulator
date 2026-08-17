@@ -89,10 +89,12 @@ def test_legacy_funcs_in_catalog(engine):
 
 def _unpack_tm_header(pkt):
     """Return (service, subtype, data) from a _pack_tm packet."""
-    # primary(6) + sec_hdr: 0x10, service, subtype, cuc(4) -> data starts at 13
+    # primary(6) + sec_hdr(9): 0x10, service, subtype, cuc coarse(4),
+    # cuc fine(2) -> data starts at 6 + TM_SEC_HDR_LEN == 15
+    from smo_common.protocol.ecss_packet import TM_SEC_HDR_LEN
     service = pkt[7]
     subtype = pkt[8]
-    data = pkt[13:-2]  # strip trailing CRC16
+    data = pkt[6 + TM_SEC_HDR_LEN:-2]  # strip trailing CRC16
     return service, subtype, data
 
 

@@ -59,14 +59,21 @@ class TCScheduler:
         self._enabled = True
 
     def insert(self, execution_time_cuc: int, tc_packet: bytes) -> int:
-        """Insert a time-tagged TC. Returns command ID."""
+        """Insert a time-tagged TC. Returns command ID.
+
+        ``execution_time_cuc`` is coerced to a whole CUC second: the S11,4
+        wire field is a u32 of whole seconds, and ``set_state`` restores it as
+        an ``int``. Keeping a float here (the on-board clock is now
+        full-precision — Part B) made a breakpoint round trip lossy, so a
+        saved schedule no longer compared equal to the restored one.
+        """
         identity = _decommutate_identity(tc_packet)
         with self._lock:
             cmd_id = self._next_id
             self._next_id += 1
             self._commands[cmd_id] = {
                 'id': cmd_id,
-                'exec_time': execution_time_cuc,
+                'exec_time': int(execution_time_cuc),
                 'packet': tc_packet,
                 **identity,
             }

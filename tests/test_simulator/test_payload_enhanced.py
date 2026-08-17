@@ -1056,3 +1056,122 @@ class TestCoolerSetpointWP3:
         assert r["success"] is False
         assert r["error_code"] == 0x0003
         assert "-20" in r["message"] and "0 C" in r["message"]
+
+
+class TestSwathIs240Km:
+    """The instrument swath is 240 km — OWNER RULING (Franz, 2026-08).
+
+    The courseware has always specified a 240 km swath; the model used to
+    produce 45 km from hard-coded constants (ifov = 20 urad x 5000 px =
+    0.1 rad; 450 km x 0.1 = 45 km). The optics now live in
+    ``configs/eosat1/subsystems/payload.yaml`` and the model derives the
+    geometry from them, so config, simulator and planner cannot drift apart.
+
+    DERIVATION (at the orbit.yaml altitude, h = 450 km):
+
+        detector array width  w = N * p = 8192 px x 5.5 um = 45.056 mm
+        half-FOV              theta/2  = atan(w / 2 / f)
+                                       = atan(22.528 / 84.5) = 14.928 deg
+        full FOV              theta    = 29.856 deg
+        swath                 S = 2 h tan(theta/2)
+                                = 2 x 450 km x tan(14.928 deg) = 239.94 km
+        GSD (nadir)           d = h p / f
+                                = 450e3 m x 5.5e-6 / 0.0845 = 29.29 m
+
+    TOLERANCE: 240 +/- 2 km (0.8%). That covers both the rounding of the
+    focal length to 84.5 mm and the flat-Earth form of the swath formula
+    (the spherical ground arc is 240.56 km, 0.3% larger); it is tight enough
+    that any future change to N, p or f that moves the swath off 240 km
+    fails here.
+    """
+
+    ALT_KM = 450.0          # orbit.yaml altitude_km
+
+    @staticmethod
+    def _mission_config() -> dict:
+        return yaml.safe_load(PAYLOAD_YAML.read_text())
+
+    def _ticked_model(self, alt_km=None):
+        model = PayloadBasicModel()
+        model.configure(self._mission_config())
+        orbit = make_orbit_state()
+        orbit.alt_km = self.ALT_KM if alt_km is None else alt_km
+        params = {}
+        model.tick(1.0, orbit, params)
+        return model, params
+
+    def test_swath_is_240_km_at_the_mission_altitude(self):
+        model, _ = self._ticked_model()
+        assert model._state.swath_width_km == pytest.approx(240.0, abs=2.0)
+
+    def test_swath_telemetry_0x0619_carries_240_km(self):
+        _, params = self._ticked_model()
+        assert params[0x0619] == pytest.approx(240.0, abs=2.0)
+
+    def test_gsd_is_the_wide_fov_compromise(self):
+        """240 km from 450 km is a wide-FOV multispectral imager: GSD in the
+        tens of metres (29.3 m = swath / pixels, 240 km / 8192)."""
+        model, params = self._ticked_model()
+        cfg = self._mission_config()
+        assert model._state.gsd_m == pytest.approx(29.3, abs=0.5)
+        assert params[0x0628] == pytest.approx(model._state.gsd_m)
+        # GSD and swath stay mutually consistent: S ~= N * d.
+        assert (cfg["pixels_across_track"] * model._state.gsd_m / 1000.0
+                == pytest.approx(model._state.swath_width_km, rel=0.01))
+
+    def test_geometry_comes_from_the_config_optics(self):
+        """Config is the single source: halve the focal length, double the
+        swath. (Guards against re-introducing hard-coded constants.)"""
+        cfg = self._mission_config()
+        cfg["focal_length_mm"] = cfg["focal_length_mm"] / 2.0
+        model = PayloadBasicModel()
+        model.configure(cfg)
+        orbit = make_orbit_state()
+        orbit.alt_km = self.ALT_KM
+        model.tick(1.0, orbit, {})
+        assert model._state.swath_width_km > 400.0
+
+    def test_swath_and_gsd_scale_with_altitude(self):
+        low, _ = self._ticked_model(alt_km=225.0)
+        high, _ = self._ticked_model(alt_km=900.0)
+        assert low._state.swath_width_km == pytest.approx(120.0, abs=1.0)
+        assert high._state.swath_width_km == pytest.approx(480.0, abs=4.0)
+        assert high._state.gsd_m == pytest.approx(4.0 * low._state.gsd_m,
+                                                  rel=1e-6)
+
+    def test_readout_rates_follow_from_the_geometry(self):
+        """line_rate = v_ground / GSD (square pixels), and
+        data_rate = N px x 4 bands x 12 bit x line_rate.
+
+        v_ground at 450 km = sqrt(mu/r) Re/r = 7.140 km/s, so
+        7140 / 29.29 = 243.8 Hz and 8192 x 4 x 12 x 244 = 95.9 Mbps.
+        """
+        import math
+        cfg = self._mission_config()
+        model, _ = self._ticked_model()
+        mu, re_km = 398600.4418, 6371.0
+        r = re_km + self.ALT_KM
+        v_ground_ms = math.sqrt(mu / r) * (re_km / r) * 1000.0
+        assert cfg["line_rate_hz"] == pytest.approx(
+            v_ground_ms / model._state.gsd_m, rel=0.02)
+        assert cfg["data_rate_mbps"] == pytest.approx(
+            cfg["pixels_across_track"] * 4 * cfg["bits_per_pixel"]
+            * cfg["line_rate_hz"] / 1e6, rel=0.02)
+
+    def test_raw_frame_size_implied_by_the_geometry_is_reported_not_hidden(self):
+        """CONSEQUENCE, pinned deliberately: the physical raw frame at the
+        catalogue default of 2048 lines is
+
+            8192 px x 4 bands x 12 bit x 2048 lines / 8 = 100.7 MB
+
+        while ``image_size_mb`` stays at the courseware's 4 MB (defect #82,
+        owner-fixed because the whole pass-planning lesson rests on it). The
+        gap was already ~15x with the old 5000-px geometry and is now ~25x.
+        This test exists so the discrepancy is visible rather than silently
+        rescaled; change it only together with the downlink lesson.
+        """
+        cfg = self._mission_config()
+        raw_mb = (cfg["pixels_across_track"] * 4 * cfg["bits_per_pixel"]
+                  * 2048 / 8 / 1e6)
+        assert raw_mb == pytest.approx(100.7, abs=0.5)
+        assert cfg["image_size_mb"] == 4.0

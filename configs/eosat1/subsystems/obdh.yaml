@@ -3,6 +3,16 @@ modes: [nominal, safe, emergency]
 watchdog_period_ticks: 30
 cpu_baseline_pct: 35.0
 
+# ── Onboard clock (docs/plan_2026-08c/TIME_ARCHITECTURE.md Part B) ──
+# The OBC clock is INDEPENDENT of sim time. It starts at J2000 (CUC 0) on
+# power-up and after every bootloader reset, free-runs with the drift drawn
+# below, and is held exactly to true time only while GPS-disciplined.
+clock_drift_ppm_nominal: 12.0     # a plausible TCXO — ~1 s/day
+clock_drift_sigma_ppm: 4.0        # per-unit spread, drawn once per run
+clock_gps_discipline: true        # a GPS sync latches into disciplined mode
+clock_jump_event_threshold_s: 1.0 # |jump| that raises an S5 clock event
+clock_drift_failure_ppm: 500.0    # ppm forced by the `clock_drift` injection
+
 param_ids:
   obc_mode: 0x0300
   obc_temp: 0x0301
@@ -16,3 +26,9 @@ param_ids:
   obc_time: 0x0309
   reboot_count: 0x030A
   sw_version: 0x030B
+  # Onboard clock telemetry (Part B). 0x0309 is the coarse CUC second; these
+  # three are new. 0x031F is taken (heat dissipation) and 0x0320+ belongs to
+  # TCS, so the new ids come from the OBDH-owned 0x0A1x block.
+  obc_time_fine: 0x0A12
+  time_ref: 0x0A13
+  time_since_sync: 0x0A14

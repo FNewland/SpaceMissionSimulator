@@ -712,3 +712,225 @@ class TestProcedureFailure:
         assert runner.state == ProcedureState.FAILED
         assert runner.step_results[0]["result"] == int(StepResult.FAILED)
         assert runner.step_results[1]["result"] == int(StepResult.PENDING)
+
+
+# ── Branching (label / branch) ───────────────────────────────────────
+
+async def _run_to_rest(runner, timeout_s=5.0):
+    """Start the procedure and wait until it stops running."""
+    await runner.start()
+    deadline = asyncio.get_event_loop().time() + timeout_s
+    while asyncio.get_event_loop().time() < deadline:
+        await asyncio.sleep(0.01)
+        if runner.state not in (ProcedureState.RUNNING, ProcedureState.PAUSED):
+            return
+    raise AssertionError(
+        f"procedure did not finish within {timeout_s}s "
+        f"(state={runner.state.name}, step={runner.current_step})"
+    )
+
+
+def _shed_card(on_true="RECOVERED", on_false="SHED"):
+    """A miniature of the undervoltage load-shed card: the branch decides
+    whether the shed command is sent at all."""
+    return [
+        {"type": "label", "name": "START"},
+        {"type": "branch", "parameter": "eps.bus_voltage", "condition": ">",
+         "value": 26.5, "timeout_s": 0.2,
+         "on_true": on_true, "on_false": on_false},
+        {"type": "label", "name": "SHED"},
+        {"type": "command", "service": 8, "subtype": 1, "func_id": "0x14",
+         "description": "Shed payload line"},
+        {"type": "label", "name": "RECOVERED"},
+        {"type": "wait", "seconds": 0.01},
+    ]
+
+
+class TestBranchExecution:
+    """2026-08b ruling R4: `branch` jumps to a `label`; a skipped branch means
+    the procedure runs straight past its own decision point."""
+
+    @pytest.mark.asyncio
+    async def test_branch_taken_skips_the_arm(self):
+        """Predicate true -> jump to the GO label; the NO-GO arm never runs."""
+        runner, send_fn, _ = _make_runner(
+            telemetry_values={"eps.bus_voltage": 28.0})
+        runner.load("BranchTaken", _shed_card())
+        await _run_to_rest(runner)
+        assert runner.state == ProcedureState.COMPLETED
+        # The shed command sits on the NO-GO arm and must NOT have been sent.
+        assert send_fn.await_count == 0
+        assert runner.step_results[3]["result"] == int(StepResult.PENDING)
+        assert runner.step_results[1]["result"] == int(StepResult.PASSED)
+        # ...and the jumped-to arm did run.
+        assert runner.step_results[5]["result"] == int(StepResult.PASSED)
+
+    @pytest.mark.asyncio
+    async def test_branch_not_taken_falls_through_to_the_nogo_arm(self):
+        """Predicate false for the whole window -> the NO-GO arm runs."""
+        runner, send_fn, _ = _make_runner(
+            telemetry_values={"eps.bus_voltage": 24.0})
+        runner.load("BranchNotTaken", _shed_card())
+        await _run_to_rest(runner)
+        assert runner.state == ProcedureState.COMPLETED
+        assert send_fn.await_count == 1
+        assert runner.step_results[3]["result"] == int(StepResult.PASSED)
+
+    @pytest.mark.asyncio
+    async def test_branch_arm_with_no_target_falls_through(self):
+        """An empty arm means 'continue in sequence' — not a failure."""
+        runner, send_fn, _ = _make_runner(
+            telemetry_values={"eps.bus_voltage": 24.0})
+        runner.load("EmptyArm", _shed_card(on_false=""))
+        await _run_to_rest(runner)
+        assert runner.state == ProcedureState.COMPLETED
+        assert send_fn.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_branch_to_missing_label_fails_closed(self):
+        """A target the card does not declare stops the procedure — guessing an
+        arm on a contingency card is worse than stopping."""
+        runner, send_fn, _ = _make_runner(
+            telemetry_values={"eps.bus_voltage": 28.0})
+        runner.load("MissingLabel", _shed_card(on_true="NO-SUCH-STEP"))
+        await _run_to_rest(runner)
+        assert runner.state == ProcedureState.FAILED
+        assert runner.step_results[1]["result"] == int(StepResult.FAILED)
+        assert send_fn.await_count == 0
+        assert any("missing" in e["action"].lower()
+                   for e in runner._execution_log)
+
+    @pytest.mark.asyncio
+    async def test_branch_without_targets_fails_closed(self):
+        runner, _, _ = _make_runner(telemetry_values={"eps.bus_voltage": 28.0})
+        runner.load("NoTargets", [
+            {"type": "branch", "parameter": "eps.bus_voltage", "condition": ">",
+             "value": 26.5, "timeout_s": 0.1, "on_true": "", "on_false": ""},
+        ])
+        await _run_to_rest(runner)
+        assert runner.state == ProcedureState.FAILED
+
+    @pytest.mark.asyncio
+    async def test_label_step_is_inert_and_passes(self):
+        runner, send_fn, _ = _make_runner()
+        runner.load("LabelOnly", [{"type": "label", "name": "STEP-1"},
+                                  {"type": "wait", "seconds": 0.01}])
+        await _run_to_rest(runner)
+        assert runner.state == ProcedureState.COMPLETED
+        assert send_fn.await_count == 0
+        assert runner.step_results[0]["result"] == int(StepResult.PASSED)
+
+    @pytest.mark.asyncio
+    async def test_go_nogo_with_targets_jumps_to_the_go_arm(self):
+        """A gate carrying targets is a fork: falling through would execute the
+        NO-GO arm sitting immediately after it."""
+        runner, send_fn, _ = _make_runner()
+        runner.load("GateFork", [
+            {"type": "go_nogo", "label": "Recovered?",
+             "on_go": "DONE", "on_nogo": "RECOVER"},
+            {"type": "label", "name": "RECOVER"},
+            {"type": "command", "service": 8, "subtype": 1, "func_id": "0x14"},
+            {"type": "label", "name": "DONE"},
+        ])
+        await _run_to_rest(runner)
+        assert runner.state == ProcedureState.COMPLETED
+        assert send_fn.await_count == 0
+
+
+# ── Unknown step types fail closed ───────────────────────────────────
+
+class TestUnknownStepFailsClosed:
+    """MCS_REQUESTS §9: an unknown step type must never be counted as PASSED."""
+
+    @pytest.mark.asyncio
+    async def test_unknown_step_type_fails_and_stops_the_procedure(self):
+        runner, send_fn, _ = _make_runner()
+        runner.load("UnknownType", [
+            {"type": "frobnicate", "amount": 3},
+            {"type": "command", "service": 8, "subtype": 1, "func_id": "0x10"},
+        ])
+        await _run_to_rest(runner)
+        assert runner.state == ProcedureState.FAILED
+        assert runner.step_results[0]["result"] == int(StepResult.FAILED)
+        assert runner.step_results[1]["result"] == int(StepResult.PENDING)
+        assert send_fn.await_count == 0
+
+    @pytest.mark.asyncio
+    async def test_untagged_unrecognised_step_fails_closed(self):
+        """An untagged step that matches no dialect is canonicalised into a
+        `note`; the runner must not execute it as an inert pass."""
+        runner, _, _ = _make_runner()
+        runner.load("Garbage", [{"custom_field": "value"}])
+        await _run_to_rest(runner)
+        assert runner.state == ProcedureState.FAILED
+        assert runner.step_results[0]["result"] == int(StepResult.FAILED)
+
+    @pytest.mark.asyncio
+    async def test_authored_note_is_still_inert_and_passes(self):
+        """A real `note` — an operator instruction — sends nothing and is not a
+        failure. Fail-closed is about steps the runner cannot understand."""
+        runner, _, _ = _make_runner()
+        runner.load("Notes", [{"type": "note", "text": "Watch the temperature"}])
+        await _run_to_rest(runner)
+        assert runner.state == ProcedureState.COMPLETED
+        assert runner.step_results[0]["result"] == int(StepResult.PASSED)
+
+
+# ── Loop guard on backward jumps ─────────────────────────────────────
+
+def _retry_card(max_taken=None):
+    """A retry loop: the branch jumps BACKWARD to an earlier label."""
+    branch = {"type": "branch", "parameter": "tcs.htr_battery", "condition": "==",
+              "value": 1, "timeout_s": 0.05,
+              "on_true": "RETRY", "on_false": ""}
+    if max_taken is not None:
+        branch["max_taken"] = max_taken
+    return [
+        {"type": "label", "name": "RETRY"},
+        {"type": "command", "service": 8, "subtype": 1, "func_id": "0x28",
+         "description": "Command heater OFF"},
+        branch,
+        {"type": "wait", "seconds": 0.01},
+    ]
+
+
+class TestLoopGuard:
+    """A backward jump is a loop. Bounded it terminates; unbounded it must be
+    refused rather than run forever."""
+
+    @pytest.mark.asyncio
+    async def test_bounded_backward_jump_terminates(self):
+        # Telemetry never satisfies the exit condition, so the arm is taken
+        # every time it is offered — the bound is the only thing that stops it.
+        runner, send_fn, _ = _make_runner(
+            telemetry_values={"tcs.htr_battery": 1})
+        runner.load("BoundedRetry", _retry_card(max_taken=2))
+        await _run_to_rest(runner)
+        assert runner.state == ProcedureState.COMPLETED
+        # First pass + 2 bounded retries = 3 sends, then fall through.
+        assert send_fn.await_count == 3
+        assert runner.step_results[3]["result"] == int(StepResult.PASSED)
+        assert any("Loop bound reached" == e["action"]
+                   for e in runner._execution_log)
+
+    @pytest.mark.asyncio
+    async def test_unbounded_backward_jump_fails_closed(self):
+        runner, send_fn, _ = _make_runner(
+            telemetry_values={"tcs.htr_battery": 1})
+        runner.load("UnboundedRetry", _retry_card(max_taken=None))
+        await _run_to_rest(runner)
+        assert runner.state == ProcedureState.FAILED
+        assert runner.step_results[2]["result"] == int(StepResult.FAILED)
+        # It failed on the FIRST attempt to jump back, not after spinning.
+        assert send_fn.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_loop_bound_is_capped_at_the_schema_maximum(self):
+        """max_taken above the schema ceiling is clamped, not honoured."""
+        from smo_common.procedures.schema import MAX_LOOP_ITERATIONS
+        runner, send_fn, _ = _make_runner(
+            telemetry_values={"tcs.htr_battery": 1})
+        runner.load("Greedy", _retry_card(max_taken=500))
+        await _run_to_rest(runner, timeout_s=15.0)
+        assert runner.state == ProcedureState.COMPLETED
+        assert send_fn.await_count == MAX_LOOP_ITERATIONS + 1

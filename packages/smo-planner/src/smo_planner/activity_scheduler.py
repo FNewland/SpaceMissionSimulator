@@ -2,13 +2,18 @@
 
 Supports activity states, conflict detection, procedure references,
 command sequence generation, and pass-based scheduling validation.
+
+Time domain: every ``start_time`` here is an absolute ISO-8601 UTC instant on
+**SIM TIME** (the simulator's clock). Conversion to the spacecraft's on-board
+CUC happens once, in the MCS, at S11 upload — see
+``server._handle_upload_schedule`` and ``docs/plan_2026-08c/TIME_ARCHITECTURE.md``.
 """
 from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from enum import IntEnum
 from typing import Any
 
-from smo_planner.utils import parse_iso as _parse_iso
+from smo_planner.utils import parse_iso as _parse_iso, iso_sort_key as _iso_key
 from smo_planner.constraint_checkers import (
     validate_plan, ValidationResult,
     PowerConstraintChecker, AOCSConstraintChecker,
@@ -82,7 +87,11 @@ class ActivityScheduler:
             activity["warnings"] = warnings_list
 
         self._schedule.append(activity)
-        self._schedule.sort(key=lambda a: a["start_time"])
+        # Chronological, not lexical: activity times may arrive with a "Z"
+        # suffix, an explicit "+00:00", or a non-UTC offset, and those three
+        # spellings of the same instant do not sort against each other as
+        # strings (see utils.iso_sort_key).
+        self._schedule.sort(key=lambda a: _iso_key(a.get("start_time")))
         return activity
 
     def get_schedule(self) -> list[dict]:
@@ -134,13 +143,12 @@ class ActivityScheduler:
             ):
                 continue
 
-            # Check time overlap
+            # Name-based (mutual-exclusion) conflicts only. Time overlap is
+            # decided in check_time_overlap, which parses both instants; this
+            # method never compares time strings.
             ex_start = existing.get("start_time", "")
-            ex_duration = existing.get("duration_s", 300)
 
-            # Simple string comparison (ISO format is sortable)
             if start and ex_start:
-                # Check name conflict
                 ex_name = existing.get("name", "")
                 if ex_name in conflicts_with or name in existing.get(
                     "conflicts_with", []

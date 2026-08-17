@@ -256,6 +256,13 @@ structures:
       - { param_id: 0x031C, pack_format: H, scale: 100 }
       - { param_id: 0x031D, pack_format: H, scale: 100 }
       - { param_id: 0x031E, pack_format: H, scale: 1 }
+      # Onboard clock (TIME_ARCHITECTURE.md Part B). 0x0309 above carries the
+      # coarse CUC second; these carry the sub-second, the time reference and
+      # the age of the last sync, so an operator can see the state of the
+      # clock in routine HK without an S9,2 request.
+      - { param_id: 0x0A12, pack_format: H, scale: 1 }   # obc_time_fine (1/65536 s)
+      - { param_id: 0x0A13, pack_format: B, scale: 1 }   # time_ref
+      - { param_id: 0x0A14, pack_format: I, scale: 1 }   # time_since_sync_s
 
   - sid: 5
     name: Payload

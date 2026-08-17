@@ -75,8 +75,16 @@ CIRCULAR_STORES = {1}
 class OnboardTMStorage:
     """S15 Onboard TM packet storage with circular and stop-when-full modes."""
 
-    def __init__(self, store_defs: dict | None = None):
+    def __init__(self, store_defs: dict | None = None,
+                 time_source=None):
+        """``time_source`` is a zero-argument callable returning **onboard**
+        CUC seconds since the mission epoch (the OBDH clock — spec Part C.5),
+        used to stamp any packet stored without an explicit timestamp. The
+        engine wires it to ``engine._get_cuc_time``. Left None (bare unit-test
+        storages) the stamps stay 0.0, as before.
+        """
         defs = store_defs or DEFAULT_STORES
+        self._time_source = time_source
         self._stores: dict[int, list] = {}
         self._capacities: dict[int, int] = {}
         self._enabled: dict[int, bool] = {}
@@ -86,6 +94,10 @@ class OnboardTMStorage:
         self._oldest_ts: dict[int, float] = {}
         self._newest_ts: dict[int, float] = {}
         self._wrap_count: dict[int, int] = {}
+        # Per-packet onboard timestamps, parallel to _stores[sid]. Kept so a
+        # circular store's oldest_ts follows the eviction instead of reporting
+        # the timestamp of a packet that was overwritten hours ago.
+        self._ts: dict[int, list] = {}
 
         for store_id, info in defs.items():
             cap = info.get('capacity', 5000)
@@ -98,10 +110,30 @@ class OnboardTMStorage:
             self._oldest_ts[store_id] = 0.0
             self._newest_ts[store_id] = 0.0
             self._wrap_count[store_id] = 0
+            self._ts[store_id] = []
+
+    def set_time_source(self, time_source) -> None:
+        """Install the onboard clock used to stamp stored packets."""
+        self._time_source = time_source
+
+    def _onboard_now(self) -> float:
+        """Onboard CUC seconds, or 0.0 when no clock is wired up."""
+        if self._time_source is None:
+            return 0.0
+        try:
+            return float(self._time_source())
+        except Exception:  # noqa: BLE001 — storage must never break emission
+            logger.warning("Onboard time source failed; storing unstamped")
+            return 0.0
 
     def store_packet(self, service_type: int, pkt: bytes,
-                     timestamp: float = 0.0) -> bool:
+                     timestamp: float | None = None) -> bool:
         """Route a TM packet to the appropriate store by service type.
+
+        ``timestamp`` is **onboard CUC seconds**; None reads the installed
+        onboard clock. It used to default to 0.0, and every engine call site
+        omitted it, so oldest_ts/newest_ts were never populated for the HK,
+        event and science stores (spec Part C.5).
 
         Returns True if stored, False if store is full (linear) or disabled.
         """
@@ -115,8 +147,12 @@ class OnboardTMStorage:
         return self.store_packet_direct(store_id, pkt, timestamp)
 
     def store_packet_direct(self, store_id: int, pkt: bytes,
-                            timestamp: float = 0.0) -> bool:
+                            timestamp: float | None = None) -> bool:
         """Store a packet directly into a specific store.
+
+        ``timestamp`` is **onboard CUC seconds**; None reads the installed
+        onboard clock, so the store timestamps match the CUC in the headers of
+        the packets it holds.
 
         Returns True if stored. For circular stores, always succeeds (overwrites
         oldest). For linear stores, returns False if full.
@@ -126,13 +162,20 @@ class OnboardTMStorage:
         if not self._enabled.get(store_id, False):
             return False
 
+        if timestamp is None:
+            timestamp = self._onboard_now()
+        timestamp = float(timestamp)
+
         store = self._stores[store_id]
+        ts_list = self._ts.setdefault(store_id, [])
         cap = self._capacities[store_id]
 
         if len(store) >= cap:
             if self._circular.get(store_id, False):
                 # Circular buffer: overwrite oldest packet
                 store.pop(0)
+                if ts_list:
+                    ts_list.pop(0)
                 self._overflow[store_id] = True
                 self._wrap_count[store_id] += 1
             else:
@@ -141,17 +184,29 @@ class OnboardTMStorage:
                 return False
 
         store.append(pkt)
-
-        # Track timestamps
-        if timestamp > 0:
-            if len(store) == 1:
-                self._oldest_ts[store_id] = timestamp
-            self._newest_ts[store_id] = timestamp
-
+        ts_list.append(timestamp)
+        self._refresh_ts(store_id)
         return True
 
-    def store_alarm(self, pkt: bytes, timestamp: float = 0.0) -> bool:
-        """Store a packet in the alarm buffer (store 4)."""
+    def _refresh_ts(self, store_id: int) -> None:
+        """Recompute oldest/newest onboard timestamps for a store.
+
+        CUC 0 is a legitimate onboard time (the OBC boots at J2000 and every
+        bootloader reset returns it there), so 0.0 is only treated as "no
+        timestamp" when the whole store is unstamped.
+        """
+        stamped = [t for t in self._ts.get(store_id, ()) if t > 0]
+        if stamped:
+            self._oldest_ts[store_id] = stamped[0]
+            self._newest_ts[store_id] = stamped[-1]
+
+    def store_alarm(self, pkt: bytes, timestamp: float | None = None) -> bool:
+        """Store a packet in the alarm buffer (store 4).
+
+        ``timestamp`` is onboard CUC seconds — the alarm store used to be
+        stamped with ``sim_time.timestamp()``, a Unix float, which could not
+        be compared with the CUC in the headers of the packets inside it.
+        """
         return self.store_packet_direct(4, pkt, timestamp)
 
     def start_dump(self, store_id: int) -> list[bytes]:
@@ -173,6 +228,7 @@ class OnboardTMStorage:
         """Clear all packets in a store and reset overflow."""
         if store_id in self._stores:
             self._stores[store_id].clear()
+            self._ts.setdefault(store_id, []).clear()
             self._overflow[store_id] = False
             self._oldest_ts[store_id] = 0.0
             self._newest_ts[store_id] = 0.0
@@ -195,6 +251,7 @@ class OnboardTMStorage:
             },
             "enabled": {str(k): v for k, v in self._enabled.items()},
             "overflow": {str(k): v for k, v in self._overflow.items()},
+            "packet_ts": {str(k): list(v) for k, v in self._ts.items()},
             "oldest_ts": {str(k): v for k, v in self._oldest_ts.items()},
             "newest_ts": {str(k): v for k, v in self._newest_ts.items()},
             "wrap_count": {str(k): v for k, v in self._wrap_count.items()},
@@ -219,6 +276,15 @@ class OnboardTMStorage:
                 k = int(k_str)
                 if k in target:
                     target[k] = v
+        # Per-packet timestamps. Snapshots taken before they existed restore
+        # as unstamped, and any length mismatch is padded/trimmed so the two
+        # lists stay parallel.
+        packet_ts = state.get("packet_ts", {})
+        for sid in self._stores:
+            n = len(self._stores[sid])
+            vals = [float(t) for t in packet_ts.get(str(sid), [])][:n]
+            vals = [0.0] * (n - len(vals)) + vals
+            self._ts[sid] = vals
 
     def get_status(self) -> list[dict]:
         """Return status of all stores."""

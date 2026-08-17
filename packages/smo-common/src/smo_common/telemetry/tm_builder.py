@@ -6,16 +6,36 @@ S20 (Parameter Value Reports).
 
 Config-driven: HK structure definitions are loaded from YAML config
 rather than being hardcoded.
+
+Time: every packet is stamped with ON-BOARD time from the injected
+``time_source`` into the 9-octet PUS secondary header (CUC coarse u32 + fine
+u16). There is no wall-clock fallback and no untimestamped path — see
+``MissingTimeSourceError`` and ``docs/plan_2026-08c/TIME_ARCHITECTURE.md``.
 """
 import struct
 import logging
-from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, Optional, Union
 
-from ..protocol.ecss_packet import crc16_ccitt, TIME_EPOCH
+from ..protocol.ecss_packet import CucTime, crc16_ccitt
 from ..protocol.pus_services import encode_failure_reason
 
 logger = logging.getLogger(__name__)
+
+#: What a TM time source may return: full-precision seconds since the mission
+#: epoch, or a ready-made :class:`CucTime`.
+TimeSourceResult = Union[float, int, CucTime]
+TimeSource = Callable[[], TimeSourceResult]
+
+
+class MissingTimeSourceError(RuntimeError):
+    """Raised when a TM packet is built with no on-board clock available.
+
+    Every packet the spacecraft emits is timestamped with ON-BOARD time. There
+    is no fallback: stamping a packet with the host wall clock would put a
+    number on the wire that no on-board clock ever produced, and would do so
+    silently. A missing time source is a wiring bug in the caller.
+    """
+
 
 # Maximum length of an S5 event report's auxiliary text, in octets. The field
 # is length-prefixed with one octet in both the builder and every parser, so
@@ -25,13 +45,47 @@ logger = logging.getLogger(__name__)
 EVENT_AUX_TEXT_MAX = 120
 
 
+def _as_cuc(value: TimeSourceResult) -> CucTime:
+    """Coerce a time-source result (seconds or CucTime) to a CucTime."""
+    if isinstance(value, CucTime):
+        return value
+    if isinstance(value, (int, float)):
+        return CucTime.from_seconds(value)
+    raise TypeError(
+        f"TM time source must return seconds (float/int) or CucTime, "
+        f"got {type(value).__name__}"
+    )
+
+
 class TMBuilder:
     """Assembles ECSS PUS TM packets. All packets are big-endian per CCSDS/ECSS."""
 
-    def __init__(self, apid: int, time_source=None):
+    def __init__(self, apid: int, time_source: Optional[TimeSource] = None):
+        """
+        Args:
+            apid: source APID for emitted packets.
+            time_source: **the on-board clock**. A zero-argument callable
+                returning either
+
+                * a ``float`` (or ``int``) of full-precision seconds since the
+                  mission epoch — fractional seconds are carried into the CUC
+                  fine field, they are not discarded; or
+                * a :class:`~smo_common.protocol.ecss_packet.CucTime`.
+
+                It must return ON-BOARD time (the OBDH clock), never sim time
+                and never wall clock. It is effectively mandatory: any attempt
+                to build a packet without it raises
+                :class:`MissingTimeSourceError`. It stays optional in the
+                signature only so a builder can be constructed before the
+                clock is wired and completed with :meth:`set_time_source`.
+        """
         self._apid = apid
         self._seq_count = 0
-        self._time_source = time_source  # callable returning CUC seconds
+        self._time_source: Optional[TimeSource] = time_source
+
+    def set_time_source(self, time_source: TimeSource) -> None:
+        """Attach (or replace) the on-board clock. See :meth:`__init__`."""
+        self._time_source = time_source
 
     @property
     def apid(self) -> int:
@@ -78,7 +132,11 @@ class TMBuilder:
         cuc = self._get_cuc(params)
         aux = aux_text.encode('ascii', errors='ignore')[:EVENT_AUX_TEXT_MAX]
         data = struct.pack('>HB', event_id, severity)
-        data += struct.pack('>I', cuc)
+        # The event body repeats the timestamp as WHOLE SECONDS only (uint32).
+        # Deliberately unchanged by the CUC migration: it is a legacy field
+        # that every parser reads as '>I' at a fixed offset, and the secondary
+        # header now carries the authoritative full-precision time.
+        data += struct.pack('>I', cuc.coarse)
         data += struct.pack('>B', len(aux)) + aux
         return self._pack_tm(service=5, subtype=severity, data=data, cuc=cuc)
 
@@ -124,10 +182,15 @@ class TMBuilder:
         data += encode_failure_reason(reason)
         return self._pack_tm(service=1, subtype=8, data=data)
 
-    def build_time_report(self, cuc: int) -> bytes:
-        """Build Service 9 subtype 2 — Time Report."""
-        data = struct.pack('>I', cuc)
-        return self._pack_tm(service=9, subtype=2, data=data, cuc=cuc)
+    def build_time_report(self, cuc: TimeSourceResult | None = None) -> bytes:
+        """Build Service 9 subtype 2 — Time Report.
+
+        Body is the CUC in the same 6-octet wire form as the secondary header:
+        ``coarse(u32) fine(u16)``. Pass seconds (float/int) or a ``CucTime``;
+        omit it to report the on-board clock.
+        """
+        cuc_t = self._get_cuc() if cuc is None else _as_cuc(cuc)
+        return self._pack_tm(service=9, subtype=2, data=cuc_t.pack(), cuc=cuc_t)
 
     def build_connection_test_report(self) -> bytes:
         """Build Service 17 subtype 2 — Connection Test Report."""
@@ -141,8 +204,16 @@ class TMBuilder:
         return self._pack_tm(service=20, subtype=2, data=data, cuc=cuc)
 
     def _pack_tm(self, service: int, subtype: int, data: bytes,
-                 cuc: int = 0) -> bytes:
-        sec_hdr = bytes([0x10, service, subtype]) + struct.pack('>I', cuc)
+                 cuc: TimeSourceResult | None = None) -> bytes:
+        """Assemble a TM packet with the 9-octet PUS secondary header.
+
+        ``cuc`` may be seconds (float/int) or a ``CucTime``. Omitting it reads
+        the on-board clock — it does NOT mean "timestamp zero". Every packet
+        the spacecraft emits carries on-board time (TIME_ARCHITECTURE.md rule 1),
+        so there is no untimestamped path out of this builder.
+        """
+        cuc_t = self._get_cuc() if cuc is None else _as_cuc(cuc)
+        sec_hdr = bytes([0x10, service & 0xFF, subtype & 0xFF]) + cuc_t.pack()
         payload = sec_hdr + data
         data_length_field = len(payload) + 1  # CCSDS: (octets after primary including CRC) - 1
         self._seq_count = (self._seq_count + 1) & 0x3FFF
@@ -153,9 +224,15 @@ class TMBuilder:
         crc = crc16_ccitt(packet)
         return packet + struct.pack('>H', crc)
 
-    def _get_cuc(self, params: dict) -> int:
-        if self._time_source is not None:
-            return self._time_source()
-        # Fallback: current wall-clock
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-        return int((now - TIME_EPOCH).total_seconds())
+    def _get_cuc(self, params: Optional[dict] = None) -> CucTime:
+        """Read the on-board clock. Raises if none is wired.
+
+        There is **no wall-clock fallback**: see :class:`MissingTimeSourceError`.
+        """
+        if self._time_source is None:
+            raise MissingTimeSourceError(
+                "TMBuilder has no time_source: cannot timestamp a TM packet. "
+                "Wire the OBDH clock in via TMBuilder(time_source=...) or "
+                "set_time_source(). The host wall clock is not a substitute."
+            )
+        return _as_cuc(self._time_source())

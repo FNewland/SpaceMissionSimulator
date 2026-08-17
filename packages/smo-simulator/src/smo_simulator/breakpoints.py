@@ -10,9 +10,16 @@ memory image. A failure saving ANY component fails the WHOLE save (brief 08
 C-3: the old code logged a warning and persisted a silently-incomplete
 breakpoint that loaded without complaint).
 
+Clocks (TIME_ARCHITECTURE Part C.8): a snapshot restores ONE coherent sim
+clock — `sim_time` — from which the orbit propagator is re-driven; `saved_at`
+is a wall-clock session artefact and is never read back into state. The
+spacecraft's ONBOARD clock is not stored separately either: it belongs to the
+OBDH model and round-trips inside `subsystems["obdh"]`.
+
 Snapshot format (backwards compatible — old snapshots still load):
-  top-level:   name, timestamp, tick_count, sim_time, speed, sc_mode,
-               params, fdir_triggered, hk_timers, hk_enabled, orbit_utc,
+  top-level:   name, saved_at (was: timestamp), tick_count, sim_time, speed,
+               sc_mode, params, fdir_triggered, hk_timers, hk_enabled,
+               orbit_utc (legacy mirror of sim_time, written but not read),
                orbit_elset (Phase D: post-burn TLE re-fit; None/absent =
                never manoeuvred, config TLE authoritative)
   subsystems:  {model_name: model.get_state()}          (pre-A-4 key, kept)
@@ -58,9 +65,15 @@ class BreakpointManager:
         """
         eng = self._engine
         state = {
+            # `name`/`saved_at` describe the SESSION (which file, saved when by
+            # whose console) and are the one legitimate wall-clock use here.
+            # Everything about the simulated world is on sim time.
             "name": name or f"breakpoint_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "saved_at": datetime.now(timezone.utc).isoformat(),
             "tick_count": eng._tick_count,
+            # THE clock (spec Part C.1/C.8). The orbit propagator has no clock
+            # of its own, so this one field restores the whole sim-time state;
+            # the onboard clock is inside the OBDH model's own state block.
             "sim_time": eng._sim_time.isoformat(),
             "speed": eng.speed,
             "sc_mode": eng.sc_mode,
@@ -108,13 +121,16 @@ class BreakpointManager:
         if isinstance(hk_enabled, dict):
             state["hk_enabled"] = {str(k): bool(v) for k, v in hk_enabled.items()}
 
-        # Orbit propagator clock AND element set (Phase D). SGP4 was
-        # stateless given a UTC time only until propulsion existed: a burn
-        # re-fits the element set, so the clock alone no longer identifies
-        # the orbit. orbit_elset is None while the spacecraft has never
-        # manoeuvred (the config TLE stays authoritative), and old snapshots
-        # without the key restore correctly as un-manoeuvred. The clock is
-        # still INDEPENDENT of eng._sim_time.
+        # Orbit ELEMENT SET (Phase D). SGP4 was stateless given a UTC time
+        # only until propulsion existed: a burn re-fits the element set, so
+        # the clock alone no longer identifies the orbit. orbit_elset is None
+        # while the spacecraft has never manoeuvred (the config TLE stays
+        # authoritative), and old snapshots without the key restore correctly
+        # as un-manoeuvred.
+        #
+        # The propagator's clock is NOT saved separately any more: it has no
+        # clock of its own, it is driven from `sim_time` above. `orbit_utc` is
+        # still written for older readers, and is always equal to sim_time.
         orbit = getattr(eng, "orbit", None)
         if orbit is not None:
             try:
@@ -232,13 +248,16 @@ class BreakpointManager:
                 for sid, on in state["hk_enabled"].items():
                     eng._hk_enabled[int(sid)] = bool(on)
 
-            # Restore the orbit propagator's ELEMENT SET first (Phase D: a
-            # burn's TLE re-fit must be back in place before the clock reset
-            # propagates), then the clock so the satellite is back at the
-            # snapshot's orbital position. A snapshot without orbit_elset
-            # (pre-propulsion, or never manoeuvred) restores the config TLE.
-            # Fall back to the engine sim_time for snapshots that pre-date
-            # the orbit_utc field.
+            # Restore the orbit propagator's ELEMENT SET (Phase D: a burn's
+            # TLE re-fit must be back in place before we re-propagate), then
+            # drive the propagator from the ONE restored clock — eng._sim_time
+            # — so the satellite is back at the snapshot's orbital position.
+            # There is no separate orbit clock to restore and no fallback to
+            # choose between: a snapshot that carries an `orbit_utc`
+            # disagreeing with `sim_time` was written by the pre-Part-C code
+            # and the sim clock is the authority. A snapshot without
+            # orbit_elset (pre-propulsion, or never manoeuvred) restores the
+            # config TLE.
             orbit = getattr(eng, "orbit", None)
             if orbit is not None and hasattr(orbit, "set_elset"):
                 try:
@@ -246,13 +265,10 @@ class BreakpointManager:
                 except Exception as e:
                     logger.warning("Orbit element-set restore failed: %s", e)
             if orbit is not None and hasattr(orbit, "reset"):
-                from datetime import datetime as _dt
-                utc_str = state.get("orbit_utc") or state.get("sim_time")
-                if utc_str:
-                    try:
-                        orbit.reset(_dt.fromisoformat(utc_str))
-                    except Exception as e:
-                        logger.warning("Orbit propagator reset failed: %s", e)
+                try:
+                    orbit.reset(eng._sim_time)
+                except Exception as e:
+                    logger.warning("Orbit propagator reset failed: %s", e)
 
             logger.info("Breakpoint loaded: %s", state.get("name", "unknown"))
             return True

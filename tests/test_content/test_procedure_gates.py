@@ -76,15 +76,13 @@ def _commands(steps: list[dict]) -> list[dict]:
 def _is_advisory(entry: dict) -> bool:
     """A card that DECLARES it commands nothing.
 
-    Encoded as ``runnable: {kind: advisory, reason: ...}`` rather than the
-    ``advisory: true`` / ``advisory_reason:`` pair the ruling names, because
-    ``ProcedureIndexEntry`` is a ``StrictModel`` in
-    ``smo_common/config/schemas.py`` — not a Phase-5-owned file — and would
-    reject the two new keys. The information is identical, the field is already
-    in the schema, and ``smo_mcs.server._resolve_runnable`` already treats an
-    unknown ``kind`` as not-runnable. See the phase report.
+    Encoded as the first-class ``advisory: true`` / ``advisory_reason:`` pair
+    on ``ProcedureIndexEntry`` (``smo_common/config/schemas.py``). It used to
+    be smuggled through ``runnable: {kind: advisory}``, which asserted the
+    card was linked to an executable definition when the declaration means the
+    opposite; an advisory card now carries no ``runnable:`` link at all.
     """
-    return (entry.get("runnable") or {}).get("kind") == "advisory"
+    return bool(entry.get("advisory"))
 
 
 @pytest.fixture(scope="module")
@@ -350,7 +348,7 @@ def test_command_services_matches_the_extracted_steps(entry):
         assert not extracted, (
             f"{entry['id']} is advisory but extracts commands on services "
             f"{extracted} — it is not advisory")
-        assert str((entry.get("runnable") or {}).get("reason", "")).strip(), (
+        assert str(entry.get("advisory_reason", "")).strip(), (
             f"{entry['id']} is advisory with no reason. The whole point of the "
             f"declaration is that 'zero commands' becomes a DECLARED property "
             f"with a stated reason.")

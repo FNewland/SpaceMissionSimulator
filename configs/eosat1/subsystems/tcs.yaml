@@ -97,14 +97,15 @@ fpa_cooler_target_c: -15.0
 # the margin is now finite, spendable and VISIBLE at 0x0424 (achievable floor)
 # and 0x0425 (margin), mirrored by the payload at 0x064A / 0x064B.
 fpa_cooler_max_lift_k: 40.0
-# NOT YET CONFIGURABLE. `fpa_cooler_carnot_fraction` (0.23),
-# `fpa_cooler_power_w` (15.0, matching subsystems/payload.yaml) and
-# `fpa_imaging_load_w` (2.0) are read with `config.get(...)` by the model but
-# TCSConfig is a StrictModel and does not declare them, so YAML values here
-# would be rejected by the loader. The model defaults are the live values.
-# Adding the three schema fields is requested in
-# docs/plan_2026-08b/DISPLAY_REQUESTS_PAYLOAD.md (smo-common is not the
-# payload owner's file).
+# Cooler efficiency model (DISPLAY_REQUESTS_PAYLOAD.md §8.2). These three were
+# read by `tcs_basic._fpa_achievable_lift_k` but NOT declared in TCSConfig,
+# which is a StrictModel — so putting them here would have been REJECTED by the
+# loader and the model's own literals were the live values. TCSConfig now
+# declares all three and they are real configuration; the Carnot fraction is
+# the knob for a "the cooler is degrading" scenario.
+fpa_cooler_power_w: 15.0          # matches subsystems/payload.yaml
+fpa_cooler_carnot_fraction: 0.23  # miniature Stirling class, see below
+fpa_imaging_load_w: 2.0           # detector/ROIC dissipation while IMAGING
 
 # ---------------------------------------------------------------------------
 # FPA THERMAL ENVELOPE — THE SINGLE SOURCE  (DECISIONS §3, ruled in G3-d)

@@ -57,6 +57,13 @@ limits:
   - { param_id: 0x0313, yellow_low: 0.0, yellow_high: 80.0, red_low: 0.0, red_high: 95.0, check_interval_s: 8 }
   - { param_id: 0x0314, yellow_low: 0.0, yellow_high: 80.0, red_low: 0.0, red_high: 95.0, check_interval_s: 8 }
 
+  # Onboard clock age (TIME_ARCHITECTURE.md Part B). At the nominal ~12 ppm
+  # the OBC gains ~1 s/day, so 12 h without a sync is worth flagging and 24 h
+  # is an anomaly. The never-synced sentinel (0xFFFFFFFF) deliberately reads
+  # RED: a clock that has never been set — e.g. straight after a reboot — is
+  # exactly the condition NOM-008 / LEOP-006 exist to close.
+  - { param_id: 0x0A14, yellow_low: 0.0, yellow_high: 43200.0, red_low: 0.0, red_high: 86400.0, check_interval_s: 60 }
+
   # OBDH Phase 4: SEU count, stack/heap usage
   - { param_id: 0x0319, yellow_low: 0.0, yellow_high: 10.0, red_low: 0.0, red_high: 50.0, check_interval_s: 60 }
   - { param_id: 0x031C, yellow_low: 0.0, yellow_high: 80.0, red_low: 0.0, red_high: 95.0, check_interval_s: 8 }

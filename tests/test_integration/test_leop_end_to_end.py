@@ -6,6 +6,8 @@ Covers:
   - ADCS commissioning sequence
   - Transition to nominal operations
 """
+import math
+
 import pytest
 from unittest.mock import MagicMock
 
@@ -183,7 +185,34 @@ class TestSequentialPowerOn:
         assert aocs._state.mode == MODE_DETUMBLE
 
     def test_aocs_detumble_reduces_rates(self):
-        """AOCS detumble mode should reduce body rates over time."""
+        """DETUMBLE (magnetometer-driven B-dot) damps the RATE MAGNITUDE.
+
+        The law is m = -k*Bdot with Bdot a first difference of the MEASURED
+        field, giving tau = m x B = -k*|B|^2*w_perp. Two consequences drive
+        the numbers below:
+
+        * Only the component of w PERPENDICULAR to B is damped at any instant,
+          and the field direction sweeps through the body as the spacecraft
+          tumbles. Energy therefore moves BETWEEN axes while the total falls,
+          so a per-axis assertion is not a statement about the law: measured
+          from (1.0, 0.8, 0.5) deg/s, |rate_roll| is 1.05 deg/s at t = 50 s
+          (up from 1.0) while the magnitude has already fallen 1.37 -> 1.28.
+          The pre-B-dot implementation fed back the TRUTH body rate, which
+          damped every axis directly, which is why the old 50 s per-axis
+          expectation held.
+        * The rate time constant is tau = I/(k*|B|^2) = 0.18/(5e5*(3e-5)^2)
+          ~ 400 s, and the 1.6 A.m^2 rods saturate above ~1 deg/s, so
+          convergence takes 10^3 s, not 50 s. Measured on this model from
+          |w0| = 1.37 deg/s: 1.13 at 100 s, 0.95 at 200 s, 0.63 at 600 s,
+          0.55 at 900 s (and below the 0.5 deg/s DETUMBLE exit guard at
+          t = 1166 s). From a 14 deg/s separation tumble it takes ~3.5e3 s.
+          The 0.70 deg/s threshold at 900 s leaves ~28 % margin on 0.55.
+        """
+        def rate_mag(model):
+            s = model._state
+            return math.sqrt(s.rate_roll ** 2 + s.rate_pitch ** 2
+                             + s.rate_yaw ** 2)
+
         aocs = AOCSBasicModel()
         aocs.configure({})
         aocs._state.mode = MODE_DETUMBLE
@@ -192,11 +221,37 @@ class TestSequentialPowerOn:
         aocs._state.rate_yaw = 0.5
         params = {}
         orbit = make_orbit_state()
-        for _ in range(50):
+        initial = rate_mag(aocs)
+        at_100 = None
+        for t in range(900):
             aocs.tick(1.0, orbit, params)
-        # Rates should be reduced (not necessarily zero due to noise)
-        assert abs(aocs._state.rate_roll) < 1.0
-        assert abs(aocs._state.rate_pitch) < 0.8
+            if t == 99:
+                at_100 = rate_mag(aocs)
+        final = rate_mag(aocs)
+
+        assert final < 0.70, (
+            f"B-dot did not damp the tumble: {initial:.2f} -> {final:.2f} "
+            f"deg/s in 900 s")
+        assert final < at_100 < initial, (
+            f"rate magnitude must fall throughout: {initial:.2f} -> "
+            f"{at_100:.2f} (100 s) -> {final:.2f} (900 s)")
+
+        # Control case: B-dot is a MAGNETOMETER law. With the magnetometer
+        # failed there is no damping at all — the mode's real failure
+        # signature, and the guard against a "detumble" that secretly reads
+        # the truth rate.
+        blind = AOCSBasicModel()
+        blind.configure({})
+        blind._state.mode = MODE_DETUMBLE
+        blind._state.mag_failed = True
+        blind._state.rate_roll = 1.0
+        blind._state.rate_pitch = 0.8
+        blind._state.rate_yaw = 0.5
+        for _ in range(900):
+            blind.tick(1.0, orbit, {})
+        assert rate_mag(blind) > 0.9 * initial, (
+            "rates decayed with the magnetometer failed — DETUMBLE is not "
+            "using the magnetometer")
 
     def test_tcs_heater_operates_independently(self):
         """TCS battery heater should operate regardless of LEOP phase."""

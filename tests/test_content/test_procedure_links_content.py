@@ -21,12 +21,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = REPO_ROOT / "configs" / "eosat1"
 PROC_DIR = CONFIG_DIR / "procedures"
 
-#: `advisory` is the fourth kind (2026-08b Phase 5): the document DECLARES that
-#: it commands nothing, so it is deliberately not offered for execution.
-#: `smo_mcs.server._resolve_runnable` returns None for any kind it does not
-#: know, so an advisory card is not-runnable there without an MCS change.
-VALID_KINDS = {"activity_type", "steps_file", "markdown", "advisory"}
-ADVISORY_KIND = "advisory"
+#: A `runnable:` link always names an EXECUTABLE definition. A card that
+#: declares it commands nothing (2026-08b Phase 5) says so with the
+#: `advisory: true` / `advisory_reason:` fields on `ProcedureIndexEntry` and
+#: carries no `runnable:` link at all — `advisory` is deliberately NOT a kind.
+VALID_KINDS = {"activity_type", "steps_file", "markdown"}
 
 
 def _index() -> list[dict]:
@@ -39,14 +38,11 @@ def _activity_types() -> dict[str, dict]:
     return {a["name"]: a for a in data["activity_types"]}
 
 
+#: Entries offered for EXECUTION. An advisory card declares that it is NOT
+#: executable, so it must never carry a link (asserted below).
 ALL_LINKED = [e for e in _index() if e.get("runnable")]
-#: Entries offered for EXECUTION. Advisory entries carry a `runnable:` mapping
-#: to declare that they are NOT executable, so they must be excluded from every
-#: check that resolves a link to steps.
-LINKED = [e for e in ALL_LINKED
-          if e["runnable"].get("kind") != ADVISORY_KIND]
-ADVISORY = [e for e in ALL_LINKED
-            if e["runnable"].get("kind") == ADVISORY_KIND]
+LINKED = ALL_LINKED
+ADVISORY = [e for e in _index() if e.get("advisory")]
 
 
 # ── runnable: links ─────────────────────────────────────────────────
@@ -64,10 +60,16 @@ def test_link_is_well_formed(entry):
     assert link.get("kind") in VALID_KINDS, f"{entry['id']}: {link}"
     if link["kind"] in ("activity_type", "steps_file"):
         assert link.get("ref"), f"{entry['id']}: {link['kind']} needs a ref"
-    if link["kind"] == ADVISORY_KIND:
-        assert link.get("reason"), (
-            f"{entry['id']}: an advisory card must say WHY it commands nothing "
-            f"— that is the whole point of declaring it")
+    assert not entry.get("advisory"), (
+        f"{entry['id']}: an advisory card declares it commands nothing, so it "
+        f"must not also carry a runnable link")
+
+
+@pytest.mark.parametrize("entry", ADVISORY, ids=[e["id"] for e in ADVISORY])
+def test_advisory_card_states_its_reason(entry):
+    assert str(entry.get("advisory_reason", "")).strip(), (
+        f"{entry['id']}: an advisory card must say WHY it commands nothing "
+        f"— that is the whole point of declaring it")
 
 
 @pytest.mark.parametrize("entry", LINKED, ids=[e["id"] for e in LINKED])

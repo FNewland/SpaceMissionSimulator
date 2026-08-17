@@ -76,7 +76,7 @@ must be evaluated after each recovery action.
 **Verify:** `aocs.st2_status` (0x0243) — record status
 **Verify:** `aocs.css_valid` (0x0248) — record CSS validity (1=valid)
 **Verify:** `aocs.mag_select` (0x0229) — record active magnetometer (0=A, 1=B)
-**Verify:** `aocs.mag_valid` (0x0230) — record magnetometer validity
+**Verify:** `aocs.mag_enabled` (0x025C) — record magnetometer validity
 **Verify:** `aocs.mode` (0x020F) — record current AOCS mode
 **Verify:** `aocs.att_error` (0x0217) — record current attitude error
 **Action:** Document all sensor states to establish which sensors are healthy and
@@ -145,7 +145,7 @@ degrade safe mode performance (COARSE_SUN relies on CSS).
 and both STs are failed, proceed to Step 5.
 
 ### Step 4: Magnetometer Failure Response
-**Condition:** `aocs.mag_valid` (0x0230) = 0 or magnetometer readings are invalid
+**Condition:** `aocs.mag_enabled` (0x025C) = 0 or magnetometer readings are invalid
 
 **Step 4a — Identify Failed Magnetometer:**
 **TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — Request AOCS housekeeping
@@ -166,7 +166,7 @@ or `MAG_SELECT(unit=0)` for MAG-A.
 **Verify:** `aocs.mag_select` (0x0229) reflects the new selection within 5 s
 **Action:** Wait 10 s for new magnetometer readings to stabilise.
 **TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — Request AOCS housekeeping
-**Verify:** `aocs.mag_valid` (0x0230) = 1 — magnetometer is now providing valid data
+**Verify:** `aocs.mag_enabled` (0x025C) = 1 — magnetometer is now providing valid data
 **Verify:** `aocs.mag_field_total` (0x0277) — in expected range (25000-65000 nT)
 **Action:** Log: "MAG-[A/B] FAILED — switched to MAG-[B/A]. No magnetometer redundancy."
 

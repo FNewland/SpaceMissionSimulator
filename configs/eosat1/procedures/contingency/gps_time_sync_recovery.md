@@ -21,30 +21,33 @@ command, and if necessary, re-commissions the AOCS through the required state tr
 ## Required Telemetry
 | Parameter | ID | Expected Value |
 |---|---|---|
-| gps.fix_type | 0x0605 | 3 (3D fix) — required for time sync |
-| gps.num_sats | 0x0606 | >= 5 satellites tracked |
-| gps.hdop | 0x060A | < 5.0 (horizontal dilution of precision) |
-| gps.utc_time | 0x0609 | Valid UTC timestamp |
-| obdh.obc_time | 0x0302 | Current onboard time |
-| obdh.time_src | 0x0303 | 0 = internal RTC, 1 = GPS synced |
-| aocs.mode | 0x020F | 0 = DETUMBLE, 1 = COARSE_SUN, 2 = NOMINAL, 3 = FINE_POINT, 4 = SAFE_BOOT |
-| aocs.state | 0x0218 | State within current mode |
+| aocs.gps_fix | 0x0274 | 3 (3D fix + velocity) — required for time sync |
+| aocs.gps_num_sats | 0x0276 | >= 5 satellites tracked |
+| aocs.gps_pdop | 0x0275 | < 5.0 (position dilution of precision) |
+| obdh.obc_time | 0x0309 | Current onboard CUC time (seconds since epoch) |
+| aocs.mode | 0x020F | 0 = OFF, 1 = SAFE_BOOT, 2 = DETUMBLE, 3 = COARSE_SUN, 4 = NOMINAL, 5 = FINE_POINT, 6 = SLEW, 7 = DESAT, 8 = ECLIPSE, 9 = INERTIAL |
+| aocs.att_error | 0x0217 | Pointing error for the current mode |
+
+**Note:** The GPS parameters belong to the AOCS subsystem (HK SID 2). There is no
+`gps.*` namespace, no `obdh.time_src` and no `aocs.state` in
+`telemetry/parameters.yaml`; 0x0605/0x0606/0x0609/0x060A are payload parameters,
+0x0303 is `obdh.mmm_used` and 0x0218 is `aocs.rw1_temp`.
 
 ## Required Commands
 | Command | Service | Subtype | Func ID | Description |
 |---|---|---|---|---|
 | HK_REQUEST | 3 | 27 | — | Request one-shot HK report |
 | OBC_GPS_TIME_SYNC | 8 | 1 | 80 | Synchronise OBC time to GPS UTC |
-| AOCS_SET_MODE | 8 | 4 | — | Command AOCS to specified mode |
+| AOCS_SET_MODE | 8 | 1 | 0 | Command AOCS to specified mode |
 
 ## Procedure Steps
 
 ### Step 1: Verify GPS 3D Fix Status
-**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) — Request GPS housekeeping
-**Verify:** `gps.fix_type` (0x0605) = 3 (3D fix)
-**Verify:** `gps.num_sats` (0x0606) >= 5 satellites tracked
-**Verify:** `gps.hdop` (0x060A) < 5.0 (acceptable horizontal precision)
-**Verify:** `gps.utc_time` (0x0609) is valid and incrementing
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — Request AOCS housekeeping (the GPS parameters live in the AOCS subsystem, SID 2; 0x0605-0x060A are payload parameters)
+**Verify:** `aocs.gps_fix` (0x0274) = 3 (3D fix + velocity)
+**Verify:** `aocs.gps_num_sats` (0x0276) >= 5 satellites tracked
+**Verify:** `aocs.gps_pdop` (0x0275) < 5.0 (acceptable position dilution of precision)
+**Note:** There is no GPS-UTC telemetry parameter in `telemetry/parameters.yaml`; the onboard clock is read from `obdh.obc_time` (0x0309) and the GPS-derived correction is applied by `OBC_GPS_TIME_SYNC` (S8 func 80).
 **Action:** If fix_type < 3:
 - Wait 1-2 minutes and request HK again (GPS may be re-acquiring lock)
 - If 3D fix not achieved after 2 retries, escalate to engineering (GPS receiver malfunction)
@@ -52,17 +55,23 @@ command, and if necessary, re-commissions the AOCS through the required state tr
 
 ### Step 2: Record Current AOCS Mode
 **TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — Request AOCS housekeeping
-**Verify:** Record the current `aocs.mode` (0x020F) value:
-- 0 = DETUMBLE
-- 1 = COARSE_SUN
-- 2 = NOMINAL
-- 3 = FINE_POINT
-- 4 = SAFE_BOOT
+**Verify:** Record the current `aocs.mode` (0x020F) value. Codes per `aocs/aocs_mode_codes.yaml`:
+- 0 = OFF
+- 1 = SAFE_BOOT
+- 2 = DETUMBLE
+- 3 = COARSE_SUN
+- 4 = NOMINAL
+- 5 = FINE_POINT
+- 6 = SLEW
+- 7 = DESAT
+- 8 = ECLIPSE
+- 9 = INERTIAL
 **Note:** If the AOCS is already in SAFE_BOOT, the mode value is recorded and will be used
 to determine re-commissioning sequence in Step 5.
-**Verify:** Record `aocs.state` (0x0218) for reference in post-event assessment.
-**Action:** Also note current `obdh.obc_time` (0x0309) and compare with `gps.utc_time` (0x0609)
-to estimate time jump magnitude.
+**Verify:** Record `aocs.att_error` (0x0217) for reference in post-event assessment.
+(0x0218 is `aocs.rw1_temp`, not an AOCS state word — there is no `aocs.state` parameter.)
+**Action:** Also note current `obdh.obc_time` (0x0309) and compare with the ground-stamped
+UTC to estimate time jump magnitude.
 **GO/NO-GO:** Current AOCS mode recorded — proceed to Step 3.
 
 ### Step 3: Send OBC GPS Time Synchronisation Command
@@ -71,10 +80,10 @@ to estimate time jump magnitude.
 exceeds 5 seconds, the AOCS will automatically trigger a protective transition to SAFE_BOOT.
 **Verify:** Wait 5 seconds for command execution and telemetry update.
 **TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) — Request OBDH housekeeping
-**Verify:** Check `obdh.time_src` (0x0303) = 1 (GPS synced) — indicates time sync occurred
+**Verify:** `obdh.obc_time` (0x0309) steps to the GPS-derived value — this is the evidence the sync occurred. (There is no `obdh.time_src` parameter; 0x0303 is `obdh.mmm_used`, mass-memory usage.)
 **Verify:** Compare `obdh.obc_time` (0x0309) to expected GPS time — should now match GPS UTC
-**Verify:** Request AOCS housekeeping: `HK_REQUEST(sid=5)` (Service 3, Subtype 27)
-**Check:** If `aocs.mode` (0x020F) = 4 (SAFE_BOOT):
+**Verify:** Request AOCS housekeeping: `HK_REQUEST(sid=2)` (Service 3, Subtype 27)
+**Check:** If `aocs.mode` (0x020F) = 1 (SAFE_BOOT):
 - Time jump exceeded 5 seconds threshold
 - AOCS autonomously entered SAFE_BOOT protection mode
 - Proceed to Step 5 (AOCS re-commissioning)
@@ -99,10 +108,10 @@ full attitude control capability. Follow the commissioning state machine defined
 (AOCS Commissioning Walkthrough), phases 9 and 11.
 
 **Phase 9 — DETUMBLE Mode:**
-**TC:** `AOCS_SET_MODE(mode=0)` (Service 8, Subtype 1, func_id 0) — Send mode command — (DETUMBLE)
+**TC:** `AOCS_SET_MODE(mode=2)` (Service 8, Subtype 1, func_id 0) — DETUMBLE
 **Rationale:** DETUMBLE uses magnetorquers and sun sensor to stabilize spacecraft rates.
 Reference: LEOP-004, Phase 9 — Initial Rate Damping.
-**Verify:** `aocs.mode` (0x020F) = 0 (DETUMBLE) within 10 seconds
+**Verify:** `aocs.mode` (0x020F) = 2 (DETUMBLE) within 10 seconds
 **Verify:** Angular rates begin decreasing: `aocs.rate_x`, `aocs.rate_y`, `aocs.rate_z` trending toward zero
 **Monitor:** Duration: ~3-5 orbits in DETUMBLE (rates must decay to < 1 deg/s)
 **Verify:** Attitude error: `aocs.att_error` (0x0217) < 30 degrees
@@ -111,9 +120,9 @@ Reference: LEOP-004, Phase 9 — Initial Rate Damping.
 
 **Phase 11 — Transition to NOMINAL and FINE_POINT:**
 **Note:** Once DETUMBLE is stable, transition through COARSE_SUN → NOMINAL → FINE_POINT:
-**TC:** `AOCS_SET_MODE(mode=1)` (Service 8, Subtype 1, func_id 0) — (COARSE_SUN) — wait 30 seconds, verify `aocs.mode` = 1
-**TC:** `AOCS_SET_MODE(mode=2)` (Service 8, Subtype 1, func_id 0) — (NOMINAL) — wait 30 seconds, verify `aocs.mode` = 2
-**TC:** `AOCS_SET_MODE(mode=3)` (Service 8, Subtype 1, func_id 0) — (FINE_POINT) — wait 30 seconds, verify `aocs.mode` = 3
+**TC:** `AOCS_SET_MODE(mode=3)` (Service 8, Subtype 1, func_id 0) — COARSE_SUN — wait 30 seconds, verify `aocs.mode` = 3
+**TC:** `AOCS_SET_MODE(mode=4)` (Service 8, Subtype 1, func_id 0) — NOMINAL — wait 30 seconds, verify `aocs.mode` = 4
+**TC:** `AOCS_SET_MODE(mode=5)` (Service 8, Subtype 1, func_id 0) — FINE_POINT — wait 30 seconds, verify `aocs.mode` = 5
 **Rationale:** Each transition allows attitude loop gain to re-establish at the new level.
 Reference: LEOP-004, Phase 11 — Fine Attitude Lock and Payload Commissioning.
 **Verify:** After each transition, confirm `aocs.mode` equals the commanded value
@@ -121,18 +130,17 @@ Reference: LEOP-004, Phase 11 — Fine Attitude Lock and Payload Commissioning.
 - COARSE_SUN target: < 10 degrees
 - NOMINAL target: < 5 degrees
 - FINE_POINT target: < 1 degree
-**Monitor:** `aocs.state` (0x0218) for convergence (e.g., "att_lock_achieved")
+**Monitor:** `aocs.att_error` (0x0217) for convergence
 **GO/NO-GO:** AOCS in FINE_POINT with `aocs.att_error` < 1 degree — re-commissioning complete.
 
 ### Step 6: Post-Recovery Verification
 **TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) — Platform/OBDH housekeeping
 **TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — AOCS housekeeping (GPS lives here)
-**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) — TT&C housekeeping — SIDs 4, 5, 6
-**Verify:** `obdh.obc_time` (0x0309) = current GPS UTC (from `gps.utc_time`, 0x0609)
-**Verify:** `obdh.time_src` (0x0303) = 1 (GPS synced)
-**Verify:** `aocs.mode` (0x020F) = 3 (FINE_POINT) or pre-event mode value
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27) — TT&C housekeeping
+**Verify:** `obdh.obc_time` (0x0309) = current GPS UTC within 1 s
+**Verify:** `aocs.mode` (0x020F) = 5 (FINE_POINT) or pre-event mode value
 **Verify:** `aocs.att_error` (0x0217) < mode-specific threshold
-**Verify:** `gps.fix_type` (0x0605) = 3 (3D fix maintained)
+**Verify:** `aocs.gps_fix` (0x0274) = 3 (3D fix maintained)
 **Verify:** `ttc.link_status` (0x0501) = 2 (LOCKED) — communication remained stable
 **Action:** Log the event with:
 - Time jump magnitude (OBC time before sync vs GPS time)
@@ -142,8 +150,8 @@ Reference: LEOP-004, Phase 11 — Fine Attitude Lock and Payload Commissioning.
 **GO/NO-GO:** All systems nominal, time synchronized, AOCS commissioned — recovery complete.
 
 ## Verification Criteria
-- [ ] GPS 3D fix confirmed (`gps.fix_type` 0x0605 = 3)
-- [ ] `obdh.time_src` (0x0303) = 1 (OBC time synchronized to GPS)
+- [ ] GPS 3D fix confirmed (`aocs.gps_fix` 0x0274 = 3)
+- [ ] `obdh.obc_time` (0x0309) synchronised to GPS UTC within 1 s
 - [ ] AOCS mode either stable in pre-event mode OR successfully re-commissioned to FINE_POINT
 - [ ] `aocs.att_error` (0x0217) within acceptable limits for final mode
 - [ ] TT&C link remains active throughout procedure

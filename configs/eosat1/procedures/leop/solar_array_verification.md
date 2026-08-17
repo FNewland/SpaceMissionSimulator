@@ -37,19 +37,23 @@ against predictions for the current sun angle and orbit phase. The spacecraft ha
 **Verify:** `eps.bat_soc` (0x0101) reported within 10s
 **GO/NO-GO:** EPS telemetry responding nominally
 
-### Step 2 — Check Solar Array A Deployment Status
-**TC:** `GET_PARAM(param_id=0x0110)` (Service 20, Subtype 3) — SA-A deploy switch status
-**Verify:** SA-A deploy switch = DEPLOYED (value 1) within 10s
-**TC:** `GET_PARAM(param_id=0x0112)` (Service 20, Subtype 3) — SA-A string current
-**Verify:** SA-A string current > 0.1A when in sunlight within 10s
-**GO/NO-GO:** SA-A confirmed deployed and generating current
+### Step 2 — Check +Y Wing Deployment Status and Current
+**TC:** `GET_PARAM(param_id=0x0144)` (Service 20, Subtype 3) — `eps.wing_status` deployment bitmask
+**Verify:** `eps.wing_status` (0x0144) bit 0 set (0x01, +Y wing DEPLOYED) within 10s
+**TC:** `GET_PARAM(param_id=0x0146)` (Service 20, Subtype 3) — `eps.sa_wing_py_current`
+**Verify:** `eps.sa_wing_py_current` (0x0146) > 0.1A when in sunlight within 10s
+**Note:** 0x0144 is the single deployment truth source (bit0=+Y deployed, bit1=-Y deployed,
+bit4/bit5 = deployment in progress). 0x0110-0x0113 are PDM power-LINE status flags
+(`eps.pl_obc` / `eps.pl_ttc_rx` / `eps.pl_ttc_tx` / `eps.pl_payload`) and say nothing about
+wing deployment.
+**GO/NO-GO:** +Y wing confirmed deployed and generating current
 
-### Step 3 — Check Solar Array B Deployment Status
-**TC:** `GET_PARAM(param_id=0x0111)` (Service 20, Subtype 3) — SA-B deploy switch status
-**Verify:** SA-B deploy switch = DEPLOYED (value 1) within 10s
-**TC:** `GET_PARAM(param_id=0x0113)` (Service 20, Subtype 3) — SA-B string current
-**Verify:** SA-B string current > 0.1A when in sunlight within 10s
-**GO/NO-GO:** SA-B confirmed deployed and generating current
+### Step 3 — Check -Y Wing Deployment Status and Current
+**TC:** `GET_PARAM(param_id=0x0144)` (Service 20, Subtype 3) — `eps.wing_status` deployment bitmask
+**Verify:** `eps.wing_status` (0x0144) bit 1 set (0x02, -Y wing DEPLOYED) within 10s
+**TC:** `GET_PARAM(param_id=0x0147)` (Service 20, Subtype 3) — `eps.sa_wing_my_current`
+**Verify:** `eps.sa_wing_my_current` (0x0147) > 0.1A when in sunlight within 10s
+**GO/NO-GO:** -Y wing confirmed deployed and generating current
 
 ### Step 4 — Measure Total Power Generation
 **TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
@@ -64,32 +68,34 @@ against predictions for the current sun angle and orbit phase. The spacecraft ha
 **Verify:** `eps.bat_soc` (0x0101) decreasing during eclipse at rate consistent with load
 **GO/NO-GO:** Eclipse power profile consistent with nominal array operation
 
-### Step 6 — Verify Array Symmetry
-**Action:** Compare SA-A and SA-B string currents. Arrays should produce similar current at equivalent sun angles, within 15% of each other.
-**TC:** `GET_PARAM(param_id=0x0112)` (Service 20, Subtype 3) — SA-A current
-**TC:** `GET_PARAM(param_id=0x0113)` (Service 20, Subtype 3) — SA-B current
-**Verify:** |SA-A current - SA-B current| / max(SA-A, SA-B) < 0.15 within 10s
-**GO/NO-GO:** Array currents balanced within 15% tolerance
+### Step 6 — Verify Wing Symmetry
+**Action:** Compare the +Y and -Y wing currents. The two wings should produce similar current at equivalent sun angles, within 15% of each other.
+**TC:** `GET_PARAM(param_id=0x0146)` (Service 20, Subtype 3) — `eps.sa_wing_py_current`
+**TC:** `GET_PARAM(param_id=0x0147)` (Service 20, Subtype 3) — `eps.sa_wing_my_current`
+**Verify:** |0x0146 - 0x0147| / max(0x0146, 0x0147) < 0.15 within 10s
+**Note:** Body-mounted array currents are `eps.sa_a_current` (0x0103) and `eps.sa_b_current`
+(0x0104); the per-wing currents above exclude the body faces.
+**GO/NO-GO:** Wing currents balanced within 15% tolerance
 
 ### Step 7 — Estimate Power Budget Margin
 **Action:** Calculate current power consumption from bus voltage and load current. Compare with power generation. Verify positive energy balance over one orbit (when sun-pointed).
-**Verify:** `eps.power_gen` (0x0107) > 50W expected when sun-pointed (post LEOP-004)
+**Verify:** `eps.power_gen` (0x0107) > 50W expected when sun-pointed (post LEOP-005)
 **Action:** Record power budget estimate in LEOP log. Confirm sufficient margin for commissioning activities.
 **GO/NO-GO:** Positive power budget confirmed or achievable after sun acquisition
 
 ## Off-Nominal Handling
 - If a wing fails to deploy (wing_status bit not set after 45s): Retry single wing with `EPS_DEPLOY_WING(wing=0)` for +Y or `EPS_DEPLOY_WING(wing=1)` for -Y — requires Flight Director approval. If retry fails, assess single-wing power budget viability (single wing provides ~32W in sunlight, marginal for nominal ops).
-- If both arrays deployed but power generation < 10W in sunlight: Verify spacecraft is actually in sunlight via Flight Dynamics. Check for excessive tumble rate reducing effective solar incidence. Prioritize LEOP-004 (Sun Acquisition) to stabilize attitude.
-- If array currents asymmetric > 30%: Log anomaly. One array may have partial deployment or string failure. Continue LEOP with reduced power budget. Schedule detailed EPS investigation during commissioning.
+- If both arrays deployed but power generation < 10W in sunlight: Verify spacecraft is actually in sunlight via Flight Dynamics. Check for excessive tumble rate reducing effective solar incidence. Prioritize LEOP-005 (Sun Acquisition) to stabilize attitude.
+- If wing currents asymmetric > 30%: Log anomaly. One wing may have partial deployment or string failure. Continue LEOP with reduced power budget. Schedule detailed EPS investigation during commissioning.
 - If `eps.bat_soc` dropping rapidly (> 2% per minute): Reduce spacecraft load — disable non-essential heaters via `HEATER_THRUSTER(on=0)`. Ensure AOCS detumble is using magnetorquers only (lower power). Prioritize sun acquisition.
 
 ## Post-Conditions
 - [ ] +Y solar wing deployed (wing_status bit 0 set, event 0x0112 received)
 - [ ] -Y solar wing deployed (wing_status bit 1 set, event 0x0113 received)
-- [ ] SA-A deployment confirmed via switch telemetry and current measurement
-- [ ] SA-B deployment confirmed via switch telemetry and current measurement
+- [ ] +Y wing deployment confirmed via `eps.wing_status` (0x0144) bit 0 and `eps.sa_wing_py_current` (0x0146)
+- [ ] -Y wing deployment confirmed via `eps.wing_status` (0x0144) bit 1 and `eps.sa_wing_my_current` (0x0147)
 - [ ] Total power generation measured and recorded (expected increase with wings)
-- [ ] Array symmetry verified within 15% tolerance
+- [ ] Wing symmetry verified within 15% tolerance
 - [ ] Power budget assessment completed (0.78 m2 deployed area)
 - [ ] Solar Array and Wing Deployment Verification Report distributed
-- [ ] GO decision for LEOP-004 (Sun Acquisition)
+- [ ] GO decision for LEOP-005 (Sun Acquisition)

@@ -118,10 +118,6 @@ class PeriodSpec(_Strict):
     #: can be scoped by archive-file wall time explicitly; it is never the
     #: default and never mixes with CUC.
     timebase: Literal["cuc", "wall"] = "cuc"
-    #: S1/S12/S6/S11/S15 packets carry cuc_time == 0 (tm_builder default);
-    #: they are placed by file order between their bracketing CUC-bearing
-    #: neighbours ("interpolate"), dropped, or pinned to the dump start.
-    zero_cuc_policy: Literal["interpolate", "exclude", "pin_to_dump_start"] = "interpolate"
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 

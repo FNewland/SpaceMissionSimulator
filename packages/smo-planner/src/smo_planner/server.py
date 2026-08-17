@@ -18,6 +18,18 @@ scheduled activity to the MCS in one of two modes:
   scheduler stores the embedded packets and fires them at the activity's
   planned start time (plus per-step wait offsets), producing normal S1
   acceptance/execution verification for each embedded command.
+
+Time domains (TIME_ARCHITECTURE.md Parts E.1/E.2/E.4)
+-----------------------------------------------------
+Every time the planner holds, displays or uploads is an absolute ISO-8601 UTC
+instant on **SIM TIME**. MET is read from the simulator's ``/api/state``
+``met_s`` — the planner never recomputes it. The sim-time -> on-board-CUC
+conversion for an S11 upload is done **once, by the MCS**, through its time
+correlation (``_utc_to_obc_cuc``, anchored on OBC time telemetry 0x0309), not
+by a naive ``datetime_to_cuc`` here. That means an OBC clock running 40 s fast
+makes the schedule fire 40 s early in sim time, and the planner deliberately
+does not correct for it: closing that gap is the operator's job (NOM-008), not
+the planner's.
 * mode="immediate" — legacy path. The planner POSTs the command sequence
   (now including ``start_time`` as metadata) to MCS ``/api/procedure/load``;
   the operator starts the ProcedureRunner manually from the Procedures tab.
@@ -123,6 +135,14 @@ class PlannerServer:
         self._sim_anchor_wall: float = 0.0
         self._sim_anchor_speed: float = 1.0
         self._sim_anchor_refreshed_wall: float = 0.0
+        # MET is NOT computed here. The simulator owns the single definition
+        # (`met_s = sim_time - t0_epoch`, TIME_ARCHITECTURE Part C.2) and
+        # publishes it on /api/state; the planner caches that value with the
+        # sim-time anchor it arrived with and advances it by exactly the same
+        # extrapolation as the clock (see _get_met_s). A planner-local
+        # `now - t0_epoch` would be a third definition of MET and is exactly
+        # what the spec forbids.
+        self._sim_anchor_met_s: float | None = None
         # Sim-clock discontinuity state (defect #59). A breakpoint load, a
         # scenario reset or an instructor jump moves sim_time away from what
         # the previous anchor predicted; when that happens the cached contact
@@ -536,6 +556,16 @@ class PlannerServer:
             speed = payload.get("speed")
             if speed is not None:
                 self._sim_anchor_speed = float(speed)
+            # MET comes from the simulator, never from a local subtraction
+            # (TIME_ARCHITECTURE Part E.2). It is anchored together with
+            # sim_time so the two always describe the same instant. A
+            # simulator that does not publish met_s leaves it unknown (None)
+            # rather than getting a guess.
+            met = payload.get("met_s")
+            try:
+                self._sim_anchor_met_s = None if met is None else float(met)
+            except (TypeError, ValueError):
+                self._sim_anchor_met_s = None
 
             # ── Phase D: adopt the simulator's post-burn element set ────
             # A propulsive burn re-fits the TLE and bumps orbit_epoch_version
@@ -611,6 +641,30 @@ class PlannerServer:
         elapsed = (wall - getattr(self, "_sim_anchor_wall", wall)) * getattr(
             self, "_sim_anchor_speed", 1.0)
         return self._sim_anchor_time + timedelta(seconds=elapsed)
+
+    def _get_met_s(self) -> float | None:
+        """Mission Elapsed Time in seconds, or None if unknown.
+
+        MET has exactly one definition and the simulator owns it
+        (``met_s = sim_time - t0_epoch``, TIME_ARCHITECTURE Part C.2). The
+        planner reads that value off ``/api/state`` and carries it forward by
+        the same interval its sim clock advanced since the anchor — MET and
+        sim time run at the same rate by construction, so this stays the
+        simulator's number rather than becoming a second one.
+
+        Returns None in REAL (wall-clock) mode, before the simulator has ever
+        been reached, and when the simulator publishes no ``met_s``. The
+        planner does not invent a fallback: an unknown MET is reported as
+        unknown.
+        """
+        if getattr(self, "_time_source", "real") != "sim":
+            return None
+        now = self._get_now()
+        anchor_met = getattr(self, "_sim_anchor_met_s", None)
+        anchor_time = getattr(self, "_sim_anchor_time", None)
+        if anchor_met is None or anchor_time is None:
+            return None
+        return anchor_met + (now - anchor_time).total_seconds()
 
     def _compute_contacts(self, epoch: datetime | None = None) -> None:
         """Compute contact windows for the next 24 hours from epoch (or now)."""
@@ -994,6 +1048,16 @@ class PlannerServer:
 
         mode="immediate": legacy ProcedureRunner load via
         ``/api/procedure/load``; ``start_time`` is forwarded as metadata.
+
+        **The planner uploads sim time, not CUC** (TIME_ARCHITECTURE Part
+        E.4). ``start_time`` goes out as the ISO-8601 sim-time instant the
+        operator planned. The MCS performs the single sim-time -> on-board-CUC
+        conversion via its time correlation, so the tag lands on the OBC's own
+        clock. If that clock is 40 s fast the activity executes 40 s early in
+        sim time; the planner must NOT pre-compensate, because hiding the
+        offset would hide the reason for synchronising the clock at all. The
+        fix is a clock sync (NOM-008 / LEOP-006), after which the same plan
+        fires at the planned sim time with no change to the plan.
         """
         try:
             import aiohttp as _aiohttp
@@ -1086,6 +1150,7 @@ class PlannerServer:
         """
         import time as _time
         now = self._get_now()
+        met_s = self._get_met_s()
         sim = getattr(self, "_time_source", "real") == "sim"
         anchor_time = getattr(self, "_sim_anchor_time", None)
         anchor_age = (
@@ -1097,6 +1162,9 @@ class PlannerServer:
             "time_source": getattr(self, "_time_source", "real"),
             "now": now.isoformat(),
             "sim_time": now.isoformat() if sim else None,
+            # MET as published by the simulator (its single definition),
+            # carried forward with the sim-clock anchor. None when unknown.
+            "met_s": round(met_s, 3) if met_s is not None else None,
             "speed": getattr(self, "_sim_anchor_speed", 1.0) if sim else 1.0,
             "sim_reachable": bool(getattr(self, "_sim_reachable", False)) if sim else None,
             "wall_clock_fallback": bool(sim and anchor_time is None),

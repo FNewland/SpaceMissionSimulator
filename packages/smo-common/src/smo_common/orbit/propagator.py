@@ -94,7 +94,11 @@ class OrbitPropagator:
         self._earth_r = earth_radius_km
         self._ground_stations = ground_stations or []
         self._primary_gs = self._ground_stations[0] if self._ground_stations else None
-        self._sim_utc: datetime = datetime.now(timezone.utc)
+        # NOT an independent clock — the time this propagator was last
+        # propagated to. The owner (the simulation engine) sets it via
+        # propagate_to(); the wall-clock value here is only a seed for
+        # standalone use before the first propagate_to()/reset().
+        self._current_utc: datetime = datetime.now(timezone.utc)
         self.state = OrbitState()
         self._propagate_internal()
 
@@ -234,22 +238,40 @@ class OrbitPropagator:
             "epoch_version": self._epoch_version,
         }
 
-    def reset(self, epoch_utc: datetime) -> None:
-        """Reset simulation clock to the given UTC epoch."""
-        if epoch_utc.tzinfo is None:
-            epoch_utc = epoch_utc.replace(tzinfo=timezone.utc)
-        self._sim_utc = epoch_utc
-        self._propagate_internal()
+    def propagate_to(self, utc: datetime) -> OrbitState:
+        """Propagate to an ABSOLUTE UTC and return the new state.
 
-    def advance(self, dt_seconds: float) -> OrbitState:
-        """Step the simulation clock forward and return new state."""
-        self._sim_utc += timedelta(seconds=dt_seconds)
+        This is the primary entry point. The propagator does **not** own a
+        clock: ``_current_utc`` is only a record of the time it was last
+        propagated to, and it is set by the owner of the sim clock (the
+        simulation engine). SGP4 itself is evaluated on absolute UTC, so a
+        caller may step forwards or re-evaluate the same instant freely.
+        """
+        if utc.tzinfo is None:
+            utc = utc.replace(tzinfo=timezone.utc)
+        self._current_utc = utc
         self._propagate_internal()
         return self.state
 
+    def reset(self, epoch_utc: datetime) -> None:
+        """Re-anchor the propagator at the given UTC epoch."""
+        self.propagate_to(epoch_utc)
+
+    def advance(self, dt_seconds: float) -> OrbitState:
+        """Step forward by ``dt_seconds`` from the last propagated time.
+
+        Convenience wrapper over :meth:`propagate_to` for standalone users
+        (tools and tests) that have no external clock. The engine drives the
+        propagator with :meth:`propagate_to` from its own sim clock, so the
+        two can never diverge.
+        """
+        return self.propagate_to(self._current_utc
+                                 + timedelta(seconds=dt_seconds))
+
     @property
     def utc(self) -> datetime:
-        return self._sim_utc
+        """The absolute UTC this propagator was last propagated to."""
+        return self._current_utc
 
     def contact_windows(
         self,
@@ -275,7 +297,7 @@ class OrbitPropagator:
         # One time sweep for all stations: propagate once per step and
         # evaluate every station's elevation against that single ECEF fix.
         windows: list[dict] = []
-        t_start = self._sim_utc
+        t_start = self._current_utc
         track = {s.name: {"in_pass": False, "aos": None, "max_el": 0.0}
                  for s in stations}
 
@@ -311,7 +333,7 @@ class OrbitPropagator:
         return windows
 
     def _propagate_internal(self) -> None:
-        t = self._sim_utc
+        t = self._current_utc
         jd, fr = jday(t.year, t.month, t.day, t.hour, t.minute,
                        t.second + t.microsecond * 1e-6)
 
@@ -381,14 +403,14 @@ class OrbitPropagator:
         relative to the current sim epoch, using the SAME math as the
         propagator (``_sun_eci`` / ``is_in_eclipse`` and ``self._sat.sgp4``).
 
-        Does NOT mutate ``self.state`` or ``self._sim_utc`` — all work is done
+        Does NOT mutate ``self.state`` or ``self._current_utc`` — all work is done
         on locals. Coarse/bounded by ``duration_s`` / ``step_s``.
         """
         current = bool(self.state.in_eclipse)
         entry_s: float | None = None
         exit_s: float | None = None
         prev = current
-        t0 = self._sim_utc
+        t0 = self._current_utc
         n_steps = int(duration_s / step_s) + 1
         for i in range(1, n_steps + 1):
             offset = i * step_s

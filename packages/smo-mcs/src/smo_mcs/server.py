@@ -22,7 +22,10 @@ import aiohttp
 from aiohttp import web
 
 from smo_common.protocol.framing import frame_packet, read_framed_packet
-from smo_common.protocol.ecss_packet import decommutate_packet
+from smo_common.protocol.ecss_packet import (
+    CUC_FINE_TICKS, cuc_seconds_to_datetime, datetime_to_cuc_seconds,
+    decommutate_packet, get_time_epoch,
+)
 from smo_common.protocol.pus_services import (
     COMMAND_REJECTED_EVENT_ID, FAILURE_CODES, MEMORY_FAILURE_CODES,
     VerificationData, failure_code_text, parse_command_rejection,
@@ -151,7 +154,7 @@ class MCSServer:
         # In SIM mode the MCS closed-loop syncs its ground clock to the
         # simulator's sim_time/speed via _sim_state_poll_loop (re-anchoring
         # the open-loop clock periodically). In REAL mode it leaves
-        # _ground_epoch=None so get_ground_utc() returns wall-clock UTC.
+        # _ground_epoch=None so sim_now() returns wall-clock UTC.
         import os as _os
         _cfg_time_source: str | None = None
         _cfg_sim_state_url: str | None = None
@@ -207,7 +210,12 @@ class MCSServer:
         # Maps param_id (int) -> {"value": float, "last_update_ts": float, "sid": int}
         self._param_cache: dict[int, dict] = {}
         self._param_cache_lock = asyncio.Lock()
-        self._last_tm_frame_ts: Optional[float] = None  # epoch time of last received TM frame
+        # SIM-TIME epoch of the last received TM frame. Ages are computed
+        # against sim_now_ts(), never the wall clock (spec Part D.2).
+        self._last_tm_frame_ts: Optional[float] = None
+        # Full-precision on-board CUC seconds of the newest packet received,
+        # for archive correlation. None until the first packet arrives.
+        self._last_obc_cuc: Optional[float] = None
         self.tm_packets_received: int = 0
         self._storage_status: list[dict] = []
         # Per-SID observation: epoch time each HK SID was last decoded, and any
@@ -415,6 +423,7 @@ class MCSServer:
         self._procedure_runner = ProcedureRunner(
             send_command_fn=self._proc_send_command,
             get_telemetry_fn=self._proc_get_telemetry,
+            time_fn=self.sim_now_ts,
         )
 
         # Load activity types for procedure browser
@@ -450,14 +459,20 @@ class MCSServer:
         # of parameter rows plus the WAL accumulated inside the config tree
         # and was never bounded by anything.
         try:
-            self._archive.prune()
+            self._archive.prune(now_epoch=self.sim_now_ts())
         except Exception as e:
             logger.debug("Archive prune failed: %s", e)
+        if getattr(self._archive, "legacy_time_base", False):
+            logger.warning(
+                "TM archive on disk predates the sim-time migration; its rows "
+                "are on the host wall clock and will not line up with the "
+                "sim-time rows this session writes. See TMArchive.meta().")
         self._archive_tick = 0  # counter to batch parameter archiving
         # Prune again on a timer so a console left running for a whole term
         # bounds the SQLite file without an operator restart (D-5).
+        # Interval and cutoff are both SIM seconds — same clock as the rows.
         self._archive_prune_interval_s = 3600.0
-        self._archive_last_prune = _time_mod.time()
+        self._archive_last_prune = self.sim_now_ts()
 
         # Delayed-TM (S15) dump store. These archive files are the ground
         # segment's copy of everything the spacecraft played back, so the MCS
@@ -973,12 +988,27 @@ class MCSServer:
         except Exception as e:
             logger.warning("Orbit propagator init failed: %s", e)
 
-    def get_ground_utc(self) -> datetime:
-        """Return the current ground UTC.
+    def sim_now(self) -> datetime:
+        """**The MCS clock.** Current SIM UTC — the absolute UTC of the
+        simulated world, which is what everything the MCS says about the
+        mission is timestamped with (spec Part D.1).
 
-        - If a sim epoch was given at startup, ground UTC = epoch + wall-clock
-          elapsed (adjusted by speed and manual offset).
-        - Otherwise, ground UTC = real UTC + manual offset.
+        Open-loop anchor-and-extrapolate:
+
+        - SIM mode: ``sim_epoch + (wall elapsed since the anchor) x speed``,
+          plus the operator's manual offset. ``_sim_state_poll_loop``
+          re-anchors ``_ground_epoch`` / ``_ground_start_wall`` / ``_sim_speed``
+          from the simulator every ~1.5 s (with jump detection), so the
+          extrapolation only has to cover the gap between polls. Pause
+          (``speed == 0``) freezes this clock; acceleration runs it fast —
+          which is the point: every age, alarm timestamp and archive row
+          derived from it then behaves the same way.
+        - REAL mode: no anchor, so this is wall-clock UTC plus the offset.
+          On a real mission sim time *is* wall time.
+
+        Nothing mission-related may use ``time.time()``. Wall clock stays
+        legitimate only for real-time network I/O timeouts and session log
+        lines.
         """
         now_wall = _time_mod.time()
         elapsed = (now_wall - self._ground_start_wall) * self._sim_speed
@@ -986,13 +1016,32 @@ class MCSServer:
             return self._ground_epoch + timedelta(seconds=elapsed + self._ground_time_offset)
         return datetime.fromtimestamp(now_wall + self._ground_time_offset, tz=timezone.utc)
 
+    def sim_now_ts(self) -> float:
+        """:meth:`sim_now` as a Unix epoch float.
+
+        This is the stamp used for every age, every archive row and every
+        alarm: the difference between two of these is **sim seconds**, which
+        is the unit ``mcs/staleness.yaml`` thresholds are written in.
+        """
+        return self.sim_now().timestamp()
+
+    def get_ground_utc(self) -> datetime:
+        """Deprecated alias for :meth:`sim_now`.
+
+        The old name said where the clock was *consumed* ("ground") rather
+        than what it *is* (sim time), which is how ~20 wall-clock call sites
+        came to sit next to it. Kept as a thin alias so an out-of-tree caller
+        does not break.
+        """
+        return self.sim_now()
+
     def _compute_orbital_state(self) -> dict:
         """Propagate TLE to current ground UTC and return orbital metadata."""
         if self._orbit_prop is None:
             return {}
         try:
-            ground_utc = self.get_ground_utc()
-            self._orbit_prop.reset(ground_utc)
+            sim_utc = self.sim_now()
+            self._orbit_prop.reset(sim_utc)
             o = self._orbit_prop.state
             # Defect D: surface the eclipse transition fields the power-budget
             # display reads (in_eclipse + time-to-entry/exit). Coarse, bounded scan.
@@ -1019,46 +1068,173 @@ class MCSServer:
             logger.debug("Orbit propagation error: %s", e)
             return {}
 
+    #: ``obdh.time_ref`` enumeration (spec Part B). NONE means the OBC has
+    #: free-run from CUC 0 since the last bootloader reset and has never been
+    #: told the time; GPS is the only value that implies no drift.
+    TIME_REF_NAMES = {0: "NONE", 1: "GROUND", 2: "GPS", 3: "HOLDOVER"}
+
+    #: ``obdh.time_since_sync_s`` saturates rather than wrapping; this value
+    #: means "never synced" (spec Part B).
+    TIME_SINCE_SYNC_NEVER = 0xFFFFFFFF
+
+    def _param_id_by_name(self, name: str) -> Optional[int]:
+        """Look a parameter id up by its ``parameters.yaml`` name.
+
+        The Part B OBDH clock parameters (``obdh.obc_time_fine``,
+        ``obdh.time_ref``, ``obdh.time_since_sync_s``) are allocated by the
+        simulator/config owner, so the MCS resolves them by NAME rather than
+        carrying a second copy of the id allocation that could drift out of
+        step. Absent from the configuration ⇒ the field is simply not shown.
+        """
+        idx = getattr(self, "_param_id_index", None)
+        if idx is None:
+            idx = {str(m.get("name", "")): pid
+                   for pid, m in self._param_meta.items()}
+            self._param_id_index = idx
+        return idx.get(name)
+
+    def _cached_value(self, name: str) -> Optional[float]:
+        """Latest cached value of a parameter named in ``parameters.yaml``."""
+        pid = self._param_id_by_name(name)
+        if pid is None:
+            return None
+        entry = self._param_cache.get(pid)
+        return None if entry is None else float(entry["value"])
+
+    def obc_cuc_now(self) -> Optional[float]:
+        """The spacecraft's own clock, in full-precision CUC seconds.
+
+        TM 0x0309 (coarse) plus ``obdh.obc_time_fine`` (1/65536 s) when the
+        spacecraft downlinks one. ``None`` until OBDH housekeeping has been
+        received. This is the ground's only knowledge of the on-board clock,
+        and it is what every ground<->on-board time conversion anchors on.
+        """
+        entry = self._param_cache.get(0x0309)
+        if entry is None:
+            return None
+        cuc = float(entry["value"])
+        fine = self._cached_value("obdh.obc_time_fine")
+        if fine is not None:
+            cuc += float(fine) / CUC_FINE_TICKS
+        return cuc
+
     def _compute_time_state(self) -> dict:
-        """Build time fields for the UI from ground clock and TM."""
-        ground_utc = self.get_ground_utc()
+        """Build the console's time block: SIM time, on-board time and the
+        correlation between them (spec Part D.9).
+
+        Three clocks appear here and they are deliberately kept apart:
+
+        * ``sim_time`` / ``ground_utc`` — :meth:`sim_now`, the ground
+          segment's clock. Everything the MCS timestamps is on this.
+        * ``sc_time`` — the spacecraft's own clock, decoded from TM 0x0309
+          (plus the fine field when the spacecraft downlinks one) against the
+          **J2000** mission epoch. It free-runs and drifts.
+        * ``time_correlation.offset_s`` — the measured gap, ``sc - sim``. The
+          ground can only *measure* this from telemetry; the spacecraft does
+          not know it. Closing it is the operator's job in NOM-008.
+        """
+        sim_utc = self.sim_now()
         met_s = 0.0
         if self._t0_epoch:
             try:
                 t0 = datetime.fromisoformat(
                     self._t0_epoch.replace("Z", "+00:00")
                 )
-                met_s = (ground_utc - t0).total_seconds()
+                met_s = (sim_utc - t0).total_seconds()
             except Exception:
                 met_s = (_time_mod.time() - self._ground_start_wall) * self._sim_speed
         else:
             met_s = (_time_mod.time() - self._ground_start_wall) * self._sim_speed
 
-        # Spacecraft time from OBDH TM params
-        sc_uptime = None
-        sc_obc_time_cuc = None
+        # ── Spacecraft time from OBDH TM ────────────────────────────
         cache = self._param_cache
         uptime_entry = cache.get(0x0308)
-        if uptime_entry:
-            sc_uptime = uptime_entry["value"]
+        sc_uptime = uptime_entry["value"] if uptime_entry else None
         obc_time_entry = cache.get(0x0309)
-        if obc_time_entry:
-            sc_obc_time_cuc = obc_time_entry["value"]
+        sc_obc_time_cuc = obc_time_entry["value"] if obc_time_entry else None
 
-        # Build SC time ISO string from CUC (Unix epoch seconds)
+        # Sub-second half of the CUC, when the spacecraft downlinks it —
+        # 1/65536 s ticks, the same units as the packet header's fine field.
+        fine_raw = self._cached_value("obdh.obc_time_fine")
+        sc_cuc_seconds = self.obc_cuc_now()
+
+        # Decode against the MISSION EPOCH (J2000) — what the spacecraft
+        # actually stamps with.
+        #
+        # The old code did `if sc_obc_time_cuc > 1e9: fromtimestamp(...)`: a
+        # Unix decode behind a magnitude guard. A correct J2000 CUC is ~8.4e8
+        # today, so the test never passed, `sc_time` was permanently None, and
+        # it only began to "work" once a GPS sync wrote a Unix value into a
+        # J2000 field. Both halves of that were wrong; the heuristic is gone
+        # and the shared decoder does the work.
         sc_time_iso = None
-        if sc_obc_time_cuc is not None and sc_obc_time_cuc > 1e9:
+        if sc_cuc_seconds is not None:
             try:
-                sc_time_iso = datetime.fromtimestamp(
-                    sc_obc_time_cuc, tz=timezone.utc
-                ).isoformat()
+                sc_time_iso = cuc_seconds_to_datetime(
+                    sc_cuc_seconds).replace(tzinfo=timezone.utc).isoformat()
             except Exception:
-                pass
+                sc_time_iso = None
+
+        time_ref = self._cached_value("obdh.time_ref")
+        time_ref_i = None if time_ref is None else int(round(time_ref))
+        since_sync = self._cached_value("obdh.time_since_sync_s")
+        since_sync_s: Optional[float] = None
+        never_synced: Optional[bool] = None
+        if since_sync is not None:
+            never_synced = int(round(since_sync)) >= self.TIME_SINCE_SYNC_NEVER
+            since_sync_s = None if never_synced else float(since_sync)
+        elif time_ref_i is not None:
+            never_synced = (time_ref_i == 0)
+
+        # ── The correlation: on-board minus sim, in seconds ─────────
+        offset_s = None
+        if sc_cuc_seconds is not None:
+            offset_s = sc_cuc_seconds - datetime_to_cuc_seconds(sim_utc)
+        warn_s = float(self._staleness_policy.get("clock_offset_warn_s", 5.0))
+        alarm_s = float(self._staleness_policy.get("clock_offset_alarm_s", 30.0))
+        if offset_s is None:
+            offset_state = "unknown"
+        elif abs(offset_s) >= alarm_s:
+            offset_state = "alarm"
+        elif abs(offset_s) >= warn_s:
+            offset_state = "warning"
+        else:
+            offset_state = "nominal"
+
+        correlation = {
+            "sim_utc": sim_utc.isoformat(),
+            "ground_utc": sim_utc.isoformat(),
+            "sc_utc": sc_time_iso,
+            "sc_cuc_coarse": (None if sc_obc_time_cuc is None
+                              else int(sc_obc_time_cuc)),
+            "sc_cuc_fine": None if fine_raw is None else int(fine_raw),
+            "sc_cuc_seconds": sc_cuc_seconds,
+            "cuc_fine_available": fine_raw is not None,
+            "time_ref": time_ref_i,
+            "time_ref_name": (self.TIME_REF_NAMES.get(time_ref_i, "UNKNOWN")
+                              if time_ref_i is not None else None),
+            "time_since_sync_s": since_sync_s,
+            "never_synced": never_synced,
+            "offset_s": offset_s,
+            "offset_state": offset_state,
+            "offset_warn_s": warn_s,
+            "offset_alarm_s": alarm_s,
+            "epoch": get_time_epoch().replace(tzinfo=timezone.utc).isoformat(),
+            "speed": self._sim_speed,
+        }
 
         return {
-            "sim_time": ground_utc.isoformat(),
-            "sc_time": sc_time_iso,  # from TM param 0x0309 (CUC)
+            "sim_time": sim_utc.isoformat(),
+            # The browser's S9/S11 time widgets read `ground_utc`; it was never
+            # actually published, so they silently fell back to the browser's
+            # own wall clock. Same clock, published under both names.
+            "ground_utc": sim_utc.isoformat(),
+            "sc_time": sc_time_iso,       # TM 0x0309 (+fine) decoded on J2000
             "sc_obc_time_cuc": sc_obc_time_cuc,
+            "sc_obc_time_cuc_s": sc_cuc_seconds,
+            "sc_time_ref": time_ref_i,
+            "sc_time_since_sync_s": since_sync_s,
+            "time_correlation": correlation,
             "met_s": met_s,
             "speed": self._sim_speed,
             "sc_uptime_s": sc_uptime,
@@ -1281,8 +1457,23 @@ class MCSServer:
 
     async def _process_tm(self, pkt) -> None:
         self.tm_packets_received += 1
-        # Update last TM frame timestamp for staleness tracking
-        now = _time_mod.time()
+        # RECEIVE TIMESTAMP, in SIM TIME (spec Part D.2). Every age the
+        # console shows — link liveness, per-parameter freshness, HK SID
+        # PERIODIC/SILENT, the FDIR journal — is a difference against this, so
+        # it has to be on the same clock as the thresholds in
+        # mcs/staleness.yaml, which are sim seconds. On wall clock, pausing
+        # the simulator made everything stale within a minute and running at
+        # x60 made nothing ever stale.
+        now = self.sim_now_ts()
+        # The spacecraft's own timestamp for this packet, full precision
+        # (coarse + fine/65536) on the J2000 mission epoch. Archived alongside
+        # the sim-time stamp so a row can be correlated with the on-board
+        # clock; `None` if the header could not be read.
+        try:
+            obc_cuc: Optional[float] = float(pkt.secondary.cuc_seconds)
+        except Exception:
+            obc_cuc = None
+        self._last_obc_cuc = obc_cuc
 
         info = {
             "service": pkt.secondary.service,
@@ -1515,6 +1706,8 @@ class MCSServer:
                     evt["event_id"], evt.get("severity", 0),
                     self._event_id_to_subsystem(evt["event_id"]),
                     evt.get("description", ""),
+                    utc_epoch=now,      # sim time the ground received it
+                    obc_cuc=obc_cuc,    # on-board time the S5 packet carried
                 )
             except Exception:
                 pass
@@ -1615,7 +1808,7 @@ class MCSServer:
 
         Every ~1.5 s, GET the simulator's state endpoint, parse `sim_time`
         (ISO) and `speed`, and RE-ANCHOR the open-loop ground clock so
-        get_ground_utc() tracks the simulator's real sim_time through
+        sim_now() tracks the simulator's real sim_time through
         pause / speed change / breakpoint load (bounded drift = poll
         interval). On poll failure, keep the last anchor (debug log).
 
@@ -1725,8 +1918,11 @@ class MCSServer:
             delta_s, parsed.isoformat())
         # Drop everything whose meaning is tied to the old epoch. The
         # parameter cache is deliberately KEPT: its values are still the
-        # spacecraft's last known state and its ages are wall-clock based, so
-        # the staleness gate keeps working across the jump.
+        # spacecraft's last known state. Its `last_update_ts` stamps are on
+        # SIM time, so a jump makes every age jump with it — which is the
+        # honest answer: after a breakpoint load the cached values really do
+        # describe a moment that is now `delta_s` away, and the staleness gate
+        # should say so rather than pretend the data is fresh.
         self._schedule_report = {}
         self._storage_status = []
         self._memory_dumps.clear()
@@ -1897,7 +2093,8 @@ class MCSServer:
         """
         if not isinstance(payload, dict):
             return
-        self._fdir_model.set_sc_mode(payload.get("sc_mode"), source="sim_state")
+        self._fdir_model.set_sc_mode(payload.get("sc_mode"), source="sim_state",
+                                     ts=self.sim_now_ts())
         self._sim_health = {
             "engine_fault": payload.get("engine_fault"),
             "engine_fault_count": payload.get("engine_fault_count", 0),
@@ -1960,7 +2157,9 @@ class MCSServer:
         """
         while self._running:
             try:
-                now = _time_mod.time()
+                # Sim time: every age published below is a difference against
+                # this and a sim-second threshold (spec Part D.2).
+                now = self.sim_now_ts()
                 async with self._param_cache_lock:
                     cache = dict(self._param_cache)  # Snapshot
                     last_tm_ts = self._last_tm_frame_ts
@@ -1987,17 +2186,26 @@ class MCSServer:
                     if ui_key != short:
                         grouped[sub][short] = entry["value"]
 
-                # Compute liveness/staleness
+                # Compute liveness/staleness — ages in SIM SECONDS.
+                #
+                # Clamped at zero because sim time can jump BACKWARDS (a
+                # breakpoint load, a scenario reset). A negative age is not a
+                # useful thing to publish; "0 s" says "we have telemetry for
+                # this instant", which is true, and the next frame corrects it.
                 if last_tm_ts is None:
                     stale = True
                     age_s: Optional[float] = None
                 else:
-                    age_s = now - last_tm_ts
+                    age_s = max(0.0, now - last_tm_ts)
                     stale = age_s > 60.0
 
                 data: dict = {
                     "stale": stale,
                     "last_frame_age_s": age_s,
+                    # Tells the browser (and anyone reading /api/state) which
+                    # clock every *_age_s and *_ts field below is on, so it
+                    # never has to guess whether to age them with Date.now().
+                    "age_time_base": "sim",
                     "params": params_flat,
                     "param_count": len(cache),
                 }
@@ -2023,7 +2231,7 @@ class MCSServer:
                     if not meta:
                         continue
                     sub = meta["subsystem"] or "other"
-                    param_age = now - entry.get("last_update_ts", 0)
+                    param_age = max(0.0, now - entry.get("last_update_ts", 0))
                     if sub not in subsystem_staleness or param_age < subsystem_staleness[sub]:
                         subsystem_staleness[sub] = param_age
                 data["subsystem_staleness"] = {
@@ -2033,7 +2241,7 @@ class MCSServer:
                 # telemetry cells as STALE when their last update is older than
                 # the expected HK interval, not just the subsystem as a whole.
                 data["params_age"] = {
-                    str(pid): round(now - entry.get("last_update_ts", 0), 1)
+                    str(pid): round(max(0.0, now - entry.get("last_update_ts", 0)), 1)
                     for pid, entry in cache.items()
                 }
                 # Ground limit state per parameter (WP-3). The displays colour
@@ -2053,7 +2261,8 @@ class MCSServer:
                     sid_seen = dict(self._sid_last_seen)
                     sid_reported = dict(self._sid_enabled_reported)
                 data["hk_sid_age_s"] = {
-                    str(sid): round(now - ts, 1) for sid, ts in sid_seen.items()
+                    str(sid): round(max(0.0, now - ts), 1)
+                    for sid, ts in sid_seen.items()
                 }
                 if sid_reported:
                     data["hk_enabled"] = {str(k): v for k, v in sid_reported.items()}
@@ -2137,7 +2346,7 @@ class MCSServer:
         if "speed" in body:
             self._sim_speed = float(body["speed"])
         return web.json_response({
-            "ground_utc": self.get_ground_utc().isoformat(),
+            "ground_utc": self.sim_now().isoformat(),
             "speed": self._sim_speed,
             "offset_s": self._ground_time_offset,
         })
@@ -2216,18 +2425,30 @@ class MCSServer:
         }
 
     def _maybe_prune_archive(self) -> None:
-        """Hourly `prune()` (D-5) — bounds the file on a console left running."""
-        now = _time_mod.time()
-        if now - self._archive_last_prune < self._archive_prune_interval_s:
+        """Hourly `prune()` (D-5) — bounds the file on a console left running.
+
+        Both the interval and the cutoff are in SIM seconds: the rows being
+        pruned carry sim-time epochs, so an age computed from the wall clock
+        would either delete the whole archive on the first pass or never
+        delete anything, depending on where the sim epoch sits.
+        """
+        now = self.sim_now_ts()
+        if abs(now - self._archive_last_prune) < self._archive_prune_interval_s:
             return
         self._archive_last_prune = now
         try:
-            self._archive.prune()
+            self._archive.prune(now_epoch=now)
         except Exception as e:  # noqa: BLE001
             logger.debug("Archive prune failed: %s", e)
 
     def _archive_state_snapshot(self, data: dict) -> None:
-        """Extract key parameters from a state poll and store them."""
+        """Extract key parameters from a state poll and store them.
+
+        The row is stamped with SIM TIME (spec Part D.4) and carries the
+        on-board CUC of the newest packet behind it, so an archived value can
+        be lined up against the spacecraft's own clock rather than against the
+        host that happened to run the console.
+        """
         params: dict[str, float] = {}
         for subsys in ("eps", "aocs", "tcs", "ttc", "payload", "obdh", "prop"):
             sub = data.get(subsys)
@@ -2249,11 +2470,29 @@ class MCSServer:
             params["orbit.alt_km"] = float(data["alt_km"])
         if params:
             try:
-                self._archive.store_parameters(params)
+                self._archive.store_parameters(
+                    params,
+                    utc_epoch=self.sim_now_ts(),
+                    obc_cuc=self._last_obc_cuc,
+                )
             except Exception as e:
                 logger.debug("Archive store error: %s", e)
 
     # ── TM archive query endpoints ────────────────────────────────
+
+    def _archive_meta(self) -> dict:
+        """Provenance for every archive response.
+
+        Archive rows are on SIM TIME (schema v2). A pre-migration file holds
+        wall-clock epochs, which are not comparable, so every query answer
+        carries the file's declared time base rather than leaving a client to
+        assume one (spec Part D.4).
+        """
+        try:
+            return self._archive.meta()
+        except Exception:  # noqa: BLE001 — a MagicMock archive in tests
+            return {"schema_version": None, "time_base": "unknown",
+                    "sim_time": False, "note": ""}
 
     async def _handle_archive_params(self, request):
         """GET /api/archive/parameters?name=eps.bat_soc&start=<epoch>&end=<epoch>&limit=3600"""
@@ -2264,7 +2503,8 @@ class MCSServer:
         end = float(request.query["end"]) if "end" in request.query else None
         limit = int(request.query.get("limit", 3600))
         data = self._archive.query_parameters(name, start, end, limit)
-        return web.json_response({"param_name": name, "data": data})
+        return web.json_response({"param_name": name, "data": data,
+                                  "archive": self._archive_meta()})
 
     async def _handle_archive_param_names(self, request):
         """GET /api/archive/param-names — what the TRENDS tab can plot.
@@ -2306,7 +2546,8 @@ class MCSServer:
         sev = int(request.query.get("severity", 0))
         limit = int(request.query.get("limit", 500))
         data = self._archive.query_events(start, end, sev, limit)
-        return web.json_response({"events": data})
+        return web.json_response({"events": data,
+                                  "archive": self._archive_meta()})
 
     async def _handle_archive_alarms(self, request):
         """GET /api/archive/alarms?start=<epoch>&end=<epoch>&limit=500"""
@@ -2314,7 +2555,8 @@ class MCSServer:
         end = float(request.query["end"]) if "end" in request.query else None
         limit = int(request.query.get("limit", 500))
         data = self._archive.query_alarms(start, end, limit)
-        return web.json_response({"alarms": data})
+        return web.json_response({"alarms": data,
+                                  "archive": self._archive_meta()})
 
     async def _handle_archive_playback(self, request):
         """GET /api/archive/playback?subsystem=eps&start=<epoch>&end=<epoch>"""
@@ -2323,8 +2565,10 @@ class MCSServer:
             return web.json_response({"error": "subsystem parameter required"}, status=400)
         start = float(request.query["start"]) if "start" in request.query else None
         end = float(request.query["end"]) if "end" in request.query else None
-        data = self._archive.get_playback_data(subsystem, start, end)
-        return web.json_response({"subsystem": subsystem, "data": data})
+        data = self._archive.get_playback_data(subsystem, start, end,
+                                              now_epoch=self.sim_now_ts())
+        return web.json_response({"subsystem": subsystem, "data": data,
+                                  "archive": self._archive_meta()})
 
     async def _handle_pus_command(self, request):
         """Build and send a real ECSS PUS TC packet to the simulator."""
@@ -2354,18 +2598,23 @@ class MCSServer:
             pkt = self._tc_manager.build_command(service, subtype, data)
             seq = self._tc_manager._seq_count
 
-            # Track in verification log
-            import time
+            # Track in verification log, stamped with SIM TIME (Part D.5).
             entry = {
                 "seq": seq,
                 "name": name,
                 "service": service,
                 "subtype": subtype,
                 "state": "SENT",
-                "timestamp": time.time(),
+                "timestamp": self.sim_now_ts(),
                 "error_code": 0,
                 "position": position,
             }
+            # An S11.4 built by hand in the console carries its own on-board
+            # time tag in the first four octets; record what it was scheduled
+            # for so the command history can show ground time and on-board
+            # time side by side.
+            if service == 11 and subtype == 4 and len(data) >= 4:
+                entry["sched_cuc"] = float(struct.unpack(">I", data[:4])[0])
             self._record_command(entry, data_hex=clean_hex)
             self._tc_manager.track_verification(seq, name)
 
@@ -2400,8 +2649,21 @@ class MCSServer:
         (200 rows, lost on restart) was the only command history that
         existed. The post-exercise "what did this team send, when, and what
         came back" debrief artefact needs the persistent one.
+
+        Two times are recorded, and they are not the same clock (spec Part
+        D.5):
+
+        * ``timestamp`` — SIM TIME the ground uplinked the command. Defaulted
+          here so no caller can leave a wall-clock stamp behind.
+        * ``sched_cuc`` — the ON-BOARD CUC the command is time-tagged for,
+          where one exists (an S11.4 insert and the TC embedded in it). If the
+          OBC clock is off, this fires at a different sim time than intended,
+          and having both columns is what lets a debrief show that.
         """
+        entry.setdefault("timestamp", self.sim_now_ts())
+        entry.setdefault("time_base", "sim")
         self._verification_log.appendleft(entry)
+        sched_cuc = entry.get("sched_cuc")
         try:
             self._archive.store_command(
                 seq=int(entry.get("seq", 0)),
@@ -2411,7 +2673,8 @@ class MCSServer:
                 data_hex=str(data_hex or ""),
                 position=str(entry.get("position", "")),
                 state=str(entry.get("state", "SENT")),
-                utc_epoch=entry.get("timestamp"),
+                utc_epoch=float(entry["timestamp"]),
+                sched_cuc=None if sched_cuc is None else float(sched_cuc),
             )
         except Exception as e:  # noqa: BLE001 — archiving must never block a TC
             logger.debug("store_command failed: %s", e)
@@ -2433,6 +2696,11 @@ class MCSServer:
 
         Survives an MCS restart, unlike `/api/verification-log`, which is a
         200-entry in-memory deque. This is the debrief artefact.
+
+        Each row carries two clocks: ``utc_epoch`` (SIM TIME the ground sent
+        it) and ``sched_cuc`` (the ON-BOARD CUC it was time-tagged for, where
+        one exists). Reading them together is how a student sees an S11
+        schedule fire at the wrong sim time because the OBC clock was wrong.
         """
         start = float(request.query["start"]) if "start" in request.query else None
         end = float(request.query["end"]) if "end" in request.query else None
@@ -2442,7 +2710,8 @@ class MCSServer:
         except Exception as e:  # noqa: BLE001
             logger.debug("query_commands failed: %s", e)
             rows = []
-        return web.json_response({"commands": rows})
+        return web.json_response({"commands": rows,
+                                  "archive": self._archive_meta()})
 
     async def _handle_index(self, request):
         index_file = Path(__file__).parent / "static" / "index.html"
@@ -2656,8 +2925,14 @@ class MCSServer:
         was last seen and whether it is currently arriving at its configured
         rate. That is honest telemetry-derived state rather than the assumption
         the old UI made (every SID enabled, forever).
+
+        The observed-cadence measurement is in **sim seconds** (spec Part
+        D.2): `interval_s` comes from hk_structures.yaml and is a sim-time
+        cadence, so `age` has to be too. Against the wall clock a paused
+        simulator turned every SID SILENT within a couple of cycles, and at
+        x60 a genuinely dead SID stayed PERIODIC for an hour of sim time.
         """
-        now = _time_mod.time()
+        now = self.sim_now_ts()
         async with self._param_cache_lock:
             last_seen = dict(self._sid_last_seen)
             reported = dict(self._sid_enabled_reported)
@@ -2665,7 +2940,7 @@ class MCSServer:
         for sid in sorted(self._hk_sid_meta):
             meta = dict(self._hk_sid_meta[sid])
             seen_ts = last_seen.get(sid)
-            age = None if seen_ts is None else round(now - seen_ts, 1)
+            age = None if seen_ts is None else round(max(0.0, now - seen_ts), 1)
             interval = float(meta.get("interval_s") or 0.0)
             # Two missed cycles (plus a second of slack) before calling it silent.
             silent_after = interval * 2.5 + 1.0 if interval > 0 else 30.0
@@ -2683,6 +2958,7 @@ class MCSServer:
             meta["enabled"] = reported.get(sid)
             out.append(meta)
         return web.json_response({"structures": out,
+                                  "age_time_base": "sim",
                                   "spacecraft_apid": self._spacecraft_apid,
                                   "bootloader_apid": self._bootloader_apid})
 
@@ -2692,7 +2968,6 @@ class MCSServer:
         self, service: int, subtype: int, data_hex: str = ""
     ) -> dict:
         """Send a PUS command on behalf of the procedure runner."""
-        import time as _time
         clean_hex = data_hex.replace(" ", "").strip() if data_hex else ""
         data = bytes.fromhex(clean_hex) if clean_hex else b""
         data = self._embed_s11_packet(service, subtype, data)
@@ -2705,10 +2980,12 @@ class MCSServer:
             "service": service,
             "subtype": subtype,
             "state": "SENT",
-            "timestamp": _time.time(),
+            "timestamp": self.sim_now_ts(),
             "error_code": 0,
             "position": "procedure_runner",
         }
+        if service == 11 and subtype == 4 and len(data) >= 4:
+            entry["sched_cuc"] = float(struct.unpack(">I", data[:4])[0])
         self._record_command(entry, data_hex=clean_hex)
         self._tc_manager.track_verification(seq, entry["name"])
 
@@ -2774,33 +3051,47 @@ class MCSServer:
             "service": inner_svc,
             "subtype": inner_st,
             "state": "SCHEDULED",
-            "timestamp": _time_mod.time(),
+            "timestamp": self.sim_now_ts(),
+            # The on-board CUC this deferred TC will fire at, straight off the
+            # S11.4 time tag in front of it.
+            "sched_cuc": float(struct.unpack(">I", data[:4])[0]),
             "error_code": 0,
             "position": "s11_scheduler",
         }, data_hex=inner_data.hex())
         return data[:4] + inner_pkt
 
-    def _utc_to_obc_cuc(self, dt: datetime) -> int:
-        """Convert a ground UTC datetime to on-board CUC seconds.
+    def _utc_to_obc_cuc_seconds(self, dt: datetime) -> float:
+        """Convert a SIM UTC datetime to on-board CUC seconds, full precision.
 
-        Preferred: anchor on the latest OBC time telemetry (param 0x0309)
-        plus the ground-clock delta, so the result matches the spacecraft's
-        actual clock even if it drifts. Fallback (no TM yet): the shared
-        PUS CUC epoch (smo_common TIME_EPOCH), which is also what the OBDH
-        model uses to initialise its clock.
+        This is the ground's time correlation, and it is the ONLY correct way
+        to turn a sim-time activity start into an on-board time tag: anchor on
+        the latest OBC clock telemetry (0x0309, plus the fine field if it is
+        downlinked) and add the sim-time delta, so the tag lands on the
+        spacecraft's clock *including* its error. If the OBC is 40 s fast the
+        schedule fires 40 s early in sim time — that is the correct, teachable
+        behaviour, and neither the MCS nor the planner may silently correct it.
+
+        Fallback (no OBC telemetry yet): the shared mission epoch, i.e. assume
+        a perfect clock. That is the best the ground can do before it has
+        heard from the spacecraft.
         """
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        obc_entry = self._param_cache.get(0x0309)
-        if obc_entry and obc_entry.get("value", 0) > 0:
-            ground_now = self.get_ground_utc()
-            if ground_now.tzinfo is None:
-                ground_now = ground_now.replace(tzinfo=timezone.utc)
-            delta_s = (dt - ground_now).total_seconds()
-            return int(obc_entry["value"] + delta_s)
-        from smo_common.protocol.ecss_packet import TIME_EPOCH
-        naive = dt.astimezone(timezone.utc).replace(tzinfo=None)
-        return int((naive - TIME_EPOCH).total_seconds())
+        obc_cuc = self.obc_cuc_now()
+        if obc_cuc is not None and obc_cuc > 0:
+            sim_now = self.sim_now()
+            if sim_now.tzinfo is None:
+                sim_now = sim_now.replace(tzinfo=timezone.utc)
+            return float(obc_cuc) + (dt - sim_now).total_seconds()
+        return datetime_to_cuc_seconds(dt)
+
+    def _utc_to_obc_cuc(self, dt: datetime) -> int:
+        """Whole-second (coarse) form of :meth:`_utc_to_obc_cuc_seconds`.
+
+        The S11.4 time tag on the wire is still a bare ``uint32`` of coarse
+        seconds, so this is what goes into the packet.
+        """
+        return int(math.floor(self._utc_to_obc_cuc_seconds(dt)))
 
     async def _handle_s11_schedule_upload(self, request):
         """POST /api/schedule/upload-s11 — convert a planner activity into
@@ -2885,7 +3176,8 @@ class MCSServer:
                     "service": 11,
                     "subtype": 4,
                     "state": "SENT",
-                    "timestamp": _time_mod.time(),
+                    "timestamp": self.sim_now_ts(),
+                    "sched_cuc": float(exec_cuc),
                     "error_code": 0,
                     "position": "s11_scheduler",
                 }, data_hex=s11_data.hex())
@@ -3201,7 +3493,9 @@ class MCSServer:
                 return web.json_response(
                     {"error": "Note text required"}, status=400)
             entry = {
-                "timestamp": _time.time(),
+                # Sim time: a handover note is a mission log line, rendered
+                # in the console next to telemetry timestamps.
+                "timestamp": self.sim_now_ts(),
                 "position": position,
                 "note": note,
             }
@@ -3386,24 +3680,23 @@ class MCSServer:
 
     # ── Schedule / memory report helpers ─────────────────────────────
 
-    def _obc_cuc_to_utc(self, cuc: int) -> Optional[str]:
-        """Inverse of ``_utc_to_obc_cuc``: on-board CUC seconds -> ground UTC.
+    def _obc_cuc_to_utc(self, cuc: float) -> Optional[str]:
+        """Inverse of ``_utc_to_obc_cuc``: on-board CUC seconds -> SIM UTC.
 
-        Anchored on the latest OBC time telemetry (0x0309) when available so
-        the schedule display shows the time the command will actually fire in
-        ground terms, drift included; otherwise the shared PUS CUC epoch.
+        Anchored on the latest OBC clock telemetry when available, so the
+        schedule display shows the sim time the command will *actually* fire,
+        clock error included; otherwise the shared mission epoch.
         """
         try:
-            obc_entry = self._param_cache.get(0x0309)
-            if obc_entry and obc_entry.get("value", 0) > 0:
-                ground_now = self.get_ground_utc()
-                if ground_now.tzinfo is None:
-                    ground_now = ground_now.replace(tzinfo=timezone.utc)
-                delta_s = float(cuc) - float(obc_entry["value"])
-                return (ground_now + timedelta(seconds=delta_s)).isoformat()
-            from smo_common.protocol.ecss_packet import TIME_EPOCH
-            return (TIME_EPOCH.replace(tzinfo=timezone.utc)
-                    + timedelta(seconds=int(cuc))).isoformat()
+            obc_cuc = self.obc_cuc_now()
+            if obc_cuc is not None and obc_cuc > 0:
+                sim_now = self.sim_now()
+                if sim_now.tzinfo is None:
+                    sim_now = sim_now.replace(tzinfo=timezone.utc)
+                delta_s = float(cuc) - float(obc_cuc)
+                return (sim_now + timedelta(seconds=delta_s)).isoformat()
+            return cuc_seconds_to_datetime(float(cuc)).replace(
+                tzinfo=timezone.utc).isoformat()
         except Exception:
             return None
 
@@ -3451,7 +3744,9 @@ class MCSServer:
             e["exec_utc"] = self._obc_cuc_to_utc(e["exec_time_cuc"])
             e["mnemonic"] = self._resolve_command_name(
                 e["service"], e["subtype"], e.get("data_hex", ""))
-        report["reported_ts"] = _time_mod.time()
+        # Sim time: the console renders this as "reported N s ago" against the
+        # same clock it ages telemetry with.
+        report["reported_ts"] = self.sim_now_ts()
 
     def _memory_region_name(self, address: int) -> str:
         """Name of the declared region containing `address` ('' if unmapped)."""
@@ -3476,6 +3771,7 @@ class MCSServer:
             active_alarms=active,
             param_values=values,
             load_shed_stage=self._load_shed_stage(),
+            now=self.sim_now_ts(),
         )
         data["active_alarms"] = active
         data["alarm_count_by_severity"] = {
@@ -3543,7 +3839,12 @@ class MCSServer:
         ``TMArchive.acknowledge_alarm`` needs.
         """
         self._alarm_id_counter += 1
-        alarm.setdefault("timestamp", _time_mod.time())
+        # RAISE TIME IS SIM TIME (spec Part D.3). An alarm describes a moment
+        # in the mission, so it has to be timestamped on the mission's clock —
+        # the same one the telemetry value that raised it is stamped with, and
+        # the same one the archive row lands on.
+        alarm.setdefault("timestamp", self.sim_now_ts())
+        alarm["time_base"] = "sim"
         alarm.setdefault("acknowledged", False)
         alarm.setdefault("limit", "")
         alarm["id"] = self._alarm_id_counter
@@ -3558,7 +3859,8 @@ class MCSServer:
         except Exception:
             pass
         try:
-            row_id = self._archive.store_alarm(alarm)
+            row_id = self._archive.store_alarm(
+                alarm, utc_epoch=float(alarm["timestamp"]))
             if row_id and row_id > 0:
                 alarm["db_id"] = row_id
         except Exception:
@@ -3581,12 +3883,16 @@ class MCSServer:
         permanently lit; the WS message lets open consoles restyle the row.
         """
         tag = f"0x{param_id:04X}"
+        # CLEAR TIME IS SIM TIME, like the raise (spec Part D.3): the two are
+        # subtracted to give the duration of the excursion, so they must be on
+        # one clock.
+        cleared_ts = self.sim_now_ts()
         cleared: list[int] = []
         for a in self._alarm_journal:
             if a.get("source") == "LIMIT" and a.get("parameter") == tag \
                     and not a.get("cleared"):
                 a["cleared"] = True
-                a["cleared_ts"] = _time_mod.time()
+                a["cleared_ts"] = cleared_ts
                 a["acknowledged"] = True
                 cleared.append(a["id"])
                 db_id = a.get("db_id")
@@ -3702,10 +4008,24 @@ class MCSServer:
         "floor_stale_s": 20.0,
         "aperiodic_fresh_s": 300.0,
         "aperiodic_stale_s": 900.0,
+        # Time-correlation thresholds (spec Part D.9): how far the on-board
+        # clock may sit from sim time before the console says so. In SIM
+        # SECONDS, like everything else here. At the nominal 12 ppm drift the
+        # OBC gains ~1 s/day, so 5 s is roughly "you have not synced in the
+        # best part of a week" and 30 s is "this will visibly mis-fire an S11
+        # schedule". Both are overridable from mcs/staleness.yaml.
+        "clock_offset_warn_s": 5.0,
+        "clock_offset_alarm_s": 30.0,
     }
 
     def _load_staleness_policy(self) -> dict:
-        """Load the display staleness policy from mcs/staleness.yaml."""
+        """Load the display staleness policy from mcs/staleness.yaml.
+
+        Every threshold here is in **sim seconds** and is compared against an
+        age derived from :meth:`sim_now_ts`. Before the Part D change the ages
+        were wall-clock, so a paused simulator made the whole console stale
+        and an accelerated one made nothing ever stale.
+        """
         policy = dict(self.DEFAULT_STALENESS_POLICY)
         try:
             import yaml as _yaml
@@ -3861,7 +4181,7 @@ class MCSServer:
                 "service": 15,
                 "subtype": 9,
                 "state": "SENT",
-                "timestamp": _time_mod.time(),
+                "timestamp": self.sim_now_ts(),
                 "error_code": 0,
                 "position": "tm_dump",
             }
@@ -3883,7 +4203,8 @@ class MCSServer:
             # tag the fallback explicitly (DI-03) so trainees can never
             # mistake fabricated points for spacecraft telemetry.
             dump_key = f"{subsystem}_{store_id}"
-            archived = self._archive.get_playback_data(subsystem)
+            archived = self._archive.get_playback_data(
+                subsystem, now_epoch=self.sim_now_ts())
             if archived:
                 self._tm_dump_data[dump_key] = archived
                 self._tm_dump_synthetic.discard(dump_key)
@@ -3927,9 +4248,10 @@ class MCSServer:
         tagged ``synthetic: True`` and the serving endpoints flag the whole
         payload (DI-03).
         """
-        import math
         import random
-        now = _time_mod.time()
+        # Sim time — synthetic points must sit on the same axis as archived
+        # ones, or the trend page draws them a decade apart.
+        now = self.sim_now_ts()
         points = []
         # Generate 60 data points going back 1 hour
         for i in range(60):
@@ -4108,7 +4430,7 @@ class MCSServer:
         passes are computed against sim time, so classifying them against
         wall clock mislabelled every pass (defect #47).
         """
-        current_time = self.get_ground_utc().timestamp()
+        current_time = self.sim_now_ts()
         # Try to fetch from planner API if available
         try:
             async with aiohttp.ClientSession() as session:
@@ -4214,7 +4536,8 @@ class MCSServer:
         except Exception:
             body = {}
         subsystem = str(body.get("subsystem", "") or "")
-        now = _time_mod.time()
+        # Archive rows are on sim time, so the default window must be too.
+        now = self.sim_now_ts()
         end = float(body.get("end", now))
         start = float(body.get("start", end - 24 * 3600))
         bucket_s = max(60.0, float(body.get("bucket_s", 3600)))

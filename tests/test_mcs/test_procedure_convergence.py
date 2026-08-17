@@ -401,15 +401,17 @@ class TestCanonicalSchemaAndAdapters:
 class TestProcedureIndexLinks:
 
     def test_shipped_runnable_links_resolve_to_real_steps(self, real_server):
-        # `kind: advisory` (2026-08b) declares a card that deliberately
+        # `advisory: true` (2026-08b) declares a card that deliberately
         # commands NOTHING — CTG-020, the ground-station antenna failure, is
         # the only one today. It is the DECLARED exception that keeps
         # "extracts zero command steps" distinguishable from the defect in
         # which 21 documents hid their commanding behind `**Action:**` prose
-        # and were silently inert, so it must not be asserted to have steps.
+        # and were silently inert. Such a card carries no `runnable:` link, so
+        # it is excluded here by construction; the filter is asserted below.
         linked = [e for e in real_server._procedure_index
-                  if e.get("runnable")
-                  and e["runnable"].get("kind") != "advisory"]
+                  if e.get("runnable")]
+        assert not any(e.get("advisory") for e in linked), (
+            "an advisory card must not also declare a runnable link")
         assert len(linked) >= 4, "the exemplar links have gone missing"
         for entry in linked:
             resolved = real_server._indexed_procedure(entry["id"])

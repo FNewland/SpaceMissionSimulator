@@ -134,7 +134,6 @@ def commands_view(dataset: TelemetryDataset, period: Period) -> list[dict]:
         row = by_req.setdefault(rid, {
             "request_id": rid, "apid": v["tc_apid"], "seq": v["tc_seq"],
             "t": v["t"], "utc": cuc_to_utc_str(v["t"]),
-            "time_estimated": v.get("time_estimated", False),
             "accept": "--", "execute": "--",
             "error_code": 0, "reason": "", "subtypes": [],
         })
@@ -206,8 +205,6 @@ def alarm_pairs(dataset: TelemetryDataset, period: Period, catalogs: Catalogs,
                     "entered_utc": cuc_to_utc_str(entry["t"]),
                     "cleared_utc": cuc_to_utc_str(tr["t"]),
                     "duration_s": round(tr["t"] - entry["t"], 1),
-                    "time_estimated": entry.get("time_estimated", False)
-                    or tr.get("time_estimated", False),
                 })
     for key, entry in open_by_key.items():
         unpaired.append({
@@ -219,7 +216,6 @@ def alarm_pairs(dataset: TelemetryDataset, period: Period, catalogs: Catalogs,
             "low_limit": entry.get("low_limit"),
             "high_limit": entry.get("high_limit"),
             "entered_utc": cuc_to_utc_str(entry["t"]),
-            "time_estimated": entry.get("time_estimated", False),
         })
     return {"paired": paired, "unpaired": unpaired, "total": len(trans)}
 
@@ -242,7 +238,6 @@ def events_view(dataset: TelemetryDataset, period: Period, catalogs: Catalogs,
         rows.append({
             "t": e["t"], "utc": cuc_to_utc_str(e["t"]),
             "cuc": int(e["t"]),
-            "time_estimated": e.get("time_estimated", False),
             "id": eid, "id_hex": f"0x{eid:04X}",
             "name": name, "severity": e["severity"],
             "subsystem": subsystem, "aux_text": e.get("aux_text", ""),

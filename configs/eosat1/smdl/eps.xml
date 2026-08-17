@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="EPS" Creator="EOSAT-1 SMDL Generator" Date="2026-08-12" Version="1.0">
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="EPS" Creator="EOSAT-1 SMDL Generator" Version="1.0+2fdbeaed7708">
   <Description>SMP2 model catalogue for EPS subsystem</Description>
   <Type Name="UInt8" Uuid="1b57882a-4b2d-53f8-a27f-be0563caa586" xsi:type="Integer" Size="1" Signed="false"/>
   <Type Name="UInt16" Uuid="5fcf9bfd-72b9-5f0c-b036-3cad6f5a8506" xsi:type="Integer" Size="2" Signed="false"/>
@@ -243,13 +243,13 @@
       <Description>0=off, 1=on</Description>
     </Field>
     <Field Name="tc_EPS_POWER_ON_line_index" Uuid="3e6fb092-28d9-5db3-9d8b-df3ae1f71775" Type="UInt8" Kind="Input">
-      <Description>Power line index (0-7)</Description>
+      <Description>Power line index (0-8; 8 = prop)</Description>
     </Field>
     <Field Name="tc_EPS_POWER_OFF_line_index" Uuid="6c56eaa2-e22c-51a9-ac63-864acaeb2983" Type="UInt8" Kind="Input">
-      <Description>Power line index (0-7)</Description>
+      <Description>Power line index (0-8; 8 = prop)</Description>
     </Field>
     <Field Name="tc_EPS_RESET_OC_FLAG_line_index" Uuid="8acebd4e-0e3c-5de6-967f-5b9efcc1086f" Type="UInt8" Kind="Input">
-      <Description>Power line index (0-7)</Description>
+      <Description>Power line index (0-8; 8 = prop)</Description>
     </Field>
     <Field Name="tc_EPS_SWITCH_LOAD_load_id" Uuid="e7492f80-dc15-5deb-aaef-fa0dc72788ef" Type="UInt8" Kind="Input">
       <Description>Load ID (0-7)</Description>

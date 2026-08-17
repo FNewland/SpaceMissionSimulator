@@ -19,11 +19,11 @@ Columns:
 
 | | Count |
 |---|---:|
-| Catalogued parameters | 441 |
-| In at least one HK SID | 318 |
-| On-demand (S20-readable) | 144 |
+| Catalogued parameters | 446 |
+| In at least one HK SID | 321 |
+| On-demand (S20-readable) | 146 |
 | Declared stubs (model does not compute) | 20 |
-| Ground limit bands | 51 |
+| Ground limit bands | 52 |
 | S12 on-board monitors | 46 |
 | Ground-derived pseudo-parameters (`derived.yaml`) | 3 |
 
@@ -34,7 +34,7 @@ Columns:
 | 1 | EPS | 52 |
 | 2 | AOCS | 81 |
 | 3 | TCS | 17 |
-| 4 | Platform | 27 |
+| 4 | Platform | 30 |
 | 5 | Payload | 31 |
 | 6 | TTC | 32 |
 | 7 | AOCS_DETERMINATION | 41 |
@@ -324,6 +324,9 @@ Columns:
 | `0x031E` | obdh.mem_errors |  | 4 |  |  | OBDH Memory Errors (0.0…5.0, WARNING) |  |
 | `0x0A10` | obdh.storage_fill | % |  | yes |  |  |  |
 | `0x0A11` | obdh.can_bus_status |  |  | yes |  |  |  |
+| `0x0A12` | obdh.obc_time_fine |  | 4 |  |  |  |  |
+| `0x0A13` | obdh.time_ref |  | 4 |  |  |  |  |
+| `0x0A14` | obdh.time_since_sync_s | s | 4 |  | 0…43200 / 0…86400 |  |  |
 
 ## payload
 
@@ -482,6 +485,8 @@ Columns:
 | `0x041B` | tcs.htr_thruster |  |  | yes |  |  |  |
 | `0x0420` | tcs.temp_radiator_n | C |  | yes |  |  |  |
 | `0x0421` | tcs.temp_radiator_s | C |  | yes |  |  |  |
+| `0x0424` | tcs.fpa_cooler_floor_c | C |  | yes |  |  |  |
+| `0x0425` | tcs.fpa_cooler_margin_k | K |  | yes |  |  |  |
 
 ## ttc
 

@@ -22,7 +22,6 @@ period:
   kind: day
   day: { select: latest_utc, count: 1, boundary: "00:00:00Z" }
   timebase: cuc
-  zero_cuc_policy: interpolate
 parameter_sets:
   eps:     [eps.bat_soc, eps.bus_voltage, eps.bat_current, eps.bat_temp,
             eps.bat_dod]

@@ -137,8 +137,8 @@ def _plot_png(fig) -> str:
 
 
 def _cuc_to_dt(t: float) -> datetime:
-    from ..protocol.ecss_packet import parse_cuc_time
-    return parse_cuc_time(int(t))
+    from ..protocol.ecss_packet import cuc_seconds_to_datetime
+    return cuc_seconds_to_datetime(float(t))
 
 
 def _shade_eclipse(ax, dataset: TelemetryDataset, catalogs: Catalogs,
@@ -372,14 +372,7 @@ def _render_header(sec: HeaderSection, spec: ReportSpec,
                      datetime.now(timezone.utc).isoformat(timespec="seconds")))
     body = "".join(f"<tr><th style='width:160px'>{_esc(k)}</th>"
                    f"<td>{_esc(v)}</td></tr>" for k, v in rows)
-    prov = ""
-    if dataset.zero_cuc_placed:
-        prov = (f"<div class='warnband'>{dataset.zero_cuc_placed} packets "
-                "carry no on-board timestamp (S1/S12/S6/S11/S15 — "
-                "tm_builder default CUC 0); they are placed by archive order "
-                "between their bracketing timestamped neighbours and are "
-                "marked ~ throughout this report.</div>")
-    return f"<div class='meta'><table>{body}</table></div>{prov}"
+    return f"<div class='meta'><table>{body}</table></div>"
 
 
 def _render_narrative(sec: NarrativeSection, ctx: dict) -> str:
@@ -468,13 +461,13 @@ def _render_events(sec: EventsSection, dataset, period, catalogs) -> str:
                         f"{sec.severity_min} in the reporting period.</div>")
     body = "".join(
         f"<tr class='sev{r['severity']}'>"
-        f"<td{' class=est' if r['time_estimated'] else ''}>{_esc(r['utc'])}</td>"
+        f"<td>{_esc(r['utc'])}</td>"
         f"<td>{_esc(r['id_hex'])}</td><td>{_esc(r['name'])}</td>"
         f"<td>{_SEV_NAMES.get(r['severity'], r['severity'])}</td>"
         f"<td>{_esc(r['subsystem'])}</td><td>{_esc(r['aux_text'])}</td></tr>"
         for r in rows)
-    return (title + f"<table><caption>{len(rows)} events (severity ≥ "
-            f"{sec.severity_min}); ~ marks reconstructed timestamps</caption>"
+    return (title + f"<table><caption>{len(rows)} events "
+            f"(severity ≥ {sec.severity_min})</caption>"
             "<tr><th>UTC</th><th>ID</th><th>Name</th><th>Sev</th>"
             "<th>Subsystem</th><th>Text</th></tr>" + body + "</table>")
 
@@ -494,8 +487,7 @@ def _render_alarms(sec: AlarmsSection, dataset, period, catalogs) -> str:
             f"<td class='num'>{_fmt(p.get('value'))}</td>"
             f"<td class='num'>{_fmt(p.get('low_limit'))} / "
             f"{_fmt(p.get('high_limit'))}</td>"
-            f"<td{' class=est' if p['time_estimated'] else ''}>"
-            f"{_esc(p['entered_utc'])}</td>"
+            f"<td>{_esc(p['entered_utc'])}</td>"
             f"<td>{_esc(p['cleared_utc'])}</td>"
             f"<td class='num'>{p['duration_s']:g}</td></tr>"
             for p in res["paired"])
@@ -529,8 +521,7 @@ def _render_commands(sec: CommandsSection, dataset, period) -> str:
         err = "0x%04X" % r["error_code"] if r["error_code"] else ""
         outcome = (f"<span class='flag'>{r['outcome']}</span>" if bad
                    else r["outcome"])
-        est = " class=est" if r["time_estimated"] else ""
-        return (f"<tr><td{est}>{_esc(r['utc'])}</td>"
+        return (f"<tr><td>{_esc(r['utc'])}</td>"
                 f"<td class='num'>{r['apid']}</td>"
                 f"<td class='num'>{r['seq']}</td>"
                 f"<td>{r['accept']}</td><td>{r['execute']}</td>"

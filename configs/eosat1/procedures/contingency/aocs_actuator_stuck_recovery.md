@@ -118,12 +118,13 @@ proceed to momentum management.
 **TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — Check momentum state of remaining wheels
 **Verify:** `aocs.rw1_speed` through `aocs.rw4_speed` (active wheels only) — if any
 active wheel exceeds 3000 RPM, desaturation is required.
-**Verify:** `aocs.mag_valid` (0x0230) = 1 — magnetometer must be operational for
+**Verify:** `aocs.mag_enabled` (0x025C) = 1 — magnetometer must be operational for
 magnetorquer-based momentum dumping.
 **TC:** `AOCS_DESATURATE` (Service 8, Subtype 1, func_id 1) — Command momentum dump
 **Verify:** Active wheel speeds trending toward 0 RPM over 120-300 s
-**Verify:** `aocs.mtq_x` (0x020B), `aocs.mtq_y` (0x020C), `aocs.mtq_z` (0x020D)
-— magnetorquers are generating dipole moments (non-zero values during dump)
+**Verify:** `aocs.mtq_x_duty` (0x0258), `aocs.mtq_y_duty` (0x0259), `aocs.mtq_z_duty` (0x025A)
+— magnetorquers are driving (non-zero duty during the dump). 0x020B-0x020D are the
+magnetometer axes `aocs.mag_x/y/z`, not torquer commands.
 **Verify:** `aocs.rate_roll` (0x0204), `aocs.rate_pitch` (0x0205),
 `aocs.rate_yaw` (0x0206) — all < 0.5 deg/s during desaturation manoeuvre
 **Verify:** No remaining wheel exceeds 5000 RPM during redistribution.
@@ -203,11 +204,11 @@ ops confirmed as permanent configuration.
 - [ ] Wheel recovery feasibility assessed and documented
 
 ## Off-Nominal Handling
-- If a second wheel fails during this procedure: Command `AOCS_SET_MODE(mode=1)`
+- If a second wheel fails during this procedure: Command `AOCS_SET_MODE(mode=2)`
   (DETUMBLE) immediately. Two-wheel control does not provide three-axis pointing.
   Escalate to CTG-005 Step 7 and EMG-005 (Loss of Attitude). This is mission-critical.
 - If attitude error exceeds 10 deg during wheel disable: Command
-  `AOCS_SET_MODE(mode=2)` (COARSE_SUN) immediately. Wait for rates to stabilise
+  `AOCS_SET_MODE(mode=3)` (COARSE_SUN) immediately. Wait for rates to stabilise
   below 0.5 deg/s before attempting three-wheel mode.
 - If desaturation is ineffective (wheels still > 4000 RPM after one attempt):
   The orbit geometry may not allow efficient momentum dumping at current position.

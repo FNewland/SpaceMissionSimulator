@@ -99,8 +99,10 @@ class TestS9TimeReportFlow:
         responses = dispatcher.dispatch(9, 2, b'', None)
 
         assert len(responses) == 1, "S9.2 should return exactly one time-report packet"
-        engine._get_cuc_time.assert_called_once()
-        engine.tm_builder.build_time_report.assert_called_once_with(1000)
+        # The report takes no argument: the TM builder reads on-board time
+        # through its time source, which is the engine's single seam
+        # (engine._get_cuc_time — TIME_ARCHITECTURE Part C.3).
+        engine.tm_builder.build_time_report.assert_called_once_with()
 
 
 # ===================================================================

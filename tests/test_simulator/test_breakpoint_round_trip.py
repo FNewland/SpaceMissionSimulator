@@ -123,7 +123,8 @@ def _canonical(state: dict) -> dict:
     """Snapshot minus save-time metadata (wall-clock volatile)."""
     s = copy.deepcopy(state)
     s.pop("name", None)
-    s.pop("timestamp", None)
+    s.pop("saved_at", None)      # wall-clock session artefact
+    s.pop("timestamp", None)     # pre-Part-C name for saved_at
     return s
 
 

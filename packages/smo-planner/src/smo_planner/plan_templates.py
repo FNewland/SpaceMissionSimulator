@@ -36,7 +36,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from smo_planner.utils import parse_iso as _parse_iso
+from smo_planner.utils import parse_iso as _parse_iso, iso_sort_key as _iso_key
 
 logger = logging.getLogger(__name__)
 
@@ -263,5 +263,6 @@ def instantiate_template(
                 "extras": extras,
             })
 
-    specs.sort(key=lambda s: s["start_time"])
+    # Chronological, not lexical (utils.iso_sort_key).
+    specs.sort(key=lambda s: _iso_key(s["start_time"]))
     return specs, warnings

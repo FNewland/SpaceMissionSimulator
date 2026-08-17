@@ -142,8 +142,9 @@ class PassAnalysis:
         self.hk_samples: dict[int, list[tuple[int, dict[int, float]]]] = defaultdict(list)
         self.pkt_counts: dict[tuple[int, int], int] = defaultdict(int)
         self.hk_counts: dict[int, int] = defaultdict(int)
-        self.first_time: int | None = None
-        self.last_time: int | None = None
+        # On-board CUC seconds (float: coarse + fine/65536), None = none seen.
+        self.first_time: float | None = None
+        self.last_time: float | None = None
         # S12 on-board monitoring. Franz: "We cannot see the contents of the
         # S12s in delayed TM dumps." This analyser handled S3.25 and S5 and had
         # no `elif svc == 12` branch at all, so a dump of the Alarm store —
@@ -165,11 +166,19 @@ class PassAnalysis:
         sub = pkt.secondary.subtype
         self.pkt_counts[(svc, sub)] += 1
 
-        # time (CUC from secondary header if present)
-        # The PUS secondary header field is `cuc_time` (ecss_packet.SecondaryHeader);
-        # the old `"time"` lookup silently defaulted to 0 for every packet.
-        cuc = int(getattr(pkt.secondary, "cuc_time", 0) or 0)
-        if cuc:
+        # On-board time from the 9-octet PUS secondary header (CUC migration:
+        # coarse uint32 seconds since the mission epoch + fine uint16 in
+        # units of 1/65536 s). `cuc_seconds` is the full-precision float view;
+        # `cuc_time` would drop the sub-second part. Packet field offsets are
+        # not computed here — `decommutate_packet` already places the data
+        # field at octet 15.
+        #
+        # CUC 0 is a LEGITIMATE time (the OBC clock starts at J2000/CUC 0 on
+        # first boot and after every bootloader reset), so absence is `None`,
+        # never a falsy 0.
+        cuc = getattr(pkt.secondary, "cuc_seconds", None)
+        cuc = float(cuc) if cuc is not None else None
+        if cuc is not None:
             if self.first_time is None or cuc < self.first_time:
                 self.first_time = cuc
             if self.last_time is None or cuc > self.last_time:
@@ -223,7 +232,7 @@ class PassAnalysis:
 
 
 # ---------- render ----------
-def _svg_spark(points: list[tuple[int, float]], w=220, h=32) -> str:
+def _svg_spark(points: list[tuple[float, float]], w=220, h=32) -> str:
     if len(points) < 2:
         return ""
     xs = [p[0] for p in points]
@@ -246,13 +255,19 @@ S12_SEVERITY_COLOURS = {"INFO": "#888", "WARNING": "#b70",
                         "ALARM": "#c00", "HIGH": "#c00"}
 
 
-def _fmt_cuc(cuc: int | None) -> str:
-    """CUC seconds as UTC, falling back to the raw count."""
-    if not cuc:
+def _fmt_cuc(cuc: float | int | None) -> str:
+    """Full-precision CUC seconds as UTC, falling back to the raw count.
+
+    Takes the float (coarse + fine/65536) rather than truncating to whole
+    seconds, and treats only ``None`` as "no timestamp" — CUC 0 is a real
+    on-board time after a bootloader reset.
+    """
+    if cuc is None:
         return "--"
     try:
-        from smo_common.protocol.ecss_packet import parse_cuc_time
-        return parse_cuc_time(int(cuc)).isoformat(sep=" ", timespec="seconds") + "Z"
+        from smo_common.protocol.ecss_packet import cuc_seconds_to_datetime
+        return cuc_seconds_to_datetime(float(cuc)).isoformat(
+            sep=" ", timespec="milliseconds") + "Z"
     except Exception:  # pragma: no cover - defensive
         return str(cuc)
 
@@ -319,7 +334,7 @@ def render_report(path: Path, an: PassAnalysis, params_by_id: dict) -> str:
     )
     rows_events = "".join(
         f"<tr style='color:{SEVERITY_COLOURS.get(e['severity'],'#333')};'>"
-        f"<td>{e['cuc']}</td><td>S5.{e['subtype']}</td>"
+        f"<td>{_fmt_cuc(e['cuc'])}</td><td>S5.{e['subtype']}</td>"
         f"<td>0x{e['event_id']:04X}</td><td>{html.escape(e['description'])}</td></tr>"
         for e in an.events
     ) or "<tr><td colspan='4' style='color:#888;'>No events in dump.</td></tr>"
@@ -331,7 +346,7 @@ def render_report(path: Path, an: PassAnalysis, params_by_id: dict) -> str:
         if not samples:
             continue
         # pivot: pid -> [(cuc, value)]
-        series: dict[int, list[tuple[int, float]]] = defaultdict(list)
+        series: dict[int, list[tuple[float, float]]] = defaultdict(list)
         for cuc, vals in samples:
             for pid, v in vals.items():
                 series[pid].append((cuc, v))
@@ -392,9 +407,9 @@ th {{ background: #f0f0f0; text-align: left; }}
 <h1>TM Dump Report</h1>
 <div class='meta'>
 <b>Source:</b> <code>{html.escape(str(path))}</code><br>
-<b>Generated:</b> {datetime.utcnow().isoformat()}Z<br>
+<b>Report generated (wall clock, not mission time):</b> {datetime.utcnow().isoformat()}Z<br>
 <b>Total packets:</b> {pkt_total}<br>
-<b>CUC range:</b> {an.first_time} → {an.last_time}
+<b>On-board time (CUC) range:</b> {_fmt_cuc(an.first_time)} → {_fmt_cuc(an.last_time)}
 </div>
 
 <h2>Packet counts by service</h2>

@@ -138,10 +138,14 @@ die() {
 }
 
 # --- Start Simulator ---
+# smo-mcs reads $SMO_SIM_HTTP_PORT to build its default sim-state URL, so a
+# non-default SIMULATOR_HTTP_PORT has to reach it too, not just the simulator.
+export SMO_SIM_HTTP_PORT="${SIMULATOR_HTTP_PORT:-8080}"
 echo "==> Starting Simulator (TC:${SIMULATOR_TC_PORT:-8001} TM:${SIMULATOR_TM_PORT:-8002} HTTP:${SIMULATOR_HTTP_PORT:-8080}) on ${SIM_BIND}..."
 smo-simulator \
     --config "${MISSION_CONFIG:-configs/eosat1/}" \
     --host "${SIM_BIND}" \
+    --port "${SIMULATOR_HTTP_PORT:-8080}" \
     --speed "${SIMULATOR_SPEED:-1.0}" &
 SIM_PID=$!
 PIDS+=("$SIM_PID")

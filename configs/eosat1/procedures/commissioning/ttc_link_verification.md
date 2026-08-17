@@ -51,8 +51,10 @@ indicates a modelling error, not a link problem.
 - [ ] COM-001 through COM-003 completed
 - [ ] OBC in NOMINAL mode
 - [ ] Spacecraft attitude stable in COARSE_SUN (`aocs.mode` 0x020F = 3) or
-      NOMINAL (4). There is no COARSE_SUN or NOMINAL mode — the codes are
-      in `configs/eosat1/aocs/aocs_mode_codes.yaml`.
+      NOMINAL (4). Mode codes are defined in
+      `configs/eosat1/aocs/aocs_mode_codes.yaml`: 0 OFF, 1 SAFE_BOOT,
+      2 DETUMBLE, 3 COARSE_SUN, 4 NOMINAL, 5 FINE_POINT, 6 SLEW, 7 DESAT,
+      8 ECLIPSE, 9 INERTIAL.
 - [ ] Ground station passes scheduled for at least two stations
 - [ ] Primary transponder currently active
 - [ ] Bidirectional S-band link active — `ttc.link_status` (0x0501) = 2 (LOCKED)
@@ -243,4 +245,4 @@ beacon only.
 - [ ] Multi-station verification completed (or scheduled)
 - [ ] Link Budget Report generated
 - [ ] Primary transponder active for nominal operations
-- [ ] GO decision for COM-005 (AOCS Sensor Calibration)
+- [ ] GO decision for COM-007 (OBDH Checkout)

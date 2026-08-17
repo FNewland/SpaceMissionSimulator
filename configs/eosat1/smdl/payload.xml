@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="Payload" Creator="EOSAT-1 SMDL Generator" Date="2026-08-12" Version="1.0">
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="Payload" Creator="EOSAT-1 SMDL Generator" Version="1.0+2fdbeaed7708">
   <Description>SMP2 model catalogue for Payload subsystem</Description>
   <Type Name="UInt8" Uuid="7981e083-ea41-5360-ad7d-c285223a099c" xsi:type="Integer" Size="1" Signed="false"/>
   <Type Name="UInt16" Uuid="64b04f7d-63c1-5e74-90d1-38d9516374dc" xsi:type="Integer" Size="2" Signed="false"/>
@@ -64,7 +64,7 @@
       <Description>Detector integration time [ms]</Description>
     </Field>
     <Field Name="payload_swath_width_km" Uuid="994148ce-c616-507d-8790-d71e1714a4a9" Type="Float32" Kind="Output" View="true">
-      <Description>Ground swath width [km]</Description>
+      <Description>Ground swath width (240 km at the nominal 450 km altitude; 2*h*tan(FOV/2), FOV 29.856 deg from the payload.yaml optics) [km]</Description>
     </Field>
     <Field Name="payload_band_blue_snr" Uuid="ccbfefdf-569e-5d79-96fb-45e9abc039ad" Type="Float32" Kind="Output" View="true">
       <Description>Blue band (443 nm) SNR [dB]</Description>
@@ -91,7 +91,7 @@
       <Description>Attitude error used for quality calculation [deg]</Description>
     </Field>
     <Field Name="payload_gsd_m" Uuid="e278b349-53ed-57b7-9663-146e2c2bb5df" Type="Float32" Kind="Output" View="true">
-      <Description>Ground sample distance [m]</Description>
+      <Description>Ground sample distance (29.3 m at 450 km = h * pitch / focal length; 240 km swath / 8192 px) [m]</Description>
     </Field>
     <Field Name="payload_scene_entropy" Uuid="69ef765d-e4ea-5925-9f38-01677552bed9" Type="Float32" Kind="Output" View="true">
       <Description>Scene entropy estimate for compression</Description>

@@ -263,7 +263,7 @@ class TestS11Scheduling:
 
     def test_s11_001_schedule_tc(self, engine):
         """S11.4: Schedule a TC → S11.5 response with cmd_id."""
-        future_cuc = engine._get_cuc_time() + 300
+        future_cuc = int(engine._get_cuc_time()) + 300
         embedded = bytes([8, 1, 0, 7])  # S8.1 DESAT
         _drain_tm(engine)
         _send_tc(engine, 11, 4, struct.pack('>I', future_cuc) + embedded)
@@ -275,7 +275,7 @@ class TestS11Scheduling:
     def test_s11_002_list_scheduled(self, engine):
         """S11.17: List scheduled commands → S11.18."""
         # Schedule something first
-        future_cuc = engine._get_cuc_time() + 600
+        future_cuc = int(engine._get_cuc_time()) + 600
         _send_tc(engine, 11, 4, struct.pack('>I', future_cuc) + bytes([8, 1, 1]))
         _drain_tm(engine)
         _send_tc(engine, 11, 17, b'')
@@ -298,7 +298,7 @@ class TestS11Scheduling:
 
     def test_s11_006_timed_execution(self, engine):
         """Schedule a TC 5 ticks ahead, verify it executes."""
-        current_cuc = engine._get_cuc_time()
+        current_cuc = int(engine._get_cuc_time())
         _send_tc(engine, 11, 13, b'')  # enable scheduler
         # Schedule AOCS set_mode(OFF) at CUC+5
         embedded = bytes([8, 1, 0, 0])  # func=0, mode=0 (OFF)

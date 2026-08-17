@@ -3016,10 +3016,38 @@ a.kbd-help-btn { text-decoration: none; display: inline-block; line-height: 14px
       <div class="panel-body">
         <div class="grid-1x2">
           <div>
-            <div class="data-row"><span class="lbl">Ground UTC</span><span class="val" id="s9-ground-utc">--</span></div>
-            <div class="data-row"><span class="lbl">Spacecraft UTC</span><span class="val" id="s9-sc-utc">--</span></div>
-            <div class="data-row"><span class="lbl">Delta (ms)</span><span class="val" id="s9-delta">--</span></div>
-            <div class="data-row"><span class="lbl">CUC Raw</span><span class="val" id="s9-cuc">--</span></div>
+            <!-- The three clocks, side by side, in the order an operator
+                 reasons about them: what time is it on the ground, what time
+                 does the spacecraft think it is, and how far apart are they.
+                 TIME REF and TIME SINCE SYNC say WHY the gap is what it is. -->
+            <div class="data-row">
+              <span class="lbl" title="The ground segment's clock. In a simulated run this is SIM time, not the browser's wall clock.">SIM / GROUND UTC</span>
+              <span class="val" id="s9-ground-utc" style="font-family:monospace;">--</span>
+            </div>
+            <div class="data-row">
+              <span class="lbl" title="The spacecraft's own clock, decoded from TM obdh.obc_time on the J2000 mission epoch.">ON-BOARD UTC</span>
+              <span class="val" id="s9-sc-utc" style="font-family:monospace;">--</span>
+            </div>
+            <div class="data-row">
+              <span class="lbl" title="On-board minus ground. Positive = the OBC clock is ahead. The spacecraft cannot measure this; only the ground can.">OFFSET (SC - SIM)</span>
+              <span class="val" id="s9-delta" style="font-family:monospace;font-weight:600;">--</span>
+            </div>
+            <div class="data-row">
+              <span class="lbl" title="0 NONE (never set since the last bootloader reset) / 1 GROUND (set by S9,1, free-running with drift) / 2 GPS (disciplined, no drift) / 3 HOLDOVER (was GPS, fix lost, drifting again)">TIME REF</span>
+              <span class="val" id="s9-time-ref">--</span>
+            </div>
+            <div class="data-row">
+              <span class="lbl" title="On-board seconds since the last successful time sync. The longer this runs, the further the clock has drifted.">SINCE LAST SYNC</span>
+              <span class="val" id="s9-since-sync" style="font-family:monospace;">--</span>
+            </div>
+            <div class="data-row">
+              <span class="lbl" title="Raw on-board CUC: coarse seconds since the mission epoch plus the sub-second field in 1/65536 s ticks.">ON-BOARD CUC</span>
+              <span class="val" id="s9-cuc" style="font-family:monospace;font-size:10px;">--</span>
+            </div>
+            <div style="margin-top:8px;font-size:10px;color:var(--text-tertiary);line-height:1.5;"
+                 id="s9-corr-note">
+              Waiting for OBDH time telemetry.
+            </div>
           </div>
           <div>
             <button class="btn btn-primary" onclick="s9RequestTime()" style="margin-bottom:8px;">Request Time Report</button>
@@ -3682,6 +3710,146 @@ let eventLog = [];
 let eventSevFilter = '';   // '' = all; else 'info'|'nom'|'warn'|'alarm'|'medplus'
 let tmLog = [];
 
+/* ===================================================================
+   MISSION CLOCK — one sim clock for the whole front end
+   ===================================================================
+
+   THE RULE (docs/plan_2026-08c/TIME_ARCHITECTURE.md, Part D.8):
+   anything the console says about the MISSION is on SIM TIME.
+   `Date.now()` stays legitimate only for browser-local pacing — animation,
+   fetch timeouts, "did the websocket answer" — and never for a pass
+   countdown, a freshness check or an age display.
+
+   Why it matters: the server ages telemetry, alarms and archive rows with
+   its own sim clock. If the browser subtracts those sim-time stamps from
+   `Date.now()`, pausing the simulator makes every age run away while the
+   data is in fact perfectly current, and running at x60 makes every age
+   crawl while telemetry is genuinely a minute old.
+
+   `simNow()` mirrors the server's open-loop clock: anchor on the sim_time
+   in each state message, then extrapolate by wall elapsed x speed until the
+   next one (state arrives ~1 Hz, so the extrapolation is short).
+   speed == 0 (paused) freezes it, exactly like the server's.
+=================================================================== */
+
+/** Unix ms of the CUC epoch, J2000 = 2000-01-01T12:00:00Z. */
+const CUC_EPOCH_UNIX_MS = Date.UTC(2000, 0, 1, 12, 0, 0);
+/** Fine-time ticks per second on the wire (1/65536 s ~ 15.26 us). */
+const CUC_FINE_TICKS = 65536;
+
+let _simAnchorMs = null;    // sim time at the last server update (Unix ms)
+let _simAnchorWallMs = 0;   // browser wall clock when that arrived
+let _simSpeed = 1;          // simulator speed multiplier, from the server
+
+/** Re-anchor the browser clock from a /api/state payload or WS state msg. */
+function adoptServerClock(data) {
+  if (!data) return;
+  const iso = data.sim_time || data.ground_utc;
+  if (iso) {
+    const t = Date.parse(iso);
+    if (!isNaN(t)) { _simAnchorMs = t; _simAnchorWallMs = Date.now(); }
+  }
+  if (typeof data.speed === 'number' && isFinite(data.speed)) _simSpeed = data.speed;
+}
+
+/** Current SIM time, Unix ms. Falls back to wall clock before first state. */
+function simNow() {
+  if (_simAnchorMs === null) return Date.now();
+  return _simAnchorMs + (Date.now() - _simAnchorWallMs) * _simSpeed;
+}
+/** Current SIM time in seconds — the unit every server-side *_ts uses. */
+function simNowSec() { return simNow() / 1000; }
+/** Current SIM time as a Date. */
+function simNowDate() { return new Date(simNow()); }
+/** True once the server has told us the sim time at least once. */
+function simClockLocked() { return _simAnchorMs !== null; }
+
+/* ── CUC: ONE conversion, one epoch ────────────────────────────────
+
+   Before this, `s9SyncTime` and `s11ResolveTimeTag` each did
+   `Math.floor(d.getTime() / 1000)` — a UNIX timestamp — under a comment
+   claiming it matched the server. The server encodes J2000. The gap is
+   946 728 000 s, so an S11 time tag set from the console landed ~30 years
+   in the future and never fired. Every CUC the browser produces now goes
+   through these functions.                                            */
+
+function _hexOctets(value, nBytes) {
+  let v = Math.floor(Number(value));
+  if (!isFinite(v) || v < 0) v = 0;
+  let h = '';
+  for (let i = nBytes - 1; i >= 0; i--) {
+    h += ('00' + (Math.floor(v / Math.pow(256, i)) % 256).toString(16).toUpperCase()).slice(-2);
+  }
+  return h;
+}
+
+/**
+ * Build a CUC from a count of seconds since the mission epoch.
+ *
+ * Carries coarse (u32 seconds since J2000) AND fine (u16, 1/65536 s), plus
+ * both wire spellings:
+ *   `hex4` — coarse only. The S11,4 time tag stays 4 octets because the
+ *            on-board scheduler reads the embedded TC from octet 4.
+ *   `hex6` — coarse+fine, the ECSS CUC of TIME_ARCHITECTURE Part A. Used for
+ *            S9,1 SET_TIME, whose time field is at the front of the body and
+ *            therefore takes the wider form.
+ */
+function cucFromParts(seconds) {
+  let coarse = Math.floor(seconds);
+  let fine = Math.round((seconds - coarse) * CUC_FINE_TICKS);
+  if (fine >= CUC_FINE_TICKS) { fine -= CUC_FINE_TICKS; coarse += 1; }
+  if (fine < 0) { fine += CUC_FINE_TICKS; coarse -= 1; }
+  return {
+    seconds: seconds,
+    coarse: coarse,
+    fine: fine,
+    hex4: _hexOctets(coarse, 4),
+    hex6: _hexOctets(coarse, 4) + _hexOctets(fine, 2),
+  };
+}
+
+/** UTC instant (Date | Unix ms) -> CUC on the mission epoch (J2000). */
+function utcToCuc(when) {
+  const ms = (when instanceof Date) ? when.getTime() : Number(when);
+  return cucFromParts((ms - CUC_EPOCH_UNIX_MS) / 1000);
+}
+
+/** CUC (coarse [, fine]) -> Unix ms. */
+function cucToUtcMs(coarse, fine) {
+  return CUC_EPOCH_UNIX_MS + Number(coarse) * 1000
+         + (Number(fine) || 0) * 1000 / CUC_FINE_TICKS;
+}
+
+/**
+ * SIM time -> the ON-BOARD CUC that instant corresponds to.
+ *
+ * This is the ground's time correlation, and it is what an S11 time tag must
+ * be built from: the on-board scheduler fires on the OBC's own clock, so the
+ * tag has to be expressed in that clock INCLUDING its error. If the OBC is
+ * 40 s fast the command fires 40 s early in sim time — the correct, teachable
+ * behaviour, which the console must not silently correct for.
+ *
+ * Falls back to the plain epoch conversion ("assume a perfect clock") until
+ * the spacecraft has downlinked its time.
+ */
+function simUtcToObcCuc(when) {
+  const ms = (when instanceof Date) ? when.getTime() : Number(when);
+  const tc = (state && state.time_correlation) || {};
+  if (typeof tc.sc_cuc_seconds === 'number' && tc.sc_cuc_seconds > 0) {
+    return cucFromParts(tc.sc_cuc_seconds + (ms - simNow()) / 1000);
+  }
+  return utcToCuc(ms);
+}
+
+/** ON-BOARD CUC -> the SIM time it will happen at (inverse of the above). */
+function obcCucToSimMs(cuc) {
+  const tc = (state && state.time_correlation) || {};
+  if (typeof tc.sc_cuc_seconds === 'number' && tc.sc_cuc_seconds > 0) {
+    return simNow() + (Number(cuc) - tc.sc_cuc_seconds) * 1000;
+  }
+  return cucToUtcMs(cuc, 0);
+}
+
 // ===== OPERATOR LOG BUFFERS / SCROLL LOCK (defect #63) =====
 // The logs used to be rebuilt with innerHTML on every packet, which reset
 // scrollTop on each render (several times per second) and only ever showed the
@@ -4328,10 +4496,13 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ===== CLOCKS =====
+// The header clock is the MISSION clock: SIM UTC, taken from the server and
+// extrapolated between state messages. It reads the same as the browser's own
+// clock on a real mission and correctly stands still when the run is paused.
 function startClocks() {
   setInterval(() => {
-    const now = new Date();
-    document.getElementById('utc-clock').textContent = now.toISOString().substr(11,8);
+    document.getElementById('utc-clock').textContent =
+      simNowDate().toISOString().substr(11,8);
   }, 500);
 }
 
@@ -4603,7 +4774,8 @@ async function fetchOnDemand(pid) {
         // engine params are published as hex-keyed dict under "params"
         const v = j?.params?.[pid] ?? j?.params?.[`0x${pid.toString(16).toUpperCase().padStart(4,'0')}`];
         if (typeof v === 'number') {
-          _ondemandLastValues[pid] = {value: v, ts: Date.now()};
+          // Sim time: this is a telemetry receive stamp like any other.
+          _ondemandLastValues[pid] = {value: v, ts: simNow()};
           renderOnDemand();
         }
       } catch (e) {}
@@ -4717,6 +4889,9 @@ function connectWebSocket() {
       const msg = JSON.parse(evt.data);
       if (msg.type === 'state') {
         state = msg.data;
+        // Re-anchor the browser's sim clock BEFORE anything renders, so
+        // every age/countdown drawn this frame is on the server's clock.
+        adoptServerClock(state);
         // The last schedule report rides on the state broadcast so the S11
         // table survives a tab switch / reload without re-issuing TC(11,17);
         // a sim-time jump clears it server-side rather than leaving stale
@@ -4765,6 +4940,7 @@ function startPolling() {
       const res = await fetch('/api/sim-state');
       if (res.ok) {
         state = await res.json();
+        adoptServerClock(state);
         updateUI();
       }
     } catch(e) {}
@@ -4836,7 +5012,9 @@ function packetRowCells(e) {
 
 // ===== TM PACKET HANDLER =====
 function handleTMPacket(pkt) {
-  lastTmTimestamp = new Date();
+  // Receive time on the MISSION clock, so the packet log lines up with the
+  // ages, alarms and archive rows the server derives from the same packet.
+  lastTmTimestamp = simNowDate();
   const ts = lastTmTimestamp.toISOString().substr(11,12);
 
   // TM log — structured row with real SID / RID columns
@@ -6263,7 +6441,7 @@ async function sendPUSCommand(serviceArg, subtypeArg, dataArg, nameArg) {
       body: JSON.stringify({ service, subtype, data_hex: dataHex, name, position: currentPosition })
     });
     const result = await res.json();
-    const ts = new Date().toISOString().substr(11,12);
+    const ts = simNowDate().toISOString().substr(11,12);
     cmdHistory.unshift({ ts, name, status: result.status, seq: result.seq, service, subtype });
     if (cmdHistory.length > 100) cmdHistory.length = 100;
     if (result.status === 'sent') {
@@ -6289,7 +6467,9 @@ async function sendPUSCommand(serviceArg, subtypeArg, dataArg, nameArg) {
 // operator action on the MCS.
 
 function addEventLog(sev, sevLabel, msg) {
-  const ts = new Date().toISOString().substr(11,12);
+  // Mission clock: the operator event log is read side by side with the TM
+  // log and the alarm journal, which are both on sim time.
+  const ts = simNowDate().toISOString().substr(11,12);
   pushEventLog({ ts, sev, sevLabel, msg });
 }
 
@@ -6758,7 +6938,9 @@ function updateEclipseCountdown() {
   const el = document.getElementById('eclipseCountdown');
   if (!el) return;
   const inEclipse = !!state.in_eclipse;
-  const now = Date.now() / 1000;
+  // Eclipse entry/exit are orbital events: sim time, so the countdown holds
+  // still on pause and runs at speed when the run is accelerated.
+  const now = simNowSec();
 
   // Detect phase transition
   if (_eclipseWasInEclipse === null || inEclipse !== _eclipseWasInEclipse) {
@@ -6885,20 +7067,34 @@ function updateUI() {
   // Top bar — MET from elapsed seconds, SC time from OBC CUC TM (0x0309)
   document.getElementById('met-clock').textContent = formatMET(state.met_s);
   const scTimeEl = document.getElementById('sc-time-clock');
+  const _tc = state.time_correlation || {};
   if (state.sc_time) {
-    // SC time from telemetry param 0x0309 (set via S9.1)
+    // SC time from telemetry 0x0309 (+ fine), decoded on the J2000 epoch.
+    // Coloured by how far it has drifted from the ground: the header is the
+    // one thing an operator always has in view, so a clock that needs a sync
+    // says so there and not only on the S9 page.
     try {
       const d = new Date(state.sc_time);
       scTimeEl.textContent = d.toISOString().substr(11, 8);
-      scTimeEl.style.color = '';
+      scTimeEl.style.color = ({
+        warning: 'var(--status-warning)',
+        alarm: 'var(--status-alarm)',
+      })[_tc.offset_state] || '';
+      scTimeEl.title = 'On-board clock. ref '
+        + (_tc.time_ref_name || 'unknown')
+        + (typeof _tc.offset_s === 'number'
+            ? `, ${_tc.offset_s >= 0 ? '+' : ''}${_tc.offset_s.toFixed(1)} s vs ground` : '')
+        + (_tc.never_synced ? ' — NEVER SYNCED' : '');
     } catch(e) { scTimeEl.textContent = '--:--:--'; }
   } else if (state.sc_obc_time_cuc != null && state.sc_obc_time_cuc > 0) {
-    // CUC not yet epoch-set — show raw seconds
+    // No decode available — show raw CUC seconds.
     scTimeEl.textContent = Math.floor(state.sc_obc_time_cuc) + 's';
     scTimeEl.style.color = 'var(--status-warning)';
+    scTimeEl.title = 'Raw on-board CUC seconds';
   } else {
     scTimeEl.textContent = 'NOT SET';
     scTimeEl.style.color = 'var(--status-stale)';
+    scTimeEl.title = 'No OBDH time telemetry received';
   }
   const spd = state.speed != null ? state.speed : 1;
   const speedEl = document.getElementById('sim-speed');
@@ -7019,7 +7215,9 @@ let saContact = null;
 function renderSaPass() {
   const lbl = document.getElementById('sa-pass-lbl');
   if (!saContact) { setSaVal('sa-pass', '--', 'unknown'); return; }
-  const now = Date.now() / 1000;
+  // aos_time/los_time come from the pass list, which is computed on SIM time.
+  // Comparing them against the browser's wall clock was the AOS/LOS bug.
+  const now = simNowSec();
   if (saContact.in_contact && saContact.los_time != null) {
     if (lbl) lbl.textContent = 'LOS IN';
     setSaVal('sa-pass',
@@ -7288,7 +7486,9 @@ function updateEpsWingsAndEnergy() {
 
   // ── R-6: rolling Wh/orbit ──
   const gen = eps.power_gen_W, cons = eps.power_cons_W;
-  const now = Date.now() / 1000;
+  // Wh/orbit is integrated over MISSION time — an orbit is 90 sim minutes
+  // regardless of how fast the run is going.
+  const now = simNowSec();
   if (gen != null && cons != null) {
     _energySamples.push({t: now, net: Number(gen) - Number(cons)});
     while (_energySamples.length && now - _energySamples[0].t > ENERGY_WINDOW_S) {
@@ -7888,7 +8088,9 @@ function ovComputeSubsolarPoint(date) {
 
 function updateOvTerminator() {
   if (!overviewMap) return;
-  const now = new Date();
+  // The day/night terminator is drawn for the SIMULATED instant — the same
+  // one the ground track and the eclipse flag are computed for.
+  const now = simNowDate();
   const subsolar = ovComputeSubsolarPoint(now);
   const latR = subsolar.lat * Math.PI / 180;
   const lonR = subsolar.lon * Math.PI / 180;
@@ -7949,7 +8151,9 @@ async function fetchOvGroundTrack() {
 
     if (track.length < 2) return;
 
-    const nowMs = Date.now();
+    // The track's `utc` stamps are sim time, so past-vs-future is a sim-time
+    // question.
+    const nowMs = simNow();
 
     let seg = [];
     let inEcl = track[0].in_eclipse;
@@ -8010,7 +8214,11 @@ async function fetchOvSpacecraftState() {
       });
     }
 
-    const swathRadiusKm = sc.alt_km * Math.tan(3.5 * Math.PI / 180);
+    // Instrument footprint: half-FOV = 14.928 deg (payload optics, 8192 px
+    // x 5.5 um on f = 84.5 mm) -> 120 km half-swath at 450 km, i.e. the
+    // 240 km swath (owner ruling 2026-08). Was a 3.5 deg half-angle = 27 km,
+    // which matched neither the simulator nor the planner.
+    const swathRadiusKm = sc.alt_km * Math.tan(14.928 * Math.PI / 180);
     if (!ovScFootprint) {
       ovScFootprint = overviewMap.addCircle(lat, lon, swathRadiusKm, {
         color: '#00C896', weight: 1, opacity: 0.3,
@@ -8989,16 +9197,27 @@ function updateOBDH() {
 
   setText('obdh-temp', pf(obdh, 'obc_temp', 1, 'C'));
   setText('obdh-uptime', formatUptime(p(obdh, 'uptime_s')));
-  // OBC CUC time — display as ISO UTC if > 1e9 (epoch-based), otherwise raw seconds
+  // OBC time: a CUC coarse second on the J2000 mission epoch, decoded with
+  // the one shared helper.
+  //
+  // This carried the last copy of the `> 1e9` Unix heuristic (spec D.6): a
+  // correct J2000 CUC is ~8.4e8 today, so a healthy clock rendered as
+  // "838000000 s (not set)", and the branch would only have started
+  // "working" — 30 years wrong — once the value crossed 1e9. CUC 0 is a
+  // legitimate onboard time (the clock the bootloader leaves behind), so
+  // "never set" is what `time_ref` says, not what the magnitude says.
   const obcCuc = p(obdh, 'obc_time_cuc');
-  if (obcCuc != null && obcCuc > 0) {
-    if (obcCuc > 1e9) {
-      try { setText('obdh-obc-time', new Date(obcCuc * 1000).toISOString().replace('T',' ').substr(0,19) + ' UTC'); }
-      catch(e) { setText('obdh-obc-time', obcCuc.toFixed(0) + ' s'); }
-    } else {
-      setText('obdh-obc-time', obcCuc.toFixed(0) + ' s (not set)');
-    }
-  } else { setText('obdh-obc-time', '0 (not set)'); }
+  const obcFine = p(obdh, 'obc_time_fine', 0);
+  if (obcCuc != null) {
+    let txt;
+    try {
+      txt = new Date(cucToUtcMs(obcCuc, obcFine))
+        .toISOString().replace('T', ' ').substr(0, 19) + ' UTC';
+    } catch (e) { txt = Number(obcCuc).toFixed(0) + ' s'; }
+    const ref = p(obdh, 'time_ref');
+    if (ref === 0) txt += ' (never set)';
+    setText('obdh-obc-time', txt);
+  } else { setText('obdh-obc-time', '--'); }
   setText('obdh-reboots', p(obdh, 'reboot_count', '--'));
 
   // Reboot cause
@@ -9426,40 +9645,43 @@ function s11InitTimeTag() {
   sync();
 }
 
-/** Ground "now" as a Date — the MCS ground clock, not the browser's. */
-function s11GroundNow() {
-  if (state && state.ground_utc) {
-    const d = new Date(state.ground_utc);
-    if (!isNaN(d.getTime())) return d;
-  }
-  return new Date();
-}
+/** "Now" as a Date on the MCS SIM clock, not the browser's wall clock. */
+function s11GroundNow() { return simNowDate(); }
 
 /**
- * Resolve the time-tag widget to {cuc, utc, error}.
+ * Resolve the time-tag widget to {cuc, fine, utc, error}.
  *
- * CUC here is Unix-epoch seconds, matching MCSServer._utc_to_obc_cuc()'s
- * fallback and the OBDH clock. The server re-anchors an S11.4 it builds
- * itself; a hand-entered absolute UTC is converted here the same way.
+ * `cuc` is an ON-BOARD CUC coarse second on the J2000 mission epoch,
+ * produced by simUtcToObcCuc() — the same correlation the server uses for a
+ * planner S11 upload. `utc` is the SIM time it is expected to fire at.
+ *
+ * This used to be `Math.floor(d.getTime() / 1000)` — a Unix timestamp —
+ * under a comment asserting it matched the server, which encodes J2000. A
+ * tag set from this widget was therefore ~9.5e8 s in the future and never
+ * fired. Every conversion now goes through the one helper.
  */
 function s11ResolveTimeTag() {
   const mode = (document.getElementById('s11-tt-mode') || {}).value || 'utc';
   if (mode === 'cuc') {
+    // A hand-entered CUC is already on-board time; do not re-correlate it.
     const raw = parseInt((document.getElementById('s11-tt-cuc') || {}).value, 10);
     if (!Number.isFinite(raw) || raw <= 0) return { error: 'enter a CUC second count' };
-    return { cuc: raw, utc: new Date(raw * 1000).toISOString() };
+    return { cuc: raw, fine: 0, onboard: true,
+             utc: new Date(obcCucToSimMs(raw)).toISOString() };
   }
+  let d;
   if (mode === 'rel') {
     const mins = parseFloat((document.getElementById('s11-tt-rel') || {}).value);
     if (!Number.isFinite(mins)) return { error: 'enter a number of minutes' };
-    const d = new Date(s11GroundNow().getTime() + mins * 60000);
-    return { cuc: Math.floor(d.getTime() / 1000), utc: d.toISOString() };
+    d = new Date(simNow() + mins * 60000);
+  } else {
+    const txt = ((document.getElementById('s11-tt-utc') || {}).value || '').trim();
+    if (!txt) return { error: 'enter an execution time' };
+    d = new Date(txt);
+    if (isNaN(d.getTime())) return { error: 'unparseable date: ' + txt };
   }
-  const txt = ((document.getElementById('s11-tt-utc') || {}).value || '').trim();
-  if (!txt) return { error: 'enter an execution time' };
-  const d = new Date(txt);
-  if (isNaN(d.getTime())) return { error: 'unparseable date: ' + txt };
-  return { cuc: Math.floor(d.getTime() / 1000), utc: d.toISOString() };
+  const c = simUtcToObcCuc(d);
+  return { cuc: c.coarse, fine: c.fine, utc: d.toISOString() };
 }
 
 function s11UpdateTimeTagPreview() {
@@ -9467,20 +9689,26 @@ function s11UpdateTimeTagPreview() {
   if (!el) return;
   const t = s11ResolveTimeTag();
   if (t.error) { el.textContent = t.error; el.style.color = 'var(--status-warning)'; return; }
-  const dt = (t.cuc * 1000 - s11GroundNow().getTime()) / 1000;
+  // "How far away is this" is a SIM-time question — the countdown an operator
+  // watches — so compare the expected fire time against simNow(), not the CUC
+  // against the browser's wall clock.
+  const dt = (Date.parse(t.utc) - simNow()) / 1000;
   const rel = dt >= 0 ? `T-${fmtDuration(dt)}` : `T+${fmtDuration(-dt)} (IN THE PAST)`;
   el.style.color = dt >= 0 ? 'var(--text-primary)' : 'var(--status-alarm)';
-  el.textContent = `${t.utc}  ·  CUC ${t.cuc} (0x${t.cuc.toString(16).toUpperCase()})  ·  ${rel}`;
+  el.textContent = `${t.utc} SIM  ·  on-board CUC ${t.cuc} `
+    + `(0x${t.cuc.toString(16).toUpperCase()})  ·  ${rel}`;
 }
 
 function s11FillNow() {
   const mode = (document.getElementById('s11-tt-mode') || {}).value || 'utc';
   if (mode === 'utc') {
     const e = document.getElementById('s11-tt-utc');
-    if (e) e.value = s11GroundNow().toISOString();
+    if (e) e.value = simNowDate().toISOString();
   } else if (mode === 'cuc') {
+    // The CUC box holds ON-BOARD time, so prefill it with the spacecraft's
+    // clock right now, not with a conversion of sim time.
     const e = document.getElementById('s11-tt-cuc');
-    if (e) e.value = Math.floor(s11GroundNow().getTime() / 1000);
+    if (e) e.value = simUtcToObcCuc(simNow()).coarse;
   }
   s11UpdateTimeTagPreview();
 }
@@ -9511,9 +9739,16 @@ function s11AddFromBuilder(service, subtype, dataHex, name) {
   setTimeout(s11ListCommands, 400);
 }
 
-/** exec_time(u32, big-endian) + service(u8) + subtype(u8) + data bytes. */
+/** exec_time(u32, big-endian) + service(u8) + subtype(u8) + data bytes.
+ *
+ * The time tag is the COARSE CUC only. The on-board scheduler takes the
+ * embedded telecommand from octet 4 of the S11,4 body, so widening the tag
+ * to coarse+fine here would push the embedded TC out of alignment. The fine
+ * field on `s11ResolveTimeTag()` is carried for display and for the day the
+ * on-board S11 body is widened with it.
+ */
 function s11BuildS114Data(cuc, service, subtype, dataHex) {
-  const et = ('00000000' + (cuc >>> 0).toString(16).toUpperCase()).slice(-8);
+  const et = _hexOctets(cuc, 4);
   const svcHex = ('00' + Number(service).toString(16).toUpperCase()).slice(-2);
   const stHex = ('00' + Number(subtype).toString(16).toUpperCase()).slice(-2);
   const data = String(dataHex || '').trim();
@@ -9580,7 +9815,8 @@ function renderS11Schedule() {
     }).join('');
   }
   if (note) {
-    const age = rep.reported_ts ? Math.round(Date.now() / 1000 - rep.reported_ts) : null;
+    // reported_ts is stamped by the server on sim time.
+    const age = rep.reported_ts ? Math.round(simNowSec() - rep.reported_ts) : null;
     note.textContent = `${entries.length} of ${rep.count} entries decoded from TM(11,18)` +
       (age != null ? ` · reported ${age}s ago` : '') +
       ' · execution times converted from on-board CUC via the OBC clock correlation.';
@@ -10032,7 +10268,7 @@ function renderFdirWindow() {
   setText('fdir-mon-summary', `${ms.enabled || 0} of ${ms.total || 0} monitors enabled`);
   setText('fdir-last-action', st.last_action || 'none observed');
   setText('fdir-last-action-age', st.last_action_ts
-    ? `${Math.round(Date.now() / 1000 - st.last_action_ts)} s ago`
+    ? `${Math.round(simNowSec() - st.last_action_ts)} s ago`
     : '');
   renderFdirAutonomy(fdirData.autonomy || {});
   const rs = fdirData.rule_summary || {};
@@ -10125,7 +10361,7 @@ function renderFdirRules() {
       <td>${esc(r.action_label)}</td>
       <td>${r.enabled ? 'Y' : '<span style="color:var(--status-warning);">N</span>'}</td>
       <td>${r.fire_count || 0}${r.fire_count ? ' <span style="color:var(--text-tertiary);font-size:9px;">(inferred)</span>' : ''}</td>
-      <td style="color:var(--text-tertiary);">${r.last_fire_ts ? Math.round(Date.now()/1000 - r.last_fire_ts) + 's ago' : '--'}</td>
+      <td style="color:var(--text-tertiary);">${r.last_fire_ts ? Math.round(simNowSec() - r.last_fire_ts) + 's ago' : '--'}</td>
       <td style="white-space:nowrap;">
         <button class="btn" style="font-size:9px;padding:2px 5px;" onclick="s19EnableRule(${r.ea_id})"
                 title="TC(19,4) enable this rule">En</button>
@@ -10384,29 +10620,35 @@ function renderS19Table() {
 }
 
 // --- S9 Time ---
+//
+// S9,1 SET_TIME tells the spacecraft what time it is, so its body carries a
+// TRUE UTC -> CUC conversion (utcToCuc), NOT the correlated on-board value —
+// correlating here would just hand the OBC back its own error.
+//
+// The body is emitted as coarse(4) + fine(2), the ECSS CUC of Part A. The
+// on-board handler reads its coarse seconds from the front of the body, so
+// the wider field is accepted today and carries sub-second precision the
+// moment the OBDH side widens with it.
+//
+// What was here before: `Math.floor(d.getTime() / 1000)` — a Unix epoch
+// second written into a J2000 field, ~9.5e8 s wrong.
 function s9RequestTime() { sendPusCmd(9, 2, '', 'S9_TIME_REPORT'); }
+
+/** Space-separated hex octets of a CUC, for the command builder. */
+function s9CucBody(cuc) { return cuc.hex6.match(/.{2}/g).join(' '); }
+
 function s9SyncTime() {
-  // Use ground UTC from MCS (may be sim epoch, not real wall clock)
-  const groundUtc = state.ground_utc;
-  let epochSec;
-  if (groundUtc) {
-    try { epochSec = Math.floor(new Date(groundUtc).getTime() / 1000); }
-    catch(e) { epochSec = Math.floor(Date.now() / 1000); }
-  } else {
-    epochSec = Math.floor(Date.now() / 1000);
-  }
-  const hex = ('00000000' + epochSec.toString(16)).slice(-8).match(/.{2}/g).join(' ');
-  sendPusCmd(9, 1, hex, 'S9_SET_TIME');
+  // Sync the spacecraft to the MCS's clock: SIM time in sim mode, wall clock
+  // on a real mission — simNow() is the same answer in both cases.
+  const d = simNowDate();
+  const cuc = utcToCuc(d);
+  sendPusCmd(9, 1, s9CucBody(cuc), 'S9_SET_TIME');
+  logToConsole('[S9] Sync to ' + d.toISOString() + ' (CUC coarse=' + cuc.coarse
+               + ', fine=' + cuc.fine + ')', 'info');
 }
 function s9FillCurrentUTC() {
-  const groundUtc = state.ground_utc;
   const el = document.getElementById('s9-time-input');
-  if (groundUtc) {
-    try { el.value = new Date(groundUtc).toISOString(); }
-    catch(e) { el.value = new Date().toISOString(); }
-  } else {
-    el.value = new Date().toISOString();
-  }
+  el.value = simNowDate().toISOString();
   s9UpdateCucPreview();
 }
 function s9UpdateCucPreview() {
@@ -10416,8 +10658,9 @@ function s9UpdateCucPreview() {
   try {
     const d = new Date(inp);
     if (isNaN(d.getTime())) { prev.textContent = 'Invalid date'; return; }
-    const cuc = Math.floor(d.getTime() / 1000);
-    prev.textContent = cuc + ' (0x' + cuc.toString(16).toUpperCase() + ')';
+    const cuc = utcToCuc(d);
+    prev.textContent = cuc.coarse + ' (0x' + cuc.coarse.toString(16).toUpperCase()
+      + ') + ' + cuc.fine + '/65536 s';
   } catch(e) { prev.textContent = 'Parse error'; }
 }
 function s9SetArbitraryTime() {
@@ -10426,10 +10669,10 @@ function s9SetArbitraryTime() {
   try {
     const d = new Date(inp);
     if (isNaN(d.getTime())) { logToConsole('[S9] Invalid date: ' + inp, 'error'); return; }
-    const cuc = Math.floor(d.getTime() / 1000);
-    const hex = ('00000000' + cuc.toString(16)).slice(-8).match(/.{2}/g).join(' ');
-    sendPusCmd(9, 1, hex, 'S9_SET_TIME_' + cuc);
-    logToConsole('[S9] Setting SC time to ' + d.toISOString() + ' (CUC=' + cuc + ')', 'info');
+    const cuc = utcToCuc(d);
+    sendPusCmd(9, 1, s9CucBody(cuc), 'S9_SET_TIME_' + cuc.coarse);
+    logToConsole('[S9] Setting SC time to ' + d.toISOString()
+                 + ' (CUC=' + cuc.coarse + '.' + cuc.fine + ')', 'info');
   } catch(e) { logToConsole('[S9] Error: ' + e.message, 'error'); }
 }
 // Update CUC preview on input
@@ -10438,17 +10681,118 @@ document.addEventListener('DOMContentLoaded', function() {
   if (el) el.addEventListener('input', s9UpdateCucPreview);
 });
 
+/**
+ * The time-correlation display: SIM/ground UTC, on-board UTC, the measured
+ * offset, `time_ref` and time-since-sync, side by side.
+ *
+ * This is the operator-facing half of the time architecture. NOM-008 asks a
+ * student to notice the offset growing, work out WHY from `time_ref` and
+ * time-since-sync, and close it with a sync — so all five facts have to be
+ * legible at once, and the offset has to be flagged when it matters.
+ *
+ * The previous version was broken twice over: it drew the BROWSER's wall
+ * clock as "Ground UTC", and it drew `state.sim_time` — an ISO 8601 string —
+ * as `new Date(simTime * 1000)`, i.e. NaN, and then subtracted the same
+ * string from a wall-clock epoch to produce the "delta". It never showed the
+ * spacecraft's clock at all.
+ */
 function updateTimeCorrelation() {
-  const now = new Date();
-  document.getElementById('s9-ground-utc').textContent = now.toISOString().substr(11, 12);
-  const simTime = state.sim_time;
-  if (simTime) {
-    document.getElementById('s9-sc-utc').textContent = new Date(simTime * 1000).toISOString().substr(11, 12);
-    const delta = Math.abs(now.getTime()/1000 - simTime) * 1000;
-    document.getElementById('s9-delta').textContent = delta.toFixed(0) + ' ms';
-    document.getElementById('s9-cuc').textContent = '0x' + Math.floor(simTime).toString(16).toUpperCase();
+  const setTxt = (id, txt, colour) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = txt;
+    if (colour !== undefined) el.style.color = colour;
+  };
+  const tc = (state && state.time_correlation) || {};
+  // One rendering for both clocks — "YYYY-MM-DD HH:MM:SS.mmm UTC" — so they
+  // can be compared by eye, digit for digit, which is the whole point of
+  // putting them next to each other.
+  const fmtUtc = ms => (isFinite(ms)
+    ? new Date(ms).toISOString().replace('T', ' ').substr(0, 23) + ' UTC' : '--');
+  const fmt = iso => (iso ? fmtUtc(Date.parse(iso)) : '--');
+
+  // Ground side ticks locally between state messages so the clock is not
+  // visibly frozen at 1 Hz; it is still the SERVER's clock, extrapolated.
+  setTxt('s9-ground-utc', fmtUtc(simNow()));
+  setTxt('s9-sc-utc', fmt(tc.sc_utc),
+         tc.sc_utc ? 'var(--text-primary)' : 'var(--text-tertiary)');
+
+  const OFFSET_COLOURS = {
+    nominal: 'var(--status-nominal)',
+    warning: 'var(--status-warning)',
+    alarm: 'var(--status-alarm)',
+    unknown: 'var(--text-tertiary)',
+  };
+  const stateName = tc.offset_state || 'unknown';
+  if (typeof tc.offset_s === 'number') {
+    const sign = tc.offset_s >= 0 ? '+' : '-';
+    const mag = Math.abs(tc.offset_s);
+    const txt = sign + (mag < 10 ? mag.toFixed(3) : mag.toFixed(1)) + ' s'
+      + (stateName === 'nominal' ? '' : '  ' + stateName.toUpperCase());
+    setTxt('s9-delta', txt, OFFSET_COLOURS[stateName]);
+  } else {
+    setTxt('s9-delta', 'no on-board time yet', OFFSET_COLOURS.unknown);
+  }
+
+  const refName = tc.time_ref_name || '--';
+  const refTxt = (tc.time_ref === null || tc.time_ref === undefined)
+    ? '--' : tc.time_ref + '  ' + refName;
+  // NONE and HOLDOVER both mean "free-running and drifting"; GPS means held.
+  const refColour = ({
+    NONE: 'var(--status-alarm)',
+    GROUND: 'var(--text-primary)',
+    GPS: 'var(--status-nominal)',
+    HOLDOVER: 'var(--status-warning)',
+  })[refName] || 'var(--text-tertiary)';
+  setTxt('s9-time-ref', refTxt, refColour);
+
+  if (tc.never_synced) {
+    setTxt('s9-since-sync', 'NEVER SYNCED', 'var(--status-alarm)');
+  } else if (typeof tc.time_since_sync_s === 'number') {
+    setTxt('s9-since-sync', fmtDuration(tc.time_since_sync_s), 'var(--text-primary)');
+  } else {
+    setTxt('s9-since-sync', '--', 'var(--text-tertiary)');
+  }
+
+  if (tc.sc_cuc_coarse === null || tc.sc_cuc_coarse === undefined) {
+    setTxt('s9-cuc', '--', 'var(--text-tertiary)');
+  } else {
+    const fine = tc.cuc_fine_available ? (tc.sc_cuc_fine + '/65536 s') : 'no fine field';
+    setTxt('s9-cuc', tc.sc_cuc_coarse + ' (0x'
+      + (tc.sc_cuc_coarse >>> 0).toString(16).toUpperCase() + ')  +  ' + fine,
+      'var(--text-secondary)');
+  }
+
+  const note = document.getElementById('s9-corr-note');
+  if (note) {
+    if (typeof tc.offset_s !== 'number') {
+      note.textContent = 'No OBDH time telemetry yet — enable HK SID 4 or '
+        + 'request a time report (S9,2). Epoch ' + (tc.epoch || 'J2000') + '.';
+      note.style.color = 'var(--text-tertiary)';
+    } else if (stateName === 'nominal') {
+      note.textContent = 'On-board clock is within ' + tc.offset_warn_s
+        + ' s of ground. Reference ' + refName + '. Epoch ' + (tc.epoch || 'J2000') + '.';
+      note.style.color = 'var(--text-tertiary)';
+    } else {
+      note.textContent = 'OFFSET EXCEEDS ' + (stateName === 'alarm'
+          ? tc.offset_alarm_s : tc.offset_warn_s)
+        + ' s. A time-tagged (S11) command will execute '
+        + Math.abs(tc.offset_s).toFixed(1) + ' s '
+        + (tc.offset_s > 0 ? 'EARLY' : 'LATE')
+        + ' in mission time. Sync the clock (S9,1 or the GPS time sync).';
+      note.style.color = stateName === 'alarm'
+        ? 'var(--status-alarm)' : 'var(--status-warning)';
+    }
   }
 }
+
+// Keep the correlation live while the operator is watching it: the offset is
+// something you observe GROWING, so a static snapshot taken on tab switch was
+// the wrong shape for the exercise.
+setInterval(() => {
+  const pane = document.getElementById('pus-time');
+  if (pane && pane.style.display !== 'none') updateTimeCorrelation();
+}, 1000);
 
 // --- Helper: Send PUS command via existing command infrastructure ---
 function sendPusCmd(service, subtype, dataHex, name) {
@@ -10543,10 +10887,10 @@ function updatePassCountdown(state) {
   if (inContact !== passTimerInContact) {
     passTimerInContact = inContact;
     if (inContact) {
-      passTimerAos = Date.now();
+      passTimerAos = simNow();
       passTimerLos = null;
     } else {
-      passTimerLos = Date.now();
+      passTimerLos = simNow();
       passTimerAos = null;
     }
   }
@@ -10555,7 +10899,10 @@ function updatePassCountdown(state) {
 
   if (inContact) {
     // During pass: show elapsed pass time
-    const elapsed = passTimerAos ? Math.floor((Date.now() - passTimerAos) / 1000) : 0;
+    // Elapsed pass time in SIM seconds: the pass window itself is sim time,
+    // so a wall-clock stopwatch drifted away from it as soon as the run was
+    // paused or sped up.
+    const elapsed = passTimerAos ? Math.floor((simNow() - passTimerAos) / 1000) : 0;
     const mm = String(Math.floor(elapsed / 60)).padStart(2, '0');
     const ss = String(elapsed % 60).padStart(2, '0');
     label.textContent = 'PASS';
@@ -10586,7 +10933,9 @@ async function addHandoverNote() {
   } catch(e) {}
   // Also add locally for immediate display
   handoverNotes.push({
-    timestamp: Date.now() / 1000,
+    // Match the server's stamp for the same note (sim time), so the optimistic
+    // local row and the one that comes back from /api/handover agree.
+    timestamp: simNowSec(),
     position: currentPosition,
     note: text
   });
@@ -11149,7 +11498,8 @@ function renderContactTimeline() {
   // Remove old passes (keep the now-marker)
   bar.querySelectorAll('.contact-pass').forEach(el => el.remove());
 
-  const now = Date.now() / 1000;
+  // Pass windows are sim time; so is the "now" marker on the timeline.
+  const now = simNowSec();
   const windowStart = now - 2 * 3600; // 2h ago
   const windowEnd = now + 22 * 3600;  // 22h ahead (24h total)
   const windowDuration = windowEnd - windowStart;
@@ -11218,7 +11568,7 @@ function updateContactCountdown(nextAos) {
     if (tag) tag.textContent = 'NO PASS';
     return;
   }
-  const now = Date.now() / 1000;
+  const now = simNowSec();
   const diff = Math.max(0, nextAos.aos - now);
   const mm = String(Math.floor(diff / 60)).padStart(2, '0');
   const ss = String(Math.floor(diff % 60)).padStart(2, '0');
@@ -11230,8 +11580,8 @@ function updateContactCountdown(nextAos) {
 setTimeout(fetchContacts, 1000);
 setInterval(fetchContacts, 60000);  // Refresh every minute
 setInterval(() => {
-  // Update countdown between fetches
-  const now = Date.now() / 1000;
+  // Update countdown between fetches — sim time, like the pass windows.
+  const now = simNowSec();
   let nextAos = null;
   contactData.forEach(c => {
     if (c.aos_utc > now && (!nextAos || c.aos_utc < nextAos.aos)) {
@@ -11327,7 +11677,9 @@ function trendSelected() {
 
 function trendWindow() {
   const span = Number(document.getElementById('trend-window').value || 3600);
-  const end = Date.now() / 1000;
+  // Archive rows carry SIM-time epochs (tm_archive schema v2), so the trend
+  // window has to be expressed on the same clock or the query returns nothing.
+  const end = simNowSec();
   return { start: end - span, end };
 }
 
@@ -11612,6 +11964,8 @@ function trendExportCsv() {
   const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
+  // Wall clock is deliberate here: the filename names the download SESSION,
+  // not a mission instant. (The rows inside carry sim-time epochs.)
   a.download = `eosat1_trend_${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
   document.body.appendChild(a);
   a.click();
@@ -11658,7 +12012,7 @@ async function refreshContactSchedule() {
   try {
     const r = await fetch('/api/displays/contact-schedule');
     const d = await r.json();
-    const now = d.timestamp || Date.now() / 1000;
+    const now = d.timestamp || simNowSec();
     const passes = d.next_passes || [];
     const cur = d.current_contact_status || {};
     // Feed the SA strip's AOS/LOS countdown.
@@ -11851,8 +12205,10 @@ function renderAlarmJournal() {
            title="${esc(a.procedure.name || '')}"
            aria-label="Open contingency procedure ${esc(a.procedure.id)}">${esc(a.procedure.id)}</button>`
       : '';
+    // Alarm timestamps are sim time (server _raise_alarm), so "raised in the
+    // last 30 s" is 30 SIM seconds.
     const fresh = (!a.acknowledged && !a.cleared
-                   && (Date.now() / 1000 - a.timestamp) < 30) ? ' fresh' : '';
+                   && (simNowSec() - a.timestamp) < 30) ? ' fresh' : '';
     return `<div class="alarm-entry ${ackClass}${fresh}" data-alarm-id="${a.id}">
       <span class="alarm-ts">${ts}</span>
       <span class="alarm-sev ${sevClass}">${sevLabels[a.severity] || 'UNK'}</span>

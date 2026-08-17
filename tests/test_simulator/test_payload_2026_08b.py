@@ -36,6 +36,9 @@ CONFIG_DIR = REPO_ROOT / "configs" / "eosat1"
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from smo_common.protocol.pus_services import (  # noqa: E402
+    FAILURE_CODES, failure_code_text,
+)
 from smo_simulator.models.eps_basic import EPSBasicModel  # noqa: E402
 from smo_simulator.models.payload_basic import (  # noqa: E402
     PAYLOAD_EVENTS, PayloadBasicModel, snap_to_envelope,
@@ -251,6 +254,101 @@ class TestCalibrationMode:
         m.handle_command({"command": "set_mode", "mode": 1})
         assert m._state.calibration_active is False
         assert m._state.cal_abort_reason == 5
+
+
+class TestCalibrationFailureCodes:
+    """DISPLAY_REQUESTS_PAYLOAD.md §8.1 — five dedicated failure codes.
+
+    Every calibration refusal used to report the generic 0x0005 ("Invalid in
+    the current mode") or 0x0007 ("Not permitted in the current state"), so the
+    console printed the same sentence for four physically distinct causes and
+    the real reason survived only in the free text. 0x0021-0x0023 could not be
+    reused: they already mean the three CAPTURE pointing refusals, so the
+    console would have printed the WRONG sentence.
+    """
+
+    def test_the_five_codes_are_in_the_shared_vocabulary(self):
+        for code, needle in ((0x0024, "IMAGING"),
+                             (0x0025, "thermally ready"),
+                             (0x0026, "shutter"),
+                             (0x0027, "lamp"),
+                             (0x0028, "shutter closed")):
+            assert code in FAILURE_CODES, f"0x{code:04X} has no meaning"
+            assert needle.lower() in FAILURE_CODES[code].lower()
+            assert failure_code_text(code) == FAILURE_CODES[code]
+
+    def test_the_pointing_codes_are_not_reused(self):
+        """0x0021-0x0023 must still say what the capture gate means."""
+        for code in (0x0021, 0x0022, 0x0023):
+            assert FAILURE_CODES[code].startswith("Capture refused")
+        assert "Calibration" in FAILURE_CODES[0x0024]
+
+    # ── the five refusal paths ──────────────────────────────────────────
+
+    def test_1_imaging_refusal_carries_0x0024(self):
+        m = _ready_to_image(_payload())
+        m._state.cal_lamp_on = True
+        r = m.handle_command({"command": "start_calibration", "mode": 0})
+        assert r["success"] is False
+        assert r["code"] == "CAL_REFUSED_IMAGING"
+        assert r["error_code"] == 0x0024
+
+    def test_2_fpa_not_ready_refusal_carries_0x0025(self):
+        m = _payload()
+        m._state.mode = 1
+        m._state.shutter_position = 0
+        r = m.handle_command({"command": "start_calibration", "mode": 0})
+        assert r["success"] is False
+        assert r["code"] == "CAL_FPA_NOT_READY"
+        assert r["error_code"] == 0x0025
+
+    @pytest.mark.parametrize("cal_mode,position,code", [
+        (0, 1, "CAL_SHUTTER_OPEN"),      # dark needs it CLOSED
+        (1, 0, "CAL_SHUTTER_CLOSED"),    # flat needs it OPEN
+    ])
+    def test_3_shutter_position_refusals_carry_0x0026(self, cal_mode,
+                                                      position, code):
+        m = _cold_standby(_payload())
+        m._state.shutter_position = position
+        m._state.cal_lamp_on = (cal_mode == 1 and position == 1)
+        r = m.handle_command({"command": "start_calibration", "mode": cal_mode})
+        assert r["success"] is False
+        assert r["code"] == code
+        assert r["error_code"] == 0x0026
+
+    @pytest.mark.parametrize("cal_mode,lamp,code", [
+        (0, True, "CAL_LAMP_ON"),        # dark needs it OFF
+        (1, False, "CAL_LAMP_OFF"),      # flat needs it ON
+    ])
+    def test_4_lamp_state_refusals_carry_0x0027(self, cal_mode, lamp, code):
+        m = _cold_standby(_payload())
+        m._state.shutter_position = 0 if cal_mode == 0 else 1
+        m._state.cal_lamp_on = lamp
+        r = m.handle_command({"command": "start_calibration", "mode": cal_mode})
+        assert r["success"] is False
+        assert r["code"] == code
+        assert r["error_code"] == 0x0027
+
+    def test_5_capture_with_the_shutter_closed_carries_0x0028(self):
+        m = _ready_to_image(_payload())
+        m._state.shutter_position = 0
+        r = m.handle_command({"command": "capture"})
+        assert r["success"] is False
+        assert r["code"] == "SHUTTER_CLOSED"
+        assert r["error_code"] == 0x0028
+
+    def test_no_calibration_refusal_still_reports_a_generic_code(self):
+        """The four cal refusals must not fall back to 0x0005 / 0x0007."""
+        m = _cold_standby(_payload())
+        cases = [
+            (_ready_to_image(_payload()), 0),      # IMAGING
+            (m, 0),                                # shutter open (dark)
+        ]
+        for model, cal_mode in cases:
+            r = model.handle_command({"command": "start_calibration",
+                                      "mode": cal_mode})
+            assert r["success"] is False
+            assert r["error_code"] not in (0x0005, 0x0007), r
 
 
 class TestShutter:
@@ -534,8 +632,9 @@ class TestNoPhantomImagingData:
         m.tick(1.0, _Orbit(), params)
         assert params[0x0607] > 0.0, "readout must run during the strip"
         assert params[0x0649] == 1.0
-        # 2048 lines at 500 Hz is 4.1 s.
-        for _ in range(6):
+        # 2048 lines at 244 Hz is 8.4 s (the line rate follows the 240 km /
+        # 29.3 m GSD geometry — subsystems/payload.yaml, owner ruling 2026-08).
+        for _ in range(10):
             m.tick(1.0, _Orbit(), params)
         assert params[0x0607] == 0.0, "readout must stop when the strip ends"
 

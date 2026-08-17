@@ -2,7 +2,7 @@
 
 **Document ID:** EOSAT1-UM-REF-010  
 **Issue:** 2.0  
-**Date:** 2026-08-12  
+**Source revision:** `tc_catalog.yaml@d817c9a0a3c9`  
 **Classification:** UNCLASSIFIED — For Simulation Use Only
 
 > **GENERATED FILE — DO NOT EDIT BY HAND.**  
@@ -703,7 +703,7 @@ Switch power line ON
 |---|---|---|---|---|---|---|
 | `line_index` | uint8 | 1 | — | raw = eng | — | — |
 
-- `line_index` — Power line index (0-7)
+- `line_index` — Power line index (0-8; 8 = prop)
 
 Example: `13 00`  (line_index=0)
 
@@ -719,7 +719,7 @@ Switch power line OFF
 |---|---|---|---|---|---|---|
 | `line_index` | uint8 | 1 | — | raw = eng | — | — |
 
-- `line_index` — Power line index (0-7)
+- `line_index` — Power line index (0-8; 8 = prop)
 
 Example: `14 00`  (line_index=0)
 
@@ -733,7 +733,7 @@ Reset overcurrent trip flag and re-enable line
 |---|---|---|---|---|---|---|
 | `line_index` | uint8 | 1 | — | raw = eng | — | — |
 
-- `line_index` — Power line index (0-7)
+- `line_index` — Power line index (0-8; 8 = prop)
 
 Example: `15 00`  (line_index=0)
 
@@ -994,7 +994,7 @@ Example: `24 64 D7`  (setpoint=-15.0)
 
 **S8.1** · func_id **37** (0x25) · 2 data byte(s) · readback payload.cal_active (0x062A)
 
-Begin a radiometric calibration sequence (dark frame / flat field / both). PRECONDITIONS (2026-08b PL-d — the gate is on the OPTICS, not on a mode word; the old rule was "must be in IMAGING mode", which required the shutter to be open onto the scene before a dark frame could be asked for). Refused with S1.8 unless:    * payload mode is 1 STANDBY or 3 CALIBRATION — never 0 OFF and never     2 IMAGING (error 0x0021);   * the FPA is thermally ready, 0x0610 == 1 (0x0022) — dark current     roughly doubles every 6-8 K, so coefficients taken off setpoint     describe a different detector;   * DARK and BOTH: shutter CLOSED, 0x063C == 0 (0x0023) and the     calibration lamp OFF, 0x0615 == 0 (0x0024);   * FLAT: shutter OPEN and lamp ON;   * the devices involved are powered — FPA 0x0600, shutter 0x0603, and     the lamp 0x0602 for FLAT/BOTH (0x0007).  A BOTH run starts in the dark configuration and the on-board sequencer opens the shutter and lights the lamp itself at the DARK -> FLAT transition; no ground step can land between two phases 15 s apart. Changing the optics under a running sequence ABORTS it (event 0x0612, reason at 0x0645) rather than completing over invalid frames. Completion sets the per-band coefficients; 0x0646 cal_valid_mask marks the bands that now have BOTH a bias and a gain, so a DARK run completes an earlier FLAT run and vice versa.
+Begin a radiometric calibration sequence (dark frame / flat field / both). PRECONDITIONS (2026-08b PL-d — the gate is on the OPTICS, not on a mode word; the old rule was "must be in IMAGING mode", which required the shutter to be open onto the scene before a dark frame could be asked for). Refused with S1.8 unless:    * payload mode is 1 STANDBY or 3 CALIBRATION — never 0 OFF and never     2 IMAGING (error 0x0024);   * the FPA is thermally ready, 0x0610 == 1 (0x0025) — dark current     roughly doubles every 6-8 K, so coefficients taken off setpoint     describe a different detector;   * DARK and BOTH: shutter CLOSED, 0x063C == 0 (0x0026) and the     calibration lamp OFF, 0x0615 == 0 (0x0027);   * FLAT: shutter OPEN and lamp ON;   * the devices involved are powered — FPA 0x0600, shutter 0x0603, and     the lamp 0x0602 for FLAT/BOTH (0x0007).  A BOTH run starts in the dark configuration and the on-board sequencer opens the shutter and lights the lamp itself at the DARK -> FLAT transition; no ground step can land between two phases 15 s apart. Changing the optics under a running sequence ABORTS it (event 0x0612, reason at 0x0645) rather than completing over invalid frames. Completion sets the per-band coefficients; 0x0646 cal_valid_mask marks the bands that now have BOTH a bias and a gain, so a DARK run completes an earlier FLAT run and vice versa.
 
 | Argument | Type | Offset | Unit | Raw ↔ engineering | Range | Default |
 |---|---|---|---|---|---|---|
@@ -1326,8 +1326,6 @@ Example: `36 00`  (bus=0)
 **S8.1** · func_id **55** (0x37) · 1 data byte(s) · CAUTION
 
 Boot application software from boot loader
-
-*Aliases:* SET_PHASE
 
 *No arguments.*
 

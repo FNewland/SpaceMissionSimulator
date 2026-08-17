@@ -171,9 +171,12 @@ class TestEngineSurfacesActiveStation:
     def test_state_summary_and_aos_event_include_station(self):
         from smo_simulator.engine import SimulationEngine
         engine = SimulationEngine(CONFIG_DIR, speed=1.0)
-        # Drive the orbit clock to a Troll mid-pass epoch, then tick once.
+        # Drive THE sim clock to a Troll mid-pass epoch, then tick once. The
+        # engine owns the clock and re-propagates the orbit to it on every
+        # sub-step, so moving the propagator alone no longer moves the sim.
         mid = _mid_pass_epoch(engine.orbit, "Troll", duration_s=12 * 3600)
-        engine.orbit.reset(mid)
+        engine._sim_time = mid
+        engine.orbit.propagate_to(mid)
         engine._tick_once(1.0)
         assert engine._in_contact is True
         assert engine._active_gs == "Troll"

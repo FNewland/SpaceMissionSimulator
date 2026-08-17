@@ -128,37 +128,57 @@ burn wire restraint mechanism. Deployment is commanded via S8 function managemen
 
 ### 2.3 Power Distribution Module (PDM)
 
-The EPS uses a cold-redundant Power Distribution Module (PDM) with two categories of
-power lines:
+The EPS uses a cold-redundant Power Distribution Module (PDM) carrying **nine** power
+lines: two unswitchable and seven switchable. The line set, its ordering and its
+power-up defaults are defined once, in `POWER_LINE_DEFS` in
+`packages/smo-simulator/src/smo_simulator/models/eps_basic.py`, and overridden per
+mission by `subsystems/eps.yaml` `power_lines:`. The `line_index` argument of
+`EPS_POWER_ON` / `EPS_POWER_OFF` (S8 func 19 / 20) is the index in this table.
+
+| Idx | Line name      | Load                                   | Switchable | Power-up default | Status param | Current param | OC trip |
+|-----|----------------|----------------------------------------|------------|------------------|--------------|---------------|---------|
+| 0   | `obc`          | OBC computer                           | No         | ON               | `eps.pl_obc` 0x0110 | `eps.line_current_0` 0x0118 | 2.0 A |
+| 1   | `ttc_rx`       | TT&C receiver (incl. UHF beacon Rx)    | No         | ON               | `eps.pl_ttc_rx` 0x0111 | `eps.line_current_1` 0x0119 | 0.3 A |
+| 2   | `ttc_tx`       | TT&C transmitter + PA                  | Yes        | OFF              | `eps.pl_ttc_tx` 0x0112 | `eps.line_current_2` 0x011A | 1.0 A |
+| 3   | `payload`      | Payload imager                         | Yes        | OFF              | `eps.pl_payload` 0x0113 | `eps.line_current_3` 0x011B | 2.5 A |
+| 4   | `fpa_cooler`   | FPA cooler                             | Yes        | OFF              | `eps.pl_fpa_cooler` 0x0114 | `eps.line_current_4` 0x011C | 1.0 A |
+| 5   | `htr_bat`      | Battery heater                         | Yes        | OFF              | `eps.pl_htr_bat` 0x0115 | `eps.line_current_5` 0x011D | 0.5 A |
+| 6   | `htr_obc`      | OBC heater                             | Yes        | OFF              | `eps.pl_htr_obc` 0x0116 | `eps.line_current_6` 0x011E | 0.3 A |
+| 7   | `aocs_wheels`  | Reaction wheels                        | Yes        | OFF              | `eps.pl_aocs_wheels` 0x0117 | `eps.line_current_7` 0x011F | 0.8 A |
+| 8   | `prop`         | Propulsion (catbed heater + valve drivers) | Yes    | OFF              | `eps.pl_prop` 0x014A | `eps.line_current_8` 0x014B | 0.8 A |
 
 #### Unswitchable Lines
 
-Unswitchable PDM lines are permanently powered after separation and cannot be commanded
-off. These ensure that critical functions remain available at all times:
-
-| Line          | Load               | Purpose                                      |
-|---------------|--------------------|----------------------------------------------|
-| UNSW-1        | OBC (primary)      | Ensures onboard processing is always available |
-| UNSW-2        | RX (receiver)      | Ensures spacecraft is always commandable      |
-
-After separation switch activation, the unswitchable lines power on automatically as part
-of the POWER_STABILIZE phase, guaranteeing that the OBC and receiver are operational before
-any ground contact.
+Lines 0 (`obc`) and 1 (`ttc_rx`) are permanently powered after separation and cannot be
+commanded off. These ensure that onboard processing is always available and the
+spacecraft is always commandable. After separation switch activation they power on
+automatically as part of the POWER_STABILIZE phase, guaranteeing that the OBC and
+receiver are operational before any ground contact. Their aggregate status is also
+published as the bitmask `eps.pdm_unsw_status` (0x012A).
 
 #### Switchable Lines
 
-Switchable PDM lines can be individually commanded on/off. Over-current protection is
-implemented per outlet. These feed all other subsystem loads:
+Lines 2-8 can be individually commanded on/off with `EPS_POWER_ON(line_index=N)` /
+`EPS_POWER_OFF(line_index=N)`. Over-current protection is implemented per outlet at the
+trip currents above (150 % of nominal at 28 V, 50 ms trip); a trip sets the
+corresponding bit of `eps.oc_trip_flags` (0x010D) and drops the line until reset.
 
-| Line          | Load               | Default State (after boot)  |
-|---------------|--------------------|-----------------------------|
-| SW-1          | Transmitter + PA   | OFF (enabled after 30-min timer) |
-| SW-2          | AOCS sensors       | OFF (enabled during commissioning) |
-| SW-3          | AOCS actuators     | OFF (enabled during commissioning) |
-| SW-4          | Payload            | OFF (enabled for imaging)    |
-| SW-5          | Heaters            | ON (battery heater)          |
-| SW-6          | Redundant OBC      | OFF (standby)                |
-| SW-7          | Redundant XPDR     | OFF (standby)                |
+**Every switchable line defaults OFF at power-up.** There is no line that comes up hot
+by itself — LEOP-007 (Sequential Power-On) is what energises them, in dependency order.
+The one exception in practice is `ttc_tx`, which the platform's auto-TX hold-down turns
+on autonomously for 15 minutes on any accepted telecommand (see §2.4).
+
+Note there are **no** separate "AOCS sensors" and "AOCS actuators" lines, and no
+redundant-OBC or redundant-transponder lines: the whole AOCS suite is on `aocs_wheels`
+(line 7), and OBC/transponder redundancy is internal to those units rather than a PDM
+line of its own.
+
+#### Load Shed Order
+
+Under-voltage load shedding walks `LOAD_SHED_ORDER` from the front, lowest priority
+first: `payload` → `fpa_cooler` → `ttc_tx` → `aocs_wheels` → `prop`. Propulsion is
+deliberately LAST — losing the line mid-burn triggers the on-board burn abort (reason 4).
+`eps.load_shed_stage` (0x0134) reports how far down the list the EPS has gone.
 
 #### Cold-Redundant PDM Path
 
@@ -213,7 +233,7 @@ table is what was wrong, not the model.
 | AOCS suite         | 12 W line rating; 4 / 9 / 15 W billed by mode (COARSE / NOMINAL / FINE) | Billed from the AOCS model's live draw at 0x02C8, not the line rating |
 | Payload (imaging)  | 5.5 W         | Simera Sense TriScape100 imaging mode, 1100 mA at 5 V |
 | Payload (standby)  | 2.4 W         | TriScape100 idle/readout, 470 mA at 5 V |
-| FPA cooler         | 15 W          | Thermo-electric (Peltier) stack, own power line |
+| FPA cooler         | 15 W          | Miniature Stirling-class cryocooler (Phase 4 reclassification), own power line. Authority is a *fraction of Carnot* (`fpa_cooler_carnot_fraction` = 0.23), so the achievable lift degrades as dT grows — the 15 W is the input power, not a fixed heat lift |
 | Battery heater     | 8 W           | Thermostat ON +5 C / OFF +10 C    |
 | OBC heater         | 4 W           | Manual control                    |
 | Propulsion         | 12 W catbed + 2 W valves, when armed | Line OFF outside manoeuvre preparation |

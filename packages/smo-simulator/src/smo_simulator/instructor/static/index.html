@@ -414,6 +414,7 @@ body::before {
 #card-aocs    { --card-accent: #00c8f0; }
 #card-tcs     { --card-accent: #ef4444; }
 #card-obdh    { --card-accent: #a78bfa; }
+#card-clock   { --card-accent: #ffb703; }
 #card-ttc     { --card-accent: #00e07a; }
 #card-payload { --card-accent: #818cf8; }
 
@@ -1217,6 +1218,32 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
           <div class="param-row"><span class="param-label">Reboots</span><span class="param-value" id="obdh-reboots">--</span></div>
         </div>
       </div>
+      <!-- Onboard clock — INSTRUCTOR GROUND TRUTH.
+           TIME_ARCHITECTURE.md Part B: the true onboard-vs-sim offset is NOT
+           downlinked (the spacecraft cannot know it). It is shown here only,
+           as the answer to the exercise the students run in NOM-008, next to
+           the oscillator drift actually drawn for this run. Fed from
+           /api/instructor/snapshot -> clock_truth; it is not in /api/state and
+           it is not a telemetry parameter. -->
+      <div class="sub-card" id="card-clock">
+        <div class="sub-card-header">
+          <div class="sub-card-title">ONBOARD CLOCK</div>
+          <div class="sub-card-mode" id="clock-ref">--</div>
+        </div>
+        <div class="sub-card-body">
+          <div class="param-row"><span class="param-label">SIM UTC</span><span class="param-value" id="clock-sim-utc">--</span></div>
+          <div class="param-row"><span class="param-label">OBC UTC</span><span class="param-value" id="clock-obc-utc">--</span></div>
+          <div class="param-row"><span class="param-label">Since sync</span><span class="param-value" id="clock-since-sync">--</span></div>
+          <div class="param-row"><span class="param-label">Drift (this run)</span><span class="param-value" id="clock-drift">-- ppm</span></div>
+          <div class="param-row" style="border-top:1px solid var(--border-dim);margin-top:4px;padding-top:4px;">
+            <span class="param-label" title="Ground truth — instructor only, never downlinked">TRUE OFFSET</span>
+            <span class="param-value" id="clock-offset">-- s</span>
+          </div>
+          <div style="font-size:9px;color:#7a8a9a;margin-top:3px;">
+            OBC &minus; SIM. Instructor only: not downlinked, not in telemetry.
+          </div>
+        </div>
+      </div>
       <!-- TT&C Card -->
       <div class="sub-card" id="card-ttc">
         <div class="sub-card-header">
@@ -1396,7 +1423,10 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
     obdh:    ['cpu_spike', 'watchdog_reset', 'memory_errors',
               'memory_corruption', 'memory_segment_fail',
               'bus_failure', 'obc_crash',
-              'boot_image_corrupt', 'stuck_in_bootloader'],
+              'boot_image_corrupt', 'stuck_in_bootloader',
+              // Onboard clock: forces a large oscillator drift (order 500 ppm)
+              // so the OBC clock error is visible inside a session.
+              'clock_drift'],
     ttc:     ['primary_failure', 'redundant_failure',
               'high_ber', 'pa_overheat',
               'uplink_loss', 'receiver_degrade',
@@ -1420,7 +1450,12 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
   let scenarios = [];
   let selectedScenario = null;
   let activeScenarioName = null;
-  let scenarioStartTime = null;
+  // SIM time (epoch ms) at which the running scenario was started. A scenario
+  // `duration_s` is sim seconds, so its progress must be measured on the sim
+  // clock: the wall clock this used to run on kept the bar moving while the
+  // simulation was frozen, and mis-scaled it whenever the speed was changed
+  // mid-scenario (TIME_ARCHITECTURE.md, wall clock is for pacing only).
+  let scenarioStartSimMs = null;
   let scenarioStartTick = null;
   let ws = null;
   let frozen = false;
@@ -1612,6 +1647,7 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
     if (data) {
       snapshot = data;
       updateRawSnapshot();
+      updateClockTruth();
       if (!snapshotTabsBuilt) {
         buildSnapshotTabs();
         snapshotTabsBuilt = true;
@@ -1619,6 +1655,71 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
       updateActiveSnapshotTab();
       updateCompletenessCounter();
       performParameterSearch();
+    }
+  }
+
+  // J2000 = 2000-01-01T12:00:00 UTC, CUC zero (mission.yaml time_epoch).
+  const CUC_EPOCH_MS = Date.UTC(2000, 0, 1, 12, 0, 0);
+
+  // Sim time as epoch-ms, taken from the last /api/state poll. The instructor
+  // page polls fast enough that no local extrapolation is needed; returns null
+  // before the first poll lands. Everything measured in *mission* seconds uses
+  // this, never Date.now().
+  function simNowMs() {
+    if (!state || !state.sim_time) return null;
+    const t = Date.parse(state.sim_time);
+    return isNaN(t) ? null : t;
+  }
+
+  function formatClockAge(sec) {
+    const s = Math.max(0, Math.floor(sec));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return h > 0 ? `${h}h ${String(m).padStart(2, '0')}m`
+                 : `${m}m ${String(s % 60).padStart(2, '0')}s`;
+  }
+
+  function cucSecondsToIso(s) {
+    if (s == null) return null;
+    return new Date(CUC_EPOCH_MS + s * 1000).toISOString();
+  }
+
+  // Instructor-only clock ground truth (TIME_ARCHITECTURE.md Part B). The
+  // offset is the answer to the NOM-008 exercise: the students have to measure
+  // it from the time correlation, so it exists nowhere in the TM path.
+  function updateClockTruth() {
+    const c = (snapshot && snapshot.clock_truth) || null;
+    const set = (id, txt, cls) => {
+      const el = $(id);
+      if (!el) return;
+      el.textContent = txt;
+      if (cls !== undefined) el.className = 'param-value' + (cls ? ' ' + cls : '');
+    };
+    if (!c) {
+      set('clock-sim-utc', '--'); set('clock-obc-utc', '--');
+      set('clock-since-sync', '--'); set('clock-drift', '-- ppm');
+      set('clock-offset', '-- s', '');
+      const r = $('clock-ref'); if (r) r.textContent = '--';
+      return;
+    }
+    const ref = $('clock-ref');
+    if (ref) ref.textContent = c.time_ref_name || '--';
+    set('clock-sim-utc', formatSimTime(c.sim_time));
+    set('clock-obc-utc', formatSimTime(cucSecondsToIso(c.obc_time_s)));
+    set('clock-since-sync',
+        c.time_since_sync_s == null ? 'never synced'
+                                    : formatClockAge(c.time_since_sync_s));
+    set('clock-drift', c.drift_ppm == null ? '-- ppm'
+                                           : fmt(c.drift_ppm, 2) + ' ppm');
+    if (c.offset_s == null) {
+      set('clock-offset', '-- s', '');
+    } else {
+      const a = Math.abs(c.offset_s);
+      // Same shape as the ground display: a second is where an operator
+      // starts to care, five is where the FDIR jump guard lives.
+      const cls = a >= 5 ? 'crit' : (a >= 1 ? 'warn' : 'good');
+      set('clock-offset', (c.offset_s >= 0 ? '+' : '') + c.offset_s.toFixed(3) + ' s',
+          cls);
     }
   }
 
@@ -1914,7 +2015,7 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
     apiPost('/api/command', { type: 'start_scenario', scenario: sc.name });
     wsSend({ type: 'start_scenario', scenario: sc.name });
     activeScenarioName = sc.name;
-    scenarioStartTime = Date.now();
+    scenarioStartSimMs = simNowMs();
     scenarioStartTick = state ? state.tick : 0;
     $('btn-start-scenario').disabled = true;
     $('btn-stop-scenario').disabled = false;
@@ -1930,7 +2031,7 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
     wsSend({ type: 'stop_scenario' });
     addLogEntry('info', 'SCENARIO', `Stopped: ${activeScenarioName}`);
     activeScenarioName = null;
-    scenarioStartTime = null;
+    scenarioStartSimMs = null;
     scenarioStartTick = null;
     $('btn-start-scenario').disabled = false;
     $('btn-stop-scenario').disabled = true;
@@ -2345,9 +2446,11 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
     // === Scenario Progress ===
     if (activeScenarioName && selectedScenario != null) {
       const sc = scenarios[selectedScenario];
-      if (sc && scenarioStartTime) {
-        const elapsedMs = Date.now() - scenarioStartTime;
-        const elapsedS = elapsedMs / 1000 * currentSpeed;
+      const nowSimMs = simNowMs();
+      if (sc && scenarioStartSimMs != null && nowSimMs != null) {
+        // Sim seconds, so a frozen simulation freezes the bar and a speed
+        // change mid-scenario does not rescale the elapsed time already run.
+        const elapsedS = Math.max(0, (nowSimMs - scenarioStartSimMs) / 1000);
         const totalS = sc.duration_s || 1;
         const pct = Math.min(100, (elapsedS / totalS) * 100);
         const remainS = Math.max(0, totalS - elapsedS);

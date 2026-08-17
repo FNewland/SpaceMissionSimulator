@@ -154,10 +154,15 @@ def test_limit_state_is_published_for_the_displays():
 
 
 def test_ground_only_parameters_are_the_ones_with_no_s12_definition():
-    """30 of the 51 bands are the ONLY limit check those parameters get.
+    """31 of the 52 bands are the ONLY limit check those parameters get.
 
     Pinned so that deleting an S12 definition (or a band) makes the coverage
     change visible instead of silent.
+
+    The 31st is 0x0A14 obdh.time_since_sync_s (TIME_ARCHITECTURE.md Part B):
+    the onboard clock's age is checked on the ground only, because the OBC
+    cannot know that its own clock is wrong — that is the whole teaching
+    point of NOM-008 — so there is deliberately no S12 definition for it.
     """
     s12 = yaml.safe_load(
         (CONFIG_DIR / "monitoring" / "s12_definitions.yaml").read_text())
@@ -165,7 +170,7 @@ def test_ground_only_parameters_are_the_ones_with_no_s12_definition():
                else int(str(d["param_id"]), 0)
                for d in s12["s12_definitions"]}
     ground_only = sorted(l.param_id for l in LIMITS if l.param_id not in s12_ids)
-    assert len(ground_only) == 30, (
+    assert len(ground_only) == 31, (
         "ground-only monitoring set changed: "
         f"{[hex(p) for p in ground_only]}")
     # Spot-check the classes brief 08 named explicitly.
@@ -294,7 +299,8 @@ def test_sent_command_is_archived_and_transitions_on_verification(tmp_path):
 def test_rejected_command_is_archived_as_rejected(tmp_path):
     srv = _make_server(tmp_path)
     _ws(srv)
-    srv._archive.store_command(seq=42, name="TEST", service=8, subtype=1)
+    srv._archive.store_command(seq=42, name="TEST", service=8, subtype=1,
+                               utc_epoch=srv.sim_now_ts())
     asyncio.run(srv._process_tm(_pkt(1, 2, _s1_payload(2, 42, 0x0007))))
     row = next(r for r in srv._archive.query_commands() if r["seq"] == 42)
     assert row["state"] == "REJECTED"
@@ -339,7 +345,8 @@ def _seed(archive: TMArchive, t0: float) -> None:
             utc_epoch=t0 + i)
     archive.store_event(0x0102, 4, "eps", "Battery SoC below 10%", utc_epoch=t0 + 20)
     archive.store_alarm({"timestamp": t0 + 21, "severity": 4, "subsystem": "eps",
-                         "parameter": "0x0101", "value": "9.0", "source": "LIMIT"})
+                         "parameter": "0x0101", "value": "9.0", "source": "LIMIT"},
+                        utc_epoch=t0 + 21)
     archive.store_command(seq=7, name="EPS_LINE_ON", service=8, subtype=1,
                           data_hex="1001", position="eps_tcs",
                           utc_epoch=t0 + 22)

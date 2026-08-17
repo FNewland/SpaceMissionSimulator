@@ -100,6 +100,18 @@ def func_id_to_subsystem(fid: int) -> str:
 
 # ── YAML loaders ──
 
+# Every configuration file the XTCE and SMDL generators read. Both exports
+# stamp a digest of these (see tools/source_revision.py) as their provenance,
+# so the stamp is a function of the inputs rather than of the wall clock.
+SOURCE_FILES = [
+    CONFIG / "telemetry" / "parameters.yaml",
+    CONFIG / "telemetry" / "hk_structures.yaml",
+    CONFIG / "commands" / "tc_catalog.yaml",
+    CONFIG / "monitoring" / "s12_definitions.yaml",
+    CONFIG / "mission.yaml",
+]
+
+
 def load_parameters() -> list[dict]:
     with open(CONFIG / "telemetry" / "parameters.yaml") as f:
         data = yaml.safe_load(f)

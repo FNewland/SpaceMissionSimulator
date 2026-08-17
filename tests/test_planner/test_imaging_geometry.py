@@ -148,7 +148,8 @@ class TestOffNadirFeasibility:
 
     def test_grazing_pass_within_half_a_swath_is_offered(self):
         planner = ImagingPlanner([GULF_STREAM], altitude_km=450.0)
-        # ~0.4 deg north of max_lat = ~44 km, inside the ~59 km half swath.
+        # ~0.4 deg north of max_lat = ~44 km, inside the 120 km half swath
+        # (240 km swath, owner ruling 2026-08).
         track = _track([(45.4, -65.0), (45.4, -64.0), (45.4, -63.0)])
         opps = planner.compute_opportunities(track)
         assert opps
@@ -276,6 +277,72 @@ class TestConfigWiring:
         )
         assert len(planner.get_targets()) == 7
         assert planner.max_off_nadir_deg == cfg.imaging.max_off_nadir_deg
-        assert planner.swath_km == pytest.approx(118.3, abs=1.0)
+        assert planner.swath_km == pytest.approx(240.0, abs=2.0)
         assert planner.image_size_mb == 800.0
         assert planner.enforce_revisit is True
+
+
+# ── The swath is 240 km (owner ruling, 2026-08) ────────────────────
+
+class TestSwathIs240Km:
+    """The planner's swath must be the instrument's 240 km swath.
+
+    DERIVATION — the planner works from the full across-track FOV, which is
+    the one the payload optics give (configs/eosat1/subsystems/payload.yaml:
+    8192 px x 5.5 um on a focal length of 84.5 mm):
+
+        FOV   = 2 * atan((8192 * 5.5 um / 2) / 84.5 mm) = 29.856 deg
+        swath = 2 * h * tan(FOV/2)
+              = 2 * 450 km * tan(14.928 deg)            = 239.94 km
+
+    TOLERANCE 240 +/- 2 km (0.8%): covers the rounded focal length and the
+    flat-Earth swath formula (spherical ground arc 240.56 km, +0.3%).
+
+    Before the ruling the planner used FOV = 15 deg -> 118 km, while the
+    simulator produced 45 km and the MCS map drew a 55 km circle: three
+    different instruments. All three are now this one.
+    """
+
+    def test_default_swath_is_240_km(self):
+        planner = ImagingPlanner([GULF_STREAM], altitude_km=450.0)
+        assert planner.swath_km == pytest.approx(240.0, abs=2.0)
+
+    def test_module_constant_is_240_km(self):
+        from smo_planner.imaging_planner import SWATH_KM, FOV_DEG
+        assert SWATH_KM == pytest.approx(240.0, abs=2.0)
+        assert FOV_DEG == pytest.approx(29.856, abs=0.01)
+
+    def test_mission_config_swath_is_240_km(self):
+        from smo_planner.planner_config import load_planner_config
+        cfg = load_planner_config(CONFIG_DIR)
+        planner = ImagingPlanner.from_config(
+            imaging_cfg=cfg.imaging, altitude_km=450.0)
+        assert planner.swath_km == pytest.approx(240.0, abs=2.0)
+        # The roll limit is half the FOV, i.e. the 120 km half swath.
+        assert planner.max_off_nadir_deg == pytest.approx(
+            cfg.imaging.fov_deg / 2.0, abs=0.01)
+
+    def test_planner_swath_matches_the_payload_optics(self):
+        """Single source of truth: recompute the swath straight from
+        subsystems/payload.yaml and require the planner to agree."""
+        import math
+        import yaml
+        cfg = yaml.safe_load(
+            (CONFIG_DIR / "subsystems" / "payload.yaml").read_text())
+        half_fov = math.atan(
+            (cfg["pixels_across_track"] * cfg["pixel_pitch_um"] * 1e-3)
+            / 2.0 / cfg["focal_length_mm"])
+        optics_swath_km = 2.0 * 450.0 * math.tan(half_fov)
+        planner = ImagingPlanner([GULF_STREAM], altitude_km=450.0)
+        assert planner.swath_km == pytest.approx(optics_swath_km, abs=0.5)
+
+    def test_a_120_km_cross_track_target_is_now_reachable(self):
+        """Consequence of the wider swath: a target ~1 deg (111 km) off the
+        ground track is inside the swath and IS offered — it was infeasible
+        at the old 118 km swath (59 km half swath)."""
+        planner = ImagingPlanner([GULF_STREAM], altitude_km=450.0)
+        track = _track([(46.0, -65.0), (46.0, -64.0), (46.0, -63.0)])
+        opps = planner.compute_opportunities(track)
+        assert opps
+        assert 100.0 <= opps[0]["cross_track_km"] <= 120.0
+        assert opps[0]["off_nadir_deg"] <= opps[0]["max_off_nadir_deg"]

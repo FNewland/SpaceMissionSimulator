@@ -5,6 +5,13 @@ Produces ECSS-E-ST-40-07C compliant Simulation Model Definition Language
 (SMDL) catalogue files describing each subsystem model's fields, entry
 points, and event sources for the EOSAT-1 mission.
 
+Scope note (CUC migration, docs/plan_2026-08c/CUC_MIGRATION.md): SMDL
+describes *models*, not the wire. This generator emits no packet layout and
+no PUS secondary header, so the 7 -> 9 octet header change (CUC coarse uint32
++ fine uint16) does not affect its output. The header is modelled in
+``tools/generate_xtce.py`` (``PUS_SEC_HDR_FIELDS``); if a packet layout is
+ever added here, the 16-bit fine field must follow the 32-bit coarse one.
+
 Usage::
 
     python tools/generate_smdl.py
@@ -15,16 +22,16 @@ import argparse
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
 from pathlib import Path
-from datetime import date
 
 from xtce_smdl_common import (
-    CONFIG, PACK_FORMAT_MAP, SID_SUBSYSTEM,
+    CONFIG, SOURCE_FILES, PACK_FORMAT_MAP, SID_SUBSYSTEM,
     load_parameters, load_hk_structures, load_commands,
     load_s12_definitions, load_mission_config,
     build_param_lookup, build_hk_param_formats,
     group_params_by_subsystem, group_commands_by_subsystem,
     smdl_uuid,
 )
+from source_revision import source_revision
 
 SMDL_XMLNS = "http://www.ecss.nl/smp/2019/Smdl"
 
@@ -74,8 +81,7 @@ def _build_subsystem_catalogue(sub_name, params, commands, s12_rules,
         "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
         "Name": sub_name,
         "Creator": "EOSAT-1 SMDL Generator",
-        "Date": str(date.today()),
-        "Version": "1.0",
+        "Version": f"1.0+{source_revision(SOURCE_FILES)}",
     })
     _el(root, "Description", text=f"SMP2 model catalogue for {sub_name} subsystem")
 
@@ -255,8 +261,7 @@ def generate_smdl(output_dir: Path):
         "xmlns": SMDL_XMLNS,
         "Name": "EOSAT-1",
         "Creator": "EOSAT-1 SMDL Generator",
-        "Date": str(date.today()),
-        "Version": "1.0",
+        "Version": f"1.0+{source_revision(SOURCE_FILES)}",
     })
     _el(master, "Description",
         text="EOSAT-1 SMP2 Master Catalogue — references all subsystem models")

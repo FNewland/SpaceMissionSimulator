@@ -133,15 +133,15 @@ to match available generation" on the operations loop.
 **Action:** If the degraded panel(s) are on a face that receives maximum illumination
 in NOMINAL mode, consider temporarily switching to COARSE_SUN (sun-optimal) to
 maximise generation from undamaged panels.
-**TC:** `AOCS_SET_MODE(mode=2)` (Service 8, Subtype 1, func_id 0) — COARSE_SUN
-**Verify:** `aocs.mode` (0x020F) = 2 within 15 s
+**TC:** `AOCS_SET_MODE(mode=3)` (Service 8, Subtype 1, func_id 0) — COARSE_SUN
+**Verify:** `aocs.mode` (0x020F) = 3 within 15 s
 **Action:** Wait 120 s for new attitude to stabilise, then request EPS HK.
 **Verify:** `eps.power_gen` (0x0107) — compare to NOMINAL generation.
 **Note:** COARSE_SUN sacrifices nadir pointing (no payload imaging) but may improve
 power generation by up to 30% depending on which panel(s) are lost.
 **GO/NO-GO:** If COARSE_SUN provides significantly better power margin, maintain
 this mode until battery is sufficiently charged. If no improvement, return to
-NOMINAL: `AOCS_SET_MODE(mode=3)`.
+NOMINAL: `AOCS_SET_MODE(mode=4)`.
 
 ### Step 7: Establish Long-Term Monitoring and Operations Plan
 **Action:** Record the following as the new degraded baseline:

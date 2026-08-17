@@ -874,18 +874,38 @@ Raw CCSDS space packet stream. Single-threaded server maintains 1-second receive
 
 **Packet Format:**
 ```
-Byte 0–1:  CCSDS Primary Header[0–15] (version=0, type=1 [TC], apid=0x0001)
-Byte 2–3:  Sequence counter + length – 1
-Byte 4–5:  PUS secondary header (svc_type, svc_subtype)
-Byte 6–(N-2):  Service data field
-Byte (N-1)–N:  Error control (CRC-16 CCITT)
+Byte 0–1:  CCSDS packet id      (version=0, type=1 [TC], sec hdr flag=1, apid=0x0001)
+Byte 2–3:  Sequence control     (grouping flags + sequence count)
+Byte 4–5:  Packet data length   (octets after the primary header, minus 1)
+Byte 6–8:  PUS TC secondary header — 3 octets: 0x20 | pus_version, service, subtype
+Byte 9–(N-3):  Service data field
+Byte (N-2)–(N-1):  Error control (CRC-16 CCITT)
 ```
+
+The TC secondary header carries **no** time field (`TC_SEC_HDR_LEN == 3`).
 
 ### TM Downlink (TCP:8002)
 
 Multi-client broadcast. All connected receivers get identical packet stream.
 
-**Packet Format:** Identical to TC uplink (space packet structure).
+**Packet Format:** the same CCSDS space packet structure, but the PUS **TM**
+secondary header is **9 octets**, not 3, because it carries the onboard CUC
+timestamp (`TM_SEC_HDR_LEN == 9`; see `manual/12_time_and_clocks.md`):
+
+```
+Byte 0–5:   CCSDS primary header (type=0 [TM])
+Byte 6:     0x10 | pus_version
+Byte 7:     service
+Byte 8:     subtype
+Byte 9–12:  CUC coarse (uint32 BE, seconds since J2000)
+Byte 13–14: CUC fine   (uint16 BE, units of 1/65536 s)
+Byte 15–(N-3):  Service data field
+Byte (N-2)–(N-1):  Error control (CRC-16 CCITT)
+```
+
+The data field therefore starts at offset **15**, not 13: anything that
+hardcoded the old whole-second CUC layout is wrong. Use
+`smo_common.protocol.ecss_packet.decommutate_packet()` or `TM_SEC_HDR_LEN`.
 
 **Output Rate:**
 - Nominal: 1 HK packet/sec per SID at 1 Hz tick rate

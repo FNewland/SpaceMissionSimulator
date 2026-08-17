@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <SpaceSystem xmlns="http://www.omg.org/spec/XTCE/20180204" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="EOSAT-1">
-  <Header date="2026-08-12" version="1.0" classification="Unclassified — Simulation"/>
+  <Header version="1.0+2fdbeaed7708" classification="Unclassified — Simulation"/>
   <SpaceSystem name="CCSDS">
     <LongDescription>CCSDS Space Packet Protocol header definitions</LongDescription>
     <TelemetryMetaData>
@@ -63,8 +63,11 @@
         <IntegerParameterType name="PUS_SubtypeType" signed="false">
           <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
         </IntegerParameterType>
-        <IntegerParameterType name="PUS_CUCTimeType" signed="false">
+        <IntegerParameterType name="PUS_CUCCoarseType" signed="false">
           <IntegerDataEncoding sizeInBits="32" encoding="unsigned"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="PUS_CUCFineType" signed="false">
+          <IntegerDataEncoding sizeInBits="16" encoding="unsigned"/>
         </IntegerParameterType>
         <IntegerParameterType name="SIDType" signed="false">
           <IntegerDataEncoding sizeInBits="16" encoding="unsigned"/>
@@ -74,7 +77,8 @@
         <Parameter name="pus_PUSMisc" parameterTypeRef="PUS_PUSMiscType"/>
         <Parameter name="pus_Service" parameterTypeRef="PUS_ServiceType"/>
         <Parameter name="pus_Subtype" parameterTypeRef="PUS_SubtypeType"/>
-        <Parameter name="pus_CUCTime" parameterTypeRef="PUS_CUCTimeType"/>
+        <Parameter name="pus_CUCCoarse" parameterTypeRef="PUS_CUCCoarseType"/>
+        <Parameter name="pus_CUCFine" parameterTypeRef="PUS_CUCFineType"/>
         <Parameter name="hk_SID" parameterTypeRef="SIDType"/>
       </ParameterSet>
       <ContainerSet>
@@ -90,7 +94,8 @@
             <ParameterRefEntry parameterRef="pus_PUSMisc"/>
             <ParameterRefEntry parameterRef="pus_Service"/>
             <ParameterRefEntry parameterRef="pus_Subtype"/>
-            <ParameterRefEntry parameterRef="pus_CUCTime"/>
+            <ParameterRefEntry parameterRef="pus_CUCCoarse"/>
+            <ParameterRefEntry parameterRef="pus_CUCFine"/>
           </EntryList>
         </SequenceContainer>
         <SequenceContainer name="HKPacket" abstract="true">
@@ -1128,7 +1133,7 @@
           <LongDescription>Switch power line ON</LongDescription>
           <ArgumentList>
             <Argument name="line_index" argumentTypeRef="uint8_ArgType">
-              <LongDescription>Power line index (0-7)</LongDescription>
+              <LongDescription>Power line index (0-8; 8 = prop)</LongDescription>
             </Argument>
           </ArgumentList>
           <CommandContainer name="EPS_POWER_ON_Container">
@@ -1142,7 +1147,7 @@
           <LongDescription>Switch power line OFF</LongDescription>
           <ArgumentList>
             <Argument name="line_index" argumentTypeRef="uint8_ArgType">
-              <LongDescription>Power line index (0-7)</LongDescription>
+              <LongDescription>Power line index (0-8; 8 = prop)</LongDescription>
             </Argument>
           </ArgumentList>
           <CommandContainer name="EPS_POWER_OFF_Container">
@@ -1156,7 +1161,7 @@
           <LongDescription>Reset overcurrent trip flag and re-enable line</LongDescription>
           <ArgumentList>
             <Argument name="line_index" argumentTypeRef="uint8_ArgType">
-              <LongDescription>Power line index (0-7)</LongDescription>
+              <LongDescription>Power line index (0-8; 8 = prop)</LongDescription>
             </Argument>
           </ArgumentList>
           <CommandContainer name="EPS_RESET_OC_FLAG_Container">
@@ -3836,6 +3841,18 @@
             <Unit>C</Unit>
           </UnitSet>
         </FloatParameterType>
+        <FloatParameterType name="tcs_fpa_cooler_floor_c_Type">
+          <FloatDataEncoding sizeInBits="32"/>
+          <UnitSet>
+            <Unit>C</Unit>
+          </UnitSet>
+        </FloatParameterType>
+        <FloatParameterType name="tcs_fpa_cooler_margin_k_Type">
+          <FloatDataEncoding sizeInBits="32"/>
+          <UnitSet>
+            <Unit>K</Unit>
+          </UnitSet>
+        </FloatParameterType>
         <FloatParameterType name="tcs_htr_duty_z1_Type">
           <FloatDataEncoding sizeInBits="32"/>
           <UnitSet>
@@ -3960,6 +3977,12 @@
         </Parameter>
         <Parameter name="tcs_temp_regulation_margin" parameterTypeRef="tcs_temp_regulation_margin_Type">
           <LongDescription>Minimum margin of any regulated zone (battery/OBC/FPA) to its alarm band; negative = out of band</LongDescription>
+        </Parameter>
+        <Parameter name="tcs_fpa_cooler_floor_c" parameterTypeRef="tcs_fpa_cooler_floor_c_Type">
+          <LongDescription>Coldest FPA temperature the cooler can hold at the present sink and load</LongDescription>
+        </Parameter>
+        <Parameter name="tcs_fpa_cooler_margin_k" parameterTypeRef="tcs_fpa_cooler_margin_k_Type">
+          <LongDescription>Commanded FPA setpoint minus achievable floor; &lt;= 0 means the setpoint is out of reach</LongDescription>
         </Parameter>
         <Parameter name="tcs_htr_duty_z1" parameterTypeRef="tcs_htr_duty_z1_Type">
           <LongDescription>Heater zone 1 duty cycle</LongDescription>
@@ -4385,6 +4408,18 @@
         <FloatParameterType name="obdh_can_bus_status_Type">
           <FloatDataEncoding sizeInBits="32"/>
         </FloatParameterType>
+        <IntegerParameterType name="obdh_obc_time_fine_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="16" encoding="unsigned"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="obdh_time_ref_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="obdh_time_since_sync_s_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="32" encoding="unsigned"/>
+          <UnitSet>
+            <Unit>s</Unit>
+          </UnitSet>
+        </IntegerParameterType>
       </ParameterTypeSet>
       <ParameterSet>
         <Parameter name="obdh_mode" parameterTypeRef="obdh_mode_Type"/>
@@ -4466,6 +4501,15 @@
         <Parameter name="obdh_can_bus_status" parameterTypeRef="obdh_can_bus_status_Type">
           <LongDescription>CAN bus status (0=offline, 1=nominal, 2=degraded)</LongDescription>
         </Parameter>
+        <Parameter name="obdh_obc_time_fine" parameterTypeRef="obdh_obc_time_fine_Type">
+          <LongDescription>Onboard CUC sub-second, units of 1/65536 s (~15.26 us)</LongDescription>
+        </Parameter>
+        <Parameter name="obdh_time_ref" parameterTypeRef="obdh_time_ref_Type">
+          <LongDescription>Onboard time reference (0=NONE, 1=GROUND, 2=GPS, 3=HOLDOVER)</LongDescription>
+        </Parameter>
+        <Parameter name="obdh_time_since_sync_s" parameterTypeRef="obdh_time_since_sync_s_Type">
+          <LongDescription>Onboard seconds since the last successful time sync; saturates rather than wrapping. 4294967295 (0xFFFFFFFF) = never synced</LongDescription>
+        </Parameter>
       </ParameterSet>
       <ContainerSet>
         <SequenceContainer name="HK_Platform_SID4">
@@ -4504,6 +4548,9 @@
             <ParameterRefEntry parameterRef="/EOSAT-1/OBDH/obdh_stack_usage"/>
             <ParameterRefEntry parameterRef="/EOSAT-1/OBDH/obdh_heap_usage"/>
             <ParameterRefEntry parameterRef="/EOSAT-1/OBDH/obdh_mem_errors"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/OBDH/obdh_obc_time_fine"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/OBDH/obdh_time_ref"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/OBDH/obdh_time_since_sync_s"/>
           </EntryList>
         </SequenceContainer>
       </ContainerSet>
@@ -5812,7 +5859,7 @@
           <LongDescription>Detector integration time</LongDescription>
         </Parameter>
         <Parameter name="payload_swath_width_km" parameterTypeRef="payload_swath_width_km_Type">
-          <LongDescription>Ground swath width</LongDescription>
+          <LongDescription>Ground swath width (240 km at the nominal 450 km altitude; 2*h*tan(FOV/2), FOV 29.856 deg from the payload.yaml optics)</LongDescription>
         </Parameter>
         <Parameter name="payload_band_blue_snr" parameterTypeRef="payload_band_blue_snr_Type">
           <LongDescription>Blue band (443 nm) SNR</LongDescription>
@@ -5839,7 +5886,7 @@
           <LongDescription>Attitude error used for quality calculation</LongDescription>
         </Parameter>
         <Parameter name="payload_gsd_m" parameterTypeRef="payload_gsd_m_Type">
-          <LongDescription>Ground sample distance</LongDescription>
+          <LongDescription>Ground sample distance (29.3 m at 450 km = h * pitch / focal length; 240 km swath / 8192 px)</LongDescription>
         </Parameter>
         <Parameter name="payload_scene_entropy" parameterTypeRef="payload_scene_entropy_Type">
           <LongDescription>Scene entropy estimate for compression</LongDescription>
@@ -6342,12 +6389,12 @@ TM(8,2) reply, built like PROP_GET_STATUS (func 118): shown(2) + held(2) + produ
 PRECONDITIONS (2026-08b PL-d — the gate is on the OPTICS, not on a mode word; the old rule was &quot;must be in IMAGING mode&quot;, which required the shutter to be open onto the scene before a dark frame could be asked for). Refused with S1.8 unless:
 
   * payload mode is 1 STANDBY or 3 CALIBRATION — never 0 OFF and never
-    2 IMAGING (error 0x0021);
-  * the FPA is thermally ready, 0x0610 == 1 (0x0022) — dark current
+    2 IMAGING (error 0x0024);
+  * the FPA is thermally ready, 0x0610 == 1 (0x0025) — dark current
     roughly doubles every 6-8 K, so coefficients taken off setpoint
     describe a different detector;
-  * DARK and BOTH: shutter CLOSED, 0x063C == 0 (0x0023) and the
-    calibration lamp OFF, 0x0615 == 0 (0x0024);
+  * DARK and BOTH: shutter CLOSED, 0x063C == 0 (0x0026) and the
+    calibration lamp OFF, 0x0615 == 0 (0x0027);
   * FLAT: shutter OPEN and lamp ON;
   * the devices involved are powered — FPA 0x0600, shutter 0x0603, and
     the lamp 0x0602 for FLAT/BOTH (0x0007).

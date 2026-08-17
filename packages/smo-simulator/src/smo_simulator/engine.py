@@ -21,6 +21,7 @@ from smo_common.orbit.propagator import OrbitPropagator, GroundStation
 from smo_common.models.registry import create_model
 from smo_common.telemetry.tm_builder import TMBuilder
 from smo_common.protocol.pus_services import format_command_rejection
+from smo_common.protocol.ecss_packet import CucTime
 from smo_simulator.tc_scheduler import TCScheduler
 from smo_simulator.tm_storage import OnboardTMStorage
 from smo_simulator.fdir import FaultPropagationRule
@@ -130,7 +131,16 @@ class SimulationEngine:
         self._snapshot: dict | None = None
         self._snapshot_tick: int = -1
 
+        # ── THE sim clock (TIME_ARCHITECTURE Part C.1) ────────────────────
+        # The engine owns the one and only sim clock. Absolute UTC of the
+        # simulated world; starts at orbit.yaml t0_epoch (or the wall clock in
+        # `epoch: wall` mode), advances by dt_sim, and DRIVES the orbit
+        # propagator (which keeps no clock of its own). Nothing else may own a
+        # sim clock. Provisional value here; re-pinned to t0_epoch below.
         self._sim_time = datetime.now(timezone.utc)
+        # MET reference: t0_epoch when the run is pinned, else the sim time at
+        # construction. Set once, below, next to _t0_epoch.
+        self._met_epoch: datetime = self._sim_time
 
         # Load configs
         self._mission_cfg = load_mission_config(self.config_dir)
@@ -178,12 +188,17 @@ class SimulationEngine:
         # no t0_epoch.
         self._t0_epoch: datetime | None = self._resolve_t0_epoch()
         if self._t0_epoch is not None:
-            self.orbit.reset(self._t0_epoch)
             self._sim_time = self._t0_epoch
             logger.info("Orbit epoch pinned to t0_epoch %s (reproducible run)",
                         self._t0_epoch.isoformat())
         else:
             logger.info("Orbit epoch = wall clock (run is not reproducible)")
+        # One clock: the propagator is driven from the engine's sim time in
+        # both modes. It used to seed itself from its own datetime.now() call,
+        # so even a pinned run started the orbit and the engine microseconds
+        # apart and an unpinned run started them milliseconds apart.
+        self._met_epoch = self._sim_time
+        self.orbit.propagate_to(self._sim_time)
 
         # Instantiate subsystem models from config
         self.subsystems: dict[str, Any] = {}
@@ -226,19 +241,25 @@ class SimulationEngine:
             except Exception as e:
                 logger.warning("Failed to load model %s for %s: %s", model_name, name, e)
 
-        # Reproducibility (plan A-2): the OBDH model initialises its CUC clock
-        # from the wall clock in configure(); when the run is pinned to
-        # t0_epoch, re-pin the OBC clock to it too, otherwise param 0x0309
-        # (obdh.obc_time) differs between two same-seed runs started a second
-        # apart.
-        if self._t0_epoch is not None:
-            obdh = self.subsystems.get("obdh")
-            if obdh is not None and hasattr(obdh, '_state') \
-                    and hasattr(obdh._state, 'obc_time_cuc'):
-                from smo_common.protocol.ecss_packet import TIME_EPOCH
-                t0_naive = self._t0_epoch.astimezone(timezone.utc).replace(tzinfo=None)
-                obdh._state.obc_time_cuc = int(
-                    (t0_naive - TIME_EPOCH).total_seconds())
+        # LEGACY reproducibility shim (plan A-2). The OLD OBDH model
+        # initialised its CUC clock from the wall clock in configure(), so two
+        # same-seed runs started a second apart disagreed on param 0x0309
+        # (obdh.obc_time); the engine re-pinned it to t0_epoch to compensate.
+        #
+        # TIME_ARCHITECTURE rule 5 says nothing outside the OBDH model may
+        # write onboard time, and Part B gives the OBDH model its own clock
+        # starting deterministically at CUC 0. This block is therefore
+        # SKIPPED as soon as that model lands (detected by the new float
+        # `obc_time_s` field) and can be deleted with the last legacy model.
+        obdh = self.subsystems.get("obdh")
+        _obdh_state = getattr(obdh, "_state", None)
+        if (self._t0_epoch is not None and _obdh_state is not None
+                and not hasattr(_obdh_state, "obc_time_s")
+                and hasattr(_obdh_state, "obc_time_cuc")):
+            from smo_common.protocol.ecss_packet import get_time_epoch
+            t0_naive = self._t0_epoch.astimezone(timezone.utc).replace(tzinfo=None)
+            _obdh_state.obc_time_cuc = int(
+                (t0_naive - get_time_epoch()).total_seconds())
 
         # TM builder — two APIDs: bootloader and application.
         # At power-up we use the bootloader APID; on OBC app boot (phase 3→4) we
@@ -259,7 +280,7 @@ class SimulationEngine:
         # This ensures parameters are available for API queries even before the main loop starts.
         # This is critical for the MCS to display parameters on startup.
         try:
-            initial_orbit_state = self.orbit.advance(0.0)
+            initial_orbit_state = self.orbit.propagate_to(self._sim_time)
             self.params[0x05FF] = 1 if self._override_passes else 0
             for name, model in self.subsystems.items():
                 try:
@@ -310,7 +331,13 @@ class SimulationEngine:
         self._load_shedding = LoadSheddingManager()
         self._procedure_executor = ProcedureExecutor()
         self._current_load_shed_stage = LOAD_SHED_STAGE_NORMAL
-        self._sim_elapsed_fdir = 0.0
+        # The FDIR module's OWN accumulator of sim seconds ticked through
+        # _tick_fdir_advanced: the time base for load-shed dwell, cascade
+        # due-times and recovery back-off. It is NOT MET (it only starts
+        # accumulating when advanced FDIR first ticks, and it stops whenever
+        # that tick is skipped) — it was exported as `met_s` for a while
+        # because the two happened to agree. MET is `self.met_s`.
+        self._fdir_elapsed_s = 0.0
         # Fault-cascade / recovery runtime (WP-5). Detection had no call site
         # at all before Phase G, so none of this existed.
         self._recovery_max_attempts = 3
@@ -359,7 +386,12 @@ class SimulationEngine:
         logger.info("Delayed-TM dump archive dir: %s", self._dump_dir)
 
         # Onboard TM Storage (S15)
-        self._tm_storage = OnboardTMStorage()
+        # S15 stores are stamped with ONBOARD time, so a store's oldest/newest
+        # timestamps are on the same clock as the CUC headers of the packets
+        # inside it (spec Part C.5). Every call site that omits an explicit
+        # timestamp — including service_dispatch's science-record path — picks
+        # this up.
+        self._tm_storage = OnboardTMStorage(time_source=self._get_cuc_time)
         # S15 dump pacing: pending packets released according to TTC data rate.
         # Each item: (pkt_bytes, store_id)
         self._dump_pending: list[tuple[bytes, int]] = []
@@ -375,8 +407,9 @@ class SimulationEngine:
             getattr(self._sim_cfg.ttc, 'rt_tm_backlog_max', 2000))
         self._force_rt_pacing: bool = False
 
-        # Subsystem event edge-detection
-        self._prev_aocs_mode: Optional[int] = None
+        # Subsystem event edge-detection. There is no `_prev_aocs_mode`: the
+        # AOCS model owns the 0x0200 mode-change event (see
+        # `_check_subsystem_events`).
         self._prev_payload_mode: Optional[int] = None
         self._prev_obdh_mode: Optional[int] = None
         self._event_flags: dict[str, bool] = {}
@@ -695,11 +728,80 @@ class SimulationEngine:
         for sid in self._hk_enabled:
             self._hk_enabled[sid] = sid in self._hk_default_enabled_sids
 
-    def _get_cuc_time(self) -> int:
+    # ── Clocks (TIME_ARCHITECTURE Part C) ─────────────────────────────
+    #
+    # SIM TIME    self.sim_time  — absolute UTC of the simulated world; the
+    #                              engine owns it and drives the propagator.
+    # MET         self.met_s     — (sim_time - t0_epoch), the ONE definition.
+    # ONBOARD     _get_cuc_time  — the OBDH clock, the single seam between the
+    #                              simulator and everything the spacecraft
+    #                              emits. Never sim time, never wall clock.
+
+    @property
+    def sim_time(self) -> datetime:
+        """Absolute UTC of the simulated world (the one sim clock)."""
+        return self._sim_time
+
+    @property
+    def met_s(self) -> float:
+        """Mission Elapsed Time in seconds: ``sim_time - t0_epoch``.
+
+        The single definition (spec Part C.2). Everything that wants MET —
+        /api/state, the planner, models — takes it from here rather than
+        deriving a second one. In `epoch: wall` mode (no t0_epoch) the
+        reference is the sim time at engine construction.
+        """
+        return (self._sim_time - self._met_epoch).total_seconds()
+
+    def _obdh_clock_seconds(self) -> float | None:
+        """Onboard seconds since the mission epoch, from the OBDH model.
+
+        Adapter over the OBDH clock (spec Part B, owned by the OBDH model).
+        It reads, in order of preference:
+
+        * ``obdh.get_obc_time_s()`` -> float      (Part B: THE accessor)
+        * ``obdh._state.obc_time_s``  float       (Part B state, sub-second)
+        * ``obdh._state.obc_time_cuc`` int        (legacy whole seconds)
+
+        Returns None when there is no OBDH model at all (bare unit-test
+        engines), which the callers treat as "clock at CUC 0" — a legitimate
+        onboard time now that the OBC boots at J2000.
+        """
         obdh = self.subsystems.get("obdh")
-        if obdh and hasattr(obdh, '_state'):
-            return getattr(obdh._state, 'obc_time_cuc', 0)
-        return 0
+        if obdh is None:
+            return None
+        getter = getattr(obdh, "get_obc_time_s", None)
+        if callable(getter):
+            try:
+                return float(getter())
+            except Exception:  # noqa: BLE001 — never break packet emission
+                logger.warning("OBDH clock read failed", exc_info=True)
+        st = getattr(obdh, "_state", None)
+        if st is None:
+            return None
+        for attr in ("obc_time_s", "obc_time_cuc"):
+            val = getattr(st, attr, None)
+            if val is not None:
+                return float(val)
+        return None
+
+    def _get_cuc_time(self) -> float:
+        """THE onboard time source (spec Part C.3).
+
+        Onboard CUC seconds since the mission epoch, full precision — the
+        TMBuilder time-source contract accepts a float and carries the
+        fraction into the CUC fine field rather than discarding it.
+
+        Handed to the TMBuilder, the S11 scheduler and the S15 stores, so
+        every packet the spacecraft emits and every store timestamp carries
+        the OBC's own clock — including its drift and any pre-sync offset.
+        Never sim time, never wall clock.
+        """
+        return float(self._obdh_clock_seconds() or 0.0)
+
+    def _get_cuc(self) -> CucTime:
+        """The same onboard time as a :class:`CucTime` (coarse, fine)."""
+        return CucTime.from_seconds(self._get_cuc_time())
 
     def _load_monitoring_configs(self) -> None:
         """Load S12 on-board monitoring and S19 event-action configs from YAML.
@@ -1007,8 +1109,8 @@ class SimulationEngine:
         ran, and seven of the eight FDIR events in the catalogue could not be
         emitted. Only load shedding was live.
         """
-        self._sim_elapsed_fdir += dt
-        now = self._sim_elapsed_fdir
+        self._fdir_elapsed_s += dt
+        now = self._fdir_elapsed_s
 
         # Check load shedding based on battery SoC
         eps = self.subsystems.get("eps")
@@ -1661,7 +1763,10 @@ class SimulationEngine:
             "sep_timer_duration": self._sep_timer_duration,
             "auto_tx_remaining": self._auto_tx_remaining,
             "current_load_shed_stage": self._current_load_shed_stage,
-            "sim_elapsed_fdir": self._sim_elapsed_fdir,
+            # FDIR's own elapsed-time accumulator (see __init__). The legacy
+            # key name is kept so older snapshots keep loading.
+            "fdir_elapsed_s": self._fdir_elapsed_s,
+            "sim_elapsed_fdir": self._fdir_elapsed_s,
             "fdir_safe_active": self._fdir_safe_active,
             "fdir_emergency_active": self._fdir_emergency_active,
             "prev_in_contact": self._prev_in_contact,
@@ -1669,7 +1774,6 @@ class SimulationEngine:
             "in_contact": self._in_contact,
             "active_gs": self._active_gs,
             "prev_active_gs": self._prev_active_gs,
-            "prev_aocs_mode": self._prev_aocs_mode,
             "prev_payload_mode": self._prev_payload_mode,
             "prev_obdh_mode": self._prev_obdh_mode,
             "event_flags": dict(self._event_flags),
@@ -1705,8 +1809,9 @@ class SimulationEngine:
                                           self._auto_tx_remaining))
         self._current_load_shed_stage = int(
             g("current_load_shed_stage", self._current_load_shed_stage))
-        self._sim_elapsed_fdir = float(g("sim_elapsed_fdir",
-                                         self._sim_elapsed_fdir))
+        self._fdir_elapsed_s = float(g("fdir_elapsed_s",
+                                       g("sim_elapsed_fdir",
+                                         self._fdir_elapsed_s)))
         self._fdir_safe_active = bool(g("fdir_safe_active",
                                         self._fdir_safe_active))
         self._fdir_emergency_active = bool(g("fdir_emergency_active",
@@ -1718,7 +1823,6 @@ class SimulationEngine:
         self._in_contact = bool(g("in_contact", self._in_contact))
         self._active_gs = g("active_gs", self._active_gs)
         self._prev_active_gs = g("prev_active_gs", self._prev_active_gs)
-        self._prev_aocs_mode = g("prev_aocs_mode", self._prev_aocs_mode)
         self._prev_payload_mode = g("prev_payload_mode",
                                     self._prev_payload_mode)
         self._prev_obdh_mode = g("prev_obdh_mode", self._prev_obdh_mode)
@@ -1820,7 +1924,7 @@ class SimulationEngine:
         divergent fit leaves the orbit unchanged and raises 0x0812.
         """
         from smo_common.orbit.propagator import DeltaVFitError
-        utc = self.orbit.utc
+        utc = self._sim_time
         if imp.get("utc_mid"):
             try:
                 utc = datetime.fromisoformat(imp["utc_mid"])
@@ -1915,11 +2019,13 @@ class SimulationEngine:
         dt_sub = dt_sim / n_sub
 
         for i in range(n_sub):
-            self._tick_substep(dt_sub, dt_sim, last=(i == n_sub - 1))
-            # Advance sim time at the end of each sub-step so events emitted
-            # in sub-step i+1 carry the correct intra-tick timestamp. For
-            # n_sub == 1 this is the historical end-of-tick advance.
+            # ONE clock (spec C.1): the engine advances sim time and the
+            # sub-step propagates the orbit TO it. The orbit used to advance
+            # itself by dt at the top of the sub-step while _sim_time was
+            # still bumped at the bottom, so the two agreed only by
+            # convention — and only at tick boundaries.
             self._sim_time += timedelta(seconds=dt_sub)
+            self._tick_substep(dt_sub, dt_sim, last=(i == n_sub - 1))
 
         self._tick_count += 1
 
@@ -1932,8 +2038,9 @@ class SimulationEngine:
         ``dt`` is the physics step; ``dt_outer`` is the full outer-tick dt
         handed to the once-per-tick handlers, which only run when ``last``.
         """
-        # Advance orbit
-        orbit_state = self.orbit.advance(dt)
+        # Propagate the orbit to the engine's sim time (the propagator keeps
+        # no clock of its own — spec C.1).
+        orbit_state = self.orbit.propagate_to(self._sim_time)
         self._in_contact = orbit_state.in_contact
         self._active_gs = getattr(orbit_state, 'active_gs', None)
         self.params[0x05FF] = 1 if self._override_passes else 0
@@ -2011,6 +2118,8 @@ class SimulationEngine:
             self._drain_tc_queue()
 
             # Execute time-tagged commands from scheduler
+            # S11 is an ONBOARD schedule: it fires on the OBC's own clock, so
+            # a wrong OBC clock fires it at the wrong sim time (spec C.6).
             current_cuc = self._get_cuc_time()
             due_tcs = self._tc_scheduler.tick(current_cuc)
             for tc_pkt in due_tcs:
@@ -2807,7 +2916,8 @@ class SimulationEngine:
             if (severity >= 2 and self._tm_storage is not None
                     and int(self.params.get(0x0311, 1)) != 0):
                 try:
-                    self._tm_storage.store_alarm(pkt, timestamp=self._sim_time.timestamp())
+                    self._tm_storage.store_alarm(
+                        pkt, timestamp=self._get_cuc_time())
                 except Exception:
                     pass
             try:
@@ -2898,11 +3008,23 @@ class SimulationEngine:
         # Archive raw dump for between-pass processing
         try:
             import struct as _struct
-            from datetime import datetime as _dt
             dump_dir = self._dump_dir
             dump_dir.mkdir(parents=True, exist_ok=True)
-            ts = _dt.utcnow().strftime("%Y%m%dT%H%M%SZ")
-            path = dump_dir / f"dump_sid{store_id:02d}_{ts}.bin"
+            # The mission timestamp in a dump filename is SIM time, not the
+            # host's wall clock: two runs of the same scenario must produce
+            # the same names, and the name must match the telemetry inside.
+            # Two dumps of the same store inside one sim second (or a re-run
+            # over an old workspace) would collide, so step the name forward a
+            # second at a time. The name must stay on the canonical
+            # dump_store.DUMP_NAME_RE pattern or the report tooling ignores
+            # the file, so a "_1" style suffix is not an option.
+            stamp = self._sim_time.astimezone(timezone.utc)
+            for _ in range(60):
+                ts = stamp.strftime("%Y%m%dT%H%M%SZ")
+                path = dump_dir / f"dump_sid{store_id:02d}_{ts}.bin"
+                if not path.exists():
+                    break
+                stamp += timedelta(seconds=1)
             with path.open("wb") as f:
                 for pkt in packets:
                     f.write(_struct.pack(">I", len(pkt)))
@@ -2969,16 +3091,14 @@ class SimulationEngine:
         """Check for subsystem state transitions and emit S5 events."""
         p = self.params
 
-        # AOCS mode change
-        aocs_mode = int(p.get(0x020F, 0))
-        if self._prev_aocs_mode is not None and aocs_mode != self._prev_aocs_mode:
-            modes = {0: 'OFF', 1: 'DETUMBLE', 2: 'SAFE', 3: 'NADIR', 4: 'TARGET'}
-            self._emit_event({
-                'event_id': 0x0200,
-                'severity': 2 if aocs_mode <= 2 else 1,
-                'description': f"AOCS mode: {modes.get(self._prev_aocs_mode, '?')} -> {modes.get(aocs_mode, '?')}",
-            })
-        self._prev_aocs_mode = aocs_mode
+        # AOCS mode change: emitted by the AOCS MODEL
+        # (aocs_basic._generate_tick_events), which owns `_MODE_NAMES` for all
+        # ten modes and carries the transition reason. The duplicate that used
+        # to live here carried a 5-entry table from before the 9-mode machine
+        # (OFF/DETUMBLE/SAFE/NADIR/TARGET), so every label was wrong and modes
+        # 5-9 rendered as "?" — NOMINAL->ECLIPSE downlinked as
+        # "AOCS mode: TARGET -> ?" alongside the model's correct event. Deleted
+        # 2026-08b; do not reintroduce a second emitter for 0x0200.
 
         # Payload mode change
         payload_mode = int(p.get(0x0600, 0))
@@ -3197,7 +3317,12 @@ class SimulationEngine:
                 from smo_common.protocol.ecss_packet import decommutate_packet
                 parsed = decommutate_packet(pkt)
                 if parsed and parsed.secondary:
-                    self._tm_storage.store_packet(parsed.secondary.service, pkt)
+                    # Stamp the store with the packet's OWN onboard CUC, so a
+                    # dumped store's oldest/newest bracket the packets in it.
+                    self._tm_storage.store_packet(
+                        parsed.secondary.service, pkt,
+                        timestamp=getattr(parsed.secondary, "cuc_seconds",
+                                          None))
 
     # ------------------------------------------------------------------
     # Instructor commands
@@ -3907,7 +4032,9 @@ class SimulationEngine:
         summary = {
             'tick': self._tick_count,
             'sim_time': self._sim_time.isoformat(),
-            'met_s': self._sim_elapsed_fdir,
+            # MET, the single definition (spec C.2): sim_time - t0_epoch.
+            # This used to export the FDIR module's accumulator.
+            'met_s': self.met_s,
             'speed': self.speed,
             'sc_mode': self.sc_mode,
             'in_eclipse': bool(o.in_eclipse),
@@ -4128,11 +4255,74 @@ class SimulationEngine:
                 self._failure_manager.active_failures())
                 if hasattr(self, '_failure_manager') else [],
             'fdir': self.fdir_status(),
+            # Ground truth for the clock exercise. INSTRUCTOR ONLY — see
+            # _build_clock_truth(); never add this to _build_state_summary().
+            'clock_truth': self._build_clock_truth(),
             'engine_fault': self.engine_fault,
             'engine_fault_count': self.engine_fault_count,
             'instr_cmd_rejects': self.instr_cmd_rejects,
             'hk_enabled': dict(self._hk_enabled),
         }
+        return out
+
+    def _build_clock_truth(self) -> dict:
+        """The onboard-vs-sim clock ground truth. **Instructor console only.**
+
+        Spec Part B, last paragraph: the true onboard-vs-sim offset must NOT be
+        downlinked — the spacecraft cannot know it, and the students' whole job
+        in NOM-008 is to measure it from the correlation. It is exposed here,
+        on the instructor snapshot, as the answer key: the offset the OBC clock
+        currently carries, together with the drift ppm actually drawn for this
+        run (a seeded per-unit draw, so it differs run to run).
+
+        Deliberately NOT in `_build_state_summary()`, which is what the MCS
+        polls and what feeds every ground display; and nothing here is a
+        telemetry parameter, so it cannot reach a TM packet.
+
+        `offset_s` is positive when the OBC clock is AHEAD of sim time.
+        """
+        from smo_common.protocol.ecss_packet import datetime_to_cuc_seconds
+
+        sim_cuc_s = float(datetime_to_cuc_seconds(self._sim_time))
+        obdh = self.subsystems.get("obdh")
+        obc_time_s = self._obdh_clock_seconds()
+
+        out: dict = {
+            'sim_cuc_s': sim_cuc_s,
+            'sim_time': self._sim_time.isoformat(),
+            'obc_time_s': obc_time_s,
+            # The answer key: OBC clock minus sim time, in seconds.
+            'offset_s': (None if obc_time_s is None
+                         else obc_time_s - sim_cuc_s),
+            'drift_ppm': None,
+            'time_ref': None,
+            'time_ref_name': None,
+            'time_since_sync_s': None,
+            'gps_disciplined': False,
+        }
+        if obdh is None:
+            return out
+
+        st = getattr(obdh, '_state', None)
+        if st is not None:
+            out['drift_ppm'] = float(getattr(st, 'clock_drift_ppm', 0.0) or 0.0)
+        ref = getattr(obdh, 'get_time_ref', None)
+        if callable(ref):
+            try:
+                from smo_simulator.models.obdh_basic import (
+                    TIME_REF_GPS, TIME_REF_NAMES)
+                r = int(ref())
+                out['time_ref'] = r
+                out['time_ref_name'] = TIME_REF_NAMES.get(r, 'UNKNOWN')
+                out['gps_disciplined'] = (r == TIME_REF_GPS)
+            except Exception:  # noqa: BLE001 — never break the snapshot
+                logger.debug("time_ref read failed", exc_info=True)
+        tss = getattr(obdh, 'time_since_sync_s', None)
+        if callable(tss):
+            try:
+                out['time_since_sync_s'] = tss()
+            except Exception:  # noqa: BLE001
+                logger.debug("time_since_sync read failed", exc_info=True)
         return out
 
     def fdir_status(self) -> dict:
@@ -4155,7 +4345,7 @@ class SimulationEngine:
                  'target': c.get('target_subsystem'),
                  'action': c.get('action'),
                  'due_in_s': round(max(0.0, c.get('due', 0.0)
-                                       - self._sim_elapsed_fdir), 1)}
+                                       - self._fdir_elapsed_s), 1)}
                 for c in self._pending_cascades
             ],
             'recovery': [

@@ -151,7 +151,9 @@ class TestD2_S92TimeReport:
         responses = d.dispatch(9, 2, b'', None)
 
         assert len(responses) == 1
-        engine.tm_builder.build_time_report.assert_called_with(12345)
+        # No argument: the TM builder reads on-board time through its time
+        # source (engine._get_cuc_time), the single seam for on-board time.
+        engine.tm_builder.build_time_report.assert_called_with()
 
 
 # ─── D2: Verify S3.4 HK disable works ──────────────────────────────────────

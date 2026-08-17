@@ -115,6 +115,9 @@ def decode_event(data_field: bytes) -> dict[str, Any]:
     return {
         "event_id": ev.event_id,
         "severity": ev.severity,
+        # Whole seconds only: the S5 body's repeated timestamp is a legacy
+        # uint32. The authoritative full-precision time is the secondary
+        # header's coarse+fine CUC (see TelemetryDataset._ingest_file).
         "cuc": ev.cuc_time,
         "aux_text": ev.aux_text,
         "s12_param_id": s12_event_to_param_id(ev.event_id),

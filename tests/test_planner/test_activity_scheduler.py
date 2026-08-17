@@ -478,3 +478,45 @@ class TestClear:
         sched.clear()
         act = sched.add_activity("imaging", "2026-03-11T10:00:00Z")
         assert act["id"] == 1
+
+
+# ── Chronological ordering (TIME_ARCHITECTURE Part E.3) ─────────────
+
+class TestScheduleOrderingIsChronological:
+    """The schedule is ordered by INSTANT, not by ISO string.
+
+    The old key was ``a["start_time"]`` with the comment "Simple string
+    comparison (ISO format is sortable)". ISO strings are only sortable when
+    every one of them uses the same offset spelling; the planner receives a
+    mix of "Z", "+00:00" and real offsets.
+    """
+
+    def test_z_and_explicit_utc_offsets_interleave_correctly(self):
+        sched = _make_scheduler()
+        sched.add_activity("downlink", "2026-03-11T11:00:00+00:00")
+        sched.add_activity("imaging", "2026-03-11T10:00:00Z")
+        starts = [a["start_time"] for a in sched.get_schedule()]
+        assert starts == ["2026-03-11T10:00:00Z", "2026-03-11T11:00:00+00:00"]
+
+    def test_non_utc_offset_sorts_by_instant_not_by_text(self):
+        # 09:00-01:00 == 10:00Z, i.e. BEFORE 10:30Z, but "09" > "10"
+        # lexically so the old string sort put it last.
+        sched = _make_scheduler()
+        sched.add_activity("downlink", "2026-03-11T10:30:00Z")
+        sched.add_activity("imaging", "2026-03-11T09:00:00-01:00")
+        starts = [a["start_time"] for a in sched.get_schedule()]
+        assert starts == ["2026-03-11T09:00:00-01:00", "2026-03-11T10:30:00Z"]
+
+    def test_positive_offset_sorts_by_instant(self):
+        # 13:00+02:00 == 11:00Z, after 10:00Z.
+        sched = _make_scheduler()
+        sched.add_activity("downlink", "2026-03-11T13:00:00+02:00")
+        sched.add_activity("imaging", "2026-03-11T10:00:00Z")
+        starts = [a["start_time"] for a in sched.get_schedule()]
+        assert starts == ["2026-03-11T10:00:00Z", "2026-03-11T13:00:00+02:00"]
+
+    def test_unparseable_start_time_does_not_raise(self):
+        sched = _make_scheduler()
+        sched.add_activity("imaging", "2026-03-11T10:00:00Z")
+        sched.add_activity("downlink", "not-a-time")
+        assert len(sched.get_schedule()) == 2

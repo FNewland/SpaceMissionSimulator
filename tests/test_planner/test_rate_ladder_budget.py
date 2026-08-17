@@ -145,7 +145,13 @@ class TestPerActivityRateSplit:
         # being able to see WHY the FPA will not come ready and what is
         # actually in the image store. Still ~10 % of the 16 kbps LOW tier, so
         # the rate-ladder argument this test exists for is unchanged.
-        assert hk_bps == pytest.approx(1621.0, abs=2.0)
+        # 2026-08c (TIME_ARCHITECTURE Part B) added the onboard-clock trio to
+        # platform HK SID 4 (8 s): 0x0A12 obc_time_fine (u16), 0x0A13 time_ref
+        # (u8), 0x0A14 time_since_sync_s (u32). 7 bytes every 8 s = +8 bps of
+        # channel — the price of an operator being able to see WHICH clock
+        # reference the OBC is on and how stale the sync is, without which
+        # NOM-008 is guesswork. 0.5 % of the HK stream.
+        assert hk_bps == pytest.approx(1629.0, abs=2.0)
         contacts = _contacts([("Svalbard", 20 + 45 * i, 445, 25.0)
                               for i in range(24)])
         b = BudgetTracker.from_config(CONFIG_DIR, contacts=contacts

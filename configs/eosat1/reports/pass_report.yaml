@@ -25,7 +25,6 @@ period:
   pass: { select: latest, station: any, pad_before_s: 300, pad_after_s: 300,
           source: events }
   timebase: cuc
-  zero_cuc_policy: interpolate
 parameter_sets:
   eps_vitals: [eps.bat_soc, eps.bus_voltage, eps.bat_current]
   link:       [ttc.tm_tier, ttc.tm_tier_cmd, ttc.tm_data_rate,

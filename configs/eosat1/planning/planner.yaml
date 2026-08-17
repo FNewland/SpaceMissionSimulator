@@ -84,9 +84,16 @@ budget:
   warn_utilization_percent: 80.0
 
 imaging:
-  fov_deg: 15.0
+  # Full across-track FOV of the instrument, single-sourced with the payload
+  # optics (subsystems/payload.yaml: 8192 px x 5.5 um, f = 84.5 mm):
+  #   fov  = 2 * atan((8192 * 5.5e-3 mm / 2) / 84.5 mm) = 29.856 deg
+  #   swath = 2 * 450 km * tan(fov/2)                   = 239.9 km (the 240 km
+  #                                                       swath, owner 2026-08)
+  fov_deg: 29.856
   swath_km: null                   # null -> 2*alt*tan(fov/2) from orbit.yaml
-  max_off_nadir_deg: 7.5           # roll limit for a capture (feasibility gate)
+  # Roll limit for a capture (feasibility gate) = half the FOV, i.e. the access
+  # point must lie within half a swath (120 km) cross-track.
+  max_off_nadir_deg: 14.928
   capture_duration_s: 120.0
   capture_power_w: 60.0
   default_min_solar_elevation_deg: 10.0

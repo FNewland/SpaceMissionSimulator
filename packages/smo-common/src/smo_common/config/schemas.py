@@ -37,7 +37,15 @@ class MissionConfig(StrictModel):
     bootloader_apid: int = Field(default=0x02, description="Bootloader APID — distinct from application APID; used for beacon/bootloader TM while OBC is in bootloader")
     start_in_bootloader: bool = Field(default=True, description="If True, engine powers up in bootloader/beacon mode (phase 3) with only SID 11 active and bootloader APID")
     pus_version: int = 2
-    time_epoch: str = "2000-01-01T12:00:00"
+    # LIVE config: the single definition of the CUC epoch on the wire.
+    # ``loader.load_mission_config`` pushes it into
+    # ``smo_common.protocol.ecss_packet`` via ``init_time_epoch``; the
+    # ``TIME_EPOCH_DEFAULT`` literal there is only the fallback for code that
+    # never loads a mission config. A gate test asserts the two agree.
+    time_epoch: str = Field(
+        default="2000-01-01T12:00:00",
+        description="CUC epoch on the wire, ISO-8601 UTC (J2000 = 2000-01-01T12:00:00).",
+    )
     dump_dir: str | None = Field(default=None, description="Directory for archived S15 delayed-TM dumps; absolute or relative; may point to a shared/server location. Overridden by SMO_DUMP_DIR env. Defaults to workspace/dumps.")
     # ── Time source (MCS ground UTC + Planner "now") ──
     # Selects whether the MCS/Planner follow SIMULATION time (closed-loop
@@ -259,6 +267,15 @@ class TCSConfig(StrictModel):
     # setpoint control so the cooler is not an unbounded heat pump (brief 05
     # WP-1 / AF-6).
     fpa_cooler_max_lift_k: float = 40.0
+    # Cooler efficiency model (2026-08b, DISPLAY_REQUESTS_PAYLOAD.md §8.2).
+    # `tcs_basic._fpa_achievable_lift_k` reads all three; until they were
+    # declared here the StrictModel rejected them in tcs.yaml and the model's
+    # own literals were the only live values — three knobs that looked
+    # configurable and were not. The Carnot fraction in particular is the knob
+    # an instructor wants for a "the cooler is degrading" scenario.
+    fpa_cooler_power_w: float = 15.0          # matches subsystems/payload.yaml
+    fpa_cooler_carnot_fraction: float = 0.23  # miniature Stirling class
+    fpa_imaging_load_w: float = 2.0           # detector/ROIC dissipation
     # Declared so tcs.yaml's thermal_coupling / event_thresholds sections
     # actually reach the TCS model (pydantic drops undeclared keys — that is
     # why these sections read as "never used", defect #51).
@@ -272,6 +289,26 @@ class OBDHConfig(StrictModel):
     watchdog_period_ticks: int = 30
     cpu_baseline_pct: float = 35.0
     param_ids: dict[str, int] = Field(default_factory=dict)
+
+    # ── Onboard clock (docs/plan_2026-08c/TIME_ARCHITECTURE.md Part B) ──
+    # StrictModel forbids extra keys, so these have to be declared here before
+    # subsystems/obdh.yaml is allowed to carry them.
+    #: Mean oscillator drift of the fleet. 12 ppm ≈ 1 s/day — a plausible
+    #: TCXO: big enough that a shift-long run needs a sync, small enough not
+    #: to be absurd.
+    clock_drift_ppm_nominal: float = 12.0
+    #: Per-unit spread. ``clock_drift_ppm = nominal + N(0, sigma)``, drawn once
+    #: per run from the seeded per-model RNG so determinism holds.
+    clock_drift_sigma_ppm: float = 4.0
+    #: Whether a GPS sync latches into disciplined mode (time_ref = GPS, no
+    #: drift while the fix is good). False ⇒ a sync is a one-shot set and the
+    #: clock free-runs from there.
+    clock_gps_discipline: bool = True
+    #: Minimum |jump| in seconds that raises an onboard-clock S5 event.
+    clock_jump_event_threshold_s: float = 1.0
+    #: ppm forced by the ``clock_drift`` failure injection at magnitude 1.0.
+    clock_drift_failure_ppm: float = 500.0
+
 
 class TMRateTier(StrictModel):
     """One rung of the TM data-rate ladder (defect #85).
@@ -507,8 +544,20 @@ class PayloadConfig(StrictModel):
     # Phase E WP-7: declared so the YAML value reaches the model (pydantic
     # drops undeclared keys). 8 segments -> PAYLOAD_MARK_BAD_SEGMENT 0-7.
     num_memory_segments: int = 8
-    line_rate_hz: float = 500.0
-    data_rate_mbps: float = 80.0
+    # ── Optics: the single source of swath (0x0619) and GSD (0x0628) ──
+    # OWNER RULING 2026-08: the swath is 240 km. 8192 px x 5.5 um on an
+    # 84.5 mm focal length gives FOV = 2*atan(45.056/2/84.5) = 29.856 deg and
+    # swath = 2 * 450 km * tan(FOV/2) = 239.9 km, GSD = 450 km * 5.5/84.5e3
+    # = 29.3 m. Previously the model hard-coded 20 urad x 5000 px -> 45 km.
+    pixels_across_track: int = 8192
+    pixel_pitch_um: float = 5.5
+    focal_length_mm: float = 84.5
+    bits_per_pixel: int = 12
+    # Readout rates derived from the optics: line_rate = v_ground/GSD =
+    # 7140/29.29 = 244 Hz; data_rate = 8192 x 4 bands x 12 bit x 244 Hz =
+    # 96 Mbps (was 500 Hz / 80 Mbps, consistent with neither geometry).
+    line_rate_hz: float = 244.0
+    data_rate_mbps: float = 96.0
     param_ids: dict[str, int] = Field(default_factory=dict)
 
 class PropConfig(StrictModel):
@@ -1045,6 +1094,16 @@ class ProcedureIndexEntry(StrictModel):
     #: (roadmap X-12 / defect #83). `smo_mcs.server` resolves it and exposes
     #: `runnable: true/false` to the Procedures tab.
     runnable: dict[str, str] | None = None
+    #: The card DECLARES that it commands nothing: it is a document, and an
+    #: empty `command_services` is a stated property rather than the 2026-08b
+    #: defect in which commanding was hidden behind `**Action:**` prose and the
+    #: card was silently inert. Enforced by
+    #: `tests/test_content/test_procedure_gates.py` and
+    #: `tools/procedure_audit.py` (ZERO_COMMAND_PROCEDURE), both of which
+    #: require `advisory_reason` to be non-empty whenever `advisory` is set.
+    advisory: bool = False
+    #: Why the card commands nothing. Required when `advisory` is true.
+    advisory_reason: str = ""
 
 
 class ProcedureIndex(StrictModel):

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="TTC" Creator="EOSAT-1 SMDL Generator" Date="2026-08-12" Version="1.0">
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="TTC" Creator="EOSAT-1 SMDL Generator" Version="1.0+2fdbeaed7708">
   <Description>SMP2 model catalogue for TTC subsystem</Description>
   <Type Name="UInt8" Uuid="ab46787a-5742-5d41-9471-82b8d26b3826" xsi:type="Integer" Size="1" Signed="false"/>
   <Type Name="UInt16" Uuid="00ba295b-550c-5551-b87d-d604e30c7592" xsi:type="Integer" Size="2" Signed="false"/>

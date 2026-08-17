@@ -15,16 +15,16 @@ import argparse
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
 from pathlib import Path
-from datetime import date
 
 from xtce_smdl_common import (
-    CONFIG, PACK_FORMAT_MAP, TC_TYPE_MAP, SID_SUBSYSTEM,
+    CONFIG, SOURCE_FILES, PACK_FORMAT_MAP, TC_TYPE_MAP, SID_SUBSYSTEM,
     load_parameters, load_hk_structures, load_commands,
     load_s12_definitions, load_mission_config,
     build_param_lookup, build_hk_param_formats,
     group_params_by_subsystem, group_commands_by_subsystem,
     xtce_uuid,
 )
+from source_revision import source_revision
 
 XTCE_NS = "http://www.omg.org/spec/XTCE/20180204"
 
@@ -161,12 +161,28 @@ def _build_ccsds_system(root):
     return ss
 
 
+#: The PUS TM secondary header, in wire order. 9 octets since the CUC
+#: migration (docs/plan_2026-08c/CUC_MIGRATION.md): the bare uint32 of whole
+#: seconds became a proper ECSS CUC of coarse uint32 seconds since the mission
+#: epoch plus fine uint16 sub-seconds in units of 1/65536 s. The order here is
+#: load-bearing — every subsystem parameter offset in the generated XTCE is
+#: measured from the end of this list, so dropping the fine field would leave
+#: the whole file 2 octets short.
+PUS_SEC_HDR_FIELDS = [
+    ("PUSMisc", 8),
+    ("Service", 8),
+    ("Subtype", 8),
+    ("CUCCoarse", 32),
+    ("CUCFine", 16),
+]
+
+
 def _build_pus_system(root, mission_cfg):
-    """Build the PUS secondary header SpaceSystem."""
+    """Build the PUS secondary header SpaceSystem (9 octets, coarse+fine CUC)."""
     ss = _el(root, "SpaceSystem", name="PUS")
     tm = _el(ss, "TelemetryMetaData")
     pts = _el(tm, "ParameterTypeSet")
-    for name, bits in [("PUSMisc", 8), ("Service", 8), ("Subtype", 8), ("CUCTime", 32)]:
+    for name, bits in PUS_SEC_HDR_FIELDS:
         pt = _el(pts, "IntegerParameterType", name=f"PUS_{name}Type", signed="false")
         _el(pt, "IntegerDataEncoding", sizeInBits=str(bits), encoding="unsigned")
 
@@ -175,7 +191,7 @@ def _build_pus_system(root, mission_cfg):
     _el(pt, "IntegerDataEncoding", sizeInBits="16", encoding="unsigned")
 
     ps = _el(tm, "ParameterSet")
-    for name in ["PUSMisc", "Service", "Subtype", "CUCTime"]:
+    for name, _bits in PUS_SEC_HDR_FIELDS:
         _el(ps, "Parameter", name=f"pus_{name}", parameterTypeRef=f"PUS_{name}Type")
     _el(ps, "Parameter", name="hk_SID", parameterTypeRef="SIDType")
 
@@ -187,7 +203,8 @@ def _build_pus_system(root, mission_cfg):
     cl = _el(rc, "ComparisonList")
     _el(cl, "Comparison", parameterRef="/EOSAT-1/CCSDS/ccsds_SecHdrFlag", value="1")
     el = _el(pus, "EntryList")
-    for name in ["PUSMisc", "Service", "Subtype", "CUCTime"]:
+    # Wire order: coarse then fine.
+    for name, _bits in PUS_SEC_HDR_FIELDS:
         _el(el, "ParameterRefEntry", parameterRef=f"pus_{name}")
 
     # HK report packet (S3.25)
@@ -418,8 +435,7 @@ def generate_xtce(output_path: Path):
     })
 
     header = _el(root, "Header",
-                 date=str(date.today()),
-                 version="1.0",
+                 version=f"1.0+{source_revision(SOURCE_FILES)}",
                  classification="Unclassified — Simulation")
 
     # CCSDS and PUS base systems

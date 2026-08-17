@@ -7,6 +7,7 @@ no-op, so the manual, the exports and the spacecraft cannot disagree — the
 failure mode this whole phase exists to close (the shipped reference listed
 one of fourteen payload commands and two of seventeen TT&C commands).
 """
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -119,6 +120,44 @@ class TestGeneratedExportsAreCurrent:
         after = (REPO / target).read_bytes()
         assert before == after, (
             f"{target} is stale — re-run {tool} and commit the result")
+
+    GENERATORS = [
+        "tools/gen_command_reference.py",
+        "tools/generate_xtce.py",
+        "tools/generate_smdl.py",
+        "tools/gen_parameter_map.py",
+        "tools/xtce_smdl_common.py",
+    ]
+
+    ARTEFACTS = [
+        "configs/eosat1/manual/09_command_reference.md",
+        "configs/eosat1/xtce/eosat1.xml",
+        "configs/eosat1/smdl/payload.xml",
+        "configs/eosat1/smdl/eosat1_catalogue.xml",
+        "docs/PARAMETER_MAP.md",
+    ]
+
+    @pytest.mark.parametrize("source", GENERATORS)
+    def test_generators_do_not_read_the_wall_clock(self, source):
+        """A generated file must be a pure function of its inputs.
+
+        A ``**Date:** <today>`` stamp made every byte-diff gate above fail on
+        every calendar day but the one the reference was generated on.
+        Provenance is carried by ``tools/source_revision.py`` instead, which
+        digests the input files.
+        """
+        text = (REPO / source).read_text()
+        for clock in ("date.today(", "datetime.now(", "utcnow(", "time.time("):
+            assert clock not in text, (
+                f"{source} stamps a wall-clock value into a generated "
+                f"artefact ({clock}); use source_revision() instead")
+
+    @pytest.mark.parametrize("target", ARTEFACTS)
+    def test_artefacts_carry_no_wall_clock_date(self, target):
+        """The byte-diff gates must pass on any calendar day."""
+        text = (REPO / target).read_text()
+        stamps = re.findall(r"\d{4}-\d{2}-\d{2}", text)
+        assert not stamps, f"{target} embeds a date stamp: {sorted(set(stamps))}"
 
     def test_xtce_command_metadata_is_conformant(self):
         xml = (REPO / "configs" / "eosat1" / "xtce" / "eosat1.xml").read_text()

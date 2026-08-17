@@ -4,7 +4,6 @@ Loads scenario definitions from YAML, manages execution, tracks operator respons
 Refactored from scenario_engine.py — scenarios are now purely YAML-defined.
 """
 import logging
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -84,8 +83,11 @@ class ScenarioEngine:
         self._failure_registry: dict[str, set[str]] = {}
         self._scenarios: dict[str, ScenarioDefinition] = {}
         self._active: Optional[ScenarioDefinition] = None
+        # Scenario progress is measured in SIM seconds accumulated by
+        # tick(): a paused simulator must not advance a scenario and an
+        # accelerated one must advance it at speed. There used to be a
+        # `_start_time = time.monotonic()` beside this that nothing read.
         self._elapsed: float = 0.0
-        self._start_time: float = 0.0
         self._responses: list[dict] = []
         self._response_times: dict[str, float] = {}
         self._last_debrief: Optional[ScenarioDebrief] = None
@@ -244,7 +246,6 @@ class ScenarioEngine:
             ev.fired = False
         self._active = defn
         self._elapsed = 0.0
-        self._start_time = time.monotonic()
         self._responses = []
         self._response_times = {}
         self._injected_fids = []
@@ -424,7 +425,6 @@ class ScenarioEngine:
             return
         self._active = defn
         self._elapsed = float(state.get("elapsed", 0.0))
-        self._start_time = time.monotonic() - self._elapsed
         self._responses = [dict(r) for r in state.get("responses", [])]
         self._response_times = dict(state.get("response_times", {}))
         self._injected_fids = list(state.get("injected_fids", []))

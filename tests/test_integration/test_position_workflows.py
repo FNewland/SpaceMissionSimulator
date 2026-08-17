@@ -337,12 +337,24 @@ class TestCommandServiceAlignment:
         )
 
     def test_procedure_command_services_are_not_empty_for_operational_procedures(self):
-        """Most procedures (except handover-type) should have command services."""
+        """Most procedures (except handover-type and advisory cards) should
+        have command services.
+
+        `advisory: true` (with an `advisory_reason`) is the DECLARED exemption
+        introduced for CTG-020: a card that commands nothing because every
+        action in it is taken on the ground. The declaration is what keeps an
+        empty `command_services` distinguishable from the defect where a card's
+        commanding was hidden in prose — `test_procedure_gates.py` asserts an
+        advisory card really does extract zero commands, and that a
+        non-advisory card never extracts zero. So skipping advisory cards here
+        weakens nothing.
+        """
         procedures = _load_procedure_index()
         # Some procedures like shift handover may have empty command_services
         empty_svc = [
             proc["id"] for proc in procedures
             if not proc.get("command_services")
+            and not proc.get("advisory")
             and proc["category"] not in ("nominal",)  # handover exception
         ]
         assert not empty_svc, (

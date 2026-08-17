@@ -317,15 +317,15 @@ class TestHKOverMultipleOrbits:
         assert uptime_2 > uptime_1
 
     def test_obdh_time_cuc_advances(self):
-        """OBDH CUC time should advance with ticks."""
+        """The OBC clock (seconds since J2000, float) advances with ticks."""
         obdh = OBDHBasicModel()
         obdh.configure({})
         params = {}
         orbit = make_orbit_state()
-        cuc_start = obdh._state.obc_time_cuc
+        cuc_start = obdh.get_obc_time_s()
         for _ in range(10):
             obdh.tick(1.0, orbit, params)
-        assert obdh._state.obc_time_cuc > cuc_start
+        assert obdh.get_obc_time_s() > cuc_start
 
     def test_tm_packet_counter_increments(self):
         """TM packet counter should increment when record_tm_packet called."""

@@ -3,6 +3,8 @@
 Verifies that the instructor/operator display has ground-truth visibility into
 every parameter and subsystem state, bypassing RF link gating.
 """
+import json
+
 import pytest
 import yaml
 from pathlib import Path
@@ -269,6 +271,60 @@ class TestInstructorSnapshot:
         assert len(snap['subsystems']) > 0
         assert 'parameters' in snap
         assert len(snap['parameters']) > 0
+
+
+class TestClockGroundTruth:
+    """TIME_ARCHITECTURE.md Part B, last paragraph.
+
+    The true onboard-vs-sim offset is the answer to the NOM-008 exercise. The
+    spacecraft cannot know it, so it must exist on the instructor console and
+    nowhere else — not in the state summary the MCS polls, not in telemetry.
+    """
+
+    def test_snapshot_carries_the_offset_and_the_drawn_drift(self, engine):
+        engine.subsystems["obdh"]._state.sw_image = 1
+        engine._tick_once(1.0)
+        c = engine.get_instructor_snapshot()["clock_truth"]
+
+        from smo_common.protocol.ecss_packet import datetime_to_cuc_seconds
+        expected = (engine.subsystems["obdh"].get_obc_time_s()
+                    - datetime_to_cuc_seconds(engine._sim_time))
+        assert c["offset_s"] == pytest.approx(expected, abs=1e-6)
+        # The ppm actually drawn for this run, not the nominal.
+        assert c["drift_ppm"] == pytest.approx(
+            engine.subsystems["obdh"]._state.clock_drift_ppm)
+        assert c["time_ref_name"] in ("NONE", "GROUND", "GPS", "HOLDOVER")
+
+    def test_offset_tracks_a_clock_that_is_deliberately_wrong(self, engine):
+        engine.subsystems["obdh"]._state.sw_image = 1
+        engine._tick_once(1.0)
+        obdh = engine.subsystems["obdh"]
+        before = engine.get_instructor_snapshot()["clock_truth"]["offset_s"]
+        obdh._state.obc_time_s += 40.0
+        # The snapshot is published by the tick thread, so it moves on the
+        # next tick, not on the mutation.
+        engine._tick_once(0.0)
+        after = engine.get_instructor_snapshot()["clock_truth"]["offset_s"]
+        assert after - before == pytest.approx(40.0, abs=1e-6)
+
+    def test_the_offset_does_not_leak_into_the_ground_state_summary(self, engine):
+        engine.subsystems["obdh"]._state.sw_image = 1
+        engine._tick_once(1.0)
+        summary = engine.get_state_summary()
+        blob = json.dumps(summary, default=str)
+        assert "clock_truth" not in summary
+        assert "offset_s" not in blob
+        # And no telemetry parameter carries it either.
+        truth = engine.get_instructor_snapshot()["clock_truth"]
+        obdh = engine.subsystems["obdh"]
+        obdh._state.obc_time_s += 1234.5      # a big, unmistakable offset
+        engine._tick_once(1.0)
+        truth = engine.get_instructor_snapshot()["clock_truth"]
+        assert abs(truth["offset_s"]) > 1000.0
+        for pid, val in engine.params.items():
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                assert abs(float(val) - truth["offset_s"]) > 1e-6, (
+                    f"parameter 0x{pid:04X} downlinks the true clock offset")
 
 
 class TestInstructorDisplayGaps:

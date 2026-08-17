@@ -28,7 +28,7 @@ import yaml
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "packages" / "smo-common" / "src"))
 
-from smo_common.protocol.ecss_packet import datetime_to_cuc  # noqa: E402
+from smo_common.protocol.ecss_packet import datetime_to_cuc_seconds  # noqa: E402
 from smo_common.telemetry.tm_builder import TMBuilder  # noqa: E402
 from smo_common.reporting import (  # noqa: E402
     Catalogs,
@@ -48,7 +48,7 @@ from smo_common.reporting.spec import PeriodSpec, SpecError  # noqa: E402
 
 CONFIG_DIR = REPO / "configs" / "eosat1"
 T0 = datetime(2026, 3, 10, 4, 0, 0)  # packets say 2026…
-T0_CUC = datetime_to_cuc(T0)
+T0_CUC = datetime_to_cuc_seconds(T0)
 #: …while the archive FILENAME says 1999 (wall clock under acceleration)
 DUMP_NAME = "dump_sid01_19990101T000000Z.bin"
 
@@ -93,7 +93,9 @@ def _build_dump(dump_dir: Path) -> Path:
     cur["t"] = T0_CUC + 110
     pkts.append(b.build_event_packet(0x0002, 1, "Svalbard", {}))       # LOS
 
-    # S1 packets carry no CUC (tm_builder default 0) — placed by file order.
+    # S1 packets now carry on-board time like everything else
+    # (TIME_ARCHITECTURE Part C.4) — no zero-CUC placement any more.
+    cur["t"] = T0_CUC + 111
     pkts.append(b.build_verification_acceptance(10, 5))
     pkts.append(b.build_verification_completion(10, 5))
     pkts.append(b.build_verification_failure(10, 6, 0x0007,
@@ -176,21 +178,30 @@ def test_hk_series_decoded_with_scaling(dataset):
     assert pts[-1][1] == pytest.approx(27.5, abs=0.02)
 
 
-# ── zero-CUC placement ───────────────────────────────────────────────────
+# ── on-board timestamps ──────────────────────────────────────────────────
 
-def test_zero_cuc_verifications_interpolated_within_span(dataset):
+def test_verifications_carry_their_own_onboard_time(dataset):
+    """No interpolation: S1 packets are timestamped at source."""
     assert len(dataset.verifications) == 3
     for v in dataset.verifications:
-        assert v["time_estimated"] is True
+        assert v["t"] == pytest.approx(T0_CUC + 111)
         assert dataset.first_cuc <= v["t"] <= dataset.last_cuc
-    assert dataset.zero_cuc_placed == 3
 
 
-def test_zero_cuc_exclude_policy(dump_dir, catalogs):
-    ds = TelemetryDataset.from_dumps(sorted(dump_dir.glob("*.bin")),
-                                     catalogs, zero_cuc_policy="exclude")
-    assert ds.verifications == []
-    assert ds.zero_cuc_excluded == 3
+def test_sub_second_cuc_survives_the_dump(dump_dir, catalogs, tmp_path):
+    """Fine time is carried end to end, not rounded to whole seconds."""
+    d = tmp_path / "fine-dumps"
+    d.mkdir()
+    cur = {"t": T0_CUC + 0.25}
+    b = TMBuilder(apid=1, time_source=lambda: cur["t"])
+    pkts = [b.build_event_packet(0x0102, 3, "quarter second", {})]
+    path = d / DUMP_NAME
+    with path.open("wb") as f:
+        for pk in pkts:
+            f.write(struct.pack(">I", len(pk)))
+            f.write(pk)
+    ds = TelemetryDataset.from_dumps([path], catalogs)
+    assert ds.events[0]["t"] == pytest.approx(T0_CUC + 0.25, abs=1e-4)
 
 
 # ── stats / limits ───────────────────────────────────────────────────────
@@ -288,10 +299,7 @@ def test_generate_report_end_to_end(dump_dir, tmp_path):
     assert "data:image/png;base64," in html
     assert "http://" not in html and "https://" not in html
     assert "<script src=" not in html
-    # zero-CUC provenance note
-    assert "no on-board timestamp" in html
     assert meta["packets"] == 86
-    assert meta["zero_cuc_placed"] == 3
 
 
 def test_sections_never_silently_empty(catalogs, tmp_path):

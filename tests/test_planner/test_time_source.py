@@ -149,3 +149,55 @@ def test_mission_config_default(monkeypatch):
     monkeypatch.delenv("SMO_TIME_SOURCE", raising=False)
     server = _make_planner(time_source=None, mission_time_source="real")
     assert server._time_source == "real"
+
+
+# ── MET (TIME_ARCHITECTURE Part E.2) ────────────────────────────────
+# MET has ONE definition and the simulator owns it (met_s = sim_time -
+# t0_epoch). The planner reads it off /api/state and carries it forward with
+# the sim-clock anchor; it never recomputes it from a local t0.
+
+def test_met_comes_from_the_simulator_not_a_local_subtraction():
+    payload = {"sim_time": "2030-06-15T12:00:00+00:00", "speed": 1.0,
+               "met_s": 4242.0}
+    server = _make_planner(time_source="sim", sim_state_payload=payload)
+    server._refresh_sim_anchor(force=True)
+    met = server._get_met_s()
+    assert met is not None
+    # The simulator's number, not (sim_time - some planner-side epoch).
+    assert abs(met - 4242.0) < 2.0
+
+
+def test_met_advances_with_the_sim_clock():
+    payload = {"sim_time": "2030-06-15T12:00:00+00:00", "speed": 60.0,
+               "met_s": 1000.0}
+    server = _make_planner(time_source="sim", sim_state_payload=payload)
+    server._refresh_sim_anchor(force=True)
+    server._sim_anchor_wall = _time.time() - 2.0  # 2 wall s x 60 = 120 sim s
+    met = server._get_met_s()
+    assert 1110.0 < met < 1130.0
+
+
+def test_met_unknown_when_simulator_does_not_publish_it():
+    # No met_s key: unknown is reported as unknown, not guessed.
+    payload = {"sim_time": "2030-06-15T12:00:00+00:00", "speed": 1.0}
+    server = _make_planner(time_source="sim", sim_state_payload=payload)
+    server._refresh_sim_anchor(force=True)
+    assert server._get_met_s() is None
+
+
+def test_met_is_none_in_real_mode():
+    server = _make_planner(time_source="real")
+    assert server._get_met_s() is None
+
+
+@pytest.mark.asyncio
+async def test_time_source_endpoint_reports_met():
+    import json as _json
+    payload = {"sim_time": "2030-06-15T12:00:00+00:00", "speed": 1.0,
+               "met_s": 7200.0}
+    server = _make_planner(time_source="sim", sim_state_payload=payload)
+    server._refresh_sim_anchor(force=True)
+    resp = await server._handle_time_source(None)
+    body = _json.loads(resp.body)
+    assert body["met_s"] is not None
+    assert abs(body["met_s"] - 7200.0) < 2.0

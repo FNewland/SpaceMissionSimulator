@@ -971,7 +971,7 @@ commands:
     func_id: 19
     description: "Switch power line ON"
     fields:
-      - { name: line_index, type: uint8, description: "Power line index (0-7)" }
+      - { name: line_index, type: uint8, description: "Power line index (0-8; 8 = prop)" }
   - name: EPS_POWER_OFF
     aliases: [POWER_LINE_OFF]
     service: 8
@@ -979,14 +979,14 @@ commands:
     func_id: 20
     description: "Switch power line OFF"
     fields:
-      - { name: line_index, type: uint8, description: "Power line index (0-7)" }
+      - { name: line_index, type: uint8, description: "Power line index (0-8; 8 = prop)" }
   - name: EPS_RESET_OC_FLAG
     service: 8
     subtype: 1
     func_id: 21
     description: "Reset overcurrent trip flag and re-enable line"
     fields:
-      - { name: line_index, type: uint8, description: "Power line index (0-7)" }
+      - { name: line_index, type: uint8, description: "Power line index (0-8; 8 = prop)" }
   - name: EPS_SWITCH_LOAD
     service: 8
     subtype: 1
@@ -1325,12 +1325,12 @@ commands:
       for). Refused with S1.8 unless:
 
         * payload mode is 1 STANDBY or 3 CALIBRATION — never 0 OFF and never
-          2 IMAGING (error 0x0021);
-        * the FPA is thermally ready, 0x0610 == 1 (0x0022) — dark current
+          2 IMAGING (error 0x0024);
+        * the FPA is thermally ready, 0x0610 == 1 (0x0025) — dark current
           roughly doubles every 6-8 K, so coefficients taken off setpoint
           describe a different detector;
-        * DARK and BOTH: shutter CLOSED, 0x063C == 0 (0x0023) and the
-          calibration lamp OFF, 0x0615 == 0 (0x0024);
+        * DARK and BOTH: shutter CLOSED, 0x063C == 0 (0x0026) and the
+          calibration lamp OFF, 0x0615 == 0 (0x0027);
         * FLAT: shutter OPEN and lamp ON;
         * the devices involved are powered — FPA 0x0600, shutter 0x0603, and
           the lamp 0x0602 for FLAT/BOTH (0x0007).
@@ -1635,8 +1635,11 @@ commands:
     fields:
       - { name: bus, type: uint8, description: "0=Bus A, 1=Bus B" }
     criticality: caution
+  # 2026-08b: the `SET_PHASE` alias was removed. Booting the application image
+  # has nothing to do with the spacecraft mission phase, and the mnemonic
+  # invited an operator looking for a phase advance (an instructor-side action
+  # with no flight TC) to reboot the OBC instead.
   - name: OBC_BOOT_APP
-    aliases: [SET_PHASE]
     service: 8
     subtype: 1
     func_id: 55

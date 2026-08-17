@@ -215,7 +215,8 @@ def analyse_dumps(paths: Iterable[Path], params_by_id: dict, hk_plist: dict) -> 
     for sid, samples in sorted(an.hk_samples.items()):
         if not samples:
             continue
-        per_pid: dict[int, list[tuple[int, float]]] = {}
+        # cuc is full-precision on-board seconds (float).
+        per_pid: dict[int, list[tuple[float, float]]] = {}
         for cuc, vals in samples:
             for pid, v in vals.items():
                 per_pid.setdefault(pid, []).append((cuc, v))
@@ -545,7 +546,10 @@ function render(j) {
     ["S5 events", j.events.length],
     ["HK SIDs", j.hk.length],
     ["Anomalies", j.anomalies.length],
-    ["CUC range", `${j.first_cuc ?? "—"} → ${j.last_cuc ?? "—"}`],
+    ["On-board time (CUC) range",
+     `${j.first_cuc == null ? "—" : j.first_cuc.toFixed(3) + " (" + formatCucTime(j.first_cuc) + ")"}`
+     + " → "
+     + `${j.last_cuc == null ? "—" : j.last_cuc.toFixed(3) + " (" + formatCucTime(j.last_cuc) + ")"}`],
   ];
   for (const [label, value] of cards) {
     const c = document.createElement("div"); c.className = "card";
@@ -563,7 +567,7 @@ function render(j) {
   // Events
   $("events").innerHTML = j.events.length
     ? "<table><thead><tr><th>CUC</th><th>Subtype</th><th>Event ID</th><th>Description</th></tr></thead><tbody>"
-      + j.events.map(e => `<tr class='sev-${e.severity}'><td>${e.cuc}</td><td>S5.${e.subtype}</td><td>0x${e.event_id.toString(16).padStart(4,"0").toUpperCase()}</td><td>${escapeHtml(e.description)}</td></tr>`).join("")
+      + j.events.map(e => `<tr class='sev-${e.severity}'><td>${formatCucTime(e.cuc)}</td><td>S5.${e.subtype}</td><td>0x${e.event_id.toString(16).padStart(4,"0").toUpperCase()}</td><td>${escapeHtml(e.description)}</td></tr>`).join("")
       + "</tbody></table>"
     : "No events.";
 
@@ -583,7 +587,7 @@ function render(j) {
       + "<th class='num'>Value</th><th>Check</th><th>Severity</th><th class='num'>Limit band</th>"
       + "</tr></thead><tbody>"
       + tr.map(t => `<tr>
-          <td>${t.cuc == null ? "—" : t.cuc}</td>
+          <td>${t.cuc == null ? "—" : formatCucTime(t.cuc)}</td>
           <td class='num'>${t.mon_id == null ? "—" : t.mon_id}</td>
           <td>${escapeHtml(t.param_hex || "")} ${escapeHtml(t.param_name || "")}</td>
           <td>${t.entered ? "<b style='color:#ff6b6b'>OUT OF LIMITS</b>"
@@ -666,14 +670,21 @@ function isoOf(localInput) {
   return new Date(localInput.value + "Z").toISOString();
 }
 
-// The sim's CUC is plain seconds since 2000-01-01T12:00:00Z, packed as a bare
-// '>I' (smo_common.protocol.ecss_packet.TIME_EPOCH). It is NOT coarse/fine
-// packed, so the old `cuc / 256` + magic 657720000 offset were both wrong.
+// On-board CUC, in SECONDS since the mission epoch J2000 =
+// 2000-01-01T12:00:00Z (smo_common.protocol.ecss_packet, epoch now live from
+// mission.yaml `time_epoch`). Since the CUC migration the 9-octet PUS
+// secondary header carries coarse (uint32 s) + fine (uint16, 1/65536 s), and
+// the backend hands us the COMBINED value as a float — coarse + fine/65536 —
+// so these numbers legitimately have a fractional part. (The old comment
+// "It is NOT coarse/fine packed" described the pre-migration wire and is no
+// longer true; the `cuc / 256` and magic 657720000 offsets were always wrong.)
 const CUC_EPOCH_UNIX_MS = Date.UTC(2000, 0, 1, 12, 0, 0);   // 946728000000
 
 function formatCucTime(cuc) {
   if (typeof cuc !== 'number' || !isFinite(cuc)) return String(cuc);
-  return new Date(CUC_EPOCH_UNIX_MS + cuc * 1000).toISOString().substr(11, 8);
+  // hh:mm:ss.mmm — the fine field resolves ~15.26 us, so show sub-seconds
+  // rather than truncating them away.
+  return new Date(CUC_EPOCH_UNIX_MS + cuc * 1000).toISOString().substr(11, 12);
 }
 
 function addChart(sid, pid, name, series, units) {

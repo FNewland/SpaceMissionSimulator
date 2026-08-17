@@ -106,7 +106,7 @@ class TestImagingTarget:
     def test_within_swath_near_boundary(self):
         """Point just outside the region but within swath margin."""
         target = ImagingTarget(SAMPLE_TARGETS[0])
-        # Just above max_lat (45.0) but within ~60km (half swath)
+        # Just above max_lat (45.0) but within the 120 km half swath
         assert target.within_swath(45.3, -65.0) is True
 
     def test_within_swath_far_outside(self):

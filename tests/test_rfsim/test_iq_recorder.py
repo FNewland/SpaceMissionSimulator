@@ -132,6 +132,10 @@ def test_colored_noise_produces_slope(tmp_path):
 
 
 def test_impulsive_noise_raises_kurtosis(tmp_path):
+    # scipy is an optional extra, not a hard dependency of smo-rfsim. Skip
+    # rather than fail on an install that does not carry it; the rest of the
+    # recorder suite runs without it.
+    pytest.importorskip("scipy")
     from scipy.stats import kurtosis
     from smo_rfsim.recording import ImpairmentConfig
     cfg = RecorderConfig(modulation="BPSK", symbol_rate_hz=9600, duration_s=3.0,

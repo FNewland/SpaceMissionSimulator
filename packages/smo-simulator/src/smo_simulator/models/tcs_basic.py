@@ -18,12 +18,17 @@ import random
 from dataclasses import dataclass, field
 from typing import Any
 from smo_common.config.fpa_envelope import FPAEnvelope
+from smo_common.config.schemas import TCSConfig
 from smo_common.models.subsystem import SubsystemModel
 # The FPA setpoint arrives on the same wire field (S8 func 36, uint16
 # centi-kelvin) whether it is routed to the payload or to TCS, so both sides
 # must apply the same decode tolerance or the two will disagree about which
 # setpoints are legal. One helper, imported.
 from smo_simulator.models.payload_basic import snap_to_envelope
+
+#: Schema defaults, so the model's fallbacks and `subsystems/tcs.yaml`'s
+#: accepted keys cannot drift apart (DISPLAY_REQUESTS_PAYLOAD.md §8.2).
+_TCS_DEFAULTS = TCSConfig()
 
 @dataclass
 class TCSState:
@@ -214,9 +219,14 @@ class TCSBasicModel(SubsystemModel):
         # `_fpa_achievable_lift_k`) and is smaller than this almost everywhere.
         self._fpa_cooler_max_lift_k = 40.0
         # ── Cooler efficiency model (2026-08b) — see `_fpa_achievable_lift_k`
-        self._fpa_cooler_power_w = 15.0
-        self._fpa_cooler_carnot_fraction = 0.23
-        self._fpa_imaging_load_w = 2.0
+        # The numbers live in TCSConfig (and therefore in subsystems/tcs.yaml),
+        # not here: they used to be literals in this constructor AND in
+        # configure(), while TCSConfig — a StrictModel — did not declare them,
+        # so a YAML override was REJECTED by the loader and these were the only
+        # live values. One source now.
+        self._fpa_cooler_power_w = _TCS_DEFAULTS.fpa_cooler_power_w
+        self._fpa_cooler_carnot_fraction = _TCS_DEFAULTS.fpa_cooler_carnot_fraction
+        self._fpa_imaging_load_w = _TCS_DEFAULTS.fpa_imaging_load_w
 
     # ── FPA cooler authority (2026-08b) ─────────────────────────────────
     #
@@ -335,12 +345,16 @@ class TCSBasicModel(SubsystemModel):
         self._fpa_cooler_target = config.get("fpa_cooler_target_c", -5.0)
         self._fpa_cooler_max_lift_k = float(
             config.get("fpa_cooler_max_lift_k", 40.0))
+        # Cooler efficiency model — now REAL configuration: TCSConfig declares
+        # all three, so subsystems/tcs.yaml can set them and the loader accepts
+        # the file. The fallbacks are the schema defaults, never fresh literals.
         self._fpa_cooler_power_w = float(
-            config.get("fpa_cooler_power_w", 15.0))
+            config.get("fpa_cooler_power_w", self._fpa_cooler_power_w))
         self._fpa_cooler_carnot_fraction = float(
-            config.get("fpa_cooler_carnot_fraction", 0.23))
+            config.get("fpa_cooler_carnot_fraction",
+                       self._fpa_cooler_carnot_fraction))
         self._fpa_imaging_load_w = float(
-            config.get("fpa_imaging_load_w", 2.0))
+            config.get("fpa_imaging_load_w", self._fpa_imaging_load_w))
         # FPA envelope — the single source for readiness and for the derived
         # limit bands (DECISIONS §3, ruled in G3-d).
         self._fpa_env = FPAEnvelope.from_config(config)

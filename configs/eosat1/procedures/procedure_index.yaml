@@ -13,11 +13,12 @@
 #   runnable: {kind: markdown}      # derive command steps from the **TC:**
 #                                   # annotations in this document
 #
-#   runnable: {kind: advisory, reason: <why>}
-#                                   # the document deliberately commands
-#                                   # NOTHING; not offered for execution
-#
-# `runnable: {kind: advisory}` — the document deliberately commands NOTHING.
+# `advisory: true` + `advisory_reason: <why>` — the document deliberately
+# commands NOTHING, so it carries no `runnable:` link at all and is not offered
+# for execution. Both keys are first-class fields on `ProcedureIndexEntry`
+# (`packages/smo-common/src/smo_common/config/schemas.py`); the property used to
+# be smuggled through `runnable: {kind: advisory}`, which claimed a card was
+# linked to an executable definition when it is precisely the opposite.
 # Only CTG-020 (ground-segment antenna failure) qualifies today.
 # Without the flag, "extracts zero command steps" is indistinguishable from
 # the 2026-08b defect in which 21 documents wrote all their commanding behind
@@ -624,16 +625,12 @@ procedures:
       flight_director: "Authorize station switchover"
       ttc: "Diagnose GS equipment, switch to backup station"
     command_services: []
-    # DECLARED as commanding nothing. The literal `advisory: true` /
-    # `advisory_reason:` keys the ruling asked for would need two additive
-    # fields on `ProcedureIndexEntry` in
-    # `packages/smo-common/src/smo_common/config/schemas.py`, which is a
-    # StrictModel and is NOT a Phase-5-owned file — see the phase report. The
-    # same declared property is carried by the `runnable:` mapping, which is
-    # already in the schema and which `smo_mcs.server._resolve_runnable`
-    # already treats as not-runnable for any kind it does not know.
-    runnable: {kind: advisory, reason: "Pure ground-segment: every action is
-      taken on the ground and the spacecraft is unreachable throughout"}
+    # DECLARED as commanding nothing, via the first-class `advisory` fields on
+    # ProcedureIndexEntry. No `runnable:` link: the card is not executable, and
+    # the MCS reports runnable=false for it.
+    advisory: true
+    advisory_reason: "Pure ground-segment: every action is taken on the ground
+      and the spacecraft is unreachable throughout"
     # Full rationale (rendered next to the card in the MCS procedure browser):
     # Pure ground-segment. Every action in this card is taken on the GROUND —
     # inspect the antenna controller, check the LNA and receive chain, call the

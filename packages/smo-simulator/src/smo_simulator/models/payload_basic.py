@@ -10,7 +10,6 @@ import hashlib
 import math
 import random
 import struct
-import time
 import zlib
 from dataclasses import dataclass, field
 from typing import Any
@@ -151,7 +150,9 @@ class PayloadState:
     snr: float = 45.0               # Signal-to-noise ratio (dB)
     detector_temp_c: float = -5.0    # CCD/CMOS detector temperature
     integration_time_ms: float = 2.0 # Detector integration time
-    swath_width_km: float = 30.0     # Ground swath width
+    # Ground swath width. 240 km at the 450 km nominal altitude (owner
+    # ruling 2026-08); recomputed from the optics every tick.
+    swath_width_km: float = 240.0
 
     # ── Multispectral imaging ──
     band_enable_mask: int = 0x0F  # All 4 bands enabled (bits 0-3)
@@ -161,7 +162,7 @@ class PayloadState:
     })
     att_quality_factor: float = 1.0
     att_error_deg: float = 0.0
-    gsd_m: float = 10.0
+    gsd_m: float = 29.3   # Ground sample distance at 450 km (see swath_width_km)
     scene_entropy: float = 0.0
 
     # ── Phase C: AOCS fine-pointing gate (WP-6) ──
@@ -328,8 +329,15 @@ class PayloadBasicModel(SubsystemModel):
         # (tests, tooling) still has the readiness and event rules.
         self._fpa_env = FPAEnvelope()
         self._cooler_power_w = 15.0
-        self._line_rate_hz = 500.0
-        self._data_rate_mbps = 80.0
+        self._line_rate_hz = 244.0
+        self._data_rate_mbps = 96.0
+        # Focal-plane geometry (subsystems/payload.yaml). Defaults are the
+        # flight values so a directly instantiated model still reports the
+        # 240 km swath: 8192 px x 5.5 um on an 84.5 mm telescope.
+        self._pixels_across_track = 8192
+        self._pixel_pitch_um = 5.5
+        self._focal_length_mm = 84.5
+        self._bits_per_pixel = 12
         self._param_ids: dict[str, int] = {}
         self._next_scene_id = 100
 
@@ -354,8 +362,13 @@ class PayloadBasicModel(SubsystemModel):
         self._state.image_size_mb = config.get("image_size_mb", 4.0)
         self._state.total_storage_mb = config.get("total_storage_mb", 20000.0)
         self._cooler_power_w = config.get("fpa_cooler_power_w", 15.0)
-        self._line_rate_hz = config.get("line_rate_hz", 500.0)
-        self._data_rate_mbps = config.get("data_rate_mbps", 80.0)
+        self._line_rate_hz = config.get("line_rate_hz", 244.0)
+        self._data_rate_mbps = config.get("data_rate_mbps", 96.0)
+        # Optics — the single source of swath (0x0619) and GSD (0x0628).
+        self._pixels_across_track = int(config.get("pixels_across_track", 8192))
+        self._pixel_pitch_um = float(config.get("pixel_pitch_um", 5.5))
+        self._focal_length_mm = float(config.get("focal_length_mm", 84.5))
+        self._bits_per_pixel = int(config.get("bits_per_pixel", 12))
 
         # Memory segments
         num_seg = config.get("num_memory_segments", 8)
@@ -612,15 +625,13 @@ class PayloadBasicModel(SubsystemModel):
                                "detector powered (PAYLOAD_SET_MODE 1 or 3)"}
         if s.mode == 2:
             # Never from IMAGING: the scene is on the detector.
-            # Generic codes, not new ones: 0x0021-0x0023 already mean the
-            # three CAPTURE pointing refusals in
-            # smo_common.protocol.pus_services.FAILURE_CODES, and reusing them
-            # would make the console print the wrong sentence. The specific
-            # reason travels in `code` and in the message. Four dedicated
-            # codes are requested in DISPLAY_REQUESTS_PAYLOAD.md (smo-common
-            # is not the payload owner's file).
+            # 2026-08b: dedicated codes 0x0024-0x0027 (DISPLAY_REQUESTS_PAYLOAD
+            # §8.1) now exist in smo_common.protocol.pus_services.FAILURE_CODES,
+            # so each refusal renders as its own sentence instead of the
+            # generic 0x0005 / 0x0007. 0x0021-0x0023 stay reserved for the
+            # three CAPTURE pointing refusals.
             return {"success": False, "code": "CAL_REFUSED_IMAGING",
-                    "error_code": 0x0005,
+                    "error_code": 0x0024,
                     "message": "Calibration refused in IMAGING — a calibration "
                                "frame must not see the scene. Command "
                                "PAYLOAD_SET_MODE 1 (STANDBY) or 3 "
@@ -631,7 +642,7 @@ class PayloadBasicModel(SubsystemModel):
                                "off"}
         if not s.fpa_ready:
             return {"success": False, "code": "CAL_FPA_NOT_READY",
-                    "error_code": 0x0007,
+                    "error_code": 0x0025,
                     "message": (
                         "Calibration refused: FPA not thermally ready "
                         f"({s.fpa_temp:.1f} C, setpoint "
@@ -647,13 +658,13 @@ class PayloadBasicModel(SubsystemModel):
                                    "powered off — cannot verify the dark path"}
             if s.shutter_position != 0:
                 return {"success": False, "code": "CAL_SHUTTER_OPEN",
-                        "error_code": 0x0007,
+                        "error_code": 0x0026,
                         "message": "Calibration refused: shutter is OPEN. A "
                                    "dark frame is a shutter-closed acquisition "
                                    "— PAYLOAD_SET_SHUTTER 0 first"}
             if s.cal_lamp_on:
                 return {"success": False, "code": "CAL_LAMP_ON",
-                        "error_code": 0x0007,
+                        "error_code": 0x0027,
                         "message": "Calibration refused: calibration lamp is "
                                    "ON during the dark phase — "
                                    "PAYLOAD_CAL_LAMP 0 first"}
@@ -665,12 +676,12 @@ class PayloadBasicModel(SubsystemModel):
             # FLAT-only: the ground sets the optics up itself.
             if s.shutter_position != 1:
                 return {"success": False, "code": "CAL_SHUTTER_CLOSED",
-                        "error_code": 0x0007,
+                        "error_code": 0x0026,
                         "message": "Calibration refused: flat field needs the "
                                    "shutter OPEN (PAYLOAD_SET_SHUTTER 1)"}
             if not s.cal_lamp_on:
                 return {"success": False, "code": "CAL_LAMP_OFF",
-                        "error_code": 0x0007,
+                        "error_code": 0x0027,
                         "message": "Calibration refused: flat field needs the "
                                    "calibration lamp ON (PAYLOAD_CAL_LAMP 1)"}
         return None
@@ -1047,13 +1058,29 @@ class PayloadBasicModel(SubsystemModel):
         if hasattr(orbit_state, 'lon_deg'):
             s.orbit_lon_deg = float(orbit_state.lon_deg)
 
-        # ── Swath width from altitude ──
+        # ── Swath width and GSD from the optics and the altitude ──
+        #
+        # OWNER RULING (2026-08): the swath is 240 km. The geometry is derived
+        # from the focal-plane parameters in subsystems/payload.yaml, not from
+        # hard-coded constants (this used to be ifov = 20 urad x 5000 px =
+        # 0.1 rad -> 45 km at 450 km, which is not the instrument the
+        # courseware describes).
+        #
+        #   ifov      = pixel_pitch / focal_length          (rad per pixel)
+        #   full FOV  = 2 * atan(N * pitch / 2 / focal_length)
+        #   swath     = 2 * alt * tan(FOV/2)   (flat-Earth, same formula the
+        #                                       planner uses — the two agree)
+        #   GSD       = alt * ifov                          (at nadir)
+        #
+        # At 450 km with 8192 px x 5.5 um and f = 84.5 mm:
+        #   FOV = 29.856 deg, swath = 239.9 km, GSD = 29.3 m.
         alt_km = orbit_state.alt_km if hasattr(orbit_state, 'alt_km') else 500.0
-        ifov_urad = 20.0  # Instantaneous field of view
-        pixels_cross = 5000
-        fov_rad = pixels_cross * ifov_urad * 1e-6
-        s.swath_width_km = alt_km * fov_rad
-        s.gsd_m = alt_km * 1000.0 * ifov_urad * 1e-6
+        half_fov_rad = math.atan(
+            (self._pixels_across_track * self._pixel_pitch_um * 1e-3)
+            / 2.0 / self._focal_length_mm)
+        s.swath_width_km = 2.0 * alt_km * math.tan(half_fov_rad)
+        ifov_rad = (self._pixel_pitch_um * 1e-3) / self._focal_length_mm
+        s.gsd_m = alt_km * 1000.0 * ifov_rad
 
         # ── Per-band SNR and aggregate SNR model ──
         if s.mode == 2 and s.fpa_ready:
@@ -1367,13 +1394,19 @@ class PayloadBasicModel(SubsystemModel):
         shared_params[0x064B] = s.cooler_margin_k
 
     def _now(self) -> float:
-        """Mission time: engine sim time when hosted (deterministic under a
-        pinned t0_epoch, plan A-2), wall clock when standalone."""
+        """ONBOARD time in CUC seconds since the mission epoch (J2000).
+
+        Both users of this helper are timestamps the spacecraft stamps onto
+        things it downlinks — ``last_calibration_time`` (0x062C, sent next to
+        a CUC secondary header) and the capture time in the image catalogue —
+        so they must be on the OBC's own clock, drift and all, not on sim time
+        and certainly not on the Unix epoch this used to return (spec Part
+        C.7). Standalone (no engine) it is 0.0, which is J2000 — a legitimate
+        onboard time for an OBC that has not been set.
+        """
         eng = getattr(self, "_engine", None)
-        sim_time = getattr(eng, "_sim_time", None)
-        if sim_time is not None:
-            return sim_time.timestamp()
-        return time.time()
+        clock = getattr(eng, "_get_cuc_time", None)
+        return float(clock()) if callable(clock) else 0.0
 
     def get_telemetry(self) -> dict[int, float]:
         return {0x0601: self._state.fpa_temp}
@@ -1416,7 +1449,7 @@ class PayloadBasicModel(SubsystemModel):
             if s.shutter_position != 1:
                 return {"success": False,
                         "code": "SHUTTER_CLOSED",
-                        "error_code": 0x0007,
+                        "error_code": 0x0028,
                         "message": "Capture refused: shutter is CLOSED "
                                    "(PAYLOAD_SET_SHUTTER 1 to open)"}
             if not s.device_states.get(0x0600, True):
@@ -1554,7 +1587,7 @@ class PayloadBasicModel(SubsystemModel):
             s.image_catalog.append(img)
             s.product_bytes += self.image_size_bytes(img)
             # Start the strip-acquisition monitor over the COMMANDED strip
-            # length (lines / line_rate; 2048 @ 500 Hz = 4.1 s)
+            # length (lines / line_rate; 2048 @ 244 Hz = 8.4 s)
             line_rate = max(1.0, self._line_rate_hz)
             s.strip_remaining_s = float(lines) / line_rate
             s.strip_worst_err_deg = (s.aocs_total_err_seen

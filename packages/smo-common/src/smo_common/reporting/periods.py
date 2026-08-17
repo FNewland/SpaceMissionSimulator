@@ -25,7 +25,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from ..protocol.ecss_packet import datetime_to_cuc, parse_cuc_time
+from ..protocol.ecss_packet import (
+    cuc_seconds_to_datetime, datetime_to_cuc_seconds)
 from .catalogs import Catalogs
 from .dataset import TelemetryDataset
 from .spec import PeriodSpec
@@ -69,14 +70,16 @@ def cuc_to_utc_str(cuc: Optional[float]) -> str:
     if cuc is None:
         return "--"
     try:
-        return parse_cuc_time(int(cuc)).replace(tzinfo=timezone.utc).isoformat()
+        # Full precision: CUC carries sub-second (1/65536 s) resolution.
+        return (cuc_seconds_to_datetime(float(cuc))
+                .replace(tzinfo=timezone.utc).isoformat())
     except (ValueError, OverflowError):
         return "--"
 
 
 def _iso_to_cuc(s: str) -> float:
     dt = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
-    return float(datetime_to_cuc(dt))
+    return float(datetime_to_cuc_seconds(dt))
 
 
 def orbit_period_s(catalogs: Catalogs) -> float:
@@ -140,7 +143,7 @@ def _passes_from_propagator(catalogs: Catalogs, start: float,
             catalogs.orbit.get("tle_line1", ""),
             catalogs.orbit.get("tle_line2", ""),
             ground_stations=stations)
-        t0 = parse_cuc_time(int(start)).replace(tzinfo=timezone.utc)
+        t0 = cuc_seconds_to_datetime(float(start)).replace(tzinfo=timezone.utc)
         prop.reset(t0)
         out = []
         # Pad by 20 min so a pass straddling the envelope edge is still found.
@@ -207,11 +210,11 @@ def resolve_period(period: PeriodSpec, dataset: TelemetryDataset,
     if kind == "day":
         d = period.day
         count = d.count if d else 1
-        ref = parse_cuc_time(int(env_b or 0)).replace(tzinfo=timezone.utc)
+        ref = cuc_seconds_to_datetime(float(env_b or 0)).replace(tzinfo=timezone.utc)
         day_start = ref.replace(hour=0, minute=0, second=0, microsecond=0)
         start = day_start - timedelta(days=max(count - 1, 0))
         end = day_start + timedelta(days=1)
-        return Period(float(datetime_to_cuc(start)), float(datetime_to_cuc(end)),
+        return Period(datetime_to_cuc_seconds(start), datetime_to_cuc_seconds(end),
                       "day", f"UTC day(s) {start.date()} → {ref.date()}",
                       {"met_day": (ref.date() - _t0_date(catalogs, ref)).days
                        if _t0_date(catalogs, ref) else "?"})

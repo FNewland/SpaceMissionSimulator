@@ -160,8 +160,8 @@ threshold + 10% margin.
 
 **Step 7a — Restore AOCS Wheels (if shed) — when SoC > 25%:**
 **TC:** `EPS_POWER_ON(line_index=7)` (Service 8, Subtype 1, func_id 19)
-**TC:** `AOCS_SET_MODE(mode=2)` (Service 8, Subtype 1, func_id 0) — Command — (COARSE_SUN) to begin attitude recovery.
-**Verify:** `aocs.mode` (0x020F) responds within 15 s
+**TC:** `AOCS_SET_MODE(mode=3)` (Service 8, Subtype 1, func_id 0) — COARSE_SUN, to begin attitude recovery.
+**Verify:** `aocs.mode` (0x020F) = 3 (COARSE_SUN) within 15 s
 **Verify:** Body rates `aocs.rate_roll` (0x0204), `aocs.rate_pitch` (0x0205),
 `aocs.rate_yaw` (0x0206) — decreasing toward zero
 **Verify:** `eps.bus_voltage` (0x0105) remains > 26.0 V after wheel spin-up
@@ -231,7 +231,7 @@ threshold + 10% margin.
   payload imaging, and operate in power-conservation mode. Coordinate with mission
   planning for revised power profile.
 - If AOCS cannot recover attitude after wheel restoration: Command
-  `AOCS_SET_MODE(mode=1)` (DETUMBLE) first, then transition to COARSE_SUN once
+  `AOCS_SET_MODE(mode=2)` (DETUMBLE) first, then transition to COARSE_SUN (mode 3) once
   rates are below 0.5 deg/s. Fine pointing may not be achievable until battery
   is fully recovered.
 

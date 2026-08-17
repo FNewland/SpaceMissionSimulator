@@ -27,6 +27,7 @@ command path and exited the OBDH bootloader.
 | `aocs_wheels` | OFF | AOCS reaction wheels |
 | `payload` | OFF | Payload imager |
 | `fpa_cooler` | OFF | FPA cryocooler |
+| `prop` | OFF | Propulsion (catbed heater + valve drivers) — stays OFF; energised only for manoeuvre preparation (NOM-004 planning / NOM-013 execution) |
 
 | Subsystem | Mode | Notes |
 |---|---|---|
@@ -59,7 +60,9 @@ command path and exited the OBDH bootloader.
 ### Step 4 — Energise AOCS Wheels Line and Boot AOCS
 **TC:** `EPS_POWER_ON(line_index=7)` (Service 8, Subtype 1, func_id 19) — aocs_wheels
 **Verify:** `eps.pl_aocs_wheels == 1` (0x0117, timeout 5 s)
-**Note:** AOCS is still in MODE_OFF — the line being hot only allows the model to tick. Periodic SID 2 will start emitting on the next HK cycle.
+**Note:** AOCS is still in MODE_OFF — the line being hot only allows the model to tick. Powering the line does NOT enable SID 2: the power-up enable set is `simulation.yaml` `default_enabled_sids: [1, 11]`, re-applied by `engine.py::_apply_default_hk_enable` on application boot, so SID 2 must be commanded on explicitly (below).
+**TC:** `HK_ENABLE(sid=2)` (Service 3, Subtype 5) — enable periodic AOCS housekeeping
+**Verify:** Periodic SID 2 begins emitting within one 4 s structure interval
 **TC:** `AOCS_SET_MODE(mode=2)` (Service 8, Subtype 1, func_id 0) — DETUMBLE
 **Note:** Func_id 0 (AOCS set_mode) is exempt from the subsystem mode gate, so it can boot AOCS out of OFF.
 **Verify:** S1.1 acceptance + S1.7 execution complete received within 5s
@@ -74,8 +77,8 @@ command path and exited the OBDH bootloader.
 **Verify:** Magnetometer field magnitude in range [25, 65] µT
 **Verify:** Coarse sun sensor heads reporting illumination consistent with attitude
 **Action:** Wait until body rates < 0.5 °/s on all axes, then transition to sun-point.
-**TC:** `AOCS_SET_MODE(mode=3)` (Service 8, Subtype 1, func_id 0) — SAFE / Sun-pointing
-**Verify:** `aocs.mode` = 3 within 10s
+**TC:** `AOCS_SET_MODE(mode=3)` (Service 8, Subtype 1, func_id 0) — COARSE_SUN (sun-pointing)
+**Verify:** `aocs.mode` (0x020F) = 3 (COARSE_SUN) within 10s
 **Verify:** `aocs.att_error` (0x0217) decreasing within 120s
 **GO/NO-GO:** Attitude error < 5° and stable
 
@@ -88,7 +91,9 @@ command path and exited the OBDH bootloader.
 annotation named. Mnemonic and func_id now agree.
 **Note:** Func_id 26 (payload set_mode) is exempt from the subsystem mode gate.
 **Verify:** `payload.mode` (0x0600) = 1 (STANDBY) within 10s
-**Verify:** Periodic HK SID 5 begins emitting
+**Note:** Powering the payload line does NOT enable SID 5. Only SIDs 1 (EPS) and 11 (Beacon) are enabled at power-up (`simulation.yaml` `default_enabled_sids: [1, 11]`, re-applied on application boot); every other SID needs an explicit `HK_ENABLE`.
+**TC:** `HK_ENABLE(sid=5)` (Service 3, Subtype 5) — enable periodic payload housekeeping
+**Verify:** Periodic HK SID 5 begins emitting within one 8 s structure interval
 **Verify:** `payload.fpa_temp` (0x0601) reading valid (~ambient) within 30s
 **Verify:** Power consumption increased by ~8W within 30s
 **GO/NO-GO:** Payload in STANDBY, FPA telemetry valid
@@ -131,12 +136,7 @@ more waiting.
 COMMISSIONING (5) via the simulator console. There is NO flight telecommand for
 this — it is an instructor-side advance, so this step deliberately carries no
 `**TC:**` annotation.
-**Note:** Beware: `tc_catalog.yaml` lists SET_PHASE as an alias of
-OBC_BOOT_APP, S8 func 55. That alias is wrong — booting the application image
-has nothing to do with the spacecraft phase — and sending it here would boot the
-OBC rather than advance the phase. Flagged to the commands owner; the mnemonic is
-kept out of this card so nobody follows the alias.)
-**Verify:** `spacecraft.phase` (0x0129) = 5 within 5s
+**Verify:** `eps.spacecraft_phase` (0x0129) = 5 within 5s
 **GO/NO-GO:** All positions GO; phase = COMMISSIONING
 
 ## Off-Nominal Handling
@@ -148,9 +148,9 @@ kept out of this card so nobody follows the alias.)
 
 ## Post-Conditions
 - [ ] All switchable lines energised
-- [ ] AOCS in SAFE/Sun-pointing with attitude error < 5°
+- [ ] AOCS in COARSE_SUN (`aocs.mode` 0x020F = 3) with attitude error < 5°
 - [ ] Payload in STANDBY, FPA cooling, periodic HK SID 5 emitting
-- [ ] All six platform HK SIDs (1, 2, 3, 4, 5, 6) emitting periodically
+- [ ] All six platform HK SIDs (1, 2, 3, 4, 5, 6) emitting periodically — SID 1 by default, SIDs 3/4/6 enabled in LEOP-001 and SIDs 2/5 by the `HK_ENABLE` commands in Steps 4 and 6 (only 1 and 11 are enabled at power-up)
 - [ ] Power margin positive
 - [ ] Spacecraft phase = COMMISSIONING (5)
 - [ ] GO/NO-GO poll complete with all positions reporting GO

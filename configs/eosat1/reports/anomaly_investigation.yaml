@@ -28,7 +28,6 @@ period:
   kind: relative
   relative: { anchor: "{{vars.t0}}", before_s: 3600, after_s: 3600 }
   timebase: cuc
-  zero_cuc_policy: interpolate
 parameter_sets:
   suspects: [eps.bat_soc, eps.bus_voltage, eps.bat_current, eps.bat_temp,
              eps.power_gen, eps.power_cons, eps.sa_a_current,

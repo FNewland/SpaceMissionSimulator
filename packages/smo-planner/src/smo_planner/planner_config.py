@@ -122,11 +122,13 @@ class PlannerBudgetConfig(BaseModel):
 
 class PlannerImagingConfig(BaseModel):
     """Camera + imaging-opportunity feasibility parameters."""
-    fov_deg: float = 15.0
+    # Full across-track FOV. 29.856 deg <-> the 240 km swath at 450 km
+    # (subsystems/payload.yaml optics: 8192 px x 5.5 um, f = 84.5 mm).
+    fov_deg: float = 29.856
     swath_km: float | None = Field(
         default=None, description="None -> 2*alt*tan(fov/2) from orbit.yaml altitude.")
     max_off_nadir_deg: float = Field(
-        default=7.5,
+        default=14.928,
         description="Largest roll the payload may be pointed off nadir for a "
                     "capture. Opportunities needing more are infeasible.")
     capture_duration_s: float = 120.0

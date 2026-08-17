@@ -263,13 +263,19 @@ def resolve_dump_file(dump_dir: Path | str, filename: str) -> Path:
 # Summarising
 # ---------------------------------------------------------------------------
 
-def _cuc_to_utc(cuc: int | None) -> str | None:
-    """CUC seconds -> ISO-8601 UTC, or ``None`` when absent/unrepresentable."""
-    from smo_common.protocol.ecss_packet import parse_cuc_time
-    if not cuc:
+def _cuc_to_utc(cuc: float | None) -> str | None:
+    """CUC seconds -> ISO-8601 UTC, or ``None`` when absent/unrepresentable.
+
+    ``cuc`` is full-precision seconds (coarse + fine/65536). ``0.0`` is a real
+    time (the OBC clock out of a bootloader reset sits at J2000), so only
+    ``None`` means "absent".
+    """
+    from smo_common.protocol.ecss_packet import cuc_seconds_to_datetime
+    if cuc is None:
         return None
     try:
-        return parse_cuc_time(cuc).replace(tzinfo=timezone.utc).isoformat()
+        return (cuc_seconds_to_datetime(float(cuc))
+                .replace(tzinfo=timezone.utc).isoformat())
     except (ValueError, OverflowError):  # pragma: no cover - defensive
         return None
 
@@ -334,8 +340,8 @@ def summarise_dump(path: Path, config_dir: Any = None) -> dict[str, Any]:
     store_id, ts = parse_dump_filename(path.name)
     counts: dict[tuple[int, int], int] = {}
     apids: set[int] = set()
-    first_cuc: int | None = None
-    last_cuc: int | None = None
+    first_cuc: float | None = None
+    last_cuc: float | None = None
     crc_errors = 0
     total = 0
     undecodable = 0
@@ -358,10 +364,9 @@ def summarise_dump(path: Path, config_dir: Any = None) -> dict[str, Any]:
             continue
         key = (sec.service, sec.subtype)
         counts[key] = counts.get(key, 0) + 1
-        cuc = sec.cuc_time
-        if cuc:
-            first_cuc = cuc if first_cuc is None else min(first_cuc, cuc)
-            last_cuc = cuc if last_cuc is None else max(last_cuc, cuc)
+        cuc = sec.cuc_seconds
+        first_cuc = cuc if first_cuc is None else min(first_cuc, cuc)
+        last_cuc = cuc if last_cuc is None else max(last_cuc, cuc)
 
         # ── S12: on-board monitoring, decoded rather than merely counted ──
         if sec.service == 12 and sec.subtype in (9, 10):
@@ -369,7 +374,7 @@ def summarise_dump(path: Path, config_dir: Any = None) -> dict[str, Any]:
             if tr is None:
                 s12_undecodable += 1
                 continue
-            tr["cuc"] = cuc or None
+            tr["cuc"] = cuc
             tr["utc"] = _cuc_to_utc(cuc)
             tr["param_hex"] = f"0x{tr['param_id']:04X}"
             tr["param_name"] = names.get(tr["param_id"], "")
@@ -380,7 +385,7 @@ def summarise_dump(path: Path, config_dir: Any = None) -> dict[str, Any]:
             s12_transitions.append(tr)
         elif sec.service == 12 and sec.subtype == 13:
             for d in decode_s12_definitions(pkt.data_field):
-                d["cuc"] = cuc or None
+                d["cuc"] = cuc
                 d["utc"] = _cuc_to_utc(cuc)
                 d["param_hex"] = f"0x{d['param_id']:04X}"
                 d["param_name"] = names.get(d["param_id"], "")

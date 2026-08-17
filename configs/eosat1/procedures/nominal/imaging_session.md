@@ -73,9 +73,10 @@ the store's pre-existing ~20 % non-product fill, so it is not a product count.
 **Verify:** `eps.power_cons` (0x0106) increase observed (payload power draw)
 **Note:** Imaging session timer starts. Nominal session duration per pass plan.
 **Note:** Since Phase 4, entering IMAGING does NOT by itself generate data.
-`payload.line_rate` (0x0607) and `payload.data_rate` (0x0608) are non-zero only
-while a commanded strip is being read out --- a few seconds per capture, shown by
-`payload.readout_active` (0x0649). Before the fix, IMAGING alone accreted about
+The store only grows while a commanded strip is being read out --- a few seconds per
+capture, shown by `payload.readout_active` (0x0649) and reflected in
+`payload.mem_used_mb` (0x060B). (There are no `payload.line_rate` / `payload.data_rate`
+parameters; 0x0607 and 0x0608 are not allocated in `telemetry/parameters.yaml`.) Before the fix, IMAGING alone accreted about
 9.7 MB/s and filled the 20 GB store in ~33 minutes with zero captures, which is
 why this card's own teaching note below used to contradict the spacecraft.
 

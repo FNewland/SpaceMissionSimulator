@@ -20,7 +20,7 @@ pressure (0.85 m/s ~ 32 s at beginning of life).
 - [ ] NOM-004 completed: burn parameters authorised, S11 sequence loaded (or
       manual execution authorised in-pass)
 - [ ] AOCS in NOMINAL (4), FINE_POINT (5), or INERTIAL (9) hold for
-      retrograde: `aocs.aocs_mode` (0x020F)
+      retrograde: `aocs.mode` (0x020F)
 - [ ] Attitude error < 2.0 deg: `aocs.att_error` (0x0217)
 - [ ] Battery SoC > 45 %: `eps.bat_soc` (0x0101)
 - [ ] Not in eclipse (arm interlock)
@@ -39,7 +39,7 @@ manoeuvre is a POWER activity: preheat + burn must fit the daylight power
 budget.
 
 ### Step 2 --- Attitude for Burn
-**Verify:** `aocs.aocs_mode` (0x020F) = 4 (prograde) or 9 with the 180-deg yaw
+**Verify:** `aocs.mode` (0x020F) = 4 (prograde) or 9 with the 180-deg yaw
 target quaternion loaded (retrograde)
 **Verify:** `aocs.att_error` (0x0217) < 0.5 deg and stable
 **Note:** The thrust axis is +X body: nominal nadir attitude gives a prograde

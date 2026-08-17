@@ -4,10 +4,9 @@ Dual cold-redundant OBC (A/B), boot loader / application software model,
 dual CAN bus with failure isolation, buffer management with stop-when-full,
 and comprehensive failure injection.
 """
+import math
 import struct
-import random
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any
 
 from smo_common.models.subsystem import SubsystemModel
@@ -33,6 +32,37 @@ REBOOT_WATCHDOG = 2
 REBOOT_MEMORY_ERROR = 3
 REBOOT_SWITCHOVER = 4
 
+# ── Onboard clock: time reference (obdh.time_ref, param 0x0A13) ──
+# See docs/plan_2026-08c/TIME_ARCHITECTURE.md Part B.
+TIME_REF_NONE = 0      # never set since the last bootloader reset (free-running from CUC 0)
+TIME_REF_GROUND = 1    # last set by ground command (S9,1); free-running with drift
+TIME_REF_GPS = 2       # GPS-disciplined; NO drift while the fix is good
+TIME_REF_HOLDOVER = 3  # was GPS-disciplined, fix lost; free-running with drift
+
+TIME_REF_NAMES = {
+    TIME_REF_NONE: "NONE",
+    TIME_REF_GROUND: "GROUND",
+    TIME_REF_GPS: "GPS",
+    TIME_REF_HOLDOVER: "HOLDOVER",
+}
+
+#: AOCS GPS fix type (0=none, 1=2D, 2=3D, 3=3D+velocity). A 3D fix or better
+#: is required to discipline the onboard clock.
+GPS_FIX_PARAM = 0x0274
+GPS_FIX_MIN = 2
+
+#: EPS `obc` power-line status. Losing and restoring this line is a power-on
+#: reset: the bootloader comes up and the clock is back at J2000.
+OBC_POWER_LINE_PARAM = 0x0110
+
+#: Sentinel for obdh.time_since_sync_s when the clock has never been synced.
+TIME_SINCE_SYNC_NEVER = 0xFFFFFFFF
+
+# Onboard-clock S5 events (event_catalog.yaml, OBDH block).
+EV_OBC_TIME_SET = 0x030C       # S9,1 ground SET_TIME
+EV_OBC_TIME_SYNC = 0x030D      # GPS sync (commanded or automatic re-acquisition)
+EV_OBC_TIME_REF_LOST = 0x030E  # GPS fix lost → HOLDOVER
+
 
 @dataclass
 class OBDHState:
@@ -54,7 +84,19 @@ class OBDHState:
 
     # Timing
     uptime_s: int = 0
-    obc_time_cuc: int = 0
+
+    # ── Onboard clock (TIME_ARCHITECTURE.md Part B) ──
+    # The OBC's OWN clock, independent of sim time. Seconds since J2000
+    # (2000-01-01T12:00:00 UTC = CUC 0), sub-second resolution. Starts at 0.0
+    # on first start-up and after every bootloader reset.
+    obc_time_s: float = 0.0
+    #: TIME_REF_NONE / _GROUND / _GPS / _HOLDOVER
+    time_ref: int = TIME_REF_NONE
+    #: obc_time_s at the last successful sync; -1.0 if never synced.
+    last_sync_s: float = -1.0
+    #: This unit's actual oscillator drift, drawn ONCE per run from the seeded
+    #: per-model RNG. Hardware property — a reboot does NOT change it.
+    clock_drift_ppm: float = 0.0
 
     # Reboot
     reboot_count: int = 0
@@ -151,6 +193,27 @@ class OBDHBasicModel(SubsystemModel):
         self._prev_hktm_buf_fill = 0
         self._prev_event_buf_fill = 0
 
+        # ── Onboard clock ──
+        # Config (configure() overwrites from OBDHConfig; these are the
+        # fallbacks for standalone construction in unit tests).
+        self._clock_drift_ppm_nominal = 12.0
+        self._clock_drift_sigma_ppm = 4.0
+        self._clock_gps_discipline = True
+        self._clock_jump_event_threshold_s = 1.0
+        self._clock_drift_failure_ppm = 500.0
+        # clock_drift_ppm is drawn once per run, lazily on the first tick: the
+        # engine replaces `self.rng` with the seeded per-model stream AFTER
+        # configure() runs, so drawing in configure() would use the fallback
+        # RNG and determinism would not hold.
+        self._clock_drift_drawn = False
+        self._clock_drift_saved: float | None = None
+        # Sub-second uptime accumulator. uptime_s stays an integer count of
+        # whole seconds for telemetry, but `int(dt)` truncation used to freeze
+        # it at any non-integer sub-step (speed 2.5 at 1 Hz ⇒ 0.8333 s steps).
+        self._uptime_acc = 0.0
+        self._prev_gps_fix_ok = False
+        self._prev_obc_line_on: bool | None = None
+
     @property
     def name(self) -> str:
         return "obdh"
@@ -186,12 +249,195 @@ class OBDHBasicModel(SubsystemModel):
             "alarm_buf_fill": 0x0314,
             "last_reboot_cause": 0x0316,
             "boot_count_a": 0x0317, "boot_count_b": 0x0318,
+            # Onboard clock (TIME_ARCHITECTURE.md Part B)
+            "obc_time_fine": 0x0A12, "time_ref": 0x0A13,
+            "time_since_sync": 0x0A14,
         })
 
-        # Init CUC time
-        from smo_common.protocol.ecss_packet import TIME_EPOCH
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-        self._state.obc_time_cuc = int((now - TIME_EPOCH).total_seconds())
+        # ── Onboard clock configuration ──
+        self._clock_drift_ppm_nominal = float(
+            config.get("clock_drift_ppm_nominal", 12.0))
+        self._clock_drift_sigma_ppm = float(
+            config.get("clock_drift_sigma_ppm", 4.0))
+        self._clock_gps_discipline = bool(
+            config.get("clock_gps_discipline", True))
+        self._clock_jump_event_threshold_s = float(
+            config.get("clock_jump_event_threshold_s", 1.0))
+        self._clock_drift_failure_ppm = float(
+            config.get("clock_drift_failure_ppm", 500.0))
+
+        # The OBC clock starts at J2000 (CUC 0) on first start-up — it is NOT
+        # initialised from the wall clock and NOT from sim time. Ground has to
+        # set it (S9,1) or GPS has to discipline it. This is the LEOP flow.
+        self._reset_clock()
+        self._clock_drift_drawn = False
+
+    # ─── Onboard clock (TIME_ARCHITECTURE.md Part B) ─────────────────
+
+    def _reset_clock(self) -> None:
+        """Bootloader clock reset: back to J2000, no time reference.
+
+        Owner ruling: OBC_REBOOT drops to the bootloader and the bootloader
+        resets the clock. OBC_BOOT_APP does NOT restore it — the application
+        comes up at J2000 and must be re-synced.
+        """
+        s = self._state
+        s.obc_time_s = 0.0
+        s.time_ref = TIME_REF_NONE
+        s.last_sync_s = -1.0
+
+    def _ensure_clock_drift(self) -> None:
+        """Draw this unit's oscillator drift once per run.
+
+        Drawn from the seeded per-model RNG (`smo_common.state.derive_rng`,
+        installed by the engine as `self.rng`) so the same seed reproduces the
+        same clock. Not redrawn on reboot — it is a property of the crystal.
+        """
+        if self._clock_drift_drawn:
+            return
+        self._state.clock_drift_ppm = (
+            self._clock_drift_ppm_nominal
+            + self.rng.gauss(0.0, self._clock_drift_sigma_ppm)
+        )
+        self._clock_drift_drawn = True
+
+    def get_obc_time_s(self) -> float:
+        """Onboard time in seconds since J2000, full precision.
+
+        **This is the single accessor for onboard time.** `engine._get_cuc_time`
+        must return this value (a float, sub-second) — never sim time, never
+        wall clock. `TMBuilder` carries the fraction into the CUC fine field.
+        """
+        return float(self._state.obc_time_s)
+
+    def get_obc_cuc(self) -> tuple[int, int]:
+        """Onboard time as a `(coarse, fine)` CUC pair."""
+        t = float(self._state.obc_time_s)
+        coarse = int(math.floor(t))
+        fine = int(round((t - coarse) * 65536.0))
+        if fine >= 65536:
+            coarse += 1
+            fine -= 65536
+        return coarse, max(0, fine)
+
+    def get_time_ref(self) -> int:
+        return int(self._state.time_ref)
+
+    def time_since_sync_s(self) -> float | None:
+        """Onboard seconds since the last successful sync, None if never."""
+        s = self._state
+        if s.last_sync_s < 0:
+            return None
+        return max(0.0, float(s.obc_time_s) - float(s.last_sync_s))
+
+    def _sim_cuc_seconds(self) -> float | None:
+        """Sim time expressed in CUC seconds, or None if unavailable.
+
+        Only the GPS-discipline path may use this: GPS is the spacecraft's
+        window onto true (sim) time. Nothing else in the model reads sim time.
+        """
+        eng = getattr(self, "_engine", None)
+        sim_time = getattr(eng, "_sim_time", None) if eng is not None else None
+        if sim_time is None:
+            return None
+        from smo_common.protocol.ecss_packet import datetime_to_cuc_seconds
+        try:
+            return float(datetime_to_cuc_seconds(sim_time))
+        except Exception:
+            return None
+
+    def set_obc_time(self, new_time_s: float, ref: int) -> float:
+        """Set the onboard clock. Returns the SIGNED jump in seconds."""
+        s = self._state
+        jump = float(new_time_s) - float(s.obc_time_s)
+        s.obc_time_s = float(new_time_s)
+        s.time_ref = int(ref)
+        s.last_sync_s = float(new_time_s)
+        return jump
+
+    def _queue_event(self, event_id: int, severity: str,
+                     description: str) -> None:
+        """Push an S5 event to the engine's model-event queue (best effort)."""
+        eng = getattr(self, "_engine", None)
+        if eng is None:
+            return
+        try:
+            eng._model_event_queue.put_nowait({
+                "event_id": event_id,
+                "severity": severity,
+                "subsystem": "obdh",
+                "description": description,
+            })
+        except Exception:
+            pass
+
+    def _propagate_clock(self, dt: float,
+                         shared_params: dict[int, float]) -> None:
+        """Advance the onboard clock by one tick.
+
+        * GPS-disciplined and the fix is good → held EXACTLY to sim time; no
+          drift accumulates (owner ruling).
+        * otherwise → free-running float accumulation with the drawn drift.
+          Float, not `int(dt)`: the old truncation froze the clock entirely at
+          any non-integer sub-step.
+        """
+        s = self._state
+        self._ensure_clock_drift()
+
+        gps_fix = shared_params.get(GPS_FIX_PARAM, 0.0)
+        try:
+            fix_ok = float(gps_fix) >= GPS_FIX_MIN
+        except (TypeError, ValueError):
+            fix_ok = False
+
+        # ── GPS fix transitions ──
+        if s.time_ref == TIME_REF_GPS and not fix_ok:
+            s.time_ref = TIME_REF_HOLDOVER
+            self._queue_event(
+                EV_OBC_TIME_REF_LOST, "MEDIUM",
+                "OBC clock HOLDOVER: GPS fix lost, drift resumes "
+                f"at {s.clock_drift_ppm:.1f} ppm (jump +0.000s)")
+        elif (s.time_ref == TIME_REF_HOLDOVER and fix_ok
+                and self._clock_gps_discipline):
+            sim_cuc = self._sim_cuc_seconds()
+            if sim_cuc is not None:
+                jump = self.set_obc_time(sim_cuc, TIME_REF_GPS)
+                self._queue_event(
+                    EV_OBC_TIME_SYNC, "MEDIUM",
+                    "OBC clock re-acquired GPS discipline "
+                    f"(jump {jump:+.3f}s)")
+            else:
+                s.time_ref = TIME_REF_GPS
+
+        # ── Propagation ──
+        if s.time_ref == TIME_REF_GPS and fix_ok:
+            sim_cuc = self._sim_cuc_seconds()
+            if sim_cuc is not None:
+                s.obc_time_s = sim_cuc
+                s.last_sync_s = sim_cuc  # continuously disciplined
+                self._prev_gps_fix_ok = fix_ok
+                return
+        s.obc_time_s += dt * (1.0 + s.clock_drift_ppm * 1e-6)
+        self._prev_gps_fix_ok = fix_ok
+
+    def _check_obc_power_line(self, shared_params: dict[int, float]) -> bool:
+        """Track the EPS `obc` line. Returns True while the OBC is powered.
+
+        Powering the line off and on is a power-on reset: same effect as
+        OBC_REBOOT — bootloader, and the bootloader resets the clock to J2000.
+        """
+        raw = shared_params.get(OBC_POWER_LINE_PARAM)
+        if raw is None:
+            # EPS has not published yet (e.g. model-order on the first tick,
+            # or a standalone unit test). Assume powered; record nothing.
+            return True if self._prev_obc_line_on is None else self._prev_obc_line_on
+        on = bool(raw)
+        prev = self._prev_obc_line_on
+        self._prev_obc_line_on = on
+        if prev is not None and on and not prev:
+            # Power restored → power-on reset.
+            self._reboot(REBOOT_COMMAND)
+        return on
 
     def _apply_device_power_gates(self, s: "OBDHState") -> None:
         """Reflect OBDH equipment powered OFF via S2 device access into the
@@ -230,8 +476,19 @@ class OBDHBasicModel(SubsystemModel):
     def tick(self, dt: float, orbit_state: Any,
              shared_params: dict[int, float]) -> None:
         s = self._state
-        s.uptime_s += int(dt)
-        s.obc_time_cuc += int(dt)
+
+        # ── OBC power line ──
+        # Off→on is a power-on reset (bootloader + clock back to J2000).
+        powered = self._check_obc_power_line(shared_params)
+
+        # ── Timing ──
+        # Float accumulation. The old `int(dt)` truncated every sub-second
+        # sub-step to zero, so at speed 2.5 (three 0.8333 s sub-steps per 1 Hz
+        # tick) both uptime and the OBC clock froze completely.
+        if powered:
+            self._uptime_acc += dt
+            s.uptime_s = int(self._uptime_acc)
+            self._propagate_clock(dt, shared_params)
 
         # Read OBC temperature from TCS via shared_params
         tcs_obc_temp = shared_params.get(0x0406)
@@ -433,7 +690,20 @@ class OBDHBasicModel(SubsystemModel):
         shared_params[p.get("last_tc_error_code", 0x0315)] = s.last_tc_error_code
         shared_params[p.get("tm_pkt", 0x0307)] = s.tm_pkt_count
         shared_params[p.get("uptime", 0x0308)] = s.uptime_s
-        shared_params[p.get("obc_time", 0x0309)] = s.obc_time_cuc
+        # Onboard clock. 0x0309 keeps its meaning (coarse CUC seconds);
+        # the fine field, the time reference and the age of the last sync are
+        # new (TIME_ARCHITECTURE.md Part B).
+        coarse, fine = self.get_obc_cuc()
+        shared_params[p.get("obc_time", 0x0309)] = coarse
+        shared_params[p.get("obc_time_fine", 0x0A12)] = fine
+        shared_params[p.get("time_ref", 0x0A13)] = s.time_ref
+        since = self.time_since_sync_s()
+        if since is None:
+            since_tm = TIME_SINCE_SYNC_NEVER
+        else:
+            # Saturate rather than wrap: 0xFFFFFFFF is reserved for "never".
+            since_tm = min(int(since), TIME_SINCE_SYNC_NEVER - 1)
+        shared_params[p.get("time_since_sync", 0x0A14)] = since_tm
         shared_params[p.get("reboot_count", 0x030A)] = s.reboot_count
         shared_params[p.get("sw_version", 0x030B)] = s.sw_version
         # New params
@@ -475,6 +745,11 @@ class OBDHBasicModel(SubsystemModel):
         s.reboot_count += 1
         s.last_reboot_cause = cause
         s.uptime_s = 0
+        self._uptime_acc = 0.0
+        # The bootloader resets the clock (owner ruling). OBC_BOOT_APP does
+        # NOT restore it — the application comes up at J2000 and must be
+        # re-synced. clock_drift_ppm survives: it is the crystal, not state.
+        self._reset_clock()
         s.tc_rx_count = 0
         s.tc_acc_count = 0
         s.tc_rej_count = 0
@@ -617,28 +892,53 @@ class OBDHBasicModel(SubsystemModel):
                 return {"success": True}
 
         elif command == "set_time":
-            self._state.obc_time_cuc = int(cmd.get("cuc", 0))
-            return {"success": True}
+            # S9,1 SET_TIME. The commanded value is CUC seconds since J2000
+            # (coarse + optional fine), NOT a Unix timestamp.
+            self._ensure_clock_drift()
+            new_s = float(cmd.get("cuc_seconds",
+                                  cmd.get("cuc", 0)))
+            jump = self.set_obc_time(new_s, TIME_REF_GROUND)
+            return {"success": True, "time_jump_s": jump,
+                    "obc_time_s": self._state.obc_time_s,
+                    "message": (f"OBC time set by ground to CUC {new_s:.3f}s "
+                                f"(jump {jump:+.3f}s)")}
 
         elif command == "gps_time_sync":
-            # Synchronise onboard clock with GPS time.
-            # GPS provides epoch seconds derived from the engine's sim_time.
+            # S8 func 80. GPS is the spacecraft's window onto true time: the
+            # engine's sim time IS GPS time here.
+            #
+            # Epoch bug (TIME_ARCHITECTURE.md Part B): this used to write
+            # `int(sim_time.timestamp())` — a UNIX timestamp — into a J2000
+            # field, a ~9.5e8 s jump on every single sync, which tripped the
+            # 5-second-jump guard into AOCS SAFE_BOOT every time.
+            self._ensure_clock_drift()
             sp = cmd.get("shared_params", {})
-            gps_fix = sp.get(0x0274, 0.0)  # gps_fix: 0=none, 1=2D, 2=3D, 3=3D+vel
-            if gps_fix < 2:
-                return {"success": False, "message": "GPS time sync requires 3D fix (current fix type: %d)" % int(gps_fix)}
-            # Use engine sim_time as the "true" GPS time
+            gps_fix = sp.get(GPS_FIX_PARAM, 0.0)  # 0=none, 1=2D, 2=3D, 3=3D+vel
+            if gps_fix < GPS_FIX_MIN:
+                return {"success": False,
+                        "message": "GPS time sync requires 3D fix "
+                                   "(current fix type: %d)" % int(gps_fix)}
             sim_time = cmd.get("sim_time")
             if sim_time is not None:
-                gps_time_cuc = int(sim_time.timestamp())
+                from smo_common.protocol.ecss_packet import datetime_to_cuc_seconds
+                gps_time_s = float(datetime_to_cuc_seconds(sim_time))
             else:
-                import time as _tm
-                gps_time_cuc = int(_tm.time())
-            old_cuc = self._state.obc_time_cuc
-            time_jump_s = float(gps_time_cuc - old_cuc) if old_cuc > 0 else 0.0
-            self._state.obc_time_cuc = gps_time_cuc
+                sim_cuc = self._sim_cuc_seconds()
+                if sim_cuc is None:
+                    return {"success": False,
+                            "message": "GPS time sync: no time source available"}
+                gps_time_s = sim_cuc
+            # A GPS sync latches into disciplined mode only if configured to;
+            # otherwise it is a one-shot set and the clock keeps drifting.
+            new_ref = (TIME_REF_GPS if self._clock_gps_discipline
+                       else TIME_REF_GROUND)
+            time_jump_s = self.set_obc_time(gps_time_s, new_ref)
             return {"success": True, "time_jump_s": time_jump_s,
-                    "message": f"OBC time synced to GPS: {gps_time_cuc} (jump {time_jump_s:.1f}s)"}
+                    "obc_time_s": self._state.obc_time_s,
+                    "time_ref": self._state.time_ref,
+                    "message": (f"OBC time synced to GPS: CUC {gps_time_s:.3f}s "
+                                f"(jump {time_jump_s:+.3f}s, ref "
+                                f"{TIME_REF_NAMES.get(new_ref, '?')})")}
 
         elif command == "memory_scrub":
             self._state.scrub_active = True
@@ -755,6 +1055,18 @@ class OBDHBasicModel(SubsystemModel):
         elif failure == "boot_image_corrupt":
             s.boot_image_corrupt = True
 
+        elif failure == "clock_drift":
+            # Force a large oscillator drift so the clock error is visible
+            # inside a training session (order 500 ppm ≈ 43 s/day) instead of
+            # the nominal ~12 ppm ≈ 1 s/day.
+            self._ensure_clock_drift()
+            if self._clock_drift_saved is None:
+                self._clock_drift_saved = s.clock_drift_ppm
+            ppm = kw.get("ppm")
+            if ppm is None:
+                ppm = self._clock_drift_failure_ppm * max(0.0, float(magnitude))
+            s.clock_drift_ppm = float(ppm)
+
         elif failure == "memory_corruption":
             # EDAC uncorrectable error — triggers reboot
             s.mem_errors += int(kw.get("count", 10))
@@ -814,6 +1126,12 @@ class OBDHBasicModel(SubsystemModel):
         elif failure == "boot_image_corrupt":
             s.boot_image_corrupt = False
 
+        elif failure == "clock_drift":
+            # Back to this unit's own drawn drift.
+            if self._clock_drift_saved is not None:
+                s.clock_drift_ppm = self._clock_drift_saved
+                self._clock_drift_saved = None
+
         elif failure == "memory_corruption":
             s.mem_errors = 0
 
@@ -829,20 +1147,46 @@ class OBDHBasicModel(SubsystemModel):
             s.boot_image_corrupt = False
             s.boot_inhibit = False
 
+    # Model-level (non-dataclass) entries carried in the state dict. Every one
+    # of these is state that must NOT silently heal across a breakpoint
+    # save/restore — an injected clock_drift that reverted to the drawn value
+    # on restore would be exactly the gyro_bias bug of the last batch.
+    _EXTRA_STATE_KEYS = ("_rng_state", "_clock_drift_drawn",
+                         "_clock_drift_saved", "_uptime_acc",
+                         "_prev_gps_fix_ok", "_prev_obc_line_on")
+
     def get_state(self) -> dict[str, Any]:
         import dataclasses
         from smo_common.state import rng_state_to_json
         d = dataclasses.asdict(self._state)
         d["_rng_state"] = rng_state_to_json(self.rng.getstate())
+        # obc_time_s / time_ref / last_sync_s / clock_drift_ppm are dataclass
+        # fields and ride along in asdict(); these are the model-level ones.
+        d["_clock_drift_drawn"] = bool(self._clock_drift_drawn)
+        d["_clock_drift_saved"] = (None if self._clock_drift_saved is None
+                                   else float(self._clock_drift_saved))
+        d["_uptime_acc"] = float(self._uptime_acc)
+        d["_prev_gps_fix_ok"] = bool(self._prev_gps_fix_ok)
+        d["_prev_obc_line_on"] = self._prev_obc_line_on
         return d
 
     def set_state(self, state: dict[str, Any]) -> None:
+        # NOTE: must not mutate `state` — it may be a stored breakpoint dict
+        # that will be loaded again.
         # Container fields are deep-copied by restore_dataclass_state: the
         # plain setattr this used to do aliased the snapshot's own dicts and
         # lists into live model state (G2-f).
         from smo_common.state import restore_dataclass_state, restore_rng
         restore_rng(self.rng, state.get("_rng_state"))
-        restore_dataclass_state(self._state, state, skip=("_rng_state",))
+        self._clock_drift_drawn = bool(state.get("_clock_drift_drawn", False))
+        saved = state.get("_clock_drift_saved")
+        self._clock_drift_saved = None if saved is None else float(saved)
+        self._uptime_acc = float(state.get("_uptime_acc",
+                                           state.get("uptime_s", 0) or 0))
+        self._prev_gps_fix_ok = bool(state.get("_prev_gps_fix_ok", False))
+        self._prev_obc_line_on = state.get("_prev_obc_line_on")
+        restore_dataclass_state(self._state, state,
+                                skip=self._EXTRA_STATE_KEYS)
 
     # S2 Device Access — device-level on/off control
     def set_device_state(self, device_id: int, on_off: bool) -> bool:

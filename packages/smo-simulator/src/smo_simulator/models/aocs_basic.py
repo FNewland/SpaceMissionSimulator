@@ -266,6 +266,13 @@ class AOCSState:
     prev_gyro_bias_high: bool = False
     prev_css_degraded: bool = False
     prev_secular: bool = False
+    # Mode seen by the LAST event pass. The 0x0200 edge cannot be detected
+    # from the mode-tick's local `prev_mode`: autonomous transitions
+    # (_check_auto_transitions — eclipse entry, FDIR demotions) happen EARLIER
+    # in the same tick, and commanded ones (handle_command) happen between
+    # ticks, so both were already applied by the time that local was taken and
+    # neither produced an event. Persistent state sees all three.
+    prev_event_mode: int = 0
 
     # S2 Device Access — device on/off states (device_id -> on/off)
     device_states: dict = field(default_factory=lambda: {
@@ -555,6 +562,7 @@ class AOCSBasicModel(SubsystemModel):
     _prev_att_error_high = _mk_prev("prev_att_error_high")
     _prev_gyro_bias_high = _mk_prev("prev_gyro_bias_high")
     _prev_css_degraded = _mk_prev("prev_css_degraded")
+    _prev_event_mode = _mk_prev("prev_event_mode")
     del _mk_prev
 
     @property
@@ -1884,10 +1892,18 @@ class AOCSBasicModel(SubsystemModel):
                 prev_t = getattr(self, '_bdot_prev_dt', 0.0)
                 if prev is not None and prev_t > 1e-6:
                     Bdot = (B_meas - prev) / prev_t
-                    # High-pass the difference lightly: the magnetometer noise
-                    # floor (50 nT) differentiated at h = 0.5 s is 1e-7 T/s,
-                    # the same order as Ḃ at 1 deg/s, so a raw difference is
-                    # all noise at low rate.
+                    # Low-pass the difference lightly (first-order IIR,
+                    # alpha = 0.3, tau ~ 1.2 s at h = 0.5 s): the magnetometer
+                    # noise floor (50 nT) differentiated at h = 0.5 s is
+                    # 1e-7 T/s, the same order as Ḃ at 1 deg/s, so a raw
+                    # difference is all noise at low rate. The filter also
+                    # absorbs the sample-rate mismatch — mag_x/y/z are
+                    # refreshed once per model tick while control runs per
+                    # sub-step, so the raw difference alternates between a
+                    # 2x-scaled value and zero. Measured against truth over a
+                    # 400 s tumble the filtered estimate tracks −ω×B with
+                    # mean cos = 0.95 and |est|/|true| = 0.99, and the control
+                    # power ω·τ is negative on every sub-step.
                     self._bdot_filt = (0.7 * getattr(self, '_bdot_filt',
                                                      np.zeros(3))
                                        + 0.3 * Bdot)
@@ -3139,6 +3155,17 @@ class AOCSBasicModel(SubsystemModel):
         """
         events = []
 
+        # `prev_mode` is the mode at the start of the MODE TICK and therefore
+        # misses every transition made before it: eclipse entry and the FDIR
+        # demotions in `_check_auto_transitions` run earlier in the same tick,
+        # and a commanded change lands in `handle_command` between ticks. Edge-
+        # detect against the mode seen by the last event pass, which sees all
+        # three — a NOMINAL -> ECLIPSE transition used to produce NO event from
+        # this model at all, which is why the engine's (wrongly labelled)
+        # duplicate looked load-bearing.
+        prev_mode = self._prev_event_mode
+        self._prev_event_mode = s.mode
+
         # AOCS_MODE_CHANGE (0x0200) — on any mode transition. The reason string
         # is part of the event: an unexplained mode change is the single most
         # expensive thing to debug from a telemetry archive, and a demotion
@@ -3803,7 +3830,8 @@ class AOCSBasicModel(SubsystemModel):
     # ─── State save/restore ──────────────────────────────────────────
 
     # Model-level (non-dataclass) entries carried in the state dict.
-    _EXTRA_STATE_KEYS = ("_gyro_bias", "_bearing_degradation",
+    _EXTRA_STATE_KEYS = ("_gyro_bias", "_gyro_bias_inject",
+                         "_bearing_degradation",
                          "_gain_corruption_saved", "_rng_state", "_ekf")
 
     def get_state(self) -> dict[str, Any]:
@@ -3811,6 +3839,10 @@ class AOCSBasicModel(SubsystemModel):
         from smo_common.state import rng_state_to_json
         d = dataclasses.asdict(self._state)
         d["_gyro_bias"] = list(self._gyro_bias)
+        # The injected (persistent) bias offset is failure state, not a
+        # mean-reverting process — a snapshot that dropped it would silently
+        # heal an active gyro_bias failure on restore.
+        d["_gyro_bias_inject"] = list(self._gyro_bias_inject)
         d["_bearing_degradation"] = list(self._bearing_degradation)
         d["_gain_corruption_saved"] = dict(self._gain_corruption_saved)
         d["_rng_state"] = rng_state_to_json(self.rng.getstate())
@@ -3824,6 +3856,7 @@ class AOCSBasicModel(SubsystemModel):
         from smo_common.state import restore_dataclass_state, restore_rng
         restore_rng(self.rng, state.get("_rng_state"))
         self._gyro_bias = list(state.get("_gyro_bias", [0.0] * 3))
+        self._gyro_bias_inject = list(state.get("_gyro_bias_inject", [0.0] * 3))
         self._bearing_degradation = list(state.get("_bearing_degradation", [0.0] * 4))
         self._gain_corruption_saved = dict(state.get("_gain_corruption_saved", {}))
         ekf_state = state.get("_ekf")

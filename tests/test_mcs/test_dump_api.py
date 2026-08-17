@@ -244,7 +244,9 @@ async def test_summary_decodes_a_real_hk_dump(tmp_path):
     hk_defs = load_hk_structures(CONFIG_DIR)
     eps = next(h for h in hk_defs if h.sid == 1)
     structure = [(p.param_id, p.pack_format, p.scale) for p in eps.parameters]
-    builder = TMBuilder(apid=100)
+    # TMBuilder no longer falls back to the host wall clock: a packet without
+    # an on-board time source is a bug, so the test supplies a fixed one.
+    builder = TMBuilder(apid=100, time_source=lambda: 8.4e8)
     pkts = [builder.build_hk_packet(sid=1, params={pid: 1.0 for pid, _, _ in structure},
                                     hk_structure=structure)
             for _ in range(3)]

@@ -1,11 +1,14 @@
 """SMO Common — YAML Configuration Loader."""
 from __future__ import annotations
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Any, TypeVar, Type
 
 import yaml
 from pydantic import BaseModel
+
+from ..protocol.ecss_packet import set_time_epoch
 
 from .schemas import (
     MissionConfig, NetworkConfig, OrbitConfig, GroundStationConfig,
@@ -35,9 +38,32 @@ def load_model(path: Path, model_class: Type[T]) -> T:
     return model_class.model_validate(data)
 
 
+def init_time_epoch(mission: MissionConfig) -> datetime:
+    """Publish ``mission.yaml time_epoch`` as the process-wide CUC epoch.
+
+    This is the explicit initialisation hook for
+    :mod:`smo_common.protocol.ecss_packet`: that module is low-level protocol
+    code and must not import the config layer (an import cycle, and it would
+    make packet handling unusable without a config tree on disk), so the
+    dependency runs one way only — config pushes the epoch into the protocol.
+
+    Called automatically by :func:`load_mission_config`; call it directly if a
+    :class:`MissionConfig` is built some other way.  Returns the epoch now in
+    force.  A malformed ``time_epoch`` raises: silently falling back to the
+    literal would put two different epochs on the wire.
+    """
+    return set_time_epoch(mission.time_epoch)
+
+
 def load_mission_config(config_dir: Path) -> MissionConfig:
-    """Load mission.yaml from the config directory."""
-    return load_model(config_dir / "mission.yaml", MissionConfig)
+    """Load mission.yaml from the config directory.
+
+    Side effect: publishes ``time_epoch`` as the process-wide CUC epoch — see
+    :func:`init_time_epoch`.
+    """
+    mission = load_model(config_dir / "mission.yaml", MissionConfig)
+    init_time_epoch(mission)
+    return mission
 
 
 def load_orbit_config(config_dir: Path) -> OrbitConfig:

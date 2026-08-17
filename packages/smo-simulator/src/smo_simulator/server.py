@@ -146,20 +146,44 @@ class SimulatorServer:
             for ws in disconnected:
                 ws_clients.remove(ws)
 
-def main():
+DEFAULT_HTTP_PORT = 8080
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="SMO Spacecraft Simulator")
     parser.add_argument("--config", default="configs/eosat1/", help="Config directory path")
     parser.add_argument("--speed", type=float, default=1.0, help="Simulation speed multiplier")
     parser.add_argument("--host", default=None,
                         help="Bind address for TC/TM/HTTP (default $SMO_BIND "
                              "or 0.0.0.0; use 127.0.0.1 for loopback only)")
-    args = parser.parse_args()
+    # smo-mcs and smo-planner both take --port; the simulator hard-coded 8080,
+    # so on a host where 8080 was taken the whole suite was unstartable. The
+    # env fallback is $SMO_SIM_HTTP_PORT, the name smo-mcs already reads when
+    # it works out the simulator state URL, so setting it once moves both ends.
+    parser.add_argument("--port", type=int, default=None,
+                        help="HTTP/WebSocket port for the instructor UI "
+                             "(default $SMO_SIM_HTTP_PORT or 8080)")
+    return parser
+
+
+def resolve_http_port(port: int | None, env: dict | None = None) -> int:
+    """--port wins, then $SMO_SIM_HTTP_PORT, then 8080."""
+    if port is not None:
+        return int(port)
+    env = os.environ if env is None else env
+    return int(env.get("SMO_SIM_HTTP_PORT") or DEFAULT_HTTP_PORT)
+
+
+def main():
+    args = build_parser().parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
+    http_port = resolve_http_port(args.port)
+
     engine = SimulationEngine(config_dir=args.config, speed=args.speed)
     server = SimulatorServer(engine, config={
-        "tc_port": 8001, "tm_port": 8002, "http_port": 8080,
+        "tc_port": 8001, "tm_port": 8002, "http_port": http_port,
         "bind_host": args.host,
     })
     asyncio.run(server.start())

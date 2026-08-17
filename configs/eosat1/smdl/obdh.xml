@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="OBDH" Creator="EOSAT-1 SMDL Generator" Date="2026-08-12" Version="1.0">
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="OBDH" Creator="EOSAT-1 SMDL Generator" Version="1.0+2fdbeaed7708">
   <Description>SMP2 model catalogue for OBDH subsystem</Description>
   <Type Name="UInt8" Uuid="4e73fc8f-c4b0-5788-a75e-634a28fbbdd8" xsi:type="Integer" Size="1" Signed="false"/>
   <Type Name="UInt16" Uuid="a3adba6a-8630-5a9d-a78b-683cf4e4fd19" xsi:type="Integer" Size="2" Signed="false"/>
@@ -94,6 +94,15 @@
     </Field>
     <Field Name="obdh_can_bus_status" Uuid="12826e84-5880-5af9-abe6-33932befbc40" Type="Float32" Kind="Output" View="true">
       <Description>CAN bus status (0=offline, 1=nominal, 2=degraded)</Description>
+    </Field>
+    <Field Name="obdh_obc_time_fine" Uuid="7a8af076-a927-5dfe-86ae-acce7fefe0b7" Type="UInt16" Kind="Output" View="true">
+      <Description>Onboard CUC sub-second, units of 1/65536 s (~15.26 us)</Description>
+    </Field>
+    <Field Name="obdh_time_ref" Uuid="4611ddaa-7b48-5f78-82c5-20d03bc3844e" Type="UInt8" Kind="Output" View="true">
+      <Description>Onboard time reference (0=NONE, 1=GROUND, 2=GPS, 3=HOLDOVER)</Description>
+    </Field>
+    <Field Name="obdh_time_since_sync_s" Uuid="4676d8dc-c359-53df-b055-dbb4d61dbcc3" Type="UInt32" Kind="Output" View="true">
+      <Description>Onboard seconds since the last successful time sync; saturates rather than wrapping. 4294967295 (0xFFFFFFFF) = never synced [s]</Description>
     </Field>
     <Field Name="tc_OBC_SET_MODE_mode" Uuid="4ca74105-1a9e-5e26-9d50-5805631673dc" Type="UInt8" Kind="Input">
       <Description>0=nominal, 1=safe, 2=emergency</Description>

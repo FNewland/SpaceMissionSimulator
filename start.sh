@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Start the SMO suite: Simulator (8080), MCS (9090), Planner (9091)
+# Start the SMO suite: Simulator ($SMO_SIM_HTTP_PORT, default 8080),
+# MCS (9090), Planner (9091)
 #
 # Usage:
 #   ./start.sh            # standard mode (no RF)
@@ -38,6 +39,12 @@ if [ -n "$REAL" ]; then
 fi
 export SMO_TIME_SOURCE
 SMO_SIM_STATE_URL="${SMO_SIM_STATE_URL:-}"   # resolved once the bind is known
+# ── Simulator HTTP port ──
+# The simulator used to hard-code 8080, so a host where 8080 was already
+# taken could not run the suite at all. It now takes --port; export the
+# same name smo-mcs reads for the sim-state URL so both ends agree.
+SMO_SIM_HTTP_PORT="${SMO_SIM_HTTP_PORT:-8080}"
+export SMO_SIM_HTTP_PORT
 # Also honour the environment variable (CLI takes priority)
 if [ -z "$RF_MODE" ] && [ -n "${SMO_RF_MODE:-}" ]; then
     RF_MODE="$SMO_RF_MODE"
@@ -198,16 +205,16 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-export SMO_SIM_STATE_URL="${SMO_SIM_STATE_URL:-http://$PROBE_HOST:8080/api/state}"
+export SMO_SIM_STATE_URL="${SMO_SIM_STATE_URL:-http://$PROBE_HOST:$SMO_SIM_HTTP_PORT/api/state}"
 
-# Start Simulator (TC:8001, TM:8002, HTTP/WS:8080)
-echo "==> Starting Simulator on $SMO_BIND:8080..."
-smo-simulator --config configs/eosat1/ --host "$SMO_BIND" &
+# Start Simulator (TC:8001, TM:8002, HTTP/WS:$SMO_SIM_HTTP_PORT)
+echo "==> Starting Simulator on $SMO_BIND:$SMO_SIM_HTTP_PORT..."
+smo-simulator --config configs/eosat1/ --host "$SMO_BIND" --port "$SMO_SIM_HTTP_PORT" &
 SIM_PID=$!
 # The simulator is the root dependency: MCS and Planner showing an empty but
 # plausible console because it died on a bad config is the exact failure mode
 # N-1 was meant to eliminate, one layer up (D-1).
-wait_for_http "Simulator" "http://$PROBE_HOST:8080/api/state" "$SIM_PID" 40 \
+wait_for_http "Simulator" "http://$PROBE_HOST:$SMO_SIM_HTTP_PORT/api/state" "$SIM_PID" 40 \
     || die "the simulator never became ready"
 wait_for_port "Simulator TM socket" "$PROBE_HOST" 8002 "$SIM_PID" 15 \
     || die "the simulator TM socket never opened"
@@ -341,9 +348,9 @@ echo ""
 echo "========================================="
 echo "  SMO Suite Running"
 echo "========================================="
-echo "  Simulator:        http://$ACCESS_HOST:8080"
-echo "  Config editor:    http://$ACCESS_HOST:8080/config    (instructor, read-write)"
-echo "  Report generator: http://$ACCESS_HOST:8080/reports"
+echo "  Simulator:        http://$ACCESS_HOST:$SMO_SIM_HTTP_PORT"
+echo "  Config editor:    http://$ACCESS_HOST:$SMO_SIM_HTTP_PORT/config    (instructor, read-write)"
+echo "  Report generator: http://$ACCESS_HOST:$SMO_SIM_HTTP_PORT/reports"
 echo "  MCS:              http://$ACCESS_HOST:9090"
 echo "  MCS reports:      http://$ACCESS_HOST:9090/reports"
 echo "  MCS config view:  http://$ACCESS_HOST:9090/config    (read-only)"

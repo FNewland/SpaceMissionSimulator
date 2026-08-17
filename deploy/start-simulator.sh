@@ -59,7 +59,13 @@ echo "  Press Ctrl+C to stop"
 echo "============================================="
 echo ""
 
+# SIMULATOR_HTTP_PORT was advertised in smo-env.conf and probed by
+# start-all.sh, but never reached the simulator: setting it to anything but
+# 8080 left the banner and the readiness probe pointing at a dead port.
+export SMO_SIM_HTTP_PORT="${SIMULATOR_HTTP_PORT:-8080}"
+
 exec smo-simulator \
     --config "${MISSION_CONFIG:-configs/eosat1/}" \
     --host "${SIMULATOR_BIND:-0.0.0.0}" \
+    --port "${SIMULATOR_HTTP_PORT:-8080}" \
     --speed "${SIMULATOR_SPEED:-1.0}"

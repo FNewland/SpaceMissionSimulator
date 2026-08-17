@@ -198,7 +198,10 @@ class TestS1WireFormat:
         assert len(comp[0].data_field) == 4  # request_id only
 
     def test_builder_omits_the_notice_when_there_is_no_reason(self):
-        b = TMBuilder(apid=1)
+        # A TMBuilder needs an on-board time source: it stamps every packet
+        # with the OBC clock and raises rather than falling back to the host
+        # wall clock.
+        b = TMBuilder(apid=1, time_source=lambda: 1000.0)
         pkt = decommutate_packet(b.build_execution_failure(100, 5, 0x0001))
         assert len(pkt.data_field) == 6  # '>IH' exactly, nothing appended
 

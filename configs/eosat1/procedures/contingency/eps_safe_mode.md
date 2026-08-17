@@ -36,8 +36,8 @@ above 40% SoC.
 
 ### Step 3 — Verify AOCS Is in Minimum Power Configuration
 **TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27)
-**Verify:** `aocs.mode` (0x020F) = 2 (COARSE_SUN) — sun-pointing for maximum array illumination
-**Note:** If AOCS is not in COARSE_SUN, command `AOCS_SET_MODE(mode=2)` and verify transition within 30s
+**Verify:** `aocs.mode` (0x020F) = 3 (COARSE_SUN) — sun-pointing for maximum array illumination
+**Note:** If AOCS is not in COARSE_SUN, command `AOCS_SET_MODE(mode=3)` (Service 8, Subtype 1, func_id 0) and verify transition within 30s
 **GO/NO-GO:** AOCS in COARSE_SUN ensuring optimal solar array orientation — proceed
 
 ### Step 4 — Assess Solar Array Performance
@@ -62,8 +62,8 @@ above 40% SoC.
 **GO/NO-GO:** SoC stable above 35% with payload in standby — proceed
 
 ### Step 7 — Restore Nominal AOCS Mode
-**TC:** `AOCS_SET_MODE(mode=3)` (Service 8, Subtype 1)
-**Verify:** `aocs.mode` (0x020F) = 3 (NOMINAL) within 30s
+**TC:** `AOCS_SET_MODE(mode=4)` (Service 8, Subtype 1, func_id 0)
+**Verify:** `aocs.mode` (0x020F) = 4 (NOMINAL) within 30s
 **Verify:** `eps.bat_soc` (0x0101) remains > 30% after AOCS transition
 **GO/NO-GO:** Attitude nominal and SoC stable — proceed to restore OBC mode
 

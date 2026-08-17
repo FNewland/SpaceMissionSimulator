@@ -27,16 +27,22 @@ subsystems of interest for the current operations timeline.
 **TC:** `HK_ENABLE(sid=2)` (Service 3, Subtype 5) --- request AOCS HK structure report
 **TC:** `HK_ENABLE(sid=3)` (Service 3, Subtype 5) --- request TCS HK structure report
 **TC:** `HK_ENABLE(sid=4)` (Service 3, Subtype 5) --- request OBDH HK structure report
-**TC:** `HK_ENABLE(sid=5)` (Service 3, Subtype 5) --- request TTC HK structure report
-**TC:** `HK_ENABLE(sid=6)` (Service 3, Subtype 5) --- request Payload HK structure report
+**TC:** `HK_ENABLE(sid=5)` (Service 3, Subtype 5) --- request Payload HK structure report
+**TC:** `HK_ENABLE(sid=6)` (Service 3, Subtype 5) --- request TT&C HK structure report
 **Verify:** Configuration reports received for all 6 SIDs within 15 s
-**Action:** Record current interval_s values for each SID:
-  - SID 1 (EPS): expected 1.0 s (contact) / 10.0 s (standby)
-  - SID 2 (AOCS): expected 4.0 s (contact) / 30.0 s (standby)
-  - SID 3 (TCS): expected 10.0 s (contact) / 60.0 s (standby)
-  - SID 4 (OBDH): expected 5.0 s (contact) / 30.0 s (standby)
-  - SID 5 (TTC): expected 2.0 s (contact) / 10.0 s (standby)
-  - SID 6 (Payload): expected 5.0 s (contact) / 60.0 s (standby)
+**Note:** The SID map is fixed by `telemetry/hk_structures.yaml`: **1 EPS, 2 AOCS, 3 TCS,
+4 OBDH/Platform, 5 Payload, 6 TT&C, 7 AOCS determination, 8 EPS-extended, 9 PROP,
+11 Beacon.** Only SIDs **1 and 11** are enabled at power-up
+(`simulation.yaml` `default_enabled_sids: [1, 11]`, re-applied on application boot);
+every other SID must be commanded on with `HK_ENABLE` (S3.5).
+**Action:** Record current interval_s values for each SID. The as-shipped
+`hk_structures.yaml` intervals are:
+  - SID 1 (EPS): 1.0 s
+  - SID 2 (AOCS): 4.0 s
+  - SID 3 (TCS): 60.0 s
+  - SID 4 (OBDH/Platform): 8.0 s
+  - SID 5 (Payload): 8.0 s
+  - SID 6 (TT&C): 8.0 s
 **GO/NO-GO:** All SID configurations successfully retrieved and recorded.
 
 ### Step 2 --- Modify HK Collection Intervals
@@ -44,12 +50,12 @@ subsystems of interest for the current operations timeline.
 **TC:** `HK_SET_INTERVAL(sid=2, interval_s=N)` (Service 3, Subtype 31) --- set AOCS interval
 **TC:** `HK_SET_INTERVAL(sid=3, interval_s=N)` (Service 3, Subtype 31) --- set TCS interval
 **TC:** `HK_SET_INTERVAL(sid=4, interval_s=N)` (Service 3, Subtype 31) --- set OBDH interval
-**TC:** `HK_SET_INTERVAL(sid=5, interval_s=N)` (Service 3, Subtype 31) --- set TTC interval
-**TC:** `HK_SET_INTERVAL(sid=6, interval_s=N)` (Service 3, Subtype 31) --- set Payload interval
-**Action:** Set intervals to the appropriate rate profile:
-  - **Contact profile:** SID1=1s, SID2=4s, SID3=10s, SID4=5s, SID5=2s, SID6=5s
-  - **Standby profile:** SID1=10s, SID2=30s, SID3=60s, SID4=30s, SID5=10s, SID6=60s
-  - **Eclipse profile:** SID1=5s, SID2=10s, SID3=30s, SID4=10s, SID5=5s, SID6=OFF
+**TC:** `HK_SET_INTERVAL(sid=5, interval_s=N)` (Service 3, Subtype 31) --- set Payload interval
+**TC:** `HK_SET_INTERVAL(sid=6, interval_s=N)` (Service 3, Subtype 31) --- set TT&C interval
+**Action:** Set intervals to the appropriate rate profile (SID5 = Payload, SID6 = TT&C):
+  - **Contact profile:** SID1=1s, SID2=4s, SID3=10s, SID4=5s, SID5=5s, SID6=2s
+  - **Standby profile:** SID1=10s, SID2=30s, SID3=60s, SID4=30s, SID5=60s, SID6=10s
+  - **Eclipse profile:** SID1=5s, SID2=10s, SID3=30s, SID4=10s, SID5=OFF, SID6=5s
 **Verify:** Command acceptance for each SET_INTERVAL within 5 s
 **Note:** Interval values must be >= 1 s and a multiple of the onboard scheduling tick (1 s).
 **GO/NO-GO:** All interval commands accepted.
@@ -58,15 +64,17 @@ subsystems of interest for the current operations timeline.
 **TC:** `HK_ENABLE(sid=1)` (Service 3, Subtype 5) --- enable EPS periodic reporting
 **TC:** `HK_ENABLE(sid=2)` (Service 3, Subtype 5) --- enable AOCS periodic reporting
 **TC:** `HK_ENABLE(sid=4)` (Service 3, Subtype 5) --- enable OBDH periodic reporting
-**TC:** `HK_ENABLE(sid=5)` (Service 3, Subtype 5) --- enable TTC periodic reporting
+**TC:** `HK_ENABLE(sid=6)` (Service 3, Subtype 5) --- enable TT&C periodic reporting
 **Verify:** Command acceptance for each ENABLE within 5 s
-**Note:** SIDs 1, 2, 4, and 5 are always enabled during nominal operations.
+**Note:** SIDs 1 (EPS), 2 (AOCS), 4 (OBDH) and 6 (TT&C) are the core set kept enabled
+during nominal operations. Only SID 1 survives a reboot enabled — the rest must be
+re-commanded after every application boot.
 **GO/NO-GO:** Core SIDs enabled and reporting.
 
 ### Step 4 --- Enable or Disable Optional SIDs Based on Phase
 **Note:** For current operational context, enable/disable optional SIDs:
-**TC:** `HK_ENABLE(sid=6)` (Service 3, Subtype 5) — **If imaging planned:**  --- Payload HK ON
-**TC:** `HK_DISABLE(sid=6)` (Service 3, Subtype 6) — **If no payload ops:**  --- Payload HK OFF
+**TC:** `HK_ENABLE(sid=5)` (Service 3, Subtype 5) — **If imaging planned:**  --- Payload HK ON
+**TC:** `HK_DISABLE(sid=5)` (Service 3, Subtype 6) — **If no payload ops:**  --- Payload HK OFF
 **TC:** `HK_ENABLE(sid=3)` (Service 3, Subtype 5) — **If thermal concern:**  --- TCS HK ON at high rate
 **Note:** **If thermal nominal:** Set SID=3 to low rate via Step 2 standby profile
 **Verify:** Command acceptance within 5 s for each enable/disable
@@ -90,8 +98,8 @@ enabled SIDs are arriving at the configured intervals.
 **Verify:** SID 1 (EPS) packets received at configured rate +/- 1 s
 **Verify:** SID 2 (AOCS) packets received at configured rate +/- 1 s
 **Verify:** SID 4 (OBDH) packets received at configured rate +/- 1 s
-**Verify:** SID 5 (TTC) packets received at configured rate +/- 1 s
-**Verify:** SID 6 (Payload) packets received at configured rate (if enabled)
+**Verify:** SID 6 (TT&C) packets received at configured rate +/- 1 s
+**Verify:** SID 5 (Payload) packets received at configured rate (if enabled)
 **Verify:** All received HK parameters contain plausible values (no stale or zero-filled data)
 **Note:** Record new configuration in the operations log with effective time and rationale.
 

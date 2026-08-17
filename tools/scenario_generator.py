@@ -31,6 +31,7 @@ SUBSYSTEMS = {
             "solar_panel_loss":     {"label": "Solar panel loss (partial)", "extras": ["face", "magnitude"]},
             "solar_array_partial":  {"label": "Solar array partial degradation", "extras": ["magnitude"]},
             "solar_array_total_loss": {"label": "Solar array total loss", "extras": ["face"]},
+            "sada_stuck":           {"label": "Solar array drive (SADA) stuck", "extras": []},
             "bat_cell":             {"label": "Battery cell failure", "extras": []},
             "bus_short":            {"label": "Bus short circuit", "extras": ["magnitude"]},
             "overcurrent":          {"label": "Overcurrent trip", "extras": ["magnitude"]},
@@ -99,6 +100,7 @@ SUBSYSTEMS = {
             "memory_corruption":    {"label": "Memory corruption", "extras": ["magnitude"]},
             "memory_segment_fail":  {"label": "Memory segment failure", "extras": ["magnitude"]},
             "stuck_in_bootloader":  {"label": "Stuck in bootloader", "extras": []},
+            "clock_drift":          {"label": "OBC clock drift (large ppm)", "extras": ["magnitude"]},
         },
     },
     "payload": {

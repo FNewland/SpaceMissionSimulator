@@ -5,6 +5,12 @@ spacecraft_apid: 1        # OBC application-software APID
 bootloader_apid: 2        # OBC bootloader APID (distinct source for beacon TM)
 start_in_bootloader: true # Power up in beacon mode (phase 3, SID 11 only, bootloader APID)
 pus_version: 2
+
+# CUC epoch on the wire — LIVE config (no longer dead). Loaded by
+# smo_common.config.loader.load_mission_config, which pushes it into
+# smo_common.protocol.ecss_packet via set_time_epoch(). The TIME_EPOCH_DEFAULT
+# literal in that module is only the fallback for code that loads no mission
+# config; a gate test asserts the two agree. J2000.0 = 2000-01-01T12:00:00 UTC.
 time_epoch: "2000-01-01T12:00:00"
 
 # Ground/Planner clock source: "sim" follows the simulator's sim_time/speed

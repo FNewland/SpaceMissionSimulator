@@ -9,6 +9,13 @@ controls. Before this module the MCS had an alarm list and nothing else —
 were never called from anywhere in the repo, so ``/api/displays/fdir-alarms``
 reported "0 rules / nominal" no matter what the spacecraft was doing.
 
+TIME: every ``ts`` / ``now`` argument here is **SIM TIME** as a Unix epoch
+float — ``MCSServer.sim_now_ts()`` — because the journal rows and report ages
+this model produces are read alongside telemetry ages and alarm timestamps,
+which are all on the simulator's clock (spec Part D). The ``_time.time()``
+fallbacks exist only so the model is usable standalone in a unit test; the MCS
+always passes its clock in.
+
 This class owns the *observed* FDIR state:
 
 * the **reference database** — S12 monitor and S19 rule definitions read from
@@ -193,8 +200,13 @@ class FDIRDisplayModel:
             entry["reason"] = rejection.get("reason", "")
         return self._journal_add(entry)
 
-    def set_sc_mode(self, mode: Optional[int], source: str = "sim_state") -> None:
-        """Record the spacecraft mode and where it came from."""
+    def set_sc_mode(self, mode: Optional[int], source: str = "sim_state",
+                    ts: Optional[float] = None) -> None:
+        """Record the spacecraft mode and where it came from.
+
+        ``ts`` is the SIM TIME of the observation; the journal row it may
+        create sits alongside event and S12 rows stamped the same way.
+        """
         if mode is None:
             return
         try:
@@ -203,7 +215,7 @@ class FDIRDisplayModel:
             return
         if mode != self._sc_mode:
             self._journal_add({
-                "ts": _time.time(),
+                "ts": _time.time() if ts is None else ts,
                 "kind": "mode",
                 "label": f"SC MODE -> {SC_MODE_NAMES.get(mode, mode)}",
                 "severity": 3 if mode in (0, 3) else 1,
@@ -419,8 +431,16 @@ class FDIRDisplayModel:
     def journal(self, limit: int = 100) -> list[dict]:
         return list(self._journal)[:limit]
 
-    def state_strip(self, fdir_level: str, load_shed_stage: int = 0) -> dict:
-        """The always-visible FDIR state strip."""
+    def state_strip(self, fdir_level: str, load_shed_stage: int = 0,
+                    now: Optional[float] = None) -> dict:
+        """The always-visible FDIR state strip.
+
+        ``now`` is SIM TIME (``MCSServer.sim_now_ts()``). The report ages
+        below are differences against the ``ts`` values the ingest methods
+        were given, which are also sim time, so a paused simulator freezes
+        them instead of aging every FDIR report out within a minute.
+        """
+        now = _time.time() if now is None else now
         ool = [m for m, v in self._s12_live.items() if v.get("out_of_limits")]
         return {
             "fdir_level": fdir_level,
@@ -442,21 +462,23 @@ class FDIRDisplayModel:
             "last_action_ts": self._last_action_ts,
             "last_action": self._last_action_text,
             "s12_report_age_s": (None if self._s12_report_ts is None
-                                 else round(_time.time() - self._s12_report_ts, 1)),
+                                 else round(now - self._s12_report_ts, 1)),
             "s19_report_age_s": (None if self._s19_report_ts is None
-                                 else round(_time.time() - self._s19_report_ts, 1)),
+                                 else round(now - self._s19_report_ts, 1)),
             "s12_reported": self._s12_onboard is not None,
             "s19_reported": self._s19_onboard is not None,
         }
 
     def display_data(self, *, active_alarms: list[dict],
                      param_values: dict[int, float] | None = None,
-                     load_shed_stage: int = 0) -> dict[str, Any]:
+                     load_shed_stage: int = 0,
+                     now: Optional[float] = None) -> dict[str, Any]:
+        """Everything the FDIR window renders. ``now`` is sim time."""
         level = self.derive_level(active_alarms, load_shed_stage)
         monitors = self.monitor_rows(param_values)
         rules = self.rule_rows()
         return {
-            "state": self.state_strip(level, load_shed_stage),
+            "state": self.state_strip(level, load_shed_stage, now=now),
             "monitors": monitors,
             "monitor_summary": {
                 "total": len(monitors),

@@ -1490,8 +1490,14 @@ class ServiceDispatcher:
                                           "shared_params": self._engine.params,
                                           "sim_time": self._engine._sim_time})
             if result.get("success"):
-                # Check if time jump occurred — may disrupt AOCS
-                time_jump_s = result.get("time_jump_s", 0.0)
+                time_jump_s = float(result.get("time_jump_s", 0.0))
+                self._emit_clock_jump_event(
+                    0x030D, "OBC clock synced to GPS", time_jump_s, obdh)
+                # Check if time jump occurred — may disrupt AOCS.
+                # Both sides of the jump are now J2000 CUC seconds. It used to
+                # subtract a J2000 value from a UNIX timestamp, so the jump was
+                # ~9.5e8 s on every sync and this guard forced AOCS into
+                # SAFE_BOOT every single time (TIME_ARCHITECTURE.md Part B).
                 if abs(time_jump_s) > 5.0:
                     aocs = self._engine.subsystems.get("aocs")
                     if aocs and hasattr(aocs, '_state'):
@@ -1611,17 +1617,54 @@ class ServiceDispatcher:
 
     # ─── S9 Time Management ─────────────────────────────────────────
 
+    def _emit_clock_jump_event(self, event_id: int, what: str,
+                               jump_s: float, obdh) -> None:
+        """Emit the S5 event for an onboard-clock step.
+
+        The event carries the **signed jump in seconds** — "time set" alone
+        tells the operator nothing about how far the clock was out, which is
+        the whole point of the NOM-008 / LEOP-006 exercises. Events below the
+        configured threshold are suppressed so a routine re-sync of a
+        well-behaved clock does not spam the event log.
+        """
+        threshold = float(getattr(obdh, "_clock_jump_event_threshold_s", 1.0))
+        if abs(jump_s) < threshold:
+            return
+        from smo_simulator.models.obdh_basic import TIME_REF_NAMES
+        ref = TIME_REF_NAMES.get(
+            int(getattr(getattr(obdh, "_state", None), "time_ref", 0)), "?")
+        self._engine._emit_event({
+            "event_id": event_id,
+            "severity": "MEDIUM",
+            "subsystem": "obdh",
+            "description": f"{what}: jump {jump_s:+.3f}s, time_ref={ref}",
+        })
+
     def _handle_s9(self, subtype: int, data: bytes) -> list[bytes]:
         """S9 Time Management."""
         if subtype == 1 and len(data) >= 4:
-            cuc = struct.unpack('>I', data[:4])[0]
+            # SET_TIME. The body is CUC seconds since J2000 — coarse u32, plus
+            # an OPTIONAL fine u16 (1/65536 s) for the full 6-octet CUC. The
+            # 4-octet coarse-only form is still accepted; a client that sends a
+            # Unix timestamp here now visibly slams the clock ~30 years forward
+            # instead of quietly agreeing with a Unix-valued field.
+            coarse = struct.unpack('>I', data[:4])[0]
+            fine = struct.unpack('>H', data[4:6])[0] if len(data) >= 6 else 0
+            cuc_seconds = float(coarse) + float(fine) / 65536.0
             obdh = self._engine.subsystems.get("obdh")
             if obdh:
-                self._cmd(obdh, {"command": "set_time", "cuc": cuc})
+                result = self._cmd(obdh, {"command": "set_time",
+                                          "cuc": coarse,
+                                          "cuc_seconds": cuc_seconds})
+                if result.get("success"):
+                    self._emit_clock_jump_event(
+                        0x030C, "OBC clock set by ground (S9,1)",
+                        float(result.get("time_jump_s", 0.0)), obdh)
         elif subtype == 2:
-            # Request time report
-            cuc = self._engine._get_cuc_time()
-            pkt = self._engine.tm_builder.build_time_report(cuc)
+            # Request time report. No argument: TMBuilder reads the on-board
+            # clock through the engine's time source, which is the one seam
+            # for on-board time (TIME_ARCHITECTURE.md Part C.3).
+            pkt = self._engine.tm_builder.build_time_report()
             return [pkt]
         return []
 

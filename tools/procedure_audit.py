@@ -311,11 +311,10 @@ def audit_procedures(cat: Catalog) -> tuple[list[ProcedureReport], list[Finding]
 
         rep = ProcedureReport(rel_path=rel, category=category)
         entry = cat.index_by_file.get(rel, {})
-        # A card that DECLARES it commands nothing, via
-        # `runnable: {kind: advisory, reason: ...}`. See the header of
-        # procedures/procedure_index.yaml for why the property lives in the
-        # `runnable` mapping rather than in a dedicated `advisory:` key.
-        rep.advisory = (entry.get("runnable") or {}).get("kind") == "advisory"
+        # A card that DECLARES it commands nothing, via the `advisory: true` /
+        # `advisory_reason:` fields on ProcedureIndexEntry. See the header of
+        # procedures/procedure_index.yaml.
+        rep.advisory = bool(entry.get("advisory"))
         # A document with no index entry is not audited for the zero-command
         # invariant: it has nothing declaring what it should command, and the
         # index/tree agreement is asserted separately in test_procedure_gates.

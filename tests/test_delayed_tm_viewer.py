@@ -36,13 +36,13 @@ def _build_eps_hk_packet(values: dict[int, float]) -> bytes:
     hk_defs = load_hk_structures(CONFIG_DIR)
     eps_def = next(h for h in hk_defs if h.sid == 1)
     structure = [(p.param_id, p.pack_format, p.scale) for p in eps_def.parameters]
-    builder = TMBuilder(apid=100)
+    builder = TMBuilder(apid=100, time_source=lambda: 1000.0)
     full = {pid: values.get(pid, 0.0) for pid, _, _ in structure}
     return builder.build_hk_packet(sid=1, params=full, hk_structure=structure)
 
 
 def _build_event_packet(event_id: int, severity: int, desc: str) -> bytes:
-    builder = TMBuilder(apid=100)
+    builder = TMBuilder(apid=100, time_source=lambda: 1000.0)
     return builder.build_event_packet(
         event_id=event_id, severity=severity, aux_text=desc, params={},
     )

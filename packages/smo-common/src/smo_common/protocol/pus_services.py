@@ -43,6 +43,15 @@ FAILURE_CODES: dict[int, str] = {
     0x0021: "Capture refused: AOCS not in FINE_POINT",
     0x0022: "Capture refused: total pointing error above 0.05 deg",
     0x0023: "Capture refused: rate stability above 0.005 deg/s",
+    # 2026-08b (DISPLAY_REQUESTS_PAYLOAD.md §8.1) — payload calibration and
+    # shutter refusals. They used to report the generic 0x0005 / 0x0007, so the
+    # console printed "Invalid in the current mode" for four physically
+    # distinct refusals and the reason survived only in the free text.
+    0x0024: "Calibration refused: not permitted in IMAGING",
+    0x0025: "Calibration refused: FPA not thermally ready",
+    0x0026: "Calibration refused: shutter in the wrong position",
+    0x0027: "Calibration refused: calibration lamp in the wrong state",
+    0x0028: "Capture refused: shutter closed",
     # Phase D (brief 03 WP-2a) — propulsion arm interlocks, one code each,
     # mirroring the arm_inhibit_mask (0x0B15) bits
     0x0B01: "Arm refused: catalyst bed below minimum temperature",
@@ -241,7 +250,13 @@ class HousekeepingData:
 
 @dataclass
 class EventData:
-    """S5 Event report data."""
+    """S5 Event report data.
+
+    ``cuc_time`` is the timestamp repeated inside the event *body* as a bare
+    uint32 of whole seconds. It is deliberately NOT extended to coarse+fine by
+    the CUC migration: the authoritative, full-precision timestamp is the one
+    in the packet's 9-octet secondary header.
+    """
     event_id: int = 0
     severity: int = 1
     cuc_time: int = 0

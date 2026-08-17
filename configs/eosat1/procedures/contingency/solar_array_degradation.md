@@ -67,8 +67,8 @@ would have switched the wrong circuit.
 **GO/NO-GO:** Power margin is positive with at least 3W reserve — proceed
 
 ### Step 6 — Optimise Attitude for Solar Array Illumination
-**TC:** `AOCS_SET_MODE(mode=2)` (Service 8, Subtype 1) — COARSE_SUN for sun-optimal orientation
-**Verify:** `aocs.mode` (0x020F) = 2 within 15s
+**TC:** `AOCS_SET_MODE(mode=3)` (Service 8, Subtype 1, func_id 0) — COARSE_SUN for sun-optimal orientation
+**Verify:** `aocs.mode` (0x020F) = 3 within 15s
 **Verify:** `eps.sa_a_current` (0x0103) and `eps.sa_b_current` (0x0104) — observe improvement in current
 **Verify:** `eps.power_gen` (0x0107) increases relative to NOMINAL values
 **GO/NO-GO:** Generation improved sufficiently to maintain positive margin — proceed to monitoring

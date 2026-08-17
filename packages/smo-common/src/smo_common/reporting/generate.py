@@ -122,8 +122,6 @@ def _period_override_spec(override: dict[str, Any]) -> PeriodSpec:
         data["orbit"] = {"count": int(override.get("count", 1))}
     elif kind == "day":
         data["day"] = {"count": int(override.get("count", 1))}
-    if "zero_cuc_policy" in override:
-        data["zero_cuc_policy"] = override["zero_cuc_policy"]
     return PeriodSpec.model_validate(data)
 
 
@@ -169,7 +167,7 @@ def generate_report(
     files = _select_dump_files(spec, Path(dump_dir) if dump_dir else None,
                                dump_files)
     dataset = TelemetryDataset.from_dumps(
-        files, catalogs, zero_cuc_policy=spec.period.zero_cuc_policy)
+        files, catalogs)
 
     all_vars = {**spec.vars, **(vars or {})}
     period_spec = (_period_override_spec(period_override)
@@ -203,7 +201,6 @@ def generate_report(
         "dumps_used": [f["filename"] for f in dataset.files],
         "packets": dataset.total_packets,
         "crc_errors": dataset.crc_errors,
-        "zero_cuc_placed": dataset.zero_cuc_placed,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
     # Sidecar metadata so listings can show titles/periods without parsing HTML.

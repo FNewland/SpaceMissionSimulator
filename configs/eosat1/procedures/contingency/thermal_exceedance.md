@@ -64,8 +64,8 @@ for hot cases), and monitors the temperature trend until the zone returns within
 **Wire:** `2C <circuit:uint8> <on_temp:float32> <off_temp:float32>` — e.g. circuit 0, on 5.0 / off 10.0 C = `2C 00 40 A0 00 00 41 20 00 00`
 **Note:** There is no `tcs.htr_<zone>_setpoint` parameter — heater thermostats are reconfigured by S8 func 44, not by S20 parameter write.
 **Verify:** Heater duty cycle increases (more frequent ON cycles observed in telemetry)
-**TC (Hot case):** If temperature still rising, command `AOCS_SET_MODE(mode=2)` for COARSE_SUN to optimise spacecraft attitude for thermal dissipation
-**Verify:** `aocs.mode` (0x020F) = 2 within 15s
+**TC (Hot case):** If temperature still rising, command `AOCS_SET_MODE(mode=3)` (Service 8, Subtype 1, func_id 0) for COARSE_SUN to optimise spacecraft attitude for thermal dissipation
+**Verify:** `aocs.mode` (0x020F) = 3 within 15s
 **GO/NO-GO:** If temperature stabilises within additional 15 min, proceed to Step 5. If red limit approached, escalate to EMG-002.
 
 ### Step 5 — Confirm Recovery and Restore Operations
