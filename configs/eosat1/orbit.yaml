@@ -1,6 +1,8 @@
 # EOSAT-1 Orbit Configuration — Sun-Synchronous LEO (Ocean Current Monitoring)
-# 450 km altitude, 98° inclination SSO
-# TLE generated for 450 km circular SSO (mean motion ~15.24 rev/day)
+# ~513 km mean altitude, 98° inclination SSO
+# TLE mean motion 15.24 rev/day; propagated geodetic altitude 503–530 km,
+# mean 513 km. Owner ruling 2026-08: the TLE is the truth — the previously
+# declared "450 km" figure disagreed with the TLE and has been retired.
 #
 # CANONICAL ground-station geometry source (defect #42):
 # The `ground_stations` list below (name / lat / lon / alt / min elevation)
@@ -10,11 +12,17 @@
 # mask. RF-only augmentation (G/T, frequencies, antenna size) lives in
 # planning/ground_stations.yaml; geometry there must MATCH this file — the
 # MCS cross-checks and warns on divergence.
-tle_line1: "1 99001U 26001A   26068.50000000  .00000100  00000-0  10000-4 0  9990"
-tle_line2: "2 99001  98.0000 120.0000 0001200  90.0000 270.0000 15.24000000 00010"
-# T-0: mission start epoch for MET computation (ISO 8601 UTC)
-t0_epoch: "2026-03-10T00:00:00Z"
-altitude_km: 450.0
+tle_line1: "1 99001U 26001A   26232.50000000  .00000100  00000-0  10000-4 0  9994"
+tle_line2: "2 99001  98.0000 120.0000 0001200  90.0000 270.0000 15.24000000 00015"
+# T-0: mission start epoch for MET computation (ISO 8601 UTC).
+# Kept AT the TLE epoch (day 26232.5 = 2026-08-20T12:00:00Z) deliberately:
+# SGP4 accuracy degrades away from the elset epoch, so runs always start at
+# (or near) the epoch the elements are valid for.
+t0_epoch: "2026-08-20T12:00:00Z"
+# Informational mean geodetic altitude, measured by propagating the TLE above
+# with the repo's own OrbitPropagator (503–530 km over an orbit, mean 513 km).
+# Propagation itself uses only the TLE.
+altitude_km: 513.0
 inclination_deg: 98.0
 earth_radius_km: 6371.0
 
@@ -32,9 +40,10 @@ earth_radius_km: 6371.0
 # planning/ground_stations.yaml.
 #
 # Adding/removing a station here changes the mission's contact statistics.
-# Measured with tools/pass_gap_analysis.py over 48 h from t0_epoch:
-#   2 stations (Iqaluit+Troll): 39 passes, median gap 84 min, max gap 148 min
-#   5 stations (this list):    103 passes, median gap 33 min, max gap  79 min
+# Measured with tools/pass_gap_analysis.py over 48 h from t0_epoch
+# (re-measured 2026-08 after the epoch move to 2026-08-20T12:00:00Z):
+#   2 stations (Iqaluit+Troll): 40 passes, median gap 84 min, max gap 147 min
+#   5 stations (this list):    103 passes, median gap 34 min, max gap  80 min
 # The planner mirrors this list with planning-only attributes in
 # planning/planner.yaml; `python -m smo_planner.planner_config --config
 # configs/eosat1` prints a side-by-side alignment report of the two.

@@ -87,12 +87,14 @@ imaging:
   # Full across-track FOV of the instrument, single-sourced with the payload
   # optics (subsystems/payload.yaml: 8192 px x 5.5 um, f = 84.5 mm):
   #   fov  = 2 * atan((8192 * 5.5e-3 mm / 2) / 84.5 mm) = 29.856 deg
-  #   swath = 2 * 450 km * tan(fov/2)                   = 239.9 km (the 240 km
-  #                                                       swath, owner 2026-08)
+  #   swath = 2 * 513 km * tan(fov/2)                   = 273.4 km at the
+  #     TLE's true ~513 km mean altitude (2026-08 epoch/altitude ruling; the
+  #     FOV was sized for 240 km at the retired 450 km declaration, so the
+  #     240-km-swath ruling may need re-deriving — flag for the owner).
   fov_deg: 29.856
   swath_km: null                   # null -> 2*alt*tan(fov/2) from orbit.yaml
   # Roll limit for a capture (feasibility gate) = half the FOV, i.e. the access
-  # point must lie within half a swath (120 km) cross-track.
+  # point must lie within half a swath (~137 km at 513 km) cross-track.
   max_off_nadir_deg: 14.928
   capture_duration_s: 120.0
   capture_power_w: 60.0

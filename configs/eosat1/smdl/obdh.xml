@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="OBDH" Creator="EOSAT-1 SMDL Generator" Version="1.0+f46653e0637e">
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="OBDH" Creator="EOSAT-1 SMDL Generator" Version="1.0+590a05ec5309">
   <Description>SMP2 model catalogue for OBDH subsystem</Description>
   <Type Name="UInt8" Uuid="4e73fc8f-c4b0-5788-a75e-634a28fbbdd8" xsi:type="Integer" Size="1" Signed="false"/>
   <Type Name="UInt16" Uuid="a3adba6a-8630-5a9d-a78b-683cf4e4fd19" xsi:type="Integer" Size="2" Signed="false"/>
@@ -103,6 +103,12 @@
     </Field>
     <Field Name="obdh_time_since_sync_s" Uuid="4676d8dc-c359-53df-b055-dbb4d61dbcc3" Type="UInt32" Kind="Output" View="true">
       <Description>Onboard seconds since the last successful time sync; saturates rather than wrapping. 4294967295 (0xFFFFFFFF) = never synced [s]</Description>
+    </Field>
+    <Field Name="obdh_boot_state" Uuid="da36e126-0e1d-5be8-b11b-7ee4310068fc" Type="UInt8" Kind="Output" View="true">
+      <Description>Application boot state (0=BOOTLOADER idle, 1=VERIFYING image CRC, 2=APPLICATION running, 3=FAILED — last boot failed its CRC)</Description>
+    </Field>
+    <Field Name="obdh_boot_time_remaining_s" Uuid="48779cc4-293b-59c9-9ab6-f186eec39870" Type="UInt16" Kind="Output" View="true">
+      <Description>Seconds left in the OBC_BOOT_APP CRC verification window (0 when no boot is in flight) [s]</Description>
     </Field>
     <Field Name="tc_OBC_SET_MODE_mode" Uuid="4ca74105-1a9e-5e26-9d50-5805631673dc" Type="UInt8" Kind="Input">
       <Description>0=nominal, 1=safe, 2=emergency</Description>

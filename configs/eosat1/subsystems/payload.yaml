@@ -61,7 +61,15 @@ num_memory_segments: 8
 # and every geometric quantity the model reports is now computed from them
 # rather than from separate magic constants.
 #
-# Derivation (all at the orbit.yaml altitude, 450 km):
+# NOTE (2026-08 epoch/altitude ruling): orbit.yaml now declares the TLE-true
+# mean altitude of 513 km (the "450 km" declaration was retired). The optics
+# below are UNCHANGED — the FOV is the instrument constant — so at 513 km the
+# same geometry computes swath = 273 km and GSD = 33.4 m (the model derives
+# both from the live altitude each tick). The 240-km-swath ruling was made at
+# the 450 km declaration; whether the FOV should be re-derived to restore
+# 240 km at 513 km is an OWNER decision, deliberately not taken here.
+#
+# Derivation (all at the previously declared 450 km altitude):
 #   detector array width   = 8192 px x 5.5 um            = 45.056 mm
 #   half-FOV               = atan((45.056/2) / 84.5)     = 14.928 deg
 #   full FOV               = 29.856 deg
@@ -83,6 +91,11 @@ bits_per_pixel: 12               # detector ADC depth (raw, pre-compression)
 # Focal-plane READOUT rates, derived from the geometry above (not free
 # parameters — they follow from square pixels and the ground velocity):
 #   ground velocity at 450 km = sqrt(mu/r) * Re/r = 7.140 km/s
+#   (2026-08: at the TLE-true 513 km mean altitude v_ground = 7.06 km/s and
+#   GSD = 33.4 m, so the velocity-matched line rate would be ~211 Hz. The
+#   244 Hz / 96 Mbps figures below were sized at the retired 450 km
+#   declaration and are left unchanged pending the owner's swath/FOV
+#   re-derivation decision.)
 #   line_rate = v_ground / GSD = 7140 m/s / 29.29 m  = 243.8 Hz -> 244 Hz
 #   data_rate = 8192 px x 4 bands x 12 bit x 244 Hz  = 95.9 Mbps -> 96 Mbps
 # (was 500 Hz / 80 Mbps, which matched neither the old 5000-px geometry nor

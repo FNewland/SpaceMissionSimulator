@@ -74,7 +74,16 @@ def param_stats(dataset: TelemetryDataset, pid: int, period: Period,
 
 def completeness(dataset: TelemetryDataset, period: Period, catalogs: Catalogs,
                  sids: list[int], gap_threshold_multiple: float = 3.0) -> list[dict]:
-    """Per-SID expected/received/missing/gap analysis over the period."""
+    """Per-SID expected/received/missing/gap analysis over the period.
+
+    ``expected`` is counted over the REQUESTED PERIOD, never over the span of
+    the packets that happened to arrive. It used to be derived from
+    ``times[-1] - times[0]``, which made a SID that stopped part-way through
+    the period — because it was disabled by TC(3,6), or because a boot reset
+    the HK enable set — report ~0% missing and no gaps at all: the report drew
+    the truncated data as if it were the whole period. A hole at the START or
+    the END of the period is now a gap like any other.
+    """
     out = []
     for sid in sids:
         struct_def = catalogs.hk_structs.get(sid)
@@ -83,14 +92,21 @@ def completeness(dataset: TelemetryDataset, period: Period, catalogs: Catalogs,
                  if period.start_cuc <= t <= period.end_cuc]
         times.sort()
         received = len(times)
-        if times:
-            span = max(times[-1] - times[0], 0.0)
-            expected = int(span / cadence) + 1
-        else:
-            expected = int(period.duration_s / cadence) if period.duration_s else 0
+        expected = (int(period.duration_s / cadence)
+                    if period.duration_s and cadence > 0 else 0)
         gaps = []
         threshold = gap_threshold_multiple * cadence
-        for a, b in zip(times, times[1:]):
+        # Leading / trailing holes count too: "the SID never started" and
+        # "the SID stopped and never came back" are the two shapes an enable
+        # reset actually takes, and both were previously invisible here.
+        edges: list[tuple[float, float]] = []
+        if times:
+            edges.append((period.start_cuc, times[0]))
+            edges.extend(zip(times, times[1:]))
+            edges.append((times[-1], period.end_cuc))
+        elif period.duration_s:
+            edges.append((period.start_cuc, period.end_cuc))
+        for a, b in edges:
             if (b - a) > threshold:
                 gaps.append({"start_utc": cuc_to_utc_str(a),
                              "end_utc": cuc_to_utc_str(b),

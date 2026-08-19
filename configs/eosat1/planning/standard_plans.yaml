@@ -50,10 +50,16 @@ templates:
       #     eighth of the data the plan assumed. The template now books only
       #     passes the spacecraft will let run at HIGH — 43 of the 52 windows
       #     in a typical day.
-      # (2) `at: midpoint, offset_min: -2.75` — the 330 s dump is centred on
+      # (2) `at: midpoint, offset_min: -3.0` — the 330 s dump is centred on
       #     closest approach, where the elevation is highest and the whole
       #     activity sits above the gate. The old AOS+1 min anchor put a
       #     600 s dump across the low-elevation front half of the window.
+      #     2026-08d PLAN-2: -2.75 min centred the 330 s activity; the dump
+      #     activity is now 360 s (the 330 s window at HIGH plus the ladder
+      #     set-up and the restoration either side of it), so the centring
+      #     offset is -3.0 min. Left at -2.75 the tail of the activity fell
+      #     below the 10 deg gate and the budget raised
+      #     DUMP_BELOW_ELEVATION_GATE.
       #
       # Eight dumps at stride 3 spread across most of the shift, which is what
       # lets the plan close: the day's last data-generating activity is
@@ -72,7 +78,7 @@ templates:
         anchor: pass_relative
         pass_index: 0
         at: midpoint
-        offset_min: -2.75
+        offset_min: -3.0
         min_pass_elevation_deg: 10.0
         repeat: 8
         repeat_pass_stride: 3
@@ -107,7 +113,7 @@ templates:
         anchor: pass_relative
         pass_index: 0
         at: midpoint
-        offset_min: -2.75
+        offset_min: -3.0
         min_pass_elevation_deg: 10.0
         repeat: 8
         repeat_pass_stride: 1
@@ -138,7 +144,7 @@ templates:
       #
       # Anchoring both to the same arc and spacing them with `offset_min` makes
       # the separation independent of where the eclipse happens to fall:
-      # calibration at D+0 (180 s), imaging at D+5 min (120 s).
+      # calibration at D+0 (210 s), imaging at D+5 min (300 s).
       - type: calibration
         anchor: daylight_relative
         min_offset_min: 10
@@ -152,5 +158,5 @@ templates:
         anchor: pass_relative
         pass_index: 0
         at: midpoint
-        offset_min: -2.75
+        offset_min: -3.0
         min_pass_elevation_deg: 10.0

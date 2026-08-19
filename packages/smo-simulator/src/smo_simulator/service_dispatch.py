@@ -40,20 +40,44 @@ class DispatchResult(list):
       ``""``            executed normally
       ``"execution"``   a subsystem refused it → engine sends S1.8
       ``"exec_start"``  the dispatcher already downlinked its own S1.4
+
+    ``deferred_key`` (verification-semantics ruling, 2026-08):
+      Empty for a command whose effect is complete when the handler returns —
+      the engine sends S1.7 straight away, as it always did.  Non-empty when
+      the handler only STARTED the effect and a tick timer / multi-tick state
+      machine finishes it later (OBC_BOOT_APP's 10 s CRC window is the
+      original case).  The engine then holds the S1.7 back, registers this
+      telecommand's own sequence count against the key, and emits S1.7 when
+      the model reports the effect actually completed — or S1.8 when the
+      effect fails or no completion arrives inside ``deferred_timeout_s``.
+
+      It rides on the SAME object as ``failure_kind`` and is mutually
+      exclusive with it: a handler that refused a command did not start
+      anything, so there is nothing to wait for.
     """
 
-    __slots__ = ("error_code", "reason", "failure_kind")
+    __slots__ = ("error_code", "reason", "failure_kind",
+                 "deferred_key", "deferred_timeout_s", "deferred_label")
 
     def __init__(self, packets=(), error_code: int = 0, reason: str = "",
-                 failure_kind: str = ""):
+                 failure_kind: str = "", deferred_key: str = "",
+                 deferred_timeout_s: float = 0.0, deferred_label: str = ""):
         super().__init__(packets or [])
         self.error_code = int(error_code)
         self.reason = str(reason or "")
         self.failure_kind = failure_kind
+        self.deferred_key = str(deferred_key or "")
+        self.deferred_timeout_s = float(deferred_timeout_s or 0.0)
+        self.deferred_label = str(deferred_label or "")
 
     @property
     def failed(self) -> bool:
         return bool(self.failure_kind)
+
+    @property
+    def deferred(self) -> bool:
+        """True when execution has STARTED but has not COMPLETED."""
+        return bool(self.deferred_key) and not self.failure_kind
 
     @property
     def error(self):
@@ -95,6 +119,12 @@ class ServiceDispatcher:
         #: complete", and the failure must still reach the event log
         #: (defect #88).
         self._exec_fail: dict | None = None
+        #: Set by defer_completion() (directly, or via a model handler that
+        #: answered ``{"success": True, "deferred": "<key>"}``) — the command
+        #: has STARTED but its effect completes on a later tick. Saved and
+        #: restored around every dispatch exactly like ``_exec_fail``, so a
+        #: nested dispatch cannot make the outer command look deferred.
+        self._deferred: dict | None = None
         #: Sequence count of the telecommand being dispatched, so an S1.4
         #: execution-start failure can be attributed to it on the ground.
         #: Every one of the 17 S1.4 sites used to pass a literal 0, and the
@@ -194,10 +224,11 @@ class ServiceDispatcher:
         """
         with self._lock:
             outer = (self._err_reason, self._err_code, self._exec_fail,
-                     self._request_id)
+                     self._request_id, self._deferred)
             self._err_reason = ""
             self._err_code = 0
             self._exec_fail = None
+            self._deferred = None
             self._request_id = int(
                 getattr(primary_header, 'sequence_count', 0) or 0)
             try:
@@ -205,7 +236,7 @@ class ServiceDispatcher:
                                             primary_header)
             finally:
                 (self._err_reason, self._err_code, self._exec_fail,
-                 self._request_id) = outer
+                 self._request_id, self._deferred) = outer
 
     def _dispatch_inner(self, service: int, subtype: int, data: bytes,
                         primary_header=None) -> "DispatchResult":
@@ -250,7 +281,37 @@ class ServiceDispatcher:
             return DispatchResult(responses,
                                   self._exec_fail["error_code"],
                                   self._exec_fail["reason"], "exec_start")
+        if self._deferred:
+            d = self._deferred
+            return DispatchResult(
+                responses,
+                deferred_key=d["key"],
+                deferred_timeout_s=d["timeout_s"],
+                deferred_label=d["label"])
         return DispatchResult(responses)
+
+    # ─── Deferred completion (verification-semantics ruling, 2026-08) ──
+
+    #: Fallback timeout for a deferred completion whose handler did not name
+    #: one. Deliberately generous: a timeout is a leak-stopper, not a schedule.
+    DEFAULT_DEFERRED_TIMEOUT_S = 120.0
+
+    def defer_completion(self, key: str, timeout_s: float = 0.0,
+                         label: str = "") -> None:
+        """Report that execution STARTED but has not COMPLETED.
+
+        The engine holds the S1.7 for this telecommand and releases it when a
+        model reports ``key`` complete (``Engine.report_completion``), or
+        turns it into an S1.8 on failure or after ``timeout_s`` seconds of
+        simulated time. Same shape as ``generate_s1_exec_fail`` writing
+        ``_exec_fail``: the accumulator is per-dispatch, the outcome leaves on
+        the returned ``DispatchResult``.
+        """
+        self._deferred = {
+            "key": str(key),
+            "timeout_s": float(timeout_s or self.DEFAULT_DEFERRED_TIMEOUT_S),
+            "label": str(label or key),
+        }
 
     # ─── S2 Device Access ───────────────────────────────────────────
     # PUS Service 2 — low-level device access (on/off, register load/dump)
@@ -899,20 +960,33 @@ class ServiceDispatcher:
         elif func_id == 112:  # PROP_ABORT
             self._cmd(prop, {"command": "abort"})
         elif func_id == 113:  # PROP_ISO_OPEN: branch u8 (0=A,1=B,2=both)
-            branch = data[0] if data else 2
+            branch = self._require_u8(data, "PROP_ISO_OPEN", "`branch`",
+                                      "0=A, 1=B, 2=both")
+            if branch is None:
+                return []
             self._cmd(prop, {"command": "iso_open", "branch": branch})
         elif func_id == 114:  # PROP_ISO_CLOSE: branch u8 (2=both, CTG-028)
-            branch = data[0] if data else 2
+            branch = self._require_u8(data, "PROP_ISO_CLOSE", "`branch`",
+                                      "0=A, 1=B, 2=both")
+            if branch is None:
+                return []
             self._cmd(prop, {"command": "iso_close", "branch": branch})
         elif func_id == 115:  # PROP_SET_LIMITS: 4x f32
-            if len(data) >= 16:
-                att, p_min, cb_max, t_max = struct.unpack('>ffff', data[:16])
-                self._cmd(prop, {"command": "set_limits",
-                                 "att_err_max_deg": att, "p_min_bar": p_min,
-                                 "catbed_max_c": cb_max, "t_burn_max_s": t_max})
+            if not self._require_bytes(
+                    data, 16, "PROP_SET_LIMITS",
+                    "att_err_max_deg, p_min_bar, catbed_max_c, t_burn_max_s "
+                    "as 4x float32"):
+                return []
+            att, p_min, cb_max, t_max = struct.unpack('>ffff', data[:16])
+            self._cmd(prop, {"command": "set_limits",
+                             "att_err_max_deg": att, "p_min_bar": p_min,
+                             "catbed_max_c": cb_max, "t_burn_max_s": t_max})
         elif func_id == 116:  # PROP_INHIBIT_SET: on u8
-            on = bool(data[0]) if data else True
-            self._cmd(prop, {"command": "inhibit_set", "on": on})
+            on = self._require_u8(data, "PROP_INHIBIT_SET", "`on`",
+                                  "0=clear ground inhibit, 1=set")
+            if on is None:
+                return []
+            self._cmd(prop, {"command": "inhibit_set", "on": bool(on)})
         elif func_id == 117:  # PROP_INHIBIT_CLR: key u16
             key = struct.unpack('>H', data[:2])[0] if len(data) >= 2 else 0
             self._cmd(prop, {"command": "inhibit_clr", "key": key})
@@ -971,24 +1045,45 @@ class ServiceDispatcher:
             # the model; _cmd captures the failure and the engine downlinks
             # TM(1,8) with the 0x02C5 bitmask in the failure notice — no more
             # silent accept-then-drop-back.
-            mode = data[0] if data else 0
+            mode = self._require_u8(
+                data, "AOCS_SET_MODE", "`mode`",
+                "0=off, 1=safe_boot, 2=detumble, 3=coarse_sun, "
+                "4=nominal_nadir, 5=fine_point, 6=slew, 7=desaturation, "
+                "8=eclipse_propagate, 9=inertial")
+            if mode is None:
+                return []
             self._cmd(aocs, {"command": "set_mode", "mode": mode})
         elif func_id == 1:  # desaturate
             self._cmd(aocs, {"command": "desaturate"})
         elif func_id == 2:  # disable wheel
-            wheel = data[0] if data else 0
+            wheel = self._require_u8(data, "AOCS_DISABLE_WHEEL",
+                                     "`wheel_idx`", "wheel index 0-3")
+            if wheel is None:
+                return []
             self._cmd(aocs, {"command": "disable_wheel", "wheel": wheel})
         elif func_id == 3:  # enable wheel
-            wheel = data[0] if data else 0
+            wheel = self._require_u8(data, "AOCS_ENABLE_WHEEL",
+                                     "`wheel_idx`", "wheel index 0-3")
+            if wheel is None:
+                return []
             self._cmd(aocs, {"command": "enable_wheel", "wheel": wheel})
         elif func_id == 4:  # ST1 power
-            on = bool(data[0]) if data else True
-            self._cmd(aocs, {"command": "st_power", "unit": 1, "on": on})
+            on = self._require_u8(data, "ST1_POWER", "`on`", "0=off, 1=on")
+            if on is None:
+                return []
+            self._cmd(aocs, {"command": "st_power", "unit": 1,
+                             "on": bool(on)})
         elif func_id == 5:  # ST2 power
-            on = bool(data[0]) if data else True
-            self._cmd(aocs, {"command": "st_power", "unit": 2, "on": on})
+            on = self._require_u8(data, "ST2_POWER", "`on`", "0=off, 1=on")
+            if on is None:
+                return []
+            self._cmd(aocs, {"command": "st_power", "unit": 2,
+                             "on": bool(on)})
         elif func_id == 6:  # ST select
-            unit = data[0] if data else 1
+            unit = self._require_u8(data, "ST_SELECT", "`unit`",
+                                    "1=ST1, 2=ST2 (0 is refused)")
+            if unit is None:
+                return []
             self._cmd(aocs, {"command": "st_select", "unit": unit})
         elif func_id == 7:  # Magnetometer select — RETIRED (2026-08c)
             # EO-Sat-1 flies ONE magnetometer (owner ruling): MAG_SELECT was
@@ -999,30 +1094,39 @@ class ServiceDispatcher:
             unit = int(data[0]) if data else 0
             self._cmd(aocs, {"command": "mag_select", "source": "B" if unit else "A"})
         elif func_id == 8:  # RW set speed bias
-            if len(data) >= 5:
-                wheel = data[0]
-                bias = struct.unpack('>f', data[1:5])[0]
-                self._cmd(aocs, {
-                    "command": "rw_set_speed_bias", "wheel": wheel, "bias": bias
-                })
+            if not self._require_bytes(
+                    data, 5, "RW_SET_SPEED_BIAS",
+                    "wheel_idx(u8, 0-3) + bias_rpm(float32)"):
+                return []
+            wheel = data[0]
+            bias = struct.unpack('>f', data[1:5])[0]
+            self._cmd(aocs, {
+                "command": "rw_set_speed_bias", "wheel": wheel, "bias": bias
+            })
         elif func_id == 9:  # MTQ enable/disable
-            on = bool(data[0]) if data else True
-            cmd = "mtq_enable" if on else "mtq_disable"
+            enable = self._require_u8(data, "MTQ_ENABLE", "`enable`",
+                                      "0=disable, 1=enable")
+            if enable is None:
+                return []
+            cmd = "mtq_enable" if enable else "mtq_disable"
             self._cmd(aocs, {"command": cmd})
         elif func_id == 10:  # AOCS_SLEW_TO: quaternion (4 floats) + rate (1 float)
-            if len(data) >= 20:
-                q = [
-                    struct.unpack('>f', data[0:4])[0],
-                    struct.unpack('>f', data[4:8])[0],
-                    struct.unpack('>f', data[8:12])[0],
-                    struct.unpack('>f', data[12:16])[0],
-                ]
-                rate_dps = struct.unpack('>f', data[16:20])[0]
-                self._cmd(aocs, {
-                    "command": "slew_to_quaternion",
-                    "quaternion": q,
-                    "rate_dps": rate_dps
-                })
+            if not self._require_bytes(
+                    data, 20, "AOCS_SLEW_TO",
+                    "q_x, q_y, q_z, q_w, rate_dps as 5x float32"):
+                return []
+            q = [
+                struct.unpack('>f', data[0:4])[0],
+                struct.unpack('>f', data[4:8])[0],
+                struct.unpack('>f', data[8:12])[0],
+                struct.unpack('>f', data[12:16])[0],
+            ]
+            rate_dps = struct.unpack('>f', data[16:20])[0]
+            self._cmd(aocs, {
+                "command": "slew_to_quaternion",
+                "quaternion": q,
+                "rate_dps": rate_dps
+            })
         elif func_id == 11:  # AOCS_CHECK_MOMENTUM
             result = self._cmd(aocs, {"command": "check_momentum"})
             if result.get("success"):
@@ -1059,7 +1163,14 @@ class ServiceDispatcher:
                         int(st.get("progress_pct", 0)) & 0xFF,
                         int(result.get("duration_s", 0)) & 0xFFFF))]
         elif func_id == 14:  # AOCS_RW_RAMP_DOWN: wheel_idx (1) + target_rpm (4)
-            wheel = data[0] if data else 255  # 255 means all wheels
+            # `wheel_idx` used to default to 255 = ALL WHEELS when the byte was
+            # absent, so a truncated single-wheel ramp-down spun down the whole
+            # set. It is mandatory now; 255 still means all wheels, but only
+            # when the ground actually says 255.
+            wheel = self._require_u8(data, "AOCS_RW_RAMP_DOWN", "`wheel_idx`",
+                                     "0-3, or 255 for all wheels")
+            if wheel is None:
+                return []
             target_rpm = struct.unpack('>f', data[1:5])[0] if len(data) >= 5 else 0.0
             self._cmd(aocs, {
                 "command": "rw_ramp_down",
@@ -1076,14 +1187,22 @@ class ServiceDispatcher:
             # 0=COLD, 1=WARM, 2=HOT. Selects the GPS time-to-first-fix profile
             # consumed by the AOCS GPS model (gps_start_mode). Without this the
             # model field/TTFF logic existed but no command could set it.
-            start_mode = int(data[0]) if data else 0
+            start_mode = self._require_u8(
+                data, "AOCS_GPS_SET_START_MODE", "`start_mode`",
+                "0=COLD (60 s TTFF), 1=WARM (30 s), 2=HOT (5 s)")
+            if start_mode is None:
+                return []
             self._cmd(aocs, {
                 "command": "gps_set_start_mode",
                 "start_mode": start_mode,
             })
         # ── Phase C pointing/estimator commands (funcs 85-91, WP-5/WP-6) ──
         elif func_id == 85:  # AOCS_SET_POINTING_FRAME: frame (1 byte)
-            frame = int(data[0]) if data else 1
+            frame = self._require_u8(
+                data, "AOCS_SET_POINTING_FRAME", "`frame`",
+                "0=INERTIAL, 1=LVLH_NADIR, 2=TARGET_TRACK, 3=SUN")
+            if frame is None:
+                return []
             self._cmd(aocs, {"command": "set_pointing_frame", "frame": frame})
         elif func_id == 86:  # AOCS_SET_TARGET_QUAT: qx,qy,qz,qw (4x f32)
             if len(data) >= 16:
@@ -1121,19 +1240,36 @@ class ServiceDispatcher:
             return [self._engine.tm_builder._pack_tm(
                 service=8, subtype=130, data=struct.pack('>B', mask & 0xFF))]
         elif func_id == 90:  # AOCS_SET_MOM_MGMT: enable, entry%, exit% (3x u8)
-            enable = bool(data[0]) if data else False
+            # `enable` is mandatory. entry_pct / exit_pct keep their documented
+            # defaults (70 / 20, the catalogue's own values) — they are a
+            # genuinely optional trim on a decision the mandatory byte has
+            # already made, and the model refuses any pair that is not
+            # 0 < exit < entry <= 100.
+            enable = self._require_u8(data, "AOCS_SET_MOM_MGMT", "`enable`",
+                                      "0=disable, 1=enable")
+            if enable is None:
+                return []
             entry = int(data[1]) if len(data) > 1 else 70
             exit_ = int(data[2]) if len(data) > 2 else 20
-            self._cmd(aocs, {"command": "set_mom_mgmt", "enable": enable,
+            self._cmd(aocs, {"command": "set_mom_mgmt",
+                             "enable": bool(enable),
                              "entry_pct": entry, "exit_pct": exit_})
         elif func_id == 96:  # AOCS_SET_DESAT_INHIBIT: inhibit (1 byte)
             # 2026-08b: a momentum dump drops fine pointing, so the operator
             # (and the payload, automatically) must be able to fence it off.
-            inhibit = bool(data[0]) if data else True
+            inhibit = self._require_u8(
+                data, "AOCS_SET_DESAT_INHIBIT", "`inhibit`",
+                "0=allow desaturation, 1=inhibit")
+            if inhibit is None:
+                return []
             self._cmd(aocs, {"command": "set_desat_inhibit",
-                             "inhibit": inhibit})
+                             "inhibit": bool(inhibit)})
         elif func_id == 91:  # AOCS_EST_RESET: mode (1 byte; 0=cold, 1=warm)
-            reset_mode = int(data[0]) if data else 0
+            reset_mode = self._require_u8(
+                data, "AOCS_EST_RESET", "`mode`",
+                "0=cold (TRIAD/ST bootstrap), 1=warm (keep attitude)")
+            if reset_mode is None:
+                return []
             self._cmd(aocs, {"command": "est_reset", "mode": reset_mode})
         return []
 
@@ -1142,7 +1278,10 @@ class ServiceDispatcher:
         if not eps:
             return []
         if func_id == 16:  # payload mode
-            mode = data[0] if data else 0
+            mode = self._require_u8(data, "EPS_PAYLOAD_MODE", "`mode`",
+                                    "0=off, 1=standby, 2=imaging")
+            if mode is None:
+                return []
             self._cmd(eps, {"command": "set_payload_mode", "mode": mode})
             # Billing coupling (brief 05 WP-5): the EPS-side mode command must
             # drive the ACTUAL payload, otherwise EPS bills a mode the payload
@@ -1152,69 +1291,171 @@ class ServiceDispatcher:
             # 2026-08b PL-a: shared helper — TCS flag AND the EPS line.
             self._request_fpa_cooler(mode >= 1)
         elif func_id == 17:  # fpa cooler
-            on = bool(data[0]) if data else False
+            on = self._require_u8(data, "EPS_FPA_COOLER", "`on`",
+                                  "0=off, 1=on")
+            if on is None:
+                return []
             # One cryocooler, one commanded state (brief 05 WP-2 / 2026-08b
             # PL-a): the shared helper drives the EPS line and the unified TCS
             # cooler flag together, so 0x0114 / 0x040C / billing / FPA physics
             # agree on every command path — this one included.
-            self._request_fpa_cooler(on)
+            self._request_fpa_cooler(bool(on))
         elif func_id == 18:  # transponder tx
-            on = bool(data[0]) if data else True
-            self._cmd(eps, {"command": "set_transponder_tx", "on": on})
+            on = self._require_u8(data, "EPS_TRANSPONDER_TX", "`on`",
+                                  "0=off, 1=on")
+            if on is None:
+                return []
+            self._cmd(eps, {"command": "set_transponder_tx", "on": bool(on)})
         elif func_id == 19:  # power line on
-            if data:
-                line_idx = data[0]
-                result = self._cmd(eps, {
-                    "command": "power_line_on", "line_index": line_idx
-                })
+            line_idx = self._require_u8(data, "EPS_POWER_ON", "`line_index`",
+                                        "power line index 0-8; 8 = prop")
+            if line_idx is None:
+                return []
+            self._cmd(eps, {
+                "command": "power_line_on", "line_index": line_idx
+            })
         elif func_id == 20:  # power line off
-            if data:
-                line_idx = data[0]
-                result = self._cmd(eps, {
-                    "command": "power_line_off", "line_index": line_idx
-                })
+            line_idx = self._require_u8(data, "EPS_POWER_OFF", "`line_index`",
+                                        "power line index 0-8; 8 = prop")
+            if line_idx is None:
+                return []
+            self._cmd(eps, {
+                "command": "power_line_off", "line_index": line_idx
+            })
         elif func_id == 21:  # reset OC flag
-            if data:
-                line_idx = data[0]
-                self._cmd(eps, {
-                    "command": "reset_oc_flag", "line_index": line_idx
-                })
+            line_idx = self._require_u8(data, "EPS_RESET_OC_FLAG",
+                                        "`line_index`",
+                                        "power line index 0-8; 8 = prop")
+            if line_idx is None:
+                return []
+            self._cmd(eps, {
+                "command": "reset_oc_flag", "line_index": line_idx
+            })
         elif func_id == 22:  # switch load
-            if len(data) >= 2:
-                load_id = data[0]
-                state = bool(data[1])
-                self._cmd(eps, {
-                    "command": "switch_load", "load_id": load_id, "state": state
-                })
+            if not self._require_bytes(data, 2, "EPS_SWITCH_LOAD",
+                                       "load_id(u8, 0-7) + state(u8, "
+                                       "0=off, 1=on)"):
+                return []
+            load_id = data[0]
+            state = bool(data[1])
+            self._cmd(eps, {
+                "command": "switch_load", "load_id": load_id, "state": state
+            })
         elif func_id == 23:  # set charge rate
-            if len(data) >= 4:
-                rate_a = struct.unpack('>f', data[:4])[0]
-                self._cmd(eps, {
-                    "command": "set_charge_rate", "rate_a": rate_a
-                })
+            if not self._require_bytes(data, 4, "EPS_SET_CHARGE_RATE",
+                                       "rate_a as float32 amps, 0=auto"):
+                return []
+            rate_a = struct.unpack('>f', data[:4])[0]
+            self._cmd(eps, {
+                "command": "set_charge_rate", "rate_a": rate_a
+            })
         elif func_id == 24:  # solar array drive
-            if len(data) >= 2:
-                angle_deg = struct.unpack('>h', data[:2])[0]
-                self._cmd(eps, {
-                    "command": "set_solar_array_drive", "angle_deg": angle_deg / 100.0
-                })
+            if not self._require_bytes(
+                    data, 2, "EPS_SOLAR_ARRAY_DRIVE",
+                    "angle_deg as int16 CENTI-degrees, -9000..+9000"):
+                return []
+            angle_cdeg = struct.unpack('>h', data[:2])[0]
+            # Out of range is REFUSED, not silently folded onto the stop
+            # (the model used to clamp to +/-90 deg and answer "success",
+            # so a fat-fingered 120 deg looked like it had been obeyed).
+            if not -9000 <= angle_cdeg <= 9000:
+                self._make_error_response({
+                    "error_code": ERR_BAD_ARGUMENT,
+                    "message": f"EPS_SOLAR_ARRAY_DRIVE angle "
+                               f"{angle_cdeg / 100.0} deg is outside the "
+                               f"drive range -90..+90 deg"})
+                return []
+            self._cmd(eps, {
+                "command": "set_solar_array_drive",
+                "angle_deg": angle_cdeg / 100.0
+            })
         elif func_id == 25:  # emergency load shed
-            if data:
-                stage = data[0]
-                self._cmd(eps, {
-                    "command": "emergency_load_shed", "stage": stage
-                })
+            stage = self._require_u8(data, "EPS_EMERGENCY_LOAD_SHED",
+                                     "`stage`", "shed stage 0-3")
+            if stage is None:
+                return []
+            self._cmd(eps, {
+                "command": "emergency_load_shed", "stage": stage
+            })
         elif func_id == 81:  # deploy solar wing
-            # data[0]: 0=+Y, 1=-Y, 2=both
+            # data[0]: 0=+Y, 1=-Y, 2=both. Wing deployment is a ONE-SHOT,
+            # irreversible mechanism: a missing byte used to deploy BOTH
+            # wings, and so did any unrecognised code. Both are refused now.
             wing_map = {0: "py", 1: "my", 2: "both"}
-            wing = wing_map.get(data[0], "both") if data else "both"
-            self._cmd(eps, {"command": "deploy_wing", "wing": wing})
+            wing_code = self._require_u8(data, "EPS_DEPLOY_WING", "`wing`",
+                                         "0=+Y, 1=-Y, 2=both")
+            if wing_code is None:
+                return []
+            if wing_code not in wing_map:
+                self._make_error_response({
+                    "error_code": ERR_BAD_ARGUMENT,
+                    "message": f"EPS_DEPLOY_WING `wing` = {wing_code} is not "
+                               f"a valid selection (0=+Y, 1=-Y, 2=both)"})
+                return []
+            self._cmd(eps, {"command": "deploy_wing",
+                            "wing": wing_map[wing_code]})
         elif func_id == 82:  # get wing status
             self._cmd(eps, {"command": "get_wing_status"})
         elif func_id == 83:  # set EPS mode (defect #27): 0=nominal,1=safe,2=emergency
-            mode = int(data[0]) if data else 1
+            mode = self._require_u8(data, "EPS_SET_MODE", "`mode`",
+                                    "0=nominal, 1=safe, 2=emergency")
+            if mode is None:
+                return []
             self._cmd(eps, {"command": "set_eps_mode", "mode": mode})
         return []
+
+    # ─── Mandatory-argument guards (2026-08 command-safety defect) ────
+    #
+    # Every S8.1 route below used to read its argument as
+    # ``x = data[0] if data else <literal>``. A telecommand that arrived with
+    # the argument byte MISSING was therefore executed with a substituted
+    # value, and for several of them the substituted value was the DANGEROUS
+    # direction: TTC_SET_BEACON_MODE (func 70) with no argument turned beacon
+    # mode ON — pinning the S-band ladder to the SAFE rung so no HK could get
+    # through — and reported a clean S1.1 / S1.3 / S1.7 while doing it. The
+    # operator saw success while the spacecraft did the opposite of what they
+    # meant. Same shape on OBC_BOOT_INHIBIT (56), EPS_DEPLOY_WING (81),
+    # PROP_ISO_OPEN (113), AOCS_SET_DESAT_INHIBIT (96) and the rest.
+    #
+    # The house rule is the one TTC_SET_TX_POWER (func 68) already follows:
+    # REJECT with a stated reason, never clamp or default silently. These two
+    # helpers are that refusal, factored once — each call site still names its
+    # own field and its own legal values, so the failure notice on the ground
+    # says exactly what was missing and what to send instead.
+
+    def _require_u8(self, data: bytes, command: str, field: str,
+                    legend: str) -> int | None:
+        """Return the mandatory 1-byte argument, or REFUSE the telecommand.
+
+        Returns ``None`` when the argument byte is absent — in which case an
+        S1.8 failure notice (ERR_BAD_ARGUMENT, the same code and machinery
+        TTC_SET_TX_POWER uses) naming ``field`` and its legal values has
+        already been recorded, and the caller MUST NOT run the command.
+        """
+        if len(data) >= 1:
+            return int(data[0])
+        self._make_error_response({
+            "error_code": ERR_BAD_ARGUMENT,
+            "message": f"{command} needs a 1-byte {field} ({legend})"})
+        return None
+
+    def _require_bytes(self, data: bytes, n: int, command: str,
+                       legend: str) -> bool:
+        """True when ``data`` carries the ``n`` argument octets the command
+        needs; otherwise record the refusal and return False.
+
+        The wider half of the same defect: a dozen routes guarded their
+        argument unpack with ``if len(data) >= n:`` and had no ``else`` at
+        all, so a short telecommand did NOTHING and still verified S1.7
+        "execution complete". Silence is not an answer either.
+        """
+        if len(data) >= n:
+            return True
+        self._make_error_response({
+            "error_code": ERR_BAD_ARGUMENT,
+            "message": f"{command} needs {n} argument octets ({legend}); "
+                       f"got {len(data)}"})
+        return False
 
     def _make_error_response(self, result: dict) -> list[bytes]:
         """Store error info for the engine to use in S1.8 generation.
@@ -1246,6 +1487,15 @@ class ServiceDispatcher:
         result = subsystem.handle_command(cmd)
         if isinstance(result, dict) and not result.get("success", True):
             self._make_error_response(result)
+        elif isinstance(result, dict) and result.get("deferred"):
+            # The model started something that finishes on a later tick and
+            # said so. Same free ride as the failure path above: no router
+            # call site has to know which commands are long-running.
+            self.defer_completion(
+                str(result["deferred"]),
+                float(result.get("deferred_timeout_s", 0.0)),
+                str(result.get("deferred_label",
+                               result.get("message", "")) or ""))
         return result if isinstance(result, dict) else {}
 
     def _request_fpa_cooler(self, on: bool) -> dict:
@@ -1285,7 +1535,11 @@ class ServiceDispatcher:
         if not payload:
             return []
         if func_id == 26:  # set mode
-            mode = data[0] if data else 0
+            mode = self._require_u8(
+                data, "PAYLOAD_SET_MODE", "`mode`",
+                "0=off, 1=standby, 2=imaging, 3=calibration")
+            if mode is None:
+                return []
             result = self._cmd(payload, {"command": "set_mode", "mode": mode})
             # STANDBY / IMAGING / CALIBRATION all imply the FPA cooler; OFF
             # releases it. 2026-08b PL-a: this is now the shared helper, which
@@ -1295,9 +1549,10 @@ class ServiceDispatcher:
             if result.get("success", False):
                 self._request_fpa_cooler(mode >= 1)
         elif func_id == 27:  # set scene
-            scene_id = (
-                struct.unpack('>H', data[:2])[0] if len(data) >= 2 else 0
-            )
+            if not self._require_bytes(data, 2, "PAYLOAD_SET_SCENE",
+                                       "scene_id as uint16"):
+                return []
+            scene_id = struct.unpack('>H', data[:2])[0]
             self._cmd(payload, {"command": "set_scene", "scene_id": scene_id})
         elif func_id == 28:  # capture image (Phase E WP-1)
             # Catalogue/textbook form WINS (DECISIONS.md section 9):
@@ -1327,9 +1582,10 @@ class ServiceDispatcher:
                         pass
                 return [pkt] if pkt is not None else []
         elif func_id == 29:  # download image
-            scene_id = (
-                struct.unpack('>H', data[:2])[0] if len(data) >= 2 else 0
-            )
+            if not self._require_bytes(data, 2, "PAYLOAD_DOWNLOAD_IMAGE",
+                                       "scene_id as uint16"):
+                return []
+            scene_id = struct.unpack('>H', data[:2])[0]
             # 2026-08b PL-c: this called the model and THREW THE RESULT AWAY —
             # the operator got a bare S1.7 "execution complete" and no image
             # metadata ever reached the ground on this func. It now answers
@@ -1343,14 +1599,18 @@ class ServiceDispatcher:
                 if pkt is not None:
                     return [pkt]
         elif func_id == 30:  # delete image
-            scene_id = (
-                struct.unpack('>H', data[:2])[0] if len(data) >= 2 else 0
-            )
+            if not self._require_bytes(data, 2, "PAYLOAD_DELETE_IMAGE",
+                                       "scene_id as uint16"):
+                return []
+            scene_id = struct.unpack('>H', data[:2])[0]
             self._cmd(payload, {
                 "command": "delete_image", "scene_id": scene_id
             })
         elif func_id == 31:  # mark bad segment
-            seg = data[0] if data else 0
+            seg = self._require_u8(data, "PAYLOAD_MARK_BAD_SEGMENT",
+                                   "`segment_id`", "segment index 0-7")
+            if seg is None:
+                return []
             self._cmd(payload, {
                 "command": "mark_bad_segment", "segment": seg
             })
@@ -1378,7 +1638,11 @@ class ServiceDispatcher:
                 return [self._engine.tm_builder._pack_tm(
                     service=8, subtype=2, data=resp)]
         elif func_id == 33:  # set band configuration
-            mask = data[0] if data else 0x0F
+            mask = self._require_u8(
+                data, "PAYLOAD_SET_BAND_CONFIG", "`mask`",
+                "band bitmask; 0x0F = all four bands, 0x00 is refused")
+            if mask is None:
+                return []
             result = self._cmd(payload, {
                 "command": "set_band_config", "mask": mask
             })
@@ -1436,7 +1700,11 @@ class ServiceDispatcher:
                     "message": "PAYLOAD_COOLER_SETPOINT needs uint16 "
                                "centi-kelvin (25315-27315 = -20..0 degC)"})
         elif func_id == 37:  # start calibration (mode: 0=dark, 1=flat, 2=both)
-            mode = data[0] if data else 2
+            mode = self._require_u8(data, "PAYLOAD_START_CALIBRATION",
+                                    "`mode`",
+                                    "0=dark only, 1=flat only, 2=both")
+            if mode is None:
+                return []
             self._cmd(payload, {"command": "start_calibration", "mode": mode})
         elif func_id == 38:  # stop calibration
             self._cmd(payload, {"command": "stop_calibration"})
@@ -1457,14 +1725,25 @@ class ServiceDispatcher:
                                "+ ratio_deci(u8, 0=auto)"})
         # ── Payload extras (Phase E WP-7, funcs 92-95) ──
         elif func_id == 92:  # select filter wheel position
-            position = data[0] if data else 0
+            position = self._require_u8(data, "PAYLOAD_SELECT_FILTER",
+                                        "`position`",
+                                        "filter wheel position 0-3")
+            if position is None:
+                return []
             self._cmd(payload, {"command": "select_filter",
                                 "position": position})
         elif func_id == 93:  # cycle shutter (COM-011 dark-frame prep)
-            cycles = data[0] if data else 1
+            cycles = self._require_u8(data, "PAYLOAD_CYCLE_SHUTTER",
+                                      "`cycles`",
+                                      "number of blade transitions, 1-100")
+            if cycles is None:
+                return []
             self._cmd(payload, {"command": "cycle_shutter", "cycles": cycles})
         elif func_id == 94:  # initiate on-board transfer of a stored scene
-            scene_id = struct.unpack('>H', data[:2])[0] if len(data) >= 2 else 0
+            if not self._require_bytes(data, 2, "PAYLOAD_INITIATE_TRANSFER",
+                                       "scene_id as uint16"):
+                return []
+            scene_id = struct.unpack('>H', data[:2])[0]
             # 2026-08b PL-c: the result was discarded, so the byte count and
             # the product checksum the ground needs to open an S13 session were
             # computed on board and then dropped. TM(8,2):
@@ -1480,14 +1759,20 @@ class ServiceDispatcher:
                         int(result.get("blocks", 0)) & 0xFFFFFFFF,
                         int(result.get("checksum") or 0) & 0xFFFFFFFF))]
         elif func_id == 95:  # calibration lamp on/off
-            on = bool(data[0]) if data else False
-            self._cmd(payload, {"command": "set_cal_lamp", "on": on})
+            on = self._require_u8(data, "PAYLOAD_CAL_LAMP", "`on`",
+                                  "0=off, 1=on")
+            if on is None:
+                return []
+            self._cmd(payload, {"command": "set_cal_lamp", "on": bool(on)})
         elif func_id == 119:  # PAYLOAD_SET_SHUTTER — ABSOLUTE position
             # 2026-08b PL-d: there was no absolute shutter command anywhere in
             # the catalogue. PAYLOAD_CYCLE_SHUTTER (93) is a relative toggle and
             # a relative toggle cannot reach a KNOWN state, which is exactly
             # what a dark frame and COM-011 step 2 need.
-            position = data[0] if data else 1
+            position = self._require_u8(data, "PAYLOAD_SET_SHUTTER",
+                                        "`position`", "0=closed, 1=open")
+            if position is None:
+                return []
             self._cmd(payload, {"command": "set_shutter",
                                 "position": position})
         return []
@@ -1535,49 +1820,78 @@ class ServiceDispatcher:
             return []
         circuits = {40: "battery", 41: "obc", 42: "thruster"}
         if func_id in circuits:
-            on = bool(data[0]) if data else True
+            names = {40: "HEATER_BATTERY", 41: "HEATER_OBC",
+                     42: "HEATER_THRUSTER"}
+            on = self._require_u8(data, names[func_id], "`on`", "0=off, 1=on")
+            if on is None:
+                return []
             self._cmd(tcs, {
-                "command": "heater", "circuit": circuits[func_id], "on": on
+                "command": "heater", "circuit": circuits[func_id],
+                "on": bool(on)
             })
         elif func_id == 43:  # FPA cooler
-            on = bool(data[0]) if data else True
+            on = self._require_u8(data, "FPA_COOLER", "`on`", "0=off, 1=on")
+            if on is None:
+                return []
             # 2026-08b PL-a: COM-009's path. It used to set the TCS request
             # flag against a power line nothing switched on, and the handler
             # answered "success" regardless — the operator got "execution
             # complete" while 0x040C stayed 0 forever.
-            self._request_fpa_cooler(on)
+            self._request_fpa_cooler(bool(on))
         elif func_id == 44:  # Set heater setpoint
-            if len(data) >= 9:
-                circuit = data[0]
-                on_temp = struct.unpack('>f', data[1:5])[0]
-                off_temp = struct.unpack('>f', data[5:9])[0]
-                self._cmd(tcs, {
-                    "command": "set_setpoint",
-                    "circuit": circuit,
-                    "on_temp": on_temp,
-                    "off_temp": off_temp,
-                })
+            if not self._require_bytes(
+                    data, 9, "HEATER_SET_SETPOINT",
+                    "circuit(u8, 0=battery 1=obc 2=thruster) + on_temp(f32) "
+                    "+ off_temp(f32)"):
+                return []
+            circuit = data[0]
+            on_temp = struct.unpack('>f', data[1:5])[0]
+            off_temp = struct.unpack('>f', data[5:9])[0]
+            self._cmd(tcs, {
+                "command": "set_setpoint",
+                "circuit": circuit,
+                "on_temp": on_temp,
+                "off_temp": off_temp,
+            })
         elif func_id == 45:  # Auto mode
-            circuit = data[0] if data else 0
+            circuit = self._require_u8(data, "HEATER_AUTO_MODE", "`circuit`",
+                                       "0=battery, 1=obc, 2=thruster")
+            if circuit is None:
+                return []
             self._cmd(tcs, {
                 "command": "auto_mode", "circuit": circuit
             })
         elif func_id == 46:  # Set heater duty limit (Phase 5)
-            if len(data) >= 2:
-                circuit = data[0]
-                duty_pct = data[1]
-                self._cmd(tcs, {
-                    "command": "set_heater_duty_limit",
-                    "circuit": circuit,
-                    "duty_limit_pct": float(duty_pct),
-                })
+            if not self._require_bytes(
+                    data, 2, "TCS_SET_HEATER_DUTY_LIMIT",
+                    "circuit(u8, 0=battery 1=obc 2=thruster) + "
+                    "max_duty_pct(u8, 0-100)"):
+                return []
+            circuit = data[0]
+            duty_pct = data[1]
+            # Out of range is refused, not clamped: "100 %" and "220 %" must
+            # not both quietly mean 100 %.
+            if duty_pct > 100:
+                self._make_error_response({
+                    "error_code": ERR_BAD_ARGUMENT,
+                    "message": f"TCS_SET_HEATER_DUTY_LIMIT `max_duty_pct` = "
+                               f"{duty_pct} is outside 0-100 %"})
+                return []
+            self._cmd(tcs, {
+                "command": "set_heater_duty_limit",
+                "circuit": circuit,
+                "duty_limit_pct": float(duty_pct),
+            })
         elif func_id == 47:  # Decontamination start (Phase 5)
-            # Defect #31: default to a positive bake-out target (the handler also
-            # defaults to +50C). The previous -50C default would have *cooled*
-            # the FPA, the opposite of a decontamination bake-out.
-            target_temp = 50.0
-            if len(data) >= 4:
-                target_temp = struct.unpack('>f', data[:4])[0]
+            # Defect #31: the bake-out target is a positive temperature (the
+            # model also defaults to +50 C); the old -50 C default would have
+            # COOLED the FPA, the opposite of a decontamination bake-out. The
+            # target is now mandatory rather than defaulted at all.
+            if not self._require_bytes(
+                    data, 4, "TCS_DECONTAMINATION_START",
+                    "target_temp_c as float32, typically +50 C"):
+                return []
+            target_temp = struct.unpack('>f', data[:4])[0]
             self._cmd(tcs, {
                 "command": "decontamination_start",
                 "target_temp_c": target_temp,
@@ -1608,7 +1922,10 @@ class ServiceDispatcher:
         if not obdh:
             return []
         if func_id == 50:  # set mode
-            mode = data[0] if data else 0
+            mode = self._require_u8(data, "OBC_SET_MODE", "`mode`",
+                                    "0=nominal, 1=safe, 2=emergency")
+            if mode is None:
+                return []
             self._cmd(obdh, {"command": "set_mode", "mode": mode})
         elif func_id == 51:  # memory scrub
             self._cmd(obdh, {"command": "memory_scrub"})
@@ -1617,21 +1934,38 @@ class ServiceDispatcher:
         elif func_id == 53:  # OBC switch unit
             self._cmd(obdh, {"command": "obc_switch_unit"})
         elif func_id == 54:  # OBC select bus
-            bus = data[0] if data else 0
+            bus = self._require_u8(data, "OBC_SELECT_BUS", "`bus`",
+                                   "0=Bus A, 1=Bus B")
+            if bus is None:
+                return []
             self._cmd(obdh, {"command": "obc_select_bus", "bus": bus})
         elif func_id == 55:  # OBC boot app
             self._cmd(obdh, {"command": "obc_boot_app"})
         elif func_id == 56:  # OBC boot inhibit
-            inhibit = bool(data[0]) if data else True
+            inhibit = self._require_u8(data, "OBC_BOOT_INHIBIT", "`inhibit`",
+                                       "0=allow auto-boot, 1=inhibit")
+            if inhibit is None:
+                return []
             self._cmd(obdh, {
-                "command": "obc_boot_inhibit", "inhibit": inhibit
+                "command": "obc_boot_inhibit", "inhibit": bool(inhibit)
             })
         elif func_id == 57:  # OBC clear reboot count
             self._cmd(obdh, {"command": "obc_clear_reboot_cnt"})
         elif func_id == 58:  # OBC set watchdog period
-            if len(data) >= 2:
-                period = struct.unpack('>H', data[:2])[0]
-                self._cmd(obdh, {"command": "set_watchdog_period", "period": period})
+            if not self._require_bytes(data, 2, "OBC_SET_WATCHDOG_PERIOD",
+                                       "period_ticks as uint16, 1-1000"):
+                return []
+            period = struct.unpack('>H', data[:2])[0]
+            # Refused, not silently promoted to 1 tick (the model used to do
+            # max(1, period), so a commanded 0 became 1 and reported success).
+            if not 1 <= period <= 1000:
+                self._make_error_response({
+                    "error_code": ERR_BAD_ARGUMENT,
+                    "message": f"OBC_SET_WATCHDOG_PERIOD `period_ticks` = "
+                               f"{period} is outside 1-1000 ticks"})
+                return []
+            self._cmd(obdh, {"command": "set_watchdog_period",
+                             "period": period})
         elif func_id == 59:  # OBC watchdog enable
             self._cmd(obdh, {"command": "watchdog_enable"})
         elif func_id == 60:  # OBC watchdog disable
@@ -1736,41 +2070,68 @@ class ServiceDispatcher:
         elif func_id == 69:  # Deploy antennas
             self._cmd(ttc, {"command": "deploy_antennas"})
         elif func_id == 70:  # Set beacon mode
+            # THE field defect (2026-08): a bare TTC_SET_BEACON_MODE used to
+            # mean `on = True`. Beacon mode pins the S-band ladder to the SAFE
+            # (1 kbps) rung, so a missing argument byte silently gagged the
+            # spacecraft's housekeeping and still verified S1.1 / S1.3 / S1.7.
+            on = self._require_u8(data, "TTC_SET_BEACON_MODE", "`on`",
+                                  "0=off, 1=on")
+            if on is None:
+                return []
             self._cmd(ttc, {
                 "command": "set_beacon_mode",
-                "on": bool(data[0]) if data else True,
+                "on": bool(on),
             })
         elif func_id == 71:  # Start command channel
             self._cmd(ttc, {"command": "cmd_channel_start"})
         elif func_id == 72:  # Set uplink frequency
-            if len(data) >= 4:
-                freq_mhz = struct.unpack('>f', data[:4])[0]
-                self._cmd(ttc, {"command": "set_ul_freq", "freq_mhz": freq_mhz})
+            if not self._require_bytes(data, 4, "TTC_SET_UL_FREQ",
+                                       "freq_mhz as float32, S-band "
+                                       "2025-2110 MHz"):
+                return []
+            freq_mhz = struct.unpack('>f', data[:4])[0]
+            self._cmd(ttc, {"command": "set_ul_freq", "freq_mhz": freq_mhz})
         elif func_id == 73:  # Set downlink frequency
-            if len(data) >= 4:
-                freq_mhz = struct.unpack('>f', data[:4])[0]
-                self._cmd(ttc, {"command": "set_dl_freq", "freq_mhz": freq_mhz})
+            if not self._require_bytes(data, 4, "TTC_SET_DL_FREQ",
+                                       "freq_mhz as float32, S-band "
+                                       "2200-2290 MHz"):
+                return []
+            freq_mhz = struct.unpack('>f', data[:4])[0]
+            self._cmd(ttc, {"command": "set_dl_freq", "freq_mhz": freq_mhz})
         elif func_id == 74:  # Set modulation mode
-            mode = data[0] if data else 0
+            mode = self._require_u8(
+                data, "TTC_SET_MODULATION", "`mode`",
+                "0=BPSK, 1=QPSK, 2=8PSK, 3=OQPSK")
+            if mode is None:
+                return []
             self._cmd(ttc, {"command": "set_modulation", "mode": mode})
         elif func_id == 75:  # Set RX gain (AGC target)
-            if len(data) >= 4:
-                agc_db = struct.unpack('>f', data[:4])[0]
-                self._cmd(ttc, {"command": "set_rx_gain", "agc_db": agc_db})
+            if not self._require_bytes(data, 4, "TTC_SET_RX_GAIN",
+                                       "agc_db as float32, -100 to 0 dB"):
+                return []
+            agc_db = struct.unpack('>f', data[:4])[0]
+            self._cmd(ttc, {"command": "set_rx_gain", "agc_db": agc_db})
         elif func_id == 76:  # Start ranging
             self._cmd(ttc, {"command": "ranging_start"})
         elif func_id == 77:  # Stop ranging
             self._cmd(ttc, {"command": "ranging_stop"})
         elif func_id == 78:  # Set coherent transponder mode
-            on = bool(data[0]) if data else True
-            self._cmd(ttc, {"command": "set_coherent_mode", "on": on})
+            on = self._require_u8(data, "TTC_SET_COHERENT_MODE", "`on`",
+                                  "0=off (non-coherent), 1=on (coherent)")
+            if on is None:
+                return []
+            self._cmd(ttc, {"command": "set_coherent_mode", "on": bool(on)})
         elif func_id == 79:  # Set DOWNLINK / payload-dump mode
             # Gate for the HIGH tier of the TM rate ladder (defect #85): bulk
             # downlink has to be entered deliberately, so an S13 image dump or
             # an S15 playback is a planned activity rather than something the
             # spacecraft drifts into at 1 Mbps.
-            on = bool(data[0]) if data else True
-            self._cmd(ttc, {"command": "set_downlink_mode", "on": on})
+            on = self._require_u8(
+                data, "TTC_SET_DOWNLINK_MODE", "`on`",
+                "0=leave DOWNLINK mode, 1=enter DOWNLINK/dump mode")
+            if on is None:
+                return []
+            self._cmd(ttc, {"command": "set_downlink_mode", "on": bool(on)})
         elif func_id == 97:  # TTC_BEACON_TX_ON  — the UHF beacon transmitter
             self._cmd(ttc, {"command": "beacon_tx_on"})
         elif func_id == 98:  # TTC_BEACON_TX_OFF — silences HK SID 11's
@@ -2540,10 +2901,20 @@ class ServiceDispatcher:
                     self._request_id, 0x0003,
                     f"S19 trigger kind {trigger_kind} is not 0 (event) or "
                     f"1 (parameter)")
+            # Anything after the sixth octet is the action's ARGUMENT bytes,
+            # handed to the S8 route verbatim when the rule fires. Config-
+            # loaded rules have carried `action_data` since defect #70, but the
+            # ground had no way to supply it, so a ground-added rule naming an
+            # argument-taking function could only ever fire argument-less. That
+            # used to mean "fires with a silently defaulted argument"; now that
+            # a missing argument is refused, the wire format has to carry it.
+            # Trailing octets are optional — a 6-byte TC still means exactly
+            # what it always did.
             self._s19_definitions[ea_id] = {
                 'event_type': trigger_id,
                 'trigger_kind': trigger_kind,
                 'action_func_id': action_func_id,
+                'action_data': bytes(data[6:]),
             }
             self._s19_enabled_ids.add(ea_id)
         elif subtype == 1 and len(data) >= 4:

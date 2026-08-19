@@ -1091,6 +1091,8 @@ class TestReproducibleEpoch:
 
     def test_engine_starts_at_t0_epoch(self, engine):
         assert engine._t0_epoch is not None
+        # t0_epoch moved 2026-03-10 -> 2026-08-20T12:00:00Z (2026-08 owner
+        # ruling re-epoching the TLE); the year pin still holds.
         assert engine._t0_epoch.year == 2026
         assert engine.orbit.utc.replace(microsecond=0) == \
             engine._t0_epoch.replace(microsecond=0)

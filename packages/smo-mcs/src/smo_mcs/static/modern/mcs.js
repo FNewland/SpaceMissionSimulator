@@ -1254,11 +1254,23 @@ function renderObdSwState() {
   const MODES = ["NOMINAL", "SAFE", "EMERGENCY"];
   const imgLabel = img === 0 ? "BOOTLOADER" : img === 1 ? "APPLICATION" : "—";
   const modeLabel = MODES[mode] ?? (Number.isFinite(mode) ? `MODE_${mode}` : "—");
+  /* Boot progress (0x0A15 / 0x0A16). OBC_BOOT_APP's S1.7 now lands when the
+     10 s CRC window CLOSES, so the window itself has to be visible: sw_image
+     alone reads 0 both for "sitting in the bootloader" and for "a boot is in
+     flight", which is what left the operator guessing. */
+  const bstate = Number(paramVal("0x0A15"));
+  const bleft = Number(paramVal("0x0A16"));
+  const BOOT_STATES = ["BOOTLOADER", "VERIFYING", "APPLICATION", "FAILED"];
+  const bootLabel = BOOT_STATES[bstate] ?? "—";
+  const booting = bstate === 1;
+  const bootFailed = bstate === 3;
   const bad = mode >= 1 || img === 0;
   host.innerHTML =
     `<table class="plain"><tbody>
       <tr><td>Running image <span class="mono" style="color:var(--tx3)">0x0311</span></td>
         <td class="mono" style="${img === 0 ? "color:var(--warn)" : ""}">${imgLabel}</td></tr>
+      <tr><td>Boot state <span class="mono" style="color:var(--tx3)">0x0A15</span></td>
+        <td class="mono" style="${bootFailed ? "color:var(--alarm)" : booting ? "color:var(--warn)" : ""}">${bootLabel}${booting && Number.isFinite(bleft) ? " · " + num(bleft, 0) + " s left" : ""}</td></tr>
       <tr><td>OBC mode <span class="mono" style="color:var(--tx3)">0x0300</span></td>
         <td class="mono" style="${mode >= 1 ? "color:var(--alarm)" : ""}">${modeLabel}</td></tr>
       <tr><td>Active OBC <span class="mono" style="color:var(--tx3)">0x030C</span></td>
@@ -1266,8 +1278,12 @@ function renderObdSwState() {
       <tr><td>Reboot count <span class="mono" style="color:var(--tx3)">0x030A</span></td>
         <td class="mono">${num(paramVal("0x030A"), 0)}</td></tr>
     </tbody></table>` +
+    (booting ? `<div style="font-size:12px;color:var(--warn);margin-top:4px">
+      Application boot IN PROGRESS — the OBC is verifying the image CRC. Only the bootloader TC subset is accepted until it finishes; the S1.7 execution-complete for OBC_BOOT_APP arrives when it does.</div>` : "") +
+    (bootFailed ? `<div style="font-size:12px;color:var(--alarm);margin-top:4px">
+      Last OBC_BOOT_APP FAILED its image CRC — see the BOOT_FAILURE event. The OBC is held in the bootloader.</div>` : "") +
     (bad ? `<div style="font-size:12px;color:var(--warn);margin-top:4px">
-      ${img === 0 ? "Bootloader: minimal TC subset, UHF beacon only — OBC_BOOT_APP (S8 func 55) to run the application. " : ""}
+      ${img === 0 && !booting ? "Bootloader: minimal TC subset, UHF beacon only — OBC_BOOT_APP (S8 func 55) to run the application. " : ""}
       ${mode >= 1 ? "OBC in " + modeLabel + " — the contingency banner is driven from this parameter (M8)." : ""}</div>` : "");
 }
 
@@ -1948,6 +1964,37 @@ function catFieldDefault(f) {
   if ((f.enum || []).length) return f.enum[0].value;
   return 0;
 }
+/* Length validation against the schema. Returns the reason the ground must
+ * NOT send this packet, or null when the data field is long enough.
+ *
+ * 2026-08 command-safety defect: the typed-field editor always encodes one
+ * value per declared field, so the builder itself cannot emit a short packet.
+ * The hex box can — it is a free-text field that goes to /api/pus-command
+ * verbatim — and until now `sendCommand` had no length gate at all, only the
+ * advisory "0 / 1 B" chip. A TTC_SET_BEACON_MODE of bare "46" therefore left
+ * the console with a clean conscience and turned beacon mode ON in the
+ * spacecraft. Tell the operator BEFORE the packet is built, naming the field
+ * that is missing. */
+export function catLengthError(cmd, hexStr) {
+  if (!cmd || !Array.isArray(cmd.fields) || !cmd.fields.length) return null;
+  const octets = String(hexStr || "").replace(/[\s,]+/g, "").length / 2;
+  const prefix = (Number(cmd.service) === 8 && Number(cmd.subtype) === 1
+    && cmd.func_id != null) ? 1 : 0;
+  let need = prefix;
+  for (const f of cmd.fields) {
+    const w = catFieldWidth(String(f.type || "uint8").toLowerCase());
+    if (w == null) return null;              // variable tail — not our call
+    need += w;
+    if (octets < need) {
+      const legend = f.description ? ` (${f.description})` : "";
+      return `${cmd.name} needs a ${w}-byte \`${f.name}\`${legend} —` +
+        ` the data field is ${octets} B, the schema needs ${need} B.` +
+        ` The spacecraft REJECTS a missing argument (S1.8 0x0003);` +
+        ` it does not assume one.`;
+    }
+  }
+  return null;
+}
 /* Engineering-units validation (classic catFieldError parity). Returns the
  * reason the spacecraft would reject the value, or null when valid. */
 export function catFieldError(f, eng) {
@@ -2432,6 +2479,15 @@ async function sendCommand() {
   const data = $("cmd-data").value.trim();
   const name = $("cmd-name").value.trim() || (cmd ? cmd.name : "");
   if (cmd) {
+    // Length gate BEFORE anything else: a short data field is not a command
+    // with a default, it is a command the spacecraft will refuse (and used to
+    // execute in the dangerous direction). Never leaves the ground.
+    const lenErr = catLengthError(cmd, data);
+    if (lenErr) {
+      setHTML("cmd-result", `<span style="color:var(--alarm)">not sent — ${esc(lenErr)}</span>`);
+      setText("cmd-field-errors", lenErr);
+      return;
+    }
     const auth = commandAuthority(cmd.name);
     if (!auth.allowed) { setHTML("cmd-result", `<span style="color:var(--alarm)">${esc(auth.text)}</span>`); return; }
     if (isCritical(cmd) && !S.armed[cmd.name]) {
@@ -2689,16 +2745,67 @@ function hkObserved(sid) {
   if (age <= interval * 2.5 + 1) return { label: `PERIODIC · ${fmtAge(age)}`, cls: "ok" };
   return { label: `SILENT · ${fmtAge(age)}`, cls: "warn" };
 }
+/** The enable bit the SPACECRAFT reported for a SID, or undefined. */
+function hkEnabledBit(sid) {
+  const rep = S.state.hk_enabled || {};
+  if (rep[String(sid)] !== undefined) return !!rep[String(sid)];
+  const meta = ((S.hkStructures || {}).structures || [])
+    .find((s2) => Number(s2.sid) === Number(sid)) || {};
+  return meta.enabled === null || meta.enabled === undefined
+    ? undefined : !!meta.enabled;
+}
+
+/**
+ * "Who turned my SIDs off?"
+ *
+ * A boot or a bootloader entry legitimately replaces the on-board HK enable
+ * set with simulation.yaml `default_enabled_sids` — but nothing said so, and
+ * the operator's first evidence was a hole in the next S15 dump. The
+ * spacecraft now raises S5 0x0056 and publishes the same record, which the
+ * console prints here as an explicit banner naming the SIDs it silenced.
+ */
+function hkEnableSummaryHtml() {
+  const structures = ((S.hkStructures || {}).structures) || [];
+  const on = [], off = [];
+  for (const s2 of structures) {
+    const bit = hkEnabledBit(s2.sid);
+    if (bit === true) on.push(s2.sid);
+    else if (bit === false) off.push(s2.sid);
+  }
+  const known = on.length || off.length;
+  const line = known
+    ? `<strong>Enable set reported by the spacecraft:</strong> ENABLED [${on.join(", ") || "—"}] · DISABLED [${off.join(", ") || "—"}]`
+    : `Enable set not reported by the spacecraft — the state column below is inferred from arriving telemetry.`;
+  const rst = S.state.hk_enable_reset;
+  let why = "";
+  if (rst && rst.reason) {
+    const dis = rst.sids_disabled || [];
+    why = `<div class="ds-banner warn" role="alert" style="margin-top:6px;white-space:normal;line-height:1.5">
+      <strong>The spacecraft reset the HK enable set itself</strong> — no HK_DISABLE was sent.<br>
+      Reason: ${esc(String(rst.reason))}<br>
+      ${dis.length
+        ? `SID(s) switched OFF: <strong>${dis.join(", ")}</strong>. Periodic HK and S15 storage stopped for those SIDs, so a dump spanning this moment contains a real gap. Re-send HK_ENABLE (TC 3,5) for each one.`
+        : `No commanded SID was switched off by this reset.`}
+    </div>`;
+  }
+  return `<div style="margin-bottom:8px;font-size:12px">${line}${why}</div>`;
+}
+
 function renderS3Panel() {
   const structures = ((S.hkStructures || {}).structures) || [];
   const rows = structures.map((s2) => {
     const obs = hkObserved(s2.sid);
     // /api/hk-structures serves `param_count`; older fixtures a list
     const nParams = s2.param_count ?? (s2.parameters || []).length;
+    const bit = hkEnabledBit(s2.sid);
+    const enChip = bit === undefined
+      ? renderChip({ kind: "stale", label: "NOT REPORTED" })
+      : renderChip({ kind: bit ? "ok" : "warn", label: bit ? "ENABLED" : "DISABLED" });
     return `<tr><td class="mono">${s2.sid}</td><td>${esc(s2.name || "")}</td>
       <td class="mono">${s2.apid ?? "—"}</td>
       <td class="mono">${s2.interval_s ?? "—"} s</td>
       <td class="mono">${nParams}</td>
+      <td>${enChip}</td>
       <td>${renderChip({ kind: obs.cls === "ok" ? "ok" : obs.cls === "warn" ? "warn" : "stale", label: obs.label })}</td>
       <td><button class="ds-btn" data-s3="enable" data-sid="${s2.sid}">EN</button>
           <button class="ds-btn" data-s3="disable" data-sid="${s2.sid}">DIS</button>
@@ -2706,6 +2813,7 @@ function renderS3Panel() {
   }).join("");
   setHTML("diag-s3", `
     <div class="ds-card"><h2>Housekeeping manager (S3)</h2><div class="bd">
+      ${hkEnableSummaryHtml()}
       <div class="row" style="margin-bottom:8px">
         <button class="ds-btn" id="s3-req-all">REQUEST ALL (ONE-SHOT)</button>
         <button class="ds-btn" id="s3-en-all">ENABLE ALL</button>
@@ -2713,8 +2821,8 @@ function renderS3Panel() {
         <button class="ds-btn" id="s3-reload">RELOAD DEFINITIONS</button>
       </div>
       <table class="plain"><thead><tr><th>SID</th><th>Name</th><th>APID</th><th>Interval</th>
-        <th>Params</th><th>Observed</th><th></th></tr></thead>
-        <tbody>${rows || `<tr><td colspan="7">no HK structures</td></tr>`}</tbody></table>
+        <th>Params</th><th>Enabled</th><th>Observed</th><th></th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="8">no HK structures</td></tr>`}</tbody></table>
     </div></div>`);
 }
 async function s3Command(action, sid) {
@@ -4463,7 +4571,8 @@ export const __test = {
   handleAlarmMsg, renderBottomDrawer, renderS12Block,
   renderS19Block, renderMarkdown, provenanceText, updateTrainingChip,
   loadSchematics, updateRailHealth,
-  catFieldError, catFormatEng, isCritical, cmdFieldWidget,
+  catFieldError, catLengthError, catFormatEng, isCritical, cmdFieldWidget,
+  sendCommand,
   renderS3Panel, renderS11Table, renderS15Panel, renderS6Panel, renderS9Panel,
   renderParamsPanel, renderFdirPage, selectDiagTab, renderDiag,
   // POSITION_NEEDS gap surfaces (G1-G9, G12, G15)

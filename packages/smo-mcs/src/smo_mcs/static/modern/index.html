@@ -11,6 +11,17 @@
   (schematics.svg). No build step. All shared assets from /static/shared/
   (frozen Agent-1 contract). The classic console is byte-untouched at /classic.
 =========================================================================== -->
+<!-- Vendor libraries. These were MISSING from the modern shell (field report
+     2026-08-19): the page carried only the graceful-degradation notices, so
+     "Chart.js not installed" and "map library not installed" rendered
+     permanently even on a checkout where vendor/ is present and correct.
+     Classic loads both the same way (its lines 9-10). Plain (not deferred):
+     mcs.js is an ES module and therefore already runs after parse, and it
+     reads window.Chart / window.svgWorldMap at render time -- so the
+     degradation guards stay, and now they only fire when the assets really
+     are absent. -->
+<script src="/static/vendor/js/chart.umd.min.js"></script>
+<script src="/static/vendor/js/svg-world-map.js"></script>
 <link rel="stylesheet" href="/static/shared/design-system.css?v=1">
 <style>
 /* Page-layout CSS only — components/tokens come from the design system.  */

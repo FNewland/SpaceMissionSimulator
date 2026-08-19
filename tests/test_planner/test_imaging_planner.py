@@ -235,22 +235,35 @@ class TestCaptureSequence:
         )
         assert capture["name"] == "imaging_OCM-001"
         assert capture["start_time"] == "2026-03-11T10:00:00Z"
-        assert capture["duration_s"] == IMAGING_DURATION_S
+        # 2026-08d PLAN-1b: the ACQUISITION is still IMAGING_DURATION_S, but
+        # the activity books the whole sequence — mode lead-in, FPA cooler
+        # settle, FINE settle, readout and restoration — because that is what
+        # the spacecraft is busy for.
+        assert capture["capture_duration_s"] == IMAGING_DURATION_S
+        assert capture["duration_s"] == \
+            ImagingPlanner.CAPTURE_SEQUENCE_MIN_DURATION_S
+        assert capture["duration_s"] > IMAGING_DURATION_S
+        assert capture["timing"]["sequence_min_duration_s"] == \
+            ImagingPlanner.CAPTURE_SEQUENCE_MIN_DURATION_S
         assert capture["power_w"] == IMAGING_POWER_W
         assert capture["data_volume_mb"] == IMAGING_DATA_MB
         assert capture["target_id"] == "OCM-001"
         assert capture["target_name"] == "Gulf Stream"
-        assert len(capture["command_sequence"]) == 4
+        # 8 telecommands + the dwells/telemetry checks between them.
+        assert len([s for s in capture["command_sequence"]
+                    if s.get("service")]) == 8
 
     def test_capture_command_has_s8_func_id(self):
         planner = ImagingPlanner(SAMPLE_TARGETS)
         capture = planner.generate_capture_sequence(
             "OCM-001", "2026-03-11T10:00:00Z"
         )
-        # Capture command is the final step; func 28 (0x1C) is the real
-        # payload capture per service_dispatch routing (defect #45 — the
-        # old 0x16 landed on an EPS no-op).
-        cmd = capture["command_sequence"][3]
+        # func 28 (0x1C) is the real payload capture per service_dispatch
+        # routing (defect #45 — the old 0x16 landed on an EPS no-op). It is
+        # no longer the last step: the sequence restores the payload and the
+        # AOCS after the shutter (2026-08d PLAN-1b).
+        cmd = next(c for c in capture["command_sequence"]
+                   if c.get("func_id") == 0x1C)
         assert cmd["service"] == 8
         assert cmd["subtype"] == 1
         assert cmd["func_id"] == 0x1C

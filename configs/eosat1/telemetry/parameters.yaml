@@ -500,7 +500,7 @@ parameters:
   - { id: 0x0616, name: payload.snr, subsystem: payload, units: dB, description: Signal-to-noise ratio }
   - { id: 0x0617, name: payload.detector_temp, subsystem: payload, units: C, description: CCD/CMOS detector temperature }
   - { id: 0x0618, name: payload.integration_time, subsystem: payload, units: ms, description: Detector integration time, on_demand: true }
-  - { id: 0x0619, name: payload.swath_width_km, subsystem: payload, units: km, description: "Ground swath width (240 km at the nominal 450 km altitude; 2*h*tan(FOV/2), FOV 29.856 deg from the payload.yaml optics)", on_demand: true }
+  - { id: 0x0619, name: payload.swath_width_km, subsystem: payload, units: km, description: "Ground swath width (~273 km at the 513 km mean altitude; 2*h*tan(FOV/2), FOV 29.856 deg from the payload.yaml optics)", on_demand: true }
   # Payload Multispectral band SNR
   - { id: 0x0620, name: payload.band_blue_snr, subsystem: payload, units: dB, description: "Blue band (443 nm) SNR" , on_demand: true }
   - { id: 0x0621, name: payload.band_green_snr, subsystem: payload, units: dB, description: "Green band (560 nm) SNR" , on_demand: true }
@@ -510,7 +510,7 @@ parameters:
   - { id: 0x0625, name: payload.band_enable_mask, subsystem: payload, description: "Spectral band enable bitmask (bits 0-3: blue/green/red/nir)", on_demand: true }
   - { id: 0x0626, name: payload.att_quality_factor, subsystem: payload, description: Attitude-dependent image quality factor, on_demand: true }
   - { id: 0x0627, name: payload.att_error_deg, subsystem: payload, units: deg, description: Attitude error used for quality calculation, on_demand: true }
-  - { id: 0x0628, name: payload.gsd_m, subsystem: payload, units: m, description: "Ground sample distance (29.3 m at 450 km = h * pitch / focal length; 240 km swath / 8192 px)", on_demand: true }
+  - { id: 0x0628, name: payload.gsd_m, subsystem: payload, units: m, description: "Ground sample distance (33.4 m at 513 km = h * pitch / focal length; swath / 8192 px)", on_demand: true }
   - { id: 0x0629, name: payload.scene_entropy, subsystem: payload, description: Scene entropy estimate for compression, on_demand: true }
     # Payload Calibration and Transfer
   - { id: 0x062A, name: payload.calibration_active, subsystem: payload, description: "Calibration active (0=no, 1=yes)" }
@@ -552,6 +552,7 @@ parameters:
   - { id: 0x013F, name: eps.subsys_power_ttc, subsystem: eps, units: W, description: "TTC subsystem power draw" }
   - { id: 0x0140, name: eps.subsys_power_payload, subsystem: eps, units: W, description: "Payload subsystem power draw" }
   - { id: 0x0141, name: eps.subsys_power_obdh, subsystem: eps, units: W, description: "OBDH subsystem power draw" }
+  - { id: 0x0142, name: eps.sun_fraction, subsystem: eps, type: float, description: "Illuminated fraction of the solar disc from the single eclipse authority (0.0 = umbra, 1.0 = full sun; between = penumbra). eps.eclipse_flag/eps.eclipse_active are its boolean spelling" }
   - { id: 0x0143, name: eps.actual_charge_current_a, subsystem: eps, units: A, type: float, description: "Actual battery charge current" }
 
   # ===== FDIR Parameters =====
@@ -579,6 +580,16 @@ parameters:
   - { id: 0x0A12, name: obdh.obc_time_fine, subsystem: obdh, description: "Onboard CUC sub-second, units of 1/65536 s (~15.26 us)" }
   - { id: 0x0A13, name: obdh.time_ref, subsystem: obdh, description: "Onboard time reference (0=NONE, 1=GROUND, 2=GPS, 3=HOLDOVER)" }
   - { id: 0x0A14, name: obdh.time_since_sync_s, subsystem: obdh, units: s, description: "Onboard seconds since the last successful time sync; saturates rather than wrapping. 4294967295 (0xFFFFFFFF) = never synced" }
+
+  # ===== OBDH application boot progress (verification-semantics ruling) =====
+  # OBC_BOOT_APP (S8.1 func 55) verifies the application image CRC over a 10 s
+  # window before sw_image (0x0311) flips to 1. sw_image alone reads 0 both for
+  # "sitting in the bootloader" and for "a boot is in flight", so an operator
+  # inside that window had nothing to look at and no way to tell why their next
+  # telecommand was refused. Same 0x0A1x OBDH overflow block as the clock
+  # parameters above — 0x031C is stack usage and the 0x03xx block is full.
+  - { id: 0x0A15, name: obdh.boot_state, subsystem: obdh, description: "Application boot state (0=BOOTLOADER idle, 1=VERIFYING image CRC, 2=APPLICATION running, 3=FAILED — last boot failed its CRC)" }
+  - { id: 0x0A16, name: obdh.boot_time_remaining_s, subsystem: obdh, units: s, description: "Seconds left in the OBC_BOOT_APP CRC verification window (0 when no boot is in flight)" }
 
   # ===== Reserved diagnostic / on-demand stubs =====
   # Auto-added by procedure audit — marked on_demand + stub so they're

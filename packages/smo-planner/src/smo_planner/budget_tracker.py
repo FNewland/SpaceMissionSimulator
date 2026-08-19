@@ -64,7 +64,11 @@ mission config (``eps.yaml battery.capacity_wh`` = 100 Wh).
 
 The LOAD and GENERATION model, however, is still this module's own, and it
 does NOT agree with the spacecraft the simulator flies. Measured over the
-shipped 24 h nominal plan at the shipped TLE (beta ~49.5 deg, eclipse 0.315),
+shipped 24 h nominal plan at the shipped TLE (beta -30.6 deg, eclipse
+fraction 0.355 at the 2026-08-20T12:00:00Z epoch and ~513 km — the older
+"beta ~49.5 deg / eclipse 0.315" figures predate that epoch/altitude move
+and must not be quoted; the measured geometry is pinned in
+tests/test_simulator/test_eclipse_single_authority.py),
 against ``tools/power_budget.py`` at its worst-beta EOL sizing case:
 
     quantity (orbit-average)   this module   tools/power_budget.py
@@ -149,7 +153,9 @@ MIN_DUMP_ELEVATION_DEG = 10.0
 #: (orbit.yaml ground_stations[].min_elevation_deg).
 ELEVATION_MASK_DEG = 5.0
 #: Orbit altitude used for the pass-geometry arithmetic (orbit.yaml altitude_km).
-ORBIT_ALTITUDE_KM = 450.0
+#: 2026-08: 450 -> 513 (owner ruling: the TLE, mean motion 15.24 rev/day, is
+#: the truth; mean propagated geodetic altitude 513 km).
+ORBIT_ALTITUDE_KM = 513.0
 EARTH_RADIUS_KM = 6378.137
 #: Channel expansion of the housekeeping stream: RS(255,223) (x255/223) and the
 #: 1115/1107-byte TM transfer frame. Matches the research report's 1351.5 bps
@@ -935,12 +941,30 @@ class BudgetTracker:
             dump_scheduled = self._is_dump_scheduled_during(contact)
             if dump_scheduled:
                 dump_committed_s += prof["usable_s"]
-                if not prof["dump_capable"]:
+                # 2026-08d PLAN-2: a dump is only GATED if NO station in view
+                # while it runs clears the elevation gate. EOSAT-1's five
+                # stations produce overlapping windows — the spacecraft is
+                # above the horizon at two dishes at once — but there is one
+                # transmit chain, so a dump centred on a 40 deg Svalbard pass
+                # that happens to clip a simultaneous 9.8 deg Iqaluit window
+                # still holds HIGH. This used to flag the low window and
+                # report the plan as running at LOW; growing the dump activity
+                # from 330 s to 360 s (the ladder set-up and restoration
+                # either side of the dump window) made it start doing so.
+                dump_gated = (not prof["dump_capable"]
+                              and not self._dump_has_a_capable_window(contact))
+                if dump_gated:
                     gated_dumps.append(
                         f"pass {idx + 1} ({contact.get('gs_name', '?')}, max el "
                         f"{float(contact.get('max_elevation_deg', 0) or 0):.1f} deg)")
+            else:
+                dump_gated = False
             pass_downlink.append({
                 "pass_id": idx + 1,
+                # True only when the dump booked here has NO station in view
+                # that clears the HIGH-tier elevation gate — i.e. it really
+                # will run at the routine rung (2026-08d PLAN-2).
+                "dump_gated": dump_gated,
                 "gs_name": contact.get("gs_name", "unknown"),
                 "aos": contact.get("aos", ""),
                 "los": contact.get("los", ""),
@@ -1469,6 +1493,32 @@ class BudgetTracker:
             )
 
         return warnings
+
+    def _dump_has_a_capable_window(self, contact: dict) -> bool:
+        """Is some OTHER contact overlapping this one dump-capable?
+
+        See the note at the call site: overlapping windows are one downlink
+        opportunity, not several, so a dump only runs at LOW if every station
+        in view while it runs is below the HIGH-tier elevation gate.
+        """
+        aos = _parse_iso(contact.get("aos", "") or "")
+        los = _parse_iso(contact.get("los", "") or "")
+        if aos is None or los is None:
+            return False
+        for other in self._contacts:
+            if other is contact:
+                continue
+            o_aos = _parse_iso(other.get("aos", "") or "")
+            o_los = _parse_iso(other.get("los", "") or "")
+            if o_aos is None or o_los is None:
+                continue
+            if not (o_aos < los and o_los > aos):
+                continue
+            if not self._is_dump_scheduled_during(other):
+                continue
+            if self._pass_profile(other)["dump_capable"]:
+                return True
+        return False
 
     def _is_dump_scheduled_during(self, contact: dict) -> bool:
         """Check if a data_dump activity is scheduled during the given pass."""

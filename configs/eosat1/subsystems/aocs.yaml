@@ -1,4 +1,10 @@
 model: aocs_basic
+# NOTE (2026-08 epoch/altitude ruling): orbit.yaml now records the TLE-true
+# ~513 km mean altitude (the 450 km declaration was retired). Derivation
+# comments in this file that say "450 km" were computed at the old figure and
+# are deliberately NOT re-derived here: at 513 km the gravity-gradient and
+# magnetic terms change by only a few percent, while the aerodynamic torque
+# roughly halves (conservative as configured). Values unchanged.
 modes: [nominal, detumble, safe, wheel_desat, slew]
 
 # ═══════════════════════════════════════════════════════════════════════

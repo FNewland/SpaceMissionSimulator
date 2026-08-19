@@ -23,8 +23,8 @@ performance and scene-dependent onboard data compression.
 | Instrument Type        | Pushbroom multispectral imager |
 | Spectral Range         | 443–865 nm (VNIR)             |
 | Number of Bands        | 4 (Blue, Green, Red, NIR)     |
-| Ground Sampling Dist.  | ~9 m (at 450 km altitude)     |
-| Swath Width            | ~54 km (at 450 km altitude)   |
+| Ground Sampling Dist.  | ~33 m (at 513 km mean altitude) |
+| Swath Width            | ~273 km (at 513 km mean altitude) |
 | Detector Type          | CCD linear array               |
 | FPA Operating Temp     | -15 deg C (nominal)           |
 | Data Rate (raw)        | ~40 Mbps                       |
@@ -51,16 +51,18 @@ correction and land/sea discrimination.
 
 ### 2.2 Altitude-Dependent Geometry
 
-The imaging geometry scales with orbital altitude. At the nominal 450 km altitude:
+The imaging geometry scales with orbital altitude and follows from the 29.856 deg
+full FOV of the optics (8192 px x 5.5 um on an 84.5 mm telescope). The simulator and
+planner compute both quantities from the live altitude; over the 503–530 km orbit
+(mean 513 km, 2026-08 epoch/altitude ruling):
 
-| Parameter              | At 450 km        | At 500 km (ref)  | Scaling            |
-|------------------------|------------------|-------------------|--------------------|
-| Ground Sampling Dist.  | ~9 m             | ~10 m             | Proportional to alt|
-| Swath Width            | ~54 km           | ~60 km            | Proportional to alt|
-| Dwell Time per Pixel   | ~1.27 ms         | ~1.41 ms          | Proportional to alt|
+| Parameter              | At 513 km (mean) | At 450 km (retired declaration) | Scaling            |
+|------------------------|------------------|---------------------------------|--------------------|
+| Ground Sampling Dist.  | ~33.4 m          | ~29.3 m                         | Proportional to alt|
+| Swath Width            | ~273 km          | ~240 km                         | Proportional to alt|
 
-The lower 450 km altitude provides improved spatial resolution at the cost of slightly
-reduced swath width and increased atmospheric drag.
+The higher true altitude widens the swath and coarsens the GSD by ~14% relative to the
+figures historically quoted at 450 km.
 
 ### 2.3 Scene-Dependent Compression
 

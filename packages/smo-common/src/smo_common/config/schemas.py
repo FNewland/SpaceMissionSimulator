@@ -125,7 +125,7 @@ class OrbitConfig(StrictModel):
     altitude_km: float = 500.0
     inclination_deg: float = 97.4
     earth_radius_km: float = 6371.0
-    # Reference epoch the run starts at, e.g. "2026-03-10T00:00:00Z". Was
+    # Reference epoch the run starts at, e.g. "2026-08-20T12:00:00Z". Was
     # present in orbit.yaml but dropped by the loader, so the engine started
     # the propagator at wall-clock time and no two runs saw the same passes or
     # eclipses (roadmap N-5 / DI-16). tools/pass_gap_analysis.py had to re-read
@@ -1188,6 +1188,23 @@ class ActivityTypeConfig(StrictModel):
     requires_subsystems: list[str] = Field(default_factory=list)
     thermal_constraints: dict[str, Any] = Field(default_factory=dict)
     aocs_constraints: dict[str, Any] = Field(default_factory=dict)
+    # 2026-08d PLAN-7. The activity's real timing, as DATA rather than prose,
+    # so the scheduler and the conflict checker can reason about it:
+    #   sequence_min_duration_s  how long `command_sequence` physically takes
+    #                            (explicit wait_s dwell + a per-telecommand
+    #                            allowance) — ActivityScheduler
+    #                            .check_sequence_timing refuses a booking
+    #                            shorter than this;
+    #   lead_time_s              how much of that precedes the activity's
+    #                            defining event (the shutter, the burn);
+    #   restore_time_s           the tail that hands the spacecraft back;
+    #   min_gap_after_s          how long anything this activity conflicts
+    #                            with must wait afterwards —
+    #                            ActivityScheduler.check_separation;
+    #   plus per-activity terms documented at their use site
+    #   (dump_dwell_s, catbed_preheat_s, daylight_required_at_offset_s,
+    #   on_board_timeout_s).
+    timing: dict[str, Any] = Field(default_factory=dict)
 
 
 class ActivityTypesConfig(StrictModel):

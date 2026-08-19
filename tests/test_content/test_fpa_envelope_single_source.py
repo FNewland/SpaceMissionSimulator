@@ -162,8 +162,12 @@ def test_planner_imaging_constraints_are_derived():
 
 
 def test_planner_preconditions_use_the_imaging_bound():
+    """2026-08d PLAN-8: the parameter is `payload.fpa_temp` (0x0601).
+    `payload.fpa_temp_c` is not a name in telemetry/parameters.yaml, so the
+    planner's pre-condition checker reported it as "not available" and never
+    evaluated the bound this test exists to single-source."""
     acts = _load("planning/activity_types.yaml")["activity_types"]
-    bound = f"payload.fpa_temp_c < {ENV.imaging_max_c}"
+    bound = f"payload.fpa_temp < {ENV.imaging_max_c}"
     for act in acts:
         for cond in act.get("pre_conditions") or []:
             if "fpa_temp" in cond:

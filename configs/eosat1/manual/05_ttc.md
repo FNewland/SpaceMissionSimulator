@@ -176,7 +176,7 @@ health and initiate recovery commanding.
 | Parameter            | Value              |
 |----------------------|--------------------|
 | Ground Station EIRP  | 53 dBW             |
-| Free Space Loss      | -162.5 dB (450 km) |
+| Free Space Loss      | -164.0 dB (513 km orbit, 10 deg elev) |
 | S/C Antenna Gain     | 3 dBi              |
 | System Noise Temp    | 800 K              |
 | Required Eb/N0       | 9.6 dB             |
@@ -190,17 +190,17 @@ simulator flies, so these numbers cannot drift from the spacecraft.
 | Parameter            | SAFE (1 kbps)   | LOW (16 kbps) | HIGH (128 kbps) |
 |----------------------|-----------------|---------------|-----------------|
 | EIRP (10 dBW + 3 dBi)| 13 dBW          | 13 dBW        | 13 dBW          |
-| Free Space Loss @5 deg | -165.1 dB (1944.5 km) | -165.1 dB | -165.1 dB |
+| Free Space Loss @5 deg | -165.8 dB (2111.7 km) | -165.8 dB | -165.8 dB |
 | Ground Station G/T (Iqaluit) | 20 dB/K | 20 dB/K      | 20 dB/K         |
 | Coding               | conv(7,1/2)+RS, 7.5 dB | conv(7,1/2)+RS, 7.5 dB | RS(255,223), 6.0 dB |
 | Required Eb/N0 (9.6 dB uncoded, less coding gain) | 2.1 dB | 2.1 dB | 3.6 dB |
-| **Link margin @ 5 deg, Iqaluit** | **57.8 dB** | **45.7 dB** | **35.2 dB** |
-| **Link margin @ 5 deg, Troll (worst station)** | **56.3 dB** | **44.2 dB** | **33.7 dB** |
-| **Link margin @ zenith, Iqaluit** | 74.3 dB | 62.3 dB | 51.8 dB |
+| **Link margin @ 5 deg, Iqaluit** | **57.0 dB** | **45.0 dB** | **34.5 dB** |
+| **Link margin @ 5 deg, Troll (worst station)** | **55.5 dB** | **43.5 dB** | **33.0 dB** |
+| **Link margin @ zenith, Iqaluit** | 73.2 dB | 61.2 dB | 50.6 dB |
 
 Two things follow, and both are on the syllabus:
 
-* **Every rung closes with tens of dB to spare.** At 450 km to a professional polar dish
+* **Every rung closes with tens of dB to spare.** At ~513 km to a professional polar dish
   this link is not power-limited. What differentiates the tiers is occupied bandwidth,
   PA power and thermal cost, ground-modem configuration and mode policy — not a power
   cliff. The 10 deg rule on HIGH is a GROUND policy (planner scheduling + MCS
@@ -247,7 +247,7 @@ EOSAT-1 uses a two-station ground network providing bipolar coverage:
 | Primary Role       | TT&C + science data downlink               |
 
 Iqaluit provides northern hemisphere coverage. Its sub-Arctic latitude ensures multiple
-daily contacts with the 450 km, 98 deg inclination orbit.
+daily contacts with the ~513 km, 98 deg inclination orbit.
 
 ### 5.2 Troll Ground Station (Queen Maud Land, Antarctica)
 
@@ -272,7 +272,7 @@ Link margin varies between stations due to different slant range geometries:
 | Typical max elevation | 20–70 deg          | 20–60 deg           |
 | Best-case margin      | > 10 dB            | > 10 dB             |
 | Worst-case margin     | ~3 dB (5 deg elev) | ~3 dB (5 deg elev)  |
-| Free space loss (450 km) | -162.5 dB       | -162.5 dB           |
+| Free space loss (513 km, 10 deg elev) | -164.0 dB | -164.0 dB      |
 
 EOSAT-1 typically has 4–8 ground contacts per day across both stations, providing
 cumulative contact time of 30–60 minutes for telecommand uplink and telemetry/data

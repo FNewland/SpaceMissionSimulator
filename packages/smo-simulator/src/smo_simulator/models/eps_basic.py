@@ -56,6 +56,14 @@ POWER_LINE_DEFS = [
 ]
 
 POWER_LINE_NAMES = [d[0] for d in POWER_LINE_DEFS]
+
+# Deferred-completion keys (verification-semantics ruling, 2026-08). Solar
+# wing deployment is a burn-wire release plus a ~30 s hinge sweep; the array
+# area, and therefore the whole point of the command, only changes when the
+# timer expires. The S1.7 waits for these.
+COMPLETION_WING_PY = "eps.wing_deploy.py"
+COMPLETION_WING_MY = "eps.wing_deploy.my"
+COMPLETION_WING_BOTH = "eps.wing_deploy.both"
 POWER_LINE_SWITCHABLE = {d[0]: d[1] for d in POWER_LINE_DEFS}
 POWER_LINE_DEFAULTS = {d[0]: d[2] for d in POWER_LINE_DEFS}
 
@@ -94,6 +102,10 @@ class EPSState:
     power_gen_w: float = 252.0
     power_cons_w: float = 120.0
     in_eclipse: bool = False
+    #: Illuminated fraction of the solar disc, copied verbatim from the orbit
+    #: propagator (the single eclipse authority). Every generation path is
+    #: multiplied by it; 0.0 in umbra.
+    sun_fraction: float = 1.0
     payload_mode: int = 0
     fpa_cooler_on: bool = False
     transponder_tx: bool = True
@@ -214,6 +226,8 @@ class EPSBasicModel(SubsystemModel):
         import random as _random
         self.rng = _random.Random(20260731)  # deterministic standalone fallback; engine overrides via derive_rng
         self._cfg: dict[str, Any] = {}
+        # Deferred-completion reports drained by the engine (2026-08 ruling).
+        self._completions: list[dict] = []
         # Defaults from original config
         self._battery_capacity_wh = 120.0
         self._payload_power_w = 45.0
@@ -457,7 +471,26 @@ class EPSBasicModel(SubsystemModel):
     def tick(self, dt: float, orbit_state: Any, shared_params: dict[int, float]) -> None:
         s = self._state
         events_to_generate = []  # Accumulate events
-        s.in_eclipse = orbit_state.in_eclipse
+        # ── Illumination comes from THE authority, never from EPS ──────────
+        # `sun_fraction` (0.0 umbra … 1.0 full sun) is computed once per step
+        # by the orbit propagator from smo_common.orbit.eclipse.shadow_state
+        # and published on the OrbitState. EPS multiplies every generation
+        # path by it, so "generation in eclipse" is impossible BY
+        # CONSTRUCTION rather than by a branch that a future edit can dodge.
+        # A reduced harness whose orbit stub predates the field falls back to
+        # the boolean the same authority publishes.
+        s.in_eclipse = bool(orbit_state.in_eclipse)
+        illum = getattr(orbit_state, "sun_fraction", None)
+        try:
+            illum = float(illum)
+        except (TypeError, ValueError):
+            illum = None
+        if illum is None or not (0.0 <= illum <= 1.0):
+            illum = 0.0 if s.in_eclipse else 1.0
+        if s.in_eclipse:
+            # The authority's two spellings cannot disagree: umbra is zero sun.
+            illum = 0.0
+        s.sun_fraction = illum
         beta_deg = orbit_state.solar_beta_deg
 
         # ── Event: Eclipse entry/exit ──
@@ -479,12 +512,18 @@ class EPSBasicModel(SubsystemModel):
                     # is CHARGE_COMPLETE — so a wing deployment logged "battery
                     # reached 100% SoC" and 0x0112 appeared nowhere in the tree.
                     events_to_generate.append((0x0112, f"+Y solar wing deployed: area now {self._panel_areas['py']:.3f} m2"))
+                    self._complete(COMPLETION_WING_PY, True)
                 if s.wing_my_deploying:
                     s.wing_my_deployed = True
                     s.wing_my_deploying = False
                     self._panel_areas['my'] = self._panel_areas_body['my'] + self._wing_my_area
                     # 0x0113 WING_MY_DEPLOYED (was 0x010F PDU_OVERCURRENT).
                     events_to_generate.append((0x0113, f"-Y solar wing deployed: area now {self._panel_areas['my']:.3f} m2"))
+                    self._complete(COMPLETION_WING_MY, True)
+                # The "both" telecommand is one telecommand: its S1.7 lands
+                # when the shared burn-wire timer expires, which is the same
+                # tick both panels latch deployed.
+                self._complete(COMPLETION_WING_BOTH, True)
         # Keep panel areas in sync with deployment state (e.g. after state restore)
         if s.wing_py_deployed and not s.wing_py_deploying:
             self._panel_areas['py'] = self._panel_areas_body['py'] + self._wing_py_area
@@ -506,8 +545,10 @@ class EPSBasicModel(SubsystemModel):
         # is now DERIVED from `annual_degradation`, so the two cannot drift
         # apart again: 0.0275 / (8760 x 0.65) = 4.83e-6 per sunlit hour, and
         # 3 years x 0.0275 = 0.0825 => sa_age_factor 0.9175 at EOL.
-        if not s.in_eclipse:
-            s.sa_lifetime_hours += dt / 3600.0
+        # Aging accrues with ILLUMINATION, not with a boolean: a penumbra pass
+        # is not a full sunlit hour. Same authority, same number.
+        if illum > 0.0:
+            s.sa_lifetime_hours += illum * dt / 3600.0
         s.sa_age_factor = max(
             0.5, 1.0 - s.sa_lifetime_hours * self._sa_degradation_per_hour)
 
@@ -538,8 +579,15 @@ class EPSBasicModel(SubsystemModel):
                 al.get("array_temp_sunlit_c", 65.0) - al.get("temp_ref_c", 28.0))
             loss_f = (al.get("inherent_degradation", 0.85) * temp_f
                       * al.get("harness_efficiency", 0.95))
+        #
+        # ILLUMINATION IS A FACTOR OF K, NOT A BRANCH (single-authority
+        # refactor): `illum` is the propagator's sun_fraction — 0.0 in umbra,
+        # 1.0 in full sun, the penumbra value in between. Because every
+        # generation path below (6-panel, tumbling fallback, wings) is
+        # `area x k_eff x <geometry>`, generation in eclipse is arithmetically
+        # zero and cannot be reintroduced by editing any one branch.
         k_eff = (self._cell_eff * self._solar_irrad * loss_f
-                 * s.mppt_efficiency * s.sa_age_factor)
+                 * s.mppt_efficiency * s.sa_age_factor * illum)
 
         # Expected (undegraded) generation, accumulated alongside the actual
         # generation with the SAME model + geometry. Reference for the
@@ -553,14 +601,14 @@ class EPSBasicModel(SubsystemModel):
         # convert currents back to watts in the eclipse case too (2026-08b).
         bus_v_gen = max(s.bus_voltage, 20.0)
 
-        if s.in_eclipse:
-            # No solar generation in eclipse
-            for face in PANEL_NORMALS:
-                s.sa_panel_currents[face] = 0.0
-            gen_w = 0.0
-            s.sa_a_current = 0.0
-            s.sa_b_current = 0.0
-        elif sun_mag < 0.01:
+        # NOTE (single-authority refactor): there is deliberately NO
+        # `if s.in_eclipse: gen_w = 0` branch here any more. That branch was a
+        # check bolted on beside the physics — it zeroed the 6-panel path
+        # while leaving every other generation path (tumbling fallback, SADA
+        # wings, and anything added later) free to produce watts from a stale
+        # sun vector. Illumination is now a multiplicative factor inside
+        # k_eff, so all three paths below yield exactly 0 W in umbra.
+        if sun_mag < 0.01:
             # No valid AOCS sun vector — which is the case for the whole of
             # phases 0-3, i.e. all of bootloader and early LEOP.
             #
@@ -1173,6 +1221,12 @@ class EPSBasicModel(SubsystemModel):
         #   0x013A = eclipse_active   (now actually written)
         shared_params[0x012A] = float(s.pdm_unsw_status)
         shared_params[0x013A] = 1.0 if s.in_eclipse else 0.0
+        # 0x0142 = the illumination AUTHORITY on the wire (0.0 umbra … 1.0
+        # full sun), copied verbatim from the orbit propagator. 0x0108 /
+        # 0x013A are its boolean spelling; all three come from one number so
+        # they cannot disagree, and the ground can now see WHY generation is
+        # what it is instead of inferring it from a flag.
+        shared_params[0x0142] = float(s.sun_fraction)
 
         # Per-panel solar array currents
         panel_names = ['px', 'mx', 'py', 'my', 'pz', 'mz']
@@ -1265,6 +1319,23 @@ class EPSBasicModel(SubsystemModel):
             p.get("power_gen", 0x0107): s.power_gen_w,
             p.get("power_cons", 0x0106): s.power_cons_w,
         }
+
+    # ── Deferred completion (verification-semantics ruling, 2026-08) ──
+
+    def _wing_deploy_timeout_s(self) -> float:
+        """Timeout for a held wing-deploy S1.7: 4x the nominal sweep, floor 120 s."""
+        return max(120.0, 4.0 * float(self._wing_deploy_time_s))
+
+    def _complete(self, key: str, success: bool = True,
+                  error_code: int = 0x0001, reason: str = "") -> None:
+        """Queue a deferred-completion report for the engine to drain."""
+        self._completions.append({"key": str(key), "success": bool(success),
+                                  "error_code": int(error_code),
+                                  "reason": str(reason or "")})
+
+    def pop_completions(self) -> list[dict]:
+        out, self._completions = self._completions, []
+        return out
 
     def handle_command(self, cmd: dict[str, Any]) -> dict[str, Any]:
         command = cmd.get("command", "")
@@ -1389,7 +1460,14 @@ class EPSBasicModel(SubsystemModel):
             s.wing_py_deploying = True
             s.wing_deploy_timer = self._wing_deploy_time_s
             s.wing_deploy_target = "py"
-            return {"success": True, "message": f"+Y wing deployment initiated ({self._wing_deploy_time_s:.0f}s)"}
+            # Execution STARTED: the panel is still stowed and the array area
+            # has not changed until the burn-wire timer expires, so the S1.7
+            # waits for COMPLETION_WING_PY (verification-semantics ruling).
+            return {"success": True,
+                    "deferred": COMPLETION_WING_PY,
+                    "deferred_timeout_s": self._wing_deploy_timeout_s(),
+                    "deferred_label": "EPS_DEPLOY_WING(+Y)",
+                    "message": f"+Y wing deployment initiated ({self._wing_deploy_time_s:.0f}s)"}
         elif wing == "my" or wing == "-y":
             if s.wing_my_deployed:
                 return {"success": False, "message": "-Y wing already deployed"}
@@ -1398,7 +1476,11 @@ class EPSBasicModel(SubsystemModel):
             s.wing_my_deploying = True
             s.wing_deploy_timer = self._wing_deploy_time_s
             s.wing_deploy_target = "my"
-            return {"success": True, "message": f"-Y wing deployment initiated ({self._wing_deploy_time_s:.0f}s)"}
+            return {"success": True,
+                    "deferred": COMPLETION_WING_MY,
+                    "deferred_timeout_s": self._wing_deploy_timeout_s(),
+                    "deferred_label": "EPS_DEPLOY_WING(-Y)",
+                    "message": f"-Y wing deployment initiated ({self._wing_deploy_time_s:.0f}s)"}
         elif wing == "both":
             msgs = []
             if not s.wing_py_deployed and not s.wing_py_deploying:
@@ -1409,7 +1491,11 @@ class EPSBasicModel(SubsystemModel):
                 msgs.append("-Y")
             if msgs:
                 s.wing_deploy_timer = self._wing_deploy_time_s
-                return {"success": True, "message": f"Wing deployment initiated: {', '.join(msgs)} ({self._wing_deploy_time_s:.0f}s)"}
+                return {"success": True,
+                        "deferred": COMPLETION_WING_BOTH,
+                        "deferred_timeout_s": self._wing_deploy_timeout_s(),
+                        "deferred_label": "EPS_DEPLOY_WING(both)",
+                        "message": f"Wing deployment initiated: {', '.join(msgs)} ({self._wing_deploy_time_s:.0f}s)"}
             return {"success": False, "message": "Both wings already deployed"}
         return {"success": False, "message": f"Invalid wing: {wing} (use 'py', 'my', or 'both')"}
 

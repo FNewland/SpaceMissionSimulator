@@ -14,7 +14,9 @@ from smo_common.config.loader import load_orbit_config
 from smo_common.orbit.propagator import OrbitPropagator, GroundStation
 
 CONFIG_DIR = Path(__file__).parent.parent.parent / "configs" / "eosat1"
-EPOCH = datetime(2026, 3, 10, 0, 0, 0, tzinfo=timezone.utc)
+# Mission T-0 (orbit.yaml t0_epoch). 2026-08: moved from 2026-03-10 when the
+# owner ruling re-epoched the TLE to 2026-08-20T12:00:00Z (TLE-truth ruling).
+EPOCH = datetime(2026, 8, 20, 12, 0, 0, tzinfo=timezone.utc)
 
 
 def _mission_propagator():

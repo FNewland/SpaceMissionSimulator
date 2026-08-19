@@ -46,7 +46,9 @@ NODE = shutil.which("node") or shutil.which("nodejs")
 requires_node = pytest.mark.skipif(NODE is None, reason="node required")
 
 # Agent-1 baseline (tests/test_common/test_classic_untouched.py).
-CLASSIC_SHA = "d3766c1787933e6ed8f669ac358554cb5d9896f0635e69ecc7b3d1f494d0fe1a"
+# Re-pinned 2026-08d (TZ-1): see tests/test_common/
+# test_classic_untouched.py for why the classic page changed.
+CLASSIC_SHA = "049d00b55de192552e48ea739bcd36f919d4423add347c3e7a91ed7252f6be01"
 
 
 def run_js(snippet: str, tmp_path: Path):

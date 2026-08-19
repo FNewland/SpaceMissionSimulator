@@ -66,6 +66,17 @@ class ActivityScheduler:
             "priority": atype.get("priority", "medium"),
             "procedure_ref": atype.get("procedure_ref"),
             "command_sequence": atype.get("command_sequence", []),
+            # 2026-08d PLAN-7: the activity's REAL timing, carried on the
+            # instance so the conflict checker can see it.
+            # `timing.sequence_min_duration_s` is how long the emitted command
+            # sequence physically takes (FPA cooler settle, FINE settle, the
+            # dump dwell, the catbed preheat, the desat itself);
+            # `timing.min_gap_after_s` is how long the NEXT activity has to
+            # wait for the spacecraft to be usable again. Both used to live
+            # only in prose, so a plan that booked 120 s for a 197 s imaging
+            # sequence, or put an imaging pass on the tail of a 29-minute
+            # desat, validated clean.
+            "timing": atype.get("timing", {}) or {},
             "conflicts_with": atype.get("conflicts_with", []),
             # The RESOURCES this activity occupies. Two activities that overlap
             # in time only really clash if they want the same subsystem, so the
@@ -86,6 +97,12 @@ class ActivityScheduler:
         # Also check time overlaps at insertion time
         overlaps = self.check_time_overlap(activity)
         warnings_list.extend(overlaps)
+
+        # 2026-08d PLAN-7: is the booking long enough to actually run the
+        # command sequence, and does it respect the preceding activity's
+        # recovery gap?
+        warnings_list.extend(self.check_sequence_timing(activity))
+        warnings_list.extend(self.check_separation(activity))
 
         if warnings_list:
             activity["warnings"] = warnings_list
@@ -184,6 +201,107 @@ class ActivityScheduler:
         if not a_res or not b_res:
             return True
         return bool(a_res & b_res)
+
+    # ── Sequence timing and inter-activity separation (2026-08d PLAN-7) ──
+    #
+    # An activity's `duration_s` is a BOOKING. Its `command_sequence` is what
+    # the spacecraft actually does, and that has a floor: the explicit
+    # `wait_s` dwells (FPA cooler settle, FINE settle, the dump window, the
+    # catbed preheat, the desaturation itself) plus a round-trip allowance per
+    # telecommand. Before this, nothing compared the two, so imaging_pass
+    # booked 120 s for a sequence that could not finish inside 197 s and
+    # orbit_manoeuvre booked 1500 s for one that needed 1920 s — the plan
+    # looked feasible, the pass ran long, and the next activity started on top
+    # of a spacecraft still in the previous configuration.
+    #
+    # Both numbers are DATA (activity_types.yaml `timing:`), so the checker
+    # reasons about them instead of an operator reading a comment.
+
+    #: Seconds allowed per telecommand for uplink, acceptance and execution
+    #: verification. Deliberately small — it exists so a sequence of N bare
+    #: commands is not costed at zero, not to model the link.
+    TC_ALLOWANCE_S = 1.0
+
+    @classmethod
+    def sequence_min_duration_s(cls, activity: dict) -> float:
+        """Minimum wall time the activity's command sequence needs.
+
+        The larger of the declared ``timing.sequence_min_duration_s`` and the
+        sum computed from the sequence itself, so a catalogue whose declared
+        number has drifted from its own steps is caught by the bigger of the
+        two rather than trusted.
+        """
+        declared = float((activity.get("timing") or {}).get(
+            "sequence_min_duration_s", 0.0) or 0.0)
+        computed = 0.0
+        for step in activity.get("command_sequence") or []:
+            if not isinstance(step, dict):
+                continue
+            if "wait_s" in step:
+                computed += float(step.get("wait_s") or 0.0)
+            elif "service" in step:
+                computed += cls.TC_ALLOWANCE_S
+            # `wait_for` costs nothing here on purpose: the S11 on-board
+            # schedule skips telemetry checks entirely, so they may not be
+            # relied on to create time. Real dwell must be a `wait_s`.
+        return max(declared, computed)
+
+    def check_sequence_timing(self, activity: dict) -> list[str]:
+        """Booked duration vs the time the command sequence actually needs."""
+        need = self.sequence_min_duration_s(activity)
+        if need <= 0.0:
+            return []
+        booked = float(activity.get("duration_s") or 0.0)
+        if booked + 1e-6 >= need:
+            return []
+        return [
+            f"Under-booked: '{activity.get('name')}' books {booked:.0f} s but "
+            f"its command sequence needs at least {need:.0f} s "
+            f"(explicit wait_s dwell + {self.TC_ALLOWANCE_S:.0f} s per "
+            f"telecommand)"
+        ]
+
+    def check_separation(self, activity: dict) -> list[str]:
+        """Recovery gaps demanded by activities that run BEFORE this one.
+
+        ``timing.min_gap_after_s`` states how long the spacecraft is unusable
+        for anything the activity conflicts with once it ends: after a
+        momentum dump the wheels have to settle AND the FINE_POINT
+        preconditions (0x02C5) have to become satisfiable again, which is
+        ~10 min, not the 30 s the catalogue used to claim.
+        """
+        issues: list[str] = []
+        start = _parse_iso(activity.get("start_time", "") or "")
+        if start is None:
+            return issues
+        name = activity.get("name", "")
+        for other in self._active_others(activity):
+            gap_s = float((other.get("timing") or {}).get(
+                "min_gap_after_s", 0.0) or 0.0)
+            if gap_s <= 0.0:
+                continue
+            # A gap only binds on activities that cannot run in that state.
+            if not (name in (other.get("conflicts_with") or [])
+                    or other.get("name", "") in (
+                        activity.get("conflicts_with") or [])
+                    or self._shares_resource(activity, other)):
+                continue
+            o_start = _parse_iso(other.get("start_time", "") or "")
+            if o_start is None:
+                continue
+            o_end = o_start + timedelta(
+                seconds=float(other.get("duration_s") or 0.0))
+            if o_end > start:
+                continue                      # overlap: reported elsewhere
+            actual = (start - o_end).total_seconds()
+            if actual + 1e-6 < gap_s:
+                issues.append(
+                    f"Only {actual:.0f} s after '{other.get('name')}' "
+                    f"(id={other.get('id')}) ends; that activity declares a "
+                    f"{gap_s:.0f} s recovery gap before anything it conflicts "
+                    f"with can run"
+                )
+        return issues
 
     def _active_others(self, activity: dict):
         """Iterate schedule entries that are neither *activity* nor dead."""
@@ -381,6 +499,24 @@ class ActivityScheduler:
                     "activity_id": activity["id"],
                     "type": "time_overlap",
                     "message": o,
+                })
+
+            # 2026-08d PLAN-7: physically infeasible bookings. An activity
+            # whose booking is shorter than its own command sequence, or that
+            # starts inside a preceding activity's declared recovery gap, is
+            # a plan the spacecraft cannot fly — the checker says so on the
+            # ground instead of the operator finding out at the shutter.
+            for m in self.check_sequence_timing(activity):
+                issues.append({
+                    "activity_id": activity["id"],
+                    "type": "under_booked",
+                    "message": m,
+                })
+            for m in self.check_separation(activity):
+                issues.append({
+                    "activity_id": activity["id"],
+                    "type": "separation",
+                    "message": m,
                 })
 
             # Pre-condition evaluation (if telemetry available)

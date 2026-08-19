@@ -110,6 +110,13 @@ class SimulationEngine:
         # test_53 drains) to avoid a re-emit feedback loop.
         self._model_event_queue: queue.Queue = queue.Queue(maxsize=500)
 
+        # Deferred command completions (verification-semantics ruling,
+        # 2026-08). One entry per telecommand whose handler reported
+        # execution STARTED but not COMPLETED; the S1.7 for that sequence
+        # count is held here until the owning model reports the effect done.
+        # See _register_pending_completion / report_completion.
+        self._pending_completions: list[dict] = []
+
         # Diagnostic counters
         self.tm_queue_drops: int = 0
         self.tm_packets_enqueued: int = 0
@@ -296,6 +303,10 @@ class SimulationEngine:
         self._hk_intervals: dict[int, float] = {}
         self._hk_timers: dict[int, float] = {}
         self._hk_enabled: dict[int, bool] = {}
+        # Last wholesale reset of the HK enable set (boot / bootloader entry),
+        # published on /api/state so the ground can explain a SID that went
+        # quiet without anyone commanding TC(3,6). None = never reset.
+        self._hk_enable_reset: dict[str, Any] | None = None
         # Default HK enable state is config-driven (defect #75). The operations
         # manual says HK generation is enabled *by command*; the engine used to
         # switch every SID on at startup, which made TC(3,5) HK_ENABLE a no-op
@@ -511,6 +522,11 @@ class SimulationEngine:
         # not ticking (handled by phase gate in main loop).
         if getattr(self._mission_cfg, 'start_in_bootloader', True):
             self._enter_bootloader_mode()
+            # Construction is not something that happened TO the operator:
+            # nothing has been commanded yet, so there is no reset to explain.
+            # (A bootloader entry LATER in the run does have one — see
+            # _set_hk_enable_set.)
+            self._hk_enable_reset = None
 
         # ── Stateful-component registry (plan A-4) ──
         # Every component holding mutable simulation state MUST be registered
@@ -584,8 +600,11 @@ class SimulationEngine:
         self._sep_timer = 0.0
 
         # HK gating: only beacon SID active
-        for sid in self._hk_enabled:
-            self._hk_enabled[sid] = (sid == BOOTLOADER_BEACON_SID)
+        self._set_hk_enable_set(
+            {BOOTLOADER_BEACON_SID},
+            reason=("OBC is in the bootloader — HK restricted to the beacon "
+                    "SID; every commanded SID must be re-enabled after "
+                    "OBC_BOOT_APP"))
         logger.info("Bootloader boot-up: HK restricted to SID %d (Beacon)",
                     BOOTLOADER_BEACON_SID)
 
@@ -699,7 +718,11 @@ class SimulationEngine:
         # (defect #75). The application has full telemetry access, but the
         # operator still has to command HK_ENABLE for the non-essential SIDs,
         # which is what the operations manual and the commissioning cards say.
-        self._apply_default_hk_enable()
+        self._apply_default_hk_enable(
+            reason=("OBC application software booted — the OBSW starts from "
+                    "its configured power-up HK set (simulation.yaml "
+                    "housekeeping.default_enabled_sids); re-send TC(3,5) "
+                    "HK_ENABLE for every other SID"))
 
         # TM stores come online (empty but enabled)
         if self._tm_storage is not None:
@@ -723,10 +746,73 @@ class SimulationEngine:
             "Application booted: APID=0x%03X, default HK SIDs %s enabled, stores online",
             self._application_apid, sorted(self._hk_default_enabled_sids))
 
-    def _apply_default_hk_enable(self) -> None:
-        """Set every HK SID to its configured power-up enable state."""
+    def _apply_default_hk_enable(
+            self, reason: str = "application boot — HK enable set reset to the "
+                                "configured power-up defaults") -> None:
+        """Set every HK SID to its configured power-up enable state.
+
+        This is correct behaviour on a BOOT — the application software comes
+        up with `default_enabled_sids` and nothing else — but it is invisible
+        behaviour unless it is announced, and the SIDs it switches off stop
+        feeding the S15 HK store, so a dump taken afterwards has a hole in it.
+        Every call therefore goes through `_set_hk_enable_set`, which raises
+        S5 event 0x0056 naming the SIDs that were switched off and why.
+        """
+        self._set_hk_enable_set(set(self._hk_default_enabled_sids),
+                                reason=reason)
+
+    #: S5 event raised whenever the on-board HK enable set is reset wholesale
+    #: (boot, bootloader entry) rather than by an operator TC(3,5)/TC(3,6).
+    EV_HK_ENABLE_SET_RESET = 0x0056
+
+    def _set_hk_enable_set(self, enabled_sids: set[int], *, reason: str) -> None:
+        """Replace the whole HK enable set, and say so if anything changed.
+
+        `enabled_sids` is the set of SIDs that must be ON afterwards; every
+        other configured SID goes OFF. When that actually turns something off
+        that the ground had commanded on, an S5 event is raised and the
+        change is recorded in `_hk_enable_reset` so /api/state (and therefore
+        the MCS HK Manager) can show the operator WHY their SIDs went quiet.
+        """
+        want = {int(s) for s in enabled_sids}
+        turned_off = sorted(sid for sid, on in self._hk_enabled.items()
+                            if on and sid not in want)
+        turned_on = sorted(sid for sid in self._hk_enabled
+                           if sid in want and not self._hk_enabled.get(sid))
         for sid in self._hk_enabled:
-            self._hk_enabled[sid] = sid in self._hk_default_enabled_sids
+            self._hk_enabled[sid] = sid in want
+        if not turned_off and not turned_on:
+            return
+        record = {
+            'reason': reason,
+            'sids_disabled': turned_off,
+            'sids_enabled': turned_on,
+            'enabled_now': sorted(s for s, on in self._hk_enabled.items() if on),
+            'obc_time_s': self._obdh_clock_seconds(),
+            'sim_time': self._sim_time.isoformat(),
+        }
+        self._hk_enable_reset = record
+        if turned_off:
+            desc = (f"HK enable set reset: SID(s) "
+                    f"{', '.join(str(s) for s in turned_off)} switched OFF — "
+                    f"{reason}. Periodic HK and S15 storage stop for those "
+                    f"SIDs until TC(3,5) HK_ENABLE is re-sent.")
+            severity = 3
+        else:
+            desc = (f"HK enable set reset: SID(s) "
+                    f"{', '.join(str(s) for s in turned_on)} switched ON — "
+                    f"{reason}.")
+            severity = 2
+        try:
+            self._emit_event({
+                'event_id': self.EV_HK_ENABLE_SET_RESET,
+                'severity': severity,
+                'description': desc,
+            })
+        except Exception:  # noqa: BLE001 — never break a boot on an event
+            logger.debug("HK enable-set reset event could not be emitted",
+                         exc_info=True)
+        logger.warning("%s", desc)
 
     # ── Clocks (TIME_ARCHITECTURE Part C) ─────────────────────────────
     #
@@ -1489,19 +1575,31 @@ class SimulationEngine:
             if new_phase == 1:
                 self._sep_timer = self._sep_timer_duration
         else:
-            # Application mode: HK per the configured defaults, application
-            # APID, stores online. Force OBDH sw_image to APPLICATION so the
-            # reboot-detection logic in _tick_spacecraft_phase does not
-            # immediately revert us to bootloader on the next tick.
+            # Application mode: application APID, stores online. Force OBDH
+            # sw_image to APPLICATION so the reboot-detection logic in
+            # _tick_spacecraft_phase does not immediately revert us to
+            # bootloader on the next tick.
             obdh = self.subsystems.get("obdh")
             if obdh and hasattr(obdh, '_state'):
                 obdh._state.sw_image = 1
                 if hasattr(obdh._state, 'boot_app_pending'):
                     obdh._state.boot_app_pending = False
             if old_phase <= 3:
+                # A BOOT. The application software starts from its power-up
+                # HK configuration, so the configured defaults are re-applied
+                # (and announced — see _apply_default_hk_enable).
                 self._exit_bootloader_mode()
-            else:
-                self._apply_default_hk_enable()
+            # An application -> application phase change (LEOP -> COMMISSIONING
+            # -> NOMINAL, or a FORCEd step back) is a DECLARATION about where
+            # the mission is, not a reboot: the OBSW keeps running and its HK
+            # configuration is untouched. This branch used to call
+            # _apply_default_hk_enable(), so the last card of LEOP
+            # (SYS_SET_MISSION_PHASE(5)) and the last card of commissioning
+            # (SYS_SET_MISSION_PHASE(6)) each silently reverted every SID the
+            # operator had commissioned back to `default_enabled_sids`
+            # [1, 11] — with no event, and therefore holes in the S15 HK
+            # store and in every dump taken afterwards. Nothing here touches
+            # the HK enable set any more.
         self.params[0x0129] = self._spacecraft_phase
         return old_phase
 
@@ -1828,6 +1926,13 @@ class SimulationEngine:
             "rt_pending": [pkt.hex() for pkt in self._rt_pending],
             "rt_byte_budget": self._rt_byte_budget,
             "override_passes": self._override_passes,
+            # Deferred S1.7s. Without these in the round-trip a breakpoint
+            # taken mid-boot would restore into a spacecraft that had quietly
+            # forgotten it owed the operator a verification report — the
+            # "state that silently heals on restore" failure this repo has
+            # been bitten by before.
+            "pending_completions": [dict(e)
+                                    for e in self._pending_completions],
             "tm_apid": self.tm_builder.apid,
             "tm_seq_count": self.tm_builder._seq_count,
             "seed": self.seed,
@@ -1884,6 +1989,14 @@ class SimulationEngine:
                                        self._rt_byte_budget))
         self._override_passes = bool(g("override_passes",
                                        self._override_passes))
+        self._pending_completions = [
+            {"key": str(e.get("key", "")), "apid": int(e.get("apid", 0)),
+             "seq": int(e.get("seq", 0)), "service": int(e.get("service", 0)),
+             "subtype": int(e.get("subtype", 0)),
+             "label": str(e.get("label", "")),
+             "remaining_s": float(e.get("remaining_s", 0.0))}
+            for e in g("pending_completions", [])
+        ][:self.MAX_PENDING_COMPLETIONS]
         if "tm_apid" in state:
             # set_apid resets the sequence counter on change — restore the
             # counter AFTER the APID so both survive exactly.
@@ -2213,6 +2326,11 @@ class SimulationEngine:
 
         # Deliver events raised inside the subsystem models (defect #23).
         self._drain_model_events()
+
+        # Release (or time out) the S1.7s held for long-running commands.
+        # After _drain_model_events so the S5 event that explains a completion
+        # is already on the downlink when its S1.7 lands.
+        self._tick_pending_completions(dt)
 
         # Transitions
         self._check_transitions(orbit_state)
@@ -2625,6 +2743,35 @@ class SimulationEngine:
         self._emit_command_rejected(svc, sub, pkt.data_field or b'',
                                     error_code, reason, "acceptance")
 
+    def _boot_gate_advice(self) -> str:
+        """Why the bootloader subset is still in force, in the operator's terms.
+
+        Reads obdh.boot_state (0x0A15) so the refusal distinguishes "no boot
+        has been commanded" from "a boot is running right now, wait for it"
+        from "the last boot failed CRC" — three situations that used to
+        produce one identical, and in two cases wrong, sentence.
+        """
+        obdh = self.subsystems.get("obdh")
+        st = getattr(obdh, "_state", None)
+        try:
+            from smo_simulator.models.obdh_basic import (
+                BOOT_STATE_VERIFYING, BOOT_STATE_FAILED)
+        except Exception:  # noqa: BLE001
+            BOOT_STATE_VERIFYING, BOOT_STATE_FAILED = 1, 3
+        boot_state = int(getattr(st, "boot_state", 0) or 0)
+        if boot_state == BOOT_STATE_VERIFYING:
+            remaining = float(getattr(st, "boot_app_timer", 0.0) or 0.0)
+            # Kept short on purpose: the failure notice is capped at
+            # FAILURE_REASON_MAX_BYTES and the identity prefix eats ~60 of it,
+            # so the parameter id and the "wait" instruction must both fit.
+            return (f"0x0A15 = 1 VERIFYING: a boot IS in progress, "
+                    f"~{max(0.0, remaining):.0f} s of CRC left — wait for its "
+                    f"S1.7, then re-send")
+        if boot_state == BOOT_STATE_FAILED:
+            return ("0x0A15 = 3 FAILED: the last OBC_BOOT_APP failed its image "
+                    "CRC — see the BOOT_FAILURE event")
+        return "boot the application (S8.1 func 55) first"
+
     def _dispatch_tc(self, raw: bytes) -> None:
         from smo_common.protocol.ecss_packet import decommutate_packet
         pkt = decommutate_packet(raw)
@@ -2698,11 +2845,17 @@ class SimulationEngine:
             if not allowed:
                 # Reject at acceptance — no S1.3/S1.7 is emitted.
                 ident = self._tc_identity(svc, sub, pkt.data_field)
+                # If a boot is ALREADY in flight, say so. The owner's report
+                # was exactly this: OBC_BOOT_APP answered S1.7 immediately, so
+                # the operator sent the next command inside the 10 s CRC
+                # window and got "boot the application first" from a
+                # spacecraft that was busy doing precisely that. The deferred
+                # S1.7 fixes the first half; this sentence fixes the second.
                 self._reject_tc(
                     pkt, 0x0006,
                     f"{ident} is not in the bootloader command subset "
-                    f"(phase {int(self._spacecraft_phase)}); boot the "
-                    f"application (S8.1 func 55) first")
+                    f"(phase {int(self._spacecraft_phase)}); "
+                    + self._boot_gate_advice())
                 return
 
         # Bus-reachability gate (defect #29): if the active CAN bus has failed,
@@ -2804,6 +2957,16 @@ class SimulationEngine:
             self._emit_command_rejected(svc, sub, pkt.data_field or b'',
                                         result.error_code, result.reason,
                                         "execution")
+        elif result.deferred:
+            # Execution has STARTED but the effect completes on a later tick
+            # (OBC_BOOT_APP's 10 s CRC window, a 30 s wing deployment, a
+            # 300 s gyro-calibration arc, a 20 min memory scrub). The S1.3
+            # already went out above and is the honest report; the S1.7 is
+            # held until the model says the effect actually happened.
+            self._register_pending_completion(
+                result.deferred_key, pkt.primary.apid,
+                pkt.primary.sequence_count, svc, sub,
+                result.deferred_timeout_s, result.deferred_label)
         else:
             # Send S1.7 execution complete
             comp = self.tm_builder.build_verification_completion(pkt.primary.apid, pkt.primary.sequence_count)
@@ -2811,6 +2974,143 @@ class SimulationEngine:
 
         if obdh and hasattr(obdh, 'record_tc_executed'):
             obdh.record_tc_executed()
+
+    # ------------------------------------------------------------------
+    # Deferred command completion (verification-semantics ruling, 2026-08)
+    # ------------------------------------------------------------------
+    #
+    # WHAT WAS WRONG. `_dispatch_tc` sent S1.7 "execution complete" to every
+    # dispatch that did not fail, including the ones whose handler had merely
+    # armed a timer. OBC_BOOT_APP reported the boot complete the instant it
+    # was accepted, while the OBDH model only flips `sw_image` to APPLICATION
+    # ten seconds later — so the operator's next command was refused S1.2
+    # "not in the bootloader command subset" by a spacecraft that had just
+    # told them the boot was done. This is the "reports success for something
+    # that did nothing" class this codebase has closed repeatedly elsewhere.
+    #
+    # THE CONTRACT.
+    #   1. A model handler that starts a long-running effect returns
+    #      ``{"success": True, "deferred": "<key>", "deferred_timeout_s": N}``.
+    #      `ServiceDispatcher._cmd` turns that into `DispatchResult.deferred_key`
+    #      — the same free ride the failure path already gets, so no router
+    #      call site needs to know which commands are long-running.
+    #   2. The engine emits S1.3 (it already does, for every accepted TC),
+    #      then registers apid + sequence count + key + timeout here INSTEAD
+    #      of emitting S1.7.
+    #   3. The model calls `Engine.report_completion(key, success, ...)` when
+    #      the effect lands. Success → S1.7 for the ORIGINAL sequence count.
+    #      Failure → S1.8 carrying the model's own reason.
+    #   4. No completion inside the timeout → S1.8 "no completion report",
+    #      so a lost completion can never leak an entry.
+    #
+    # BOUNDS. `MAX_PENDING_COMPLETIONS` caps the table; a re-issued command
+    # supersedes its own earlier entry (closing that one with an S1.8) rather
+    # than stacking. The table is in `get_state`/`set_state`, so a breakpoint
+    # save/restore mid-boot keeps waiting instead of silently healing.
+
+    #: Hard cap on outstanding deferred completions. Ten is far above the
+    #: realistic concurrent set (one boot, two wings, one calibration, one
+    #: scrub) and small enough that a runaway producer is obvious.
+    MAX_PENDING_COMPLETIONS = 10
+
+    #: S1.8 error code for a deferred completion that timed out.
+    ERR_COMPLETION_TIMEOUT = 0x000A
+
+    def _register_pending_completion(self, key: str, apid: int, seq: int,
+                                     svc: int, sub: int, timeout_s: float,
+                                     label: str = "") -> None:
+        """Hold the S1.7 for `seq` until `key` completes (or times out)."""
+        # A re-issued command supersedes its own earlier entry: two pending
+        # S1.7s for one key would both fire on the single completion report.
+        for old in [e for e in self._pending_completions
+                    if e["key"] == str(key)]:
+            self._close_pending(
+                old, False, self.ERR_COMPLETION_TIMEOUT,
+                f"{old['label'] or old['key']}: superseded by a later "
+                f"telecommand before it completed")
+        if len(self._pending_completions) >= self.MAX_PENDING_COMPLETIONS:
+            oldest = self._pending_completions[0]
+            self._close_pending(
+                oldest, False, self.ERR_COMPLETION_TIMEOUT,
+                f"{oldest['label'] or oldest['key']}: dropped — the pending "
+                f"completion table is full "
+                f"({self.MAX_PENDING_COMPLETIONS} entries)")
+        entry = {
+            "key": str(key), "apid": int(apid), "seq": int(seq),
+            "service": int(svc), "subtype": int(sub),
+            "label": str(label or key),
+            "remaining_s": float(timeout_s or 0.0),
+        }
+        self._pending_completions.append(entry)
+        logger.info("TC S%d.%d seq %d: execution started, S1.7 deferred on "
+                    "'%s' (timeout %.0f s)", svc, sub, seq, key,
+                    entry["remaining_s"])
+
+    def _close_pending(self, entry: dict, success: bool, error_code: int,
+                       reason: str) -> None:
+        """Emit the held S1.7 (or an S1.8) and drop the entry."""
+        try:
+            self._pending_completions.remove(entry)
+        except ValueError:
+            return
+        if success:
+            self._enqueue_tm(self.tm_builder.build_verification_completion(
+                entry["apid"], entry["seq"]))
+            logger.info("TC S%d.%d seq %d: '%s' completed — S1.7 released",
+                        entry["service"], entry["subtype"], entry["seq"],
+                        entry["key"])
+            return
+        code = int(error_code or 0x0001)
+        self._enqueue_tm(self.tm_builder.build_execution_failure(
+            entry["apid"], entry["seq"], code, reason))
+        logger.info("TC S%d.%d seq %d: '%s' failed after start — %s "
+                    "(err 0x%04X)", entry["service"], entry["subtype"],
+                    entry["seq"], entry["key"], reason, code)
+        self._emit_command_rejected(entry["service"], entry["subtype"], b'',
+                                    code, reason, "execution")
+
+    def report_completion(self, key: str, success: bool = True,
+                          reason: str = "", error_code: int = 0x0001) -> int:
+        """A model reports that a deferred effect finished. Returns matches.
+
+        Safe to call when nothing is pending — an effect can also be started
+        from the instructor console or a failure injection, and that must not
+        raise. Returns the number of held telecommands it resolved.
+        """
+        matches = [e for e in self._pending_completions if e["key"] == str(key)]
+        for entry in matches:
+            self._close_pending(entry, bool(success), error_code, reason)
+        return len(matches)
+
+    def _tick_pending_completions(self, dt: float) -> None:
+        """Drain model completion reports and time out the ones that never come."""
+        for name, model in self.subsystems.items():
+            pop = getattr(model, "pop_completions", None)
+            if pop is None:
+                continue
+            try:
+                reports = pop() or []
+            except Exception as e:  # noqa: BLE001 — one model must not kill the loop
+                logger.warning("Subsystem %s completion drain error: %s",
+                               name, e)
+                continue
+            for rep in reports:
+                try:
+                    self.report_completion(
+                        rep["key"], bool(rep.get("success", True)),
+                        str(rep.get("reason", "")),
+                        int(rep.get("error_code", 0x0001)))
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("Bad completion report from %s: %r (%s)",
+                                   name, rep, e)
+        for entry in list(self._pending_completions):
+            entry["remaining_s"] -= float(dt)
+            if entry["remaining_s"] <= 0.0:
+                self._close_pending(
+                    entry, False, self.ERR_COMPLETION_TIMEOUT,
+                    f"{entry['label'] or entry['key']}: no completion report "
+                    f"arrived on board — the effect did not finish and the "
+                    f"telecommand is abandoned")
 
     # ------------------------------------------------------------------
     # HK emission
@@ -3983,8 +4283,10 @@ class SimulationEngine:
         # HK gating: In bootloader, only SID 11 (Beacon) is active. Full
         # subsystem HK requires application software running. Also switch TM
         # builder to bootloader APID and tear down TM stores.
-        for sid in self._hk_enabled:
-            self._hk_enabled[sid] = (sid == BOOTLOADER_BEACON_SID)
+        self._set_hk_enable_set(
+            {BOOTLOADER_BEACON_SID},
+            reason=("cold boot into the bootloader — HK restricted to the "
+                    "beacon SID"))
         try:
             self.tm_builder.set_apid(self._bootloader_apid)
         except Exception:
@@ -4118,7 +4420,17 @@ class SimulationEngine:
             'met_s': self.met_s,
             'speed': self.speed,
             'sc_mode': self.sc_mode,
+            # ── Illumination: the single authority, published for the ground ──
+            # The MCS and the planner each own an orbit propagator (they must,
+            # to PREDICT future eclipse), but for PRESENT time they consume
+            # these fields rather than re-deriving them on their own clock.
+            # That is what stops "AOCS is in eclipse but the planner says it
+            # is not": one number, one clock, one geometry.
             'in_eclipse': bool(o.in_eclipse),
+            'sun_fraction': float(getattr(o, 'sun_fraction',
+                                          0.0 if o.in_eclipse else 1.0)),
+            'in_penumbra': bool(getattr(o, 'in_penumbra', False)),
+            'shadow_model': getattr(o, 'shadow_model', ''),
             'in_contact': bool(o.in_contact),
             'ground_station_name': getattr(o, 'active_gs', None) or '',
             'gs_elevation_deg': round(o.gs_elevation_deg, 1),
@@ -4250,6 +4562,9 @@ class SimulationEngine:
             'engine_fault': getattr(self, 'engine_fault', None),
             'engine_fault_count': getattr(self, 'engine_fault_count', 0),
             'hk_enabled': dict(getattr(self, '_hk_enabled', {}) or {}),
+            # Why the HK enable set last changed on its own (boot / bootloader
+            # entry). None = it has only ever been changed by TC(3,5)/(3,6).
+            'hk_enable_reset': getattr(self, '_hk_enable_reset', None),
             'tm_rate_bps': int(self._current_tm_rate_bps()),
             'tm_tier': self._current_tm_tier()[0],
             'tm_tier_name': self._current_tm_tier()[1],
@@ -4311,6 +4626,9 @@ class SimulationEngine:
                 'lon_deg': round(o.lon_deg, 4),
                 'alt_km': round(o.alt_km, 2),
                 'in_eclipse': bool(o.in_eclipse),
+                'sun_fraction': float(getattr(o, 'sun_fraction',
+                                              0.0 if o.in_eclipse else 1.0)),
+                'in_penumbra': bool(getattr(o, 'in_penumbra', False)),
                 'in_contact': bool(o.in_contact),
                 'active_gs': getattr(o, 'active_gs', None),
                 'semi_major_axis_km': round(o.semi_major_axis_km, 2) if hasattr(o, 'semi_major_axis_km') else None,
@@ -4343,6 +4661,7 @@ class SimulationEngine:
             'engine_fault_count': self.engine_fault_count,
             'instr_cmd_rejects': self.instr_cmd_rejects,
             'hk_enabled': dict(self._hk_enabled),
+            'hk_enable_reset': self._hk_enable_reset,
         }
         return out
 

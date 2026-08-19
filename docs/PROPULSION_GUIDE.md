@@ -9,6 +9,14 @@ with the wings commanded broadside) — compliant with the FCC 5-year rule at
 every solar condition. A propulsive deorbit would cost 42.6+ m/s, a second
 complete propulsion system.
 
+> **2026-08 caution:** the decay figures above were derived at the retired
+> 450 km altitude declaration. The TLE-true mean altitude is ~513 km
+> (orbit.yaml, 2026-08 epoch/altitude ruling), where atmospheric density is
+> roughly half and natural decay is several times slower — the solar-min case
+> very likely exceeds the FCC 5-year rule. The decay analysis, and with it
+> the standing "no deorbit capability" ruling, needs re-deriving at 513 km.
+> Owner decision pending; not re-derived in the 2026-08 config sweep.
+
 ## Hardware
 
 1U green-monopropellant (LMP-103S/ADN-class) blowdown module, single

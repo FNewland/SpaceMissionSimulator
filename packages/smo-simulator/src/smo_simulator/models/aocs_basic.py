@@ -397,6 +397,8 @@ class AOCSBasicModel(SubsystemModel):
 
     def __init__(self):
         self._state = AOCSState()
+        # Deferred-completion reports drained by the engine (2026-08 ruling).
+        self._completions: list[dict] = []
         # Per-model RNG (plan A-2). Standalone construction gets a fixed
         # deterministic stream; the engine replaces this with a Random
         # derived from simulation.yaml `seed` (derive_rng).
@@ -2574,6 +2576,17 @@ class AOCSBasicModel(SubsystemModel):
     # fault is still there while 0x02D2 shows the operator the residual has
     # gone — which is the whole teaching point of the scenario.
 
+    #: Deferred-completion key for AOCS_GYRO_CALIBRATION (S8.1 func 13).
+    #: The arc is 300 s by default. The command already publishes progress
+    #: (0x02CA) and raises its own 0x0210/0x0211/0x0212 events, so the
+    #: operator was never blind here — but the S1.7 still claimed the
+    #: calibration was COMPLETE the moment the arc STARTED, which is the
+    #: semantics the ruling fixes everywhere, not just where it also blinds
+    #: the operator. Progress telemetry is the right *situational* contract
+    #: and stays; it is not a substitute for the verification service saying
+    #: what actually happened to this telecommand.
+    COMPLETION_GYRO_CAL = "aocs.gyro_calibration"
+
     GYRO_CAL_IDLE = 0
     GYRO_CAL_RUNNING = 1
     GYRO_CAL_COMPLETE = 2
@@ -2637,6 +2650,22 @@ class AOCSBasicModel(SubsystemModel):
                 'description': description,
             })
 
+    # ── Deferred completion (verification-semantics ruling, 2026-08) ──
+
+    def _complete(self, key: str, success: bool = True,
+                  error_code: int = 0x0001, reason: str = "") -> None:
+        """Queue a deferred-completion report for the engine to drain."""
+        if not hasattr(self, "_completions"):
+            self._completions = []
+        self._completions.append({"key": str(key), "success": bool(success),
+                                  "error_code": int(error_code),
+                                  "reason": str(reason or "")})
+
+    def pop_completions(self) -> list[dict]:
+        out = getattr(self, "_completions", [])
+        self._completions = []
+        return out
+
     def _start_gyro_calibration(self, duration_s: float = 0.0) -> dict:
         """AOCS_GYRO_CALIBRATION start. Refuses with a specific code."""
         s = self._state
@@ -2665,6 +2694,13 @@ class AOCSBasicModel(SubsystemModel):
                          f'Gyro bias calibration started: {dur:.0f} s arc '
                          f'({s.gyro_cal_settle_s:.0f} s settle)')
         return {"success": True,
+                "deferred": self.COMPLETION_GYRO_CAL,
+                # Generous: the arc is `dur`, and the abort paths report
+                # their own failure, so the timeout only catches a lost
+                # completion, never a slow one.
+                "deferred_timeout_s": 2.0 * dur + 120.0,
+                "deferred_label": (f"AOCS_GYRO_CALIBRATION "
+                                   f"({dur:.0f} s arc)"),
                 "message": (f"Gyro bias calibration started ({dur:.0f} s); "
                             "progress in aocs.gyro_cal_progress (0x02CA)"),
                 "duration_s": dur}
@@ -2680,6 +2716,8 @@ class AOCSBasicModel(SubsystemModel):
         self._emit_event(0x0212, 'MEDIUM',
                          f'Gyro bias calibration aborted: {why} '
                          f'(code 0x{code:04X})')
+        self._complete(self.COMPLETION_GYRO_CAL, False, int(code),
+                       f"AOCS_GYRO_CALIBRATION aborted: {why}")
 
     def _tick_gyro_calibration(self, s: AOCSState, dt: float) -> None:
         """Advance a running calibration by dt."""
@@ -2734,6 +2772,7 @@ class AOCSBasicModel(SubsystemModel):
             'Gyro bias calibration complete: '
             f'X={new_comp[0]:+.5f} Y={new_comp[1]:+.5f} '
             f'Z={new_comp[2]:+.5f} deg/s applied as compensation')
+        self._complete(self.COMPLETION_GYRO_CAL, True)
 
     # ─── Wheels and momentum ─────────────────────────────────────────
 

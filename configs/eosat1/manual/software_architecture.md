@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-**SMO** (Space Mission Operations Simulator) is a high-fidelity spacecraft operations simulator implementing the ECSS-E-ST-70-41C (PUS-C) standard for the EOSAT-1 mission. EOSAT-1 is a 6U CubeSat platform designed for ocean current monitoring in a 450 km sun-synchronous orbit.
+**SMO** (Space Mission Operations Simulator) is a high-fidelity spacecraft operations simulator implementing the ECSS-E-ST-70-41C (PUS-C) standard for the EOSAT-1 mission. EOSAT-1 is a 6U CubeSat platform designed for ocean current monitoring in a ~513 km sun-synchronous orbit.
 
 SMO is designed for four primary use cases:
 

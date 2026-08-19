@@ -206,6 +206,10 @@ class PlannerServer:
             earth_radius_km=self._earth_r,
         ))
 
+        # Present-time illumination reported by the spacecraft (single
+        # eclipse authority); None in real mode or before the first anchor.
+        self._sim_illum: dict | None = None
+
         # Live propagator for current spacecraft state
         self._live_prop = OrbitPropagator(
             self._tle1, self._tle2,
@@ -589,6 +593,28 @@ class PlannerServer:
 
             self._sim_anchor_time = parsed
             self._sim_anchor_wall = wall
+            # ── Present-time illumination: read, never re-derive ──────────
+            # The planner propagates its own orbit because it must PREDICT
+            # (ground track, eclipse arcs, power budget over a horizon). For
+            # "is it eclipse right now" it consumes the spacecraft's value —
+            # the single authority in smo_common.orbit.eclipse evaluated on
+            # the simulator's clock. Re-deriving it here on the planner's
+            # anchored clock is what made the planner disagree with the AOCS
+            # near the terminator.
+            if "in_eclipse" in payload:
+                try:
+                    self._sim_illum = {
+                        "in_eclipse": bool(payload.get("in_eclipse")),
+                        "sun_fraction": (
+                            float(payload["sun_fraction"])
+                            if payload.get("sun_fraction") is not None
+                            else (0.0 if payload.get("in_eclipse") else 1.0)),
+                        "in_penumbra": bool(payload.get("in_penumbra", False)),
+                        "shadow_model": payload.get("shadow_model") or "",
+                        "wall": wall,
+                    }
+                except (TypeError, ValueError):
+                    self._sim_illum = None
             self._sim_reachable = True
             self._wall_clock_fallback = False
             speed = payload.get("speed")
@@ -652,6 +678,10 @@ class PlannerServer:
                     "invalidating contact/ground-track caches", ev)
         except Exception as e:
             logger.debug("planner sim-anchor parse failed: %s", e)
+
+    #: How stale (wall seconds) the cached spacecraft illumination may be
+    #: before the planner falls back to its own propagator.
+    _SIM_ILLUM_MAX_AGE_S = 4.5
 
     def _get_now(self) -> datetime:
         """Return the planner's notion of "now".
@@ -781,12 +811,39 @@ class PlannerServer:
         if not isinstance(active_gs, str):
             active_gs = None
 
+        # PRESENT-time eclipse comes from the spacecraft when the sim anchor
+        # is fresh (see _refresh_sim_anchor); the propagation above remains
+        # the source for geometry the spacecraft does not downlink, and the
+        # only source in real mode.
+        in_eclipse = bool(state.in_eclipse)
+        try:
+            sun_frac = float(getattr(state, "sun_fraction"))
+            if not 0.0 <= sun_frac <= 1.0:
+                raise ValueError
+        except (AttributeError, TypeError, ValueError):
+            # Reduced harnesses hand in stubs without the field.
+            sun_frac = 0.0 if in_eclipse else 1.0
+        shadow_model = getattr(state, "shadow_model", "")
+        if not isinstance(shadow_model, str):
+            shadow_model = ""
+        eclipse_source = "ground_propagator"
+        illum = getattr(self, "_sim_illum", None)
+        if (illum and getattr(self, "_time_source", "real") == "sim"
+                and (__import__("time").time() - illum["wall"])
+                <= self._SIM_ILLUM_MAX_AGE_S):
+            in_eclipse = illum["in_eclipse"]
+            sun_frac = illum["sun_fraction"]
+            eclipse_source = "spacecraft"
+
         return {
             "utc": state.utc.isoformat(),
             "lat": round(state.lat_deg, 4),
             "lon": round(state.lon_deg, 4),
             "alt_km": round(state.alt_km, 2),
-            "in_eclipse": bool(state.in_eclipse),
+            "in_eclipse": in_eclipse,
+            "sun_fraction": round(sun_frac, 4),
+            "eclipse_source": eclipse_source,
+            "shadow_model": shadow_model,
             "in_contact": bool(state.in_contact),
             "active_gs": active_gs,
             "heading_deg": round(heading_deg, 1),

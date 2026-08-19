@@ -25,7 +25,7 @@ time_source: sim
 
 orbit:
   type: sun_synchronous
-  altitude_km: 450.0
+  altitude_km: 513.0  # mean geodetic altitude from the orbit.yaml TLE (owner ruling 2026-08)
   inclination_deg: 98.0
 
 payload:

@@ -191,7 +191,14 @@ class TestGyroCalPrecondition:
         aocs = engine.subsystems["aocs"]
         s = aocs._state
         started = False
-        for _ in range(200):
+        # 200 -> 900 ticks, retrying on the rate gate (2026-08): at the new
+        # epoch (t0 2026-08-20T12:00:00Z, TLE-truth ruling) COARSE_SUN
+        # acquires the sun immediately (t0 is in sunlight) and the residual
+        # body rate is still just above the 0.10 deg/s calibration gate when
+        # the tracker first aids the estimator; it damps below the gate a few
+        # hundred seconds later, still in COARSE_SUN with the wheels off —
+        # the same COM-003 window, entered a little later.
+        for _ in range(900):
             engine._tick_once(1.0)
             if (s.mode == 3 and (int(s.est_source) & 0x01)
                     and s.st1_num_stars >= 5):
@@ -199,6 +206,8 @@ class TestGyroCalPrecondition:
                     "wheels must be OFF (COM-004 enables them)"
                 r = aocs.handle_command({"command": "gyro_calibration",
                                          "action": 0, "duration_s": 60})
+                if not r["success"] and "body rate" in r.get("message", ""):
+                    continue          # still damping — stay in the window
                 assert r["success"], r
                 assert s.gyro_cal_state == 1  # RUNNING
                 started = True

@@ -6,20 +6,64 @@
     - ZERO button / form / input / select elements; no hover-dependent
       content; nothing is clickable.
     - Readable from metres: primary numerals >= 28 px, nothing below 18 px.
-    - Two layout tiers: 16:9 -> 2x3 grid; ultrawide (>= ~21:9) -> one row.
     - Freshness is life-or-death on a wall (risk R7): a stale block gets the
       hatch + em-dash treatment; a full-page STALE banner appears after
       120 s without a single successful poll (watchdog in wide.js).
     - JS polling refresh only; no meta-refresh.
 
+  LAYOUT (reworked 2026-08-19 on the owner's wall-screen field report:
+  "in wide mode the ground track view is too small"). Two structural
+  containers, both tiers:
+
+      .rail (narrow left column)      .stage (everything else)
+        TIME                            GROUND TRACK   <- centrepiece
+        NEXT PASSES                     PLAN — NEXT 24 H
+        LINK / CONTACT                  BUDGETS (slim full-width strip)
+
+  Tier 1 (16:9 through ~16:5, e.g. 1920x1080 and 2560x1080): rail ~22 %
+  wide; the stage stacks track / plan / budgets at 60 / 20 / 20 of the
+  height, so the map gets ~4x the area it had in the old six-across row.
+  Tier 2 (ultrawide >= 16:5, e.g. 5760x1080): rail ~12.5 % wide; the stage
+  splits into a full-height GROUND TRACK column, sized to the map's own
+  2.143:1 aspect, and a right column holding PLAN over BUDGETS (68 / 32).
+
+  Budgets became a slim horizontal strip rather than a column: every budget
+  readout is a scalar (a number, a bar and one line of context), so it reads
+  fine in a row and needs no vertical real estate — the map and the timeline
+  do. No block was dropped; the budgets column was donated to the map.
+
   Cadences (plan §2.3): 1 s clock + now-marker · 10 s contacts/link ·
   30 s schedule/budgets · 120 s ground track.
+
+  v2 (2026-08-19, second owner field report from the wall):
+    - PLAN is two lanes. The top lane is ONE ORBIT wide (now .. now + the
+      orbital period DERIVED in wide.js from the served ground track — never
+      a literal) and spells out each contact and activity in 21-36 px type:
+      station + AOS + max elevation, activity type + start. The bottom lane
+      is the familiar 24 h overview, with that same orbit shaded.
+    - GROUND TRACK draws solid to the SAME one-orbit boundary and dotted
+      beyond it, so both blocks tell one story.
+    - GROUND TRACK also carries the five canonical ground stations
+      (/api/ground-stations) as named triangles, and marks AOS (filled) and
+      LOS (hollow) on the track for the same upcoming contacts the NEXT
+      PASSES block lists — one dataset, two views.
+    - ONE map renderer: the canvas (see the note by the vendor script below).
 ========================================================================== -->
 <html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SMO Planner — Wall Display</title>
+<!-- NO vendor map script here, deliberately (decision 2026-08-19).
+     /wide has exactly ONE ground-track renderer: the canvas in wide.js,
+     with the offline Natural Earth basemap in wide-basemap.js. The page
+     draws things the vendor SVG map has no primitives for (a dashed/solid
+     split at the derived one-orbit boundary, haloed labels, AOS/LOS glyphs
+     interpolated onto the track, leaders, a legend), and a wall whose
+     appearance depends on whether vendor/ happens to exist in a given
+     deployment is worse than one renderer that is identical everywhere and
+     works offline. The interactive planner page and the MCS still use the
+     vendor map; this page does not. -->
 <link rel="stylesheet" href="/static/shared/design-system.css?v=1">
 <style>
 /* Wall-display type floor: NOTHING below 18 px on this page. */
@@ -28,30 +72,68 @@ body{ font-size:18px; overflow:hidden; height:100vh;
   display:flex; flex-direction:column; }
 
 /* Full-page stale banner (watchdog, wide.js). Hidden until triggered. */
-#staleBanner{ display:none; padding:12px 24px; font-size:30px; font-weight:800;
+/* Padding kept tight: the banner steals height from the blocks below it,
+   and on a 1080 px wall that is the difference between the budget strip
+   fitting and clipping. 28 px is the wall floor for a primary numeral. */
+#staleBanner{ display:none; padding:6px 24px; font-size:28px; font-weight:800;
   letter-spacing:3px; color:var(--alarm); background:var(--alarm-wash);
   border-bottom:3px solid var(--alarm); text-align:center; }
 #staleBanner.on{ display:block; }
-#staleBanner .num{ font-size:30px; }
+#staleBanner .num{ font-size:28px; }
 
 /* ── Layout tiers ──────────────────────────────────────────────────── */
+/* Tier 1 (default, 16:9 and everything narrower): narrow rail + stage. */
 main{ flex:1; display:grid; gap:12px; padding:12px; min-height:0;
-  /* Tier 1 (default, 16:9): 2 rows x 3 columns. */
-  grid-template-columns:repeat(3, minmax(0,1fr));
-  grid-template-rows:repeat(2, minmax(0,1fr)); }
-@media (min-aspect-ratio: 21/9){
-  /* Tier 2 (ultrawide classroom wall, e.g. 5760x1080): one row of six. */
-  main{ grid-template-columns:repeat(6, minmax(0,1fr));
-    grid-template-rows:minmax(0,1fr); }
+  min-width:0; grid-template-columns:minmax(360px, 22%) minmax(0,1fr); }
+
+/* The rail stacks time / passes / link. Passes takes the slack. */
+.rail{ display:grid; gap:12px; min-height:0; min-width:0;
+  grid-template-rows:auto minmax(0,1fr) auto; }
+
+/* The stage: ground track dominates, plan below it, budgets as a strip. */
+.stage{ display:grid; gap:12px; min-height:0; min-width:0;
+  grid-template-columns:minmax(0,1fr);
+  grid-template-rows:minmax(0,54fr) minmax(0,26fr) minmax(0,20fr);
+  grid-template-areas:"track" "plan" "bud"; }
+
+/* Mid tier (2:1 .. 16:5, e.g. 2560x1080): still stacked, but the map is
+   height-limited here, so every extra pixel of stage width is wasted inside
+   the track block. Hand it to the rail instead — bigger clock, more passes,
+   less dead space around the map. */
+@media (min-aspect-ratio: 2/1) and (max-aspect-ratio: 16/5){
+  main{ grid-template-columns:minmax(360px, min(30%, 760px)) minmax(0,1fr); }
 }
+
+@media (min-aspect-ratio: 16/5){
+  /* Tier 2 (ultrawide classroom wall, e.g. 5760x1080): a thinner rail, and
+     the stage splits so the map runs the FULL height of the wall.
+     Threshold is 16:5, not 21:9: below ~3.2 a full-height map column AND a
+     usable plan column do not both fit on a 1080 px-tall wall, and the
+     stacked tier-1 layout yields the LARGER map (measured at 2560x1080:
+     1278x596 stacked vs 1014x473 side-by-side).
+     The track column is sized to the map's own aspect — 360 deg of
+     longitude over 2*TRACK_LAT_VIS(84) deg of latitude is 2.143:1 — so the
+     map fills it edge to edge instead of sitting letterboxed in a column
+     that is too wide. 66 px is the chrome above/below the canvas. */
+  main{ grid-template-columns:minmax(0, 12.5%) minmax(0,1fr); }
+  .stage{
+    grid-template-columns:minmax(0, min(calc(2.16 * (100vh - 66px)), 56%))
+      minmax(0,1fr);
+    grid-template-rows:minmax(0,68fr) minmax(0,32fr);
+    grid-template-areas:"track plan" "track bud"; }
+}
+
+#block-track{ grid-area:track; }
+#block-timeline{ grid-area:plan; }
+#block-budgets{ grid-area:bud; }
 
 section.blk{ background:var(--s1); border:1px solid var(--line);
   border-radius:var(--r); display:flex; flex-direction:column;
-  min-height:0; min-width:0; overflow:hidden; }
+  min-height:0; min-width:0; overflow:hidden; container-type:inline-size; }
 section.blk>h2{ font-size:19px; font-weight:700; letter-spacing:2.5px;
-  color:var(--tx3); padding:10px 16px; border-bottom:1px solid var(--line);
-  display:flex; align-items:center; gap:12px; }
-section.blk .bd{ flex:1; padding:12px 16px; min-height:0; display:flex;
+  color:var(--tx3); padding:8px 16px; border-bottom:1px solid var(--line);
+  display:flex; align-items:center; gap:12px; flex:none; }
+section.blk .bd{ flex:1; padding:10px 16px; min-height:0; display:flex;
   flex-direction:column; gap:8px; }
 
 /* Per-block stale treatment: hatch fill + the block's numerals are
@@ -61,57 +143,88 @@ section.blk.stale>h2::after{ content:"STALE"; color:var(--tx2);
   font-size:18px; letter-spacing:2px; margin-left:auto;
   border:1px solid var(--line-2); border-radius:var(--r); padding:2px 10px; }
 
-/* ── 1. Clock block ────────────────────────────────────────────────── */
+/* ── 1. Clock block (rail) ─────────────────────────────────────────── */
 #block-clock .date{ font-family:var(--mono); font-size:30px; color:var(--tx2); }
-/* cqw not vw (Agent 5 screenshot fix): on the 2880x540 ultrawide tier the
-   viewport is huge but the clock COLUMN is narrow, so 9vw clipped the last
-   digits. Size against the block's own width instead (>=28px floor kept). */
-#block-clock{ container-type:inline-size; }
-#block-clock .utc{ font-family:var(--mono); font-size:max(28px,min(17cqw,9vw,108px));
+/* cqw not vw (Agent 5 screenshot fix): on the ultrawide tier the viewport
+   is huge but the rail is narrow, so 9vw clipped the last digits. Size
+   against the block's own width instead (>=28 px floor kept). */
+#block-clock .utc{ font-family:var(--mono); font-size:max(28px,min(19cqw,100px));
   font-weight:700; line-height:1.05; letter-spacing:2px; }
-#block-clock .met{ font-family:var(--mono); font-size:32px; color:var(--tx2); }
-#block-clock .row{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+#block-clock .met{ font-family:var(--mono); font-size:30px; color:var(--tx2); }
+#block-clock .row{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
 .wbadge{ display:inline-block; font-size:20px; font-weight:700;
-  letter-spacing:2px; padding:5px 14px; border:1px solid var(--line-2);
+  letter-spacing:2px; padding:4px 12px; border:1px solid var(--line-2);
   border-radius:var(--r); color:var(--tx2); font-family:var(--mono); }
 .wbadge.wall{ color:var(--alarm); border-color:var(--alarm);
   background:var(--alarm-wash); }
 #trainingChip{ display:none; font-size:20px; font-weight:800; letter-spacing:2px;
-  padding:5px 14px; border-radius:var(--r); border:1px solid var(--warn);
+  padding:4px 12px; border-radius:var(--r); border:1px solid var(--warn);
   color:var(--warn); background:var(--warn-wash); font-family:var(--mono); }
 #trainingChip.on{ display:inline-block; }
 
-/* ── 2. Passes block ───────────────────────────────────────────────── */
+/* ── 2. Passes block (rail) ────────────────────────────────────────── */
 #block-passes .next-label{ font-size:20px; letter-spacing:2px; color:var(--tx3); }
 #block-passes .next-station{ font-size:30px; font-weight:700; }
-#block-passes .countdown{ font-family:var(--mono); font-size:min(5.2vw,64px);
-  font-weight:700; line-height:1.05; }
+#block-passes .countdown{ font-family:var(--mono);
+  font-size:max(28px,min(14cqw,58px)); font-weight:700; line-height:1.05; }
 #block-passes .countdown.los{ color:var(--info); }
 .passlist{ flex:1; overflow:hidden; }
-.pass{ display:grid; grid-template-columns:1.3fr 1fr 1fr .8fr; gap:10px;
-  padding:6px 0; border-bottom:1px solid var(--line);
-  font-family:var(--mono); font-size:21px; }
+.pass{ display:grid; grid-template-columns:1.3fr 1fr 1fr .8fr; gap:8px;
+  padding:5px 0; border-bottom:1px solid var(--line);
+  font-family:var(--mono); font-size:19px; }
 .pass .st{ font-family:var(--sans); font-weight:600; }
 .pass.head{ font-size:18px; color:var(--tx3); font-family:var(--sans);
-  letter-spacing:1px; }
+  letter-spacing:0; }
+.pass>span{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
-/* ── 3 + 4. Canvas blocks ──────────────────────────────────────────── */
-#block-timeline canvas, #block-track canvas, #block-track #wideMap{
+/* ── 3. Link / contact block (rail) ────────────────────────────────── */
+#block-link .state{ font-size:max(28px,min(11cqw,50px)); font-weight:800;
+  letter-spacing:1px; line-height:1.08; }
+#block-link .state.yes{ color:var(--info); }
+#block-link .kv{ display:grid; grid-template-columns:auto 1fr; gap:5px 16px;
+  font-size:20px; align-content:start; }
+#block-link .kv b{ color:var(--tx3); font-weight:400; letter-spacing:1px; }
+#block-link .kv span{ font-family:var(--mono); overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap; }
+.api-dot{ display:inline-block; width:14px; height:14px; border-radius:50%;
+  background:var(--stale); vertical-align:middle; margin-right:9px; }
+.api-dot.connected{ background:var(--ok); }
+.api-dot.error{ background:var(--alarm); }
+
+/* ── 4 + 5. Canvas blocks (stage) ──────────────────────────────────── */
+#block-timeline canvas, #block-track canvas{
   width:100%; height:100%; display:block; }
 #block-track .cv{ position:relative; flex:1; min-height:0; }
-#wideMapFallbackNote{ display:none; position:absolute; left:12px; bottom:10px;
-  font-size:18px; color:var(--tx3); font-family:var(--mono); }
-#wideMapFallbackNote.on{ display:block; }
+/* Map key, in the GROUND TRACK header row. Normal weight + tx2 so it reads
+   as a key and never competes with the block title. */
+#block-track .legend{ font-size:18px; font-weight:400; letter-spacing:1px;
+  color:var(--tx2); font-family:var(--mono); white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis; }
+/* Basemap provenance, top-right of the map. */
+#wTrackSource{ position:absolute; right:10px; top:8px;
+  font-size:18px; color:var(--tx3); font-family:var(--mono);
+  letter-spacing:1px; background:var(--s1); border:1px solid var(--line);
+  border-radius:var(--r); padding:2px 10px; opacity:.85; }
 
-/* ── 5. Budget block ───────────────────────────────────────────────── */
-.bud{ display:flex; flex-direction:column; gap:6px; }
-.bud .k{ font-size:20px; letter-spacing:2px; color:var(--tx3); }
-.bud .v{ font-family:var(--mono); font-size:min(4.5vw,54px); font-weight:700;
+/* ── 6. Budget strip (stage, slim + full width) ────────────────────── */
+#block-budgets .bd{ padding:8px 16px 6px; }
+.budstrip{ flex:1; min-height:0; overflow:hidden; display:grid; gap:6px 32px;
+  grid-template-columns:minmax(0,1.15fr) minmax(0,1.15fr) minmax(0,1.4fr);
+  align-items:start; align-content:start; }
+.bud{ display:flex; flex-direction:column; gap:5px; min-width:0; }
+.bud .k, .bud .k2{ font-size:18px; letter-spacing:2px; color:var(--tx3);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.bud .v, .bud .v2{ font-family:var(--mono); font-size:34px; font-weight:700;
   line-height:1.05; }
-.bud .v.warn{ color:var(--warn); } .bud .v.alarm{ color:var(--alarm); }
-.bud .sub{ font-size:19px; color:var(--tx2); font-family:var(--mono); }
-.bud .reason{ font-size:19px; color:var(--warn); line-height:1.4; }
-.wbar{ position:relative; height:26px; background:var(--s3); border-radius:5px;
+.bud .v.warn, .bud .v2.warn{ color:var(--warn); }
+.bud .v.alarm, .bud .v2.alarm{ color:var(--alarm); }
+.bud .v2.absent{ background:var(--hatch); border-radius:var(--r);
+  padding:0 12px; justify-self:start; align-self:start; color:var(--tx3); }
+.bud .sub, .bud .reason{ font-size:18px; color:var(--tx2);
+  font-family:var(--mono); line-height:1.2; overflow:hidden;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+.bud .reason{ color:var(--warn); font-family:var(--sans); }
+.wbar{ position:relative; height:16px; background:var(--s3); border-radius:4px;
   overflow:hidden; }
 .wbar .fl{ position:absolute; top:0; bottom:0; left:0; background:var(--tx3); }
 .wbar.w .fl{ background:var(--warn); } .wbar.a .fl{ background:var(--alarm); }
@@ -119,26 +232,9 @@ section.blk.stale>h2::after{ content:"STALE"; color:var(--tx2);
   background:var(--warn); }
 /* Mission-level derived readouts (G1): pass fit + SoC at eclipse exit.
    Invalid / unreachable renders a hatched em-dash — never a number. */
-.mrow{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-.mrow .k2{ font-size:18px; letter-spacing:1.5px; color:var(--tx3); }
-.mrow .v2{ font-family:var(--mono); font-size:34px; font-weight:700;
-  line-height:1.1; }
-.mrow .v2.warn{ color:var(--warn); } .mrow .v2.alarm{ color:var(--alarm); }
-.mrow .v2.absent{ background:var(--hatch); border-radius:var(--r);
-  padding:0 10px; display:inline-block; color:var(--tx3); }
-
-/* ── 6. Link block ─────────────────────────────────────────────────── */
-#block-link .state{ font-size:min(4.2vw,52px); font-weight:800;
-  letter-spacing:3px; line-height:1.1; }
-#block-link .state.yes{ color:var(--info); }
-#block-link .kv{ display:grid; grid-template-columns:auto 1fr; gap:6px 18px;
-  font-size:23px; }
-#block-link .kv b{ color:var(--tx3); font-weight:400; letter-spacing:1px; }
-#block-link .kv span{ font-family:var(--mono); }
-.api-dot{ display:inline-block; width:16px; height:16px; border-radius:50%;
-  background:var(--stale); vertical-align:middle; margin-right:10px; }
-.api-dot.connected{ background:var(--ok); }
-.api-dot.error{ background:var(--alarm); }
+.mrow{ display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.35fr);
+  gap:4px 20px; }
+#wMissionSub{ color:var(--tx3); }
 </style>
 </head>
 <body>
@@ -148,100 +244,117 @@ section.blk.stale>h2::after{ content:"STALE"; color:var(--tx2);
 </div>
 
 <main>
-  <!-- 1. Clock -->
-  <section class="blk" id="block-clock">
-    <h2>TIME</h2>
-    <div class="bd">
-      <div class="date num" id="wDate">—</div>
-      <div class="utc num" id="wUtc">--:--:--</div>
-      <div class="met num" id="wMet">MET —</div>
-      <div class="row">
-        <span class="wbadge" id="wClockBadge">—</span>
-        <span id="trainingChip">TRAINING — SIM TIME</span>
-      </div>
-    </div>
-  </section>
 
-  <!-- 2. Next passes -->
-  <section class="blk" id="block-passes">
-    <h2>NEXT PASSES</h2>
-    <div class="bd">
-      <div class="next-label" id="wNextLabel">NEXT AOS</div>
-      <div class="next-station" id="wNextStation">—</div>
-      <div class="countdown num" id="wCountdown">—</div>
-      <div class="passlist" id="wPassList"></div>
-    </div>
-  </section>
+  <!-- ══ Left rail: time, next passes, link/contact — stacked ══════════ -->
+  <div class="rail">
 
-  <!-- 3. 24 h plan timeline -->
-  <section class="blk" id="block-timeline">
-    <h2>PLAN — NEXT 24 H</h2>
-    <div class="bd" style="padding:8px;">
-      <canvas id="wTimeline"></canvas>
-    </div>
-  </section>
-
-  <!-- 4. Ground track (non-interactive) -->
-  <section class="blk" id="block-track">
-    <h2>GROUND TRACK</h2>
-    <div class="bd" style="padding:0;">
-      <div class="cv">
-        <div id="wideMap" style="display:none"></div>
-        <canvas id="wTrackCanvas"></canvas>
-        <div id="wideMapFallbackNote">VECTOR BASEMAP UNAVAILABLE — TRACK ONLY</div>
-      </div>
-    </div>
-  </section>
-
-  <!-- 5. Budget state -->
-  <section class="blk" id="block-budgets">
-    <h2>BUDGETS</h2>
-    <div class="bd" style="justify-content:space-evenly;">
-      <div class="bud" id="wPower">
-        <div class="k">POWER — FINAL SoC</div>
-        <div class="v num" id="wPowerVal">—</div>
-        <div class="wbar" id="wPowerBar"><div class="fl" style="width:0%"></div></div>
-        <div class="sub" id="wPowerSub">—</div>
-      </div>
-      <div class="bud" id="wData">
-        <div class="k">DATA — PEAK FILL</div>
-        <div class="v num" id="wDataVal">—</div>
-        <div class="wbar" id="wDataBar"><div class="fl" style="width:0%"></div></div>
-        <div class="sub" id="wDataSub">—</div>
-      </div>
-      <!-- G1: mission-level derived readouts. MCS state when services.mcs_url
-           is configured; pass fit falls back to the planner's own budget
-           machinery. Invalid / unreachable = hatched em-dash, never a number. -->
-      <div class="bud" id="wMission">
-        <div class="mrow">
-          <div><div class="k2">PASS FIT</div>
-            <div class="v2 num absent" id="wPassFit">—</div></div>
-          <div><div class="k2">SoC @ ECLIPSE EXIT</div>
-            <div class="v2 num absent" id="wSocExit">—</div></div>
+    <!-- 1. Clock -->
+    <section class="blk" id="block-clock">
+      <h2>TIME</h2>
+      <div class="bd">
+        <div class="date num" id="wDate">—</div>
+        <div class="utc num" id="wUtc">--:--:--</div>
+        <div class="met num" id="wMet">MET —</div>
+        <div class="row">
+          <span class="wbadge" id="wClockBadge">—</span>
+          <span id="trainingChip">TRAINING — SIM TIME</span>
         </div>
-        <div class="sub" id="wMissionSub">—</div>
       </div>
-    </div>
-  </section>
+    </section>
 
-  <!-- 6. Link status -->
-  <section class="blk" id="block-link">
-    <h2>LINK</h2>
-    <div class="bd" style="justify-content:space-evenly;">
-      <div class="state" id="wLinkState">—</div>
-      <div class="kv">
-        <b>STATION</b><span id="wLinkStation">—</span>
-        <b>ELEVATION</b><span id="wLinkElev">—</span>
-        <b>RANGE</b><span id="wLinkRange">—</span>
-        <!-- G14: achieved rollup of the last completed pass (rfsim store at
-             the configured services.rfsim_url; unset = absent state). -->
-        <b>LAST PASS</b><span id="wLastPass">—</span>
-        <b>API</b><span><span class="api-dot" id="wApiDot"></span><span id="wApiText">checking</span></span>
+    <!-- 2. Next passes -->
+    <section class="blk" id="block-passes">
+      <h2>NEXT PASSES</h2>
+      <div class="bd">
+        <div class="next-label" id="wNextLabel">NEXT AOS</div>
+        <div class="next-station" id="wNextStation">—</div>
+        <div class="countdown num" id="wCountdown">—</div>
+        <div class="passlist" id="wPassList"></div>
       </div>
-    </div>
-  </section>
+    </section>
+
+    <!-- 3. Link status -->
+    <section class="blk" id="block-link">
+      <h2>LINK</h2>
+      <div class="bd" style="justify-content:space-between;">
+        <div class="state" id="wLinkState">—</div>
+        <div class="kv">
+          <b>STATION</b><span id="wLinkStation">—</span>
+          <b>ELEVATION</b><span id="wLinkElev">—</span>
+          <b>RANGE</b><span id="wLinkRange">—</span>
+          <!-- G14: achieved rollup of the last completed pass (rfsim store at
+               the configured services.rfsim_url; unset = absent state). -->
+          <b>LAST PASS</b><span id="wLastPass">—</span>
+          <b>API</b><span><span class="api-dot" id="wApiDot"></span><span id="wApiText">checking</span></span>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- ══ Stage: ground track (centrepiece), plan, budget strip ═════════ -->
+  <div class="stage">
+
+    <!-- 4. Ground track (non-interactive) — the centrepiece. -->
+    <section class="blk" id="block-track">
+      <!-- The key lives in the block header, not on the map: on a wall the
+           map needs every pixel, and a legend floated over Antarctica hid
+           exactly the polar passes it was explaining. The orbit figure is
+           filled in by wide.js from the DERIVED period. -->
+      <h2>GROUND TRACK <span id="wTrackLegend" class="legend">—</span></h2>
+      <div class="bd" style="padding:0;">
+        <div class="cv">
+          <canvas id="wTrackCanvas"></canvas>
+          <div id="wTrackSource">OFFLINE BASEMAP — NATURAL EARTH 110 M</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. 24 h plan timeline -->
+    <section class="blk" id="block-timeline">
+      <h2>PLAN — NEXT ORBIT, THEN 24 H</h2>
+      <div class="bd" style="padding:8px;">
+        <canvas id="wTimeline"></canvas>
+      </div>
+    </section>
+
+    <!-- 6. Budget state — slim full-width strip under the plan. -->
+    <section class="blk" id="block-budgets">
+      <h2>BUDGETS</h2>
+      <div class="bd">
+        <div class="budstrip">
+          <div class="bud" id="wPower">
+            <div class="k">POWER — FINAL SoC</div>
+            <div class="v num" id="wPowerVal">—</div>
+            <div class="wbar" id="wPowerBar"><div class="fl" style="width:0%"></div></div>
+            <div class="sub" id="wPowerSub">—</div>
+          </div>
+          <div class="bud" id="wData">
+            <div class="k">DATA — PEAK FILL</div>
+            <div class="v num" id="wDataVal">—</div>
+            <div class="wbar" id="wDataBar"><div class="fl" style="width:0%"></div></div>
+            <div class="sub" id="wDataSub">—</div>
+          </div>
+          <!-- G1: mission-level derived readouts. MCS state when
+               services.mcs_url is configured; pass fit falls back to the
+               planner's own budget machinery. Invalid / unreachable = hatched
+               em-dash, never a number. -->
+          <div class="bud" id="wMission">
+            <div class="mrow">
+              <div class="k2">PASS FIT</div>
+              <div class="k2">SoC @ ECLIPSE EXIT</div>
+              <div class="v2 num absent" id="wPassFit">—</div>
+              <div class="v2 num absent" id="wSocExit">—</div>
+            </div>
+            <div class="sub" id="wMissionSub">—</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </div>
 </main>
 
-<script type="module" src="/static/modern/wide.js?v=1"></script>
+<script type="module" src="/static/modern/wide.js?v=2"></script>
 </body>
 </html>

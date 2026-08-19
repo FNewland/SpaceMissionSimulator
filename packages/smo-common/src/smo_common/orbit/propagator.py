@@ -12,7 +12,7 @@ from typing import Optional
 from sgp4.api import Satrec, jday, WGS72
 from sgp4.exporter import export_tle
 
-from .eclipse import is_in_eclipse
+from .eclipse import SHADOW_MODEL, shadow_state
 
 _DEG = math.pi / 180.0
 _RAD = 180.0 / math.pi
@@ -37,7 +37,16 @@ class OrbitState:
     vel_x: float = 0.0
     vel_y: float = 0.0
     vel_z: float = 0.0
+    # ── Illumination: THE authority (smo_common.orbit.eclipse) ──────────
+    # `in_eclipse` is umbra (no direct sunlight); `sun_fraction` is the
+    # illuminated fraction of the solar disc, which is what every power /
+    # thermal / optical consumer must multiply by. Nothing downstream may
+    # re-derive either from beta, orbit phase or a second shadow model.
     in_eclipse: bool = False
+    sun_fraction: float = 1.0
+    in_penumbra: bool = False
+    #: Name of the shadow model that produced the fields above.
+    shadow_model: str = SHADOW_MODEL
     solar_beta_deg: float = 0.0
     sun_eci: np.ndarray = field(default_factory=lambda: np.zeros(3))
     gs_elevation_deg: float = -90.0
@@ -346,7 +355,7 @@ class OrbitPropagator:
         gmst = _gmst(jd + fr)
         lat, lon, alt = _eci_to_lla(r, gmst, self._earth_r)
         sun_eci = _sun_eci(jd + fr)
-        in_eclipse = is_in_eclipse(r, sun_eci, self._earth_r)
+        shadow = shadow_state(r, sun_eci, self._earth_r)
 
         h = np.cross(r, v)
         h_hat = h / (np.linalg.norm(h) + 1e-9)
@@ -384,7 +393,10 @@ class OrbitPropagator:
         s.lon_deg = lon
         s.alt_km = alt
         s.vel_x, s.vel_y, s.vel_z = float(v[0]), float(v[1]), float(v[2])
-        s.in_eclipse = in_eclipse
+        s.in_eclipse = shadow.in_eclipse
+        s.sun_fraction = shadow.sun_fraction
+        s.in_penumbra = shadow.in_penumbra
+        s.shadow_model = SHADOW_MODEL
         s.solar_beta_deg = beta_rad * _RAD
         s.sun_eci = sun_eci
         s.gs_elevation_deg = el_deg
@@ -422,7 +434,7 @@ class OrbitPropagator:
                 continue
             r = np.array(r)
             sun_eci = _sun_eci(jd + fr)
-            ecl = is_in_eclipse(r, sun_eci, self._earth_r)
+            ecl = shadow_state(r, sun_eci, self._earth_r).in_eclipse
             if ecl and not prev and entry_s is None:
                 entry_s = float(offset)
             if (not ecl) and prev and exit_s is None:
@@ -662,9 +674,11 @@ def _lla_to_ecef(lat_deg: float, lon_deg: float, alt_km: float,
                      (N * (1 - e2) + alt_km) * math.sin(lat)])
 
 
-# NOTE (Phase B, brief 01 F24 / WP-14): the private duplicate `_is_eclipse`
-# is gone — smo_common.orbit.eclipse.is_in_eclipse is the single eclipse
-# model for the whole suite (its eclipse_fraction adds penumbra when needed).
+# NOTE: smo_common.orbit.eclipse.shadow_state is THE eclipse model for the
+# whole suite (conical umbra + penumbra). The propagator is its only primary
+# caller for present time; ground tools that predict FUTURE eclipse call the
+# same function through `shadow_at()` / `next_eclipse_transition()` so their
+# present-time values are identical to the simulator's, bit for bit.
 
 
 def _sun_eci(jd: float) -> np.ndarray:

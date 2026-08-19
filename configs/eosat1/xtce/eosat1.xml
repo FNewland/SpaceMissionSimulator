@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <SpaceSystem xmlns="http://www.omg.org/spec/XTCE/20180204" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="EOSAT-1">
-  <Header version="1.0+f46653e0637e" classification="Unclassified — Simulation"/>
+  <Header version="1.0+590a05ec5309" classification="Unclassified — Simulation"/>
   <SpaceSystem name="CCSDS">
     <LongDescription>CCSDS Space Packet Protocol header definitions</LongDescription>
     <TelemetryMetaData>
@@ -774,6 +774,15 @@
             <Unit>W</Unit>
           </UnitSet>
         </IntegerParameterType>
+        <IntegerParameterType name="eps_sun_fraction_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="16" encoding="unsigned">
+            <DefaultCalibrator>
+              <PolynomialCalibrator>
+                <Term coefficient="0.0001" exponent="1"/>
+              </PolynomialCalibrator>
+            </DefaultCalibrator>
+          </IntegerDataEncoding>
+        </IntegerParameterType>
         <IntegerParameterType name="eps_actual_charge_current_a_Type" signed="false">
           <IntegerDataEncoding sizeInBits="16" encoding="unsigned">
             <DefaultCalibrator>
@@ -1009,6 +1018,9 @@
         </Parameter>
         <Parameter name="eps_subsys_power_obdh" parameterTypeRef="eps_subsys_power_obdh_Type">
           <LongDescription>OBDH subsystem power draw</LongDescription>
+        </Parameter>
+        <Parameter name="eps_sun_fraction" parameterTypeRef="eps_sun_fraction_Type">
+          <LongDescription>Illuminated fraction of the solar disc from the single eclipse authority (0.0 = umbra, 1.0 = full sun; between = penumbra). eps.eclipse_flag/eps.eclipse_active are its boolean spelling</LongDescription>
         </Parameter>
         <Parameter name="eps_actual_charge_current_a" parameterTypeRef="eps_actual_charge_current_a_Type">
           <LongDescription>Actual battery charge current</LongDescription>
@@ -4539,6 +4551,21 @@
             <Unit>s</Unit>
           </UnitSet>
         </IntegerParameterType>
+        <IntegerParameterType name="obdh_boot_state_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="obdh_boot_time_remaining_s_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="16" encoding="unsigned">
+            <DefaultCalibrator>
+              <PolynomialCalibrator>
+                <Term coefficient="0.1" exponent="1"/>
+              </PolynomialCalibrator>
+            </DefaultCalibrator>
+          </IntegerDataEncoding>
+          <UnitSet>
+            <Unit>s</Unit>
+          </UnitSet>
+        </IntegerParameterType>
       </ParameterTypeSet>
       <ParameterSet>
         <Parameter name="obdh_mode" parameterTypeRef="obdh_mode_Type"/>
@@ -4629,6 +4656,12 @@
         <Parameter name="obdh_time_since_sync_s" parameterTypeRef="obdh_time_since_sync_s_Type">
           <LongDescription>Onboard seconds since the last successful time sync; saturates rather than wrapping. 4294967295 (0xFFFFFFFF) = never synced</LongDescription>
         </Parameter>
+        <Parameter name="obdh_boot_state" parameterTypeRef="obdh_boot_state_Type">
+          <LongDescription>Application boot state (0=BOOTLOADER idle, 1=VERIFYING image CRC, 2=APPLICATION running, 3=FAILED — last boot failed its CRC)</LongDescription>
+        </Parameter>
+        <Parameter name="obdh_boot_time_remaining_s" parameterTypeRef="obdh_boot_time_remaining_s_Type">
+          <LongDescription>Seconds left in the OBC_BOOT_APP CRC verification window (0 when no boot is in flight)</LongDescription>
+        </Parameter>
       </ParameterSet>
       <ContainerSet>
         <SequenceContainer name="HK_Platform_SID4">
@@ -4670,6 +4703,8 @@
             <ParameterRefEntry parameterRef="/EOSAT-1/OBDH/obdh_obc_time_fine"/>
             <ParameterRefEntry parameterRef="/EOSAT-1/OBDH/obdh_time_ref"/>
             <ParameterRefEntry parameterRef="/EOSAT-1/OBDH/obdh_time_since_sync_s"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/OBDH/obdh_boot_state"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/OBDH/obdh_boot_time_remaining_s"/>
             <ParameterRefEntry parameterRef="/EOSAT-1/OBDH/fdir_level"/>
             <ParameterRefEntry parameterRef="/EOSAT-1/OBDH/fdir_active_alarms"/>
             <ParameterRefEntry parameterRef="/EOSAT-1/OBDH/fdir_critical_alarms"/>
@@ -5982,7 +6017,7 @@
           <LongDescription>Detector integration time</LongDescription>
         </Parameter>
         <Parameter name="payload_swath_width_km" parameterTypeRef="payload_swath_width_km_Type">
-          <LongDescription>Ground swath width (240 km at the nominal 450 km altitude; 2*h*tan(FOV/2), FOV 29.856 deg from the payload.yaml optics)</LongDescription>
+          <LongDescription>Ground swath width (~273 km at the 513 km mean altitude; 2*h*tan(FOV/2), FOV 29.856 deg from the payload.yaml optics)</LongDescription>
         </Parameter>
         <Parameter name="payload_band_blue_snr" parameterTypeRef="payload_band_blue_snr_Type">
           <LongDescription>Blue band (443 nm) SNR</LongDescription>
@@ -6009,7 +6044,7 @@
           <LongDescription>Attitude error used for quality calculation</LongDescription>
         </Parameter>
         <Parameter name="payload_gsd_m" parameterTypeRef="payload_gsd_m_Type">
-          <LongDescription>Ground sample distance (29.3 m at 450 km = h * pitch / focal length; 240 km swath / 8192 px)</LongDescription>
+          <LongDescription>Ground sample distance (33.4 m at 513 km = h * pitch / focal length; swath / 8192 px)</LongDescription>
         </Parameter>
         <Parameter name="payload_scene_entropy" parameterTypeRef="payload_scene_entropy_Type">
           <LongDescription>Scene entropy estimate for compression</LongDescription>

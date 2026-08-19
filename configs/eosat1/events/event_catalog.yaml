@@ -15,6 +15,7 @@ events:
   - { id: 0x0052, name: OBC_APPLICATION_BOOTED, severity: MEDIUM, subsystem: obdh, description: "OBC application software booted — LEOP started (phase 3 -> 4)" }
   - { id: 0x0054, name: OBC_REVERTED_TO_BOOTLOADER, severity: HIGH, subsystem: obdh, description: "OBC reboot detected — reverted to bootloader/beacon mode" }
   - { id: 0x0055, name: MISSION_PHASE_CHANGED, severity: MEDIUM, subsystem: obdh, description: "Mission phase declared by ground telecommand (SYS_SET_MISSION_PHASE, S8.1 func 120) — carries the from and to phases" }
+  - { id: 0x0056, name: HK_ENABLE_SET_RESET, severity: HIGH, subsystem: obdh, description: "The on-board HK enable set was reset wholesale by a boot or a bootloader entry, not by TC(3,5)/TC(3,6) — names the SIDs that were switched off and why. Those SIDs stop feeding periodic HK and the S15 HK store until HK_ENABLE is re-sent." }
 
   # EPS events (0x0100-0x01FF)
   - { id: 0x0100, name: EPS_MODE_CHANGE, severity: MEDIUM, subsystem: eps, description: "EPS mode transition" }
@@ -82,6 +83,11 @@ events:
   - { id: 0x030C, name: OBC_TIME_SET, severity: MEDIUM, subsystem: obdh, description: "Onboard clock set by ground command (S9,1); aux text carries the signed jump in seconds and the resulting time reference" }
   - { id: 0x030D, name: OBC_TIME_SYNC, severity: MEDIUM, subsystem: obdh, description: "Onboard clock synchronised to GPS (S8 func 80 or automatic re-acquisition after holdover); aux text carries the signed jump in seconds" }
   - { id: 0x030E, name: OBC_TIME_REF_LOST, severity: MEDIUM, subsystem: obdh, description: "GPS fix lost while the clock was disciplined — time reference falls back to HOLDOVER and oscillator drift resumes" }
+  # Application boot (verification-semantics ruling, 2026-08). 0x0305
+  # BOOT_FAILURE already covered the CRC failure; the SUCCESS had no event at
+  # all, so the only trace of a completed boot was sw_image changing value in
+  # housekeeping. It is now raised on the same tick the held S1.7 is released.
+  - { id: 0x0310, name: BOOT_COMPLETE, severity: MEDIUM, subsystem: obdh, description: "Application image passed its CRC and is running (obdh.sw_image = 1); the deferred S1.7 execution-complete for the OBC_BOOT_APP that started it is released on this tick" }
 
   # TCS events (0x0400-0x04FF)
   - { id: 0x0400, name: TCS_OVERTEMP_WARNING, severity: MEDIUM, subsystem: tcs, description: "Thermal zone temperature above warning threshold" }

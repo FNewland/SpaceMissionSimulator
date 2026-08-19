@@ -153,9 +153,11 @@ class PayloadState:
     snr: float = 45.0               # Signal-to-noise ratio (dB)
     detector_temp_c: float = -5.0    # CCD/CMOS detector temperature
     integration_time_ms: float = 2.0 # Detector integration time
-    # Ground swath width. 240 km at the 450 km nominal altitude (owner
-    # ruling 2026-08); recomputed from the optics every tick.
-    swath_width_km: float = 240.0
+    # Ground swath width. Recomputed from the optics and the live altitude
+    # every tick; ~273 km at the TLE-true 513 km mean altitude (2026-08
+    # epoch/altitude ruling — was quoted as 240 km at the retired 450 km
+    # declaration).
+    swath_width_km: float = 273.5
 
     # ── Multispectral imaging ──
     band_enable_mask: int = 0x0F  # All 4 bands enabled (bits 0-3)
@@ -165,7 +167,7 @@ class PayloadState:
     })
     att_quality_factor: float = 1.0
     att_error_deg: float = 0.0
-    gsd_m: float = 29.3   # Ground sample distance at 450 km (see swath_width_km)
+    gsd_m: float = 33.4   # Ground sample distance at 513 km (see swath_width_km)
     scene_entropy: float = 0.0
 
     # ── Phase C: AOCS fine-pointing gate (WP-6) ──
@@ -689,9 +691,36 @@ class PayloadBasicModel(SubsystemModel):
                                    "calibration lamp ON (PAYLOAD_CAL_LAMP 1)"}
         return None
 
+    # ── Deferred completion (verification-semantics ruling, 2026-08) ──
+
+    #: Deferred-completion key for PAYLOAD_START_CALIBRATION. The run is a
+    #: 30 s two-phase state machine (dark then flat) that discards its
+    #: half-made products on abort, so "execution complete" on acceptance was
+    #: a claim about frames that had not been integrated yet.
+    COMPLETION_CALIBRATION = "payload.calibration"
+
+    def _complete(self, key: str, success: bool = True,
+                  error_code: int = 0x0001, reason: str = "") -> None:
+        """Queue a deferred-completion report for the engine to drain."""
+        if not hasattr(self, "_completions"):
+            self._completions = []
+        self._completions.append({"key": str(key), "success": bool(success),
+                                  "error_code": int(error_code),
+                                  "reason": str(reason or "")})
+
+    def pop_completions(self) -> list[dict]:
+        out = getattr(self, "_completions", [])
+        self._completions = []
+        return out
+
     def _abort_calibration(self, reason: int) -> None:
         """Stop a running calibration and discard its half-made products."""
         s = self._state
+        self._complete(
+            self.COMPLETION_CALIBRATION, False, 0x0026,
+            "PAYLOAD_START_CALIBRATION aborted: "
+            + self._CAL_ABORT_NAMES.get(reason, "unknown")
+            + " — the half-made products were discarded")
         s.calibration_active = False
         s.calibration_state = 0
         s.calibration_progress = 0.0
@@ -806,6 +835,7 @@ class PayloadBasicModel(SubsystemModel):
                         if s.mode == 3:
                             s.mode = 1   # CALIBRATION -> STANDBY
                         events_to_emit.append(0x060B)  # CALIBRATION_COMPLETE
+                        self._complete(self.COMPLETION_CALIBRATION, True)
                 else:
                     s.calibration_progress = 50.0 * (half_duration - s.calibration_timer) / half_duration
                     # 2026-08b PL-d: `<= 0`, not `<= half_duration`. The phase
@@ -865,6 +895,7 @@ class PayloadBasicModel(SubsystemModel):
                     if s.mode == 3:
                         s.mode = 1   # CALIBRATION -> STANDBY
                     events_to_emit.append(0x060B)  # CALIBRATION_COMPLETE
+                    self._complete(self.COMPLETION_CALIBRATION, True)
 
         # ── Shutter cycle test (Defect 4 — payload.md §3.3) ──
         if s.shutter_test_active:
@@ -1063,11 +1094,13 @@ class PayloadBasicModel(SubsystemModel):
 
         # ── Swath width and GSD from the optics and the altitude ──
         #
-        # OWNER RULING (2026-08): the swath is 240 km. The geometry is derived
-        # from the focal-plane parameters in subsystems/payload.yaml, not from
-        # hard-coded constants (this used to be ifov = 20 urad x 5000 px =
-        # 0.1 rad -> 45 km at 450 km, which is not the instrument the
-        # courseware describes).
+        # The geometry is derived from the focal-plane parameters in
+        # subsystems/payload.yaml, not from hard-coded constants (this used to
+        # be ifov = 20 urad x 5000 px = 0.1 rad -> 45 km, which is not the
+        # instrument the courseware describes). The optics were sized to give
+        # the owner-ruled 240 km swath at the previously declared 450 km
+        # altitude; the 2026-08 TLE-truth ruling puts the mean altitude at
+        # 513 km, where the same FOV gives ~273 km.
         #
         #   ifov      = pixel_pitch / focal_length          (rad per pixel)
         #   full FOV  = 2 * atan(N * pitch / 2 / focal_length)
@@ -1075,8 +1108,10 @@ class PayloadBasicModel(SubsystemModel):
         #                                       planner uses — the two agree)
         #   GSD       = alt * ifov                          (at nadir)
         #
-        # At 450 km with 8192 px x 5.5 um and f = 84.5 mm:
-        #   FOV = 29.856 deg, swath = 239.9 km, GSD = 29.3 m.
+        # With 8192 px x 5.5 um and f = 84.5 mm (FOV = 29.856 deg):
+        #   at 450 km: swath = 239.9 km, GSD = 29.3 m
+        #   at 513 km (TLE mean altitude, 2026-08): swath = 273.5 km,
+        #   GSD = 33.4 m.
         alt_km = orbit_state.alt_km if hasattr(orbit_state, 'alt_km') else 500.0
         half_fov_rad = math.atan(
             (self._pixels_across_track * self._pixel_pitch_um * 1e-3)
@@ -1800,7 +1835,11 @@ class PayloadBasicModel(SubsystemModel):
             # inhibit (DISPLAY_REQUESTS_AOCS.md section 3).
             if s.mode == 1:
                 s.mode = 3
-            return {"success": True, "message": "Calibration started"}
+            return {"success": True,
+                    "deferred": self.COMPLETION_CALIBRATION,
+                    "deferred_timeout_s": 4.0 * s.calibration_duration_s + 60.0,
+                    "deferred_label": "PAYLOAD_START_CALIBRATION",
+                    "message": "Calibration started"}
 
         elif command == "set_cal_lamp":
             # Phase E WP-7 — PAYLOAD_CAL_LAMP (func 95). Honours the S2

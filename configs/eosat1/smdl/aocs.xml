@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="AOCS" Creator="EOSAT-1 SMDL Generator" Version="1.0+f46653e0637e">
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="AOCS" Creator="EOSAT-1 SMDL Generator" Version="1.0+590a05ec5309">
   <Description>SMP2 model catalogue for AOCS subsystem</Description>
   <Type Name="UInt8" Uuid="5f89f604-a171-5501-aa33-4d555fe61f64" xsi:type="Integer" Size="1" Signed="false"/>
   <Type Name="UInt16" Uuid="6ba6c296-ed3b-5fbe-8a66-31fe90cbfb0d" xsi:type="Integer" Size="2" Signed="false"/>

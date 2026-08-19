@@ -48,16 +48,22 @@ from smo_planner.utils import parse_iso as _parse_iso, iso_sort_key as _iso_key
 logger = logging.getLogger(__name__)
 
 # Camera/orbit fallbacks — overridden from planner.yaml / orbit.yaml.
-ALTITUDE_KM = 450.0
-# Full across-track field of view of the instrument. OWNER RULING (2026-08):
-# the swath is 240 km. The FOV is the one implied by the focal-plane geometry
-# in subsystems/payload.yaml (8192 px x 5.5 um on an 84.5 mm telescope):
+# 2026-08: 450 -> 513 (owner ruling: the orbit.yaml TLE is the truth; mean
+# propagated geodetic altitude 513 km).
+ALTITUDE_KM = 513.0
+# Full across-track field of view of the instrument, implied by the
+# focal-plane geometry in subsystems/payload.yaml (8192 px x 5.5 um on an
+# 84.5 mm telescope):
 #   FOV = 2 * atan((8192 * 5.5 um / 2) / 84.5 mm) = 29.856 deg
-#   SWATH = 2 * 450 km * tan(29.856/2) = 239.9 km  -> the 240 km swath
+# The FOV is the instrument constant; the swath follows from it at the live
+# altitude. It was sized to give the owner-ruled 240 km swath at the
+# previously declared 450 km altitude; at the TLE's true ~513 km mean
+# altitude the same FOV gives SWATH = 2 * 513 * tan(29.856/2) = 273.4 km and
+# the swath/FOV pairing may need a fresh owner ruling.
 # (was 15.0 deg / 118 km, which matched neither the courseware nor the
 # simulator's own 45 km.)
 FOV_DEG = 29.856
-SWATH_KM = 2.0 * ALTITUDE_KM * math.tan(math.radians(FOV_DEG / 2.0))  # ~240 km
+SWATH_KM = 2.0 * ALTITUDE_KM * math.tan(math.radians(FOV_DEG / 2.0))  # ~273 km at 513 km
 MIN_SOLAR_ELEVATION_DEG = 10.0
 IMAGING_DURATION_S = 120  # seconds per imaging pass
 IMAGING_POWER_W = 60
@@ -211,6 +217,19 @@ class ImagingTarget:
 
 class ImagingPlanner:
     """Plans imaging activities for ocean current monitoring targets."""
+
+    #: 2026-08d PLAN-1b. Total explicit dwell in `generate_capture_sequence`:
+    #: 10 s mode lead-in + 60 s FPA cooler settle + 90 s FINE settle + 5 s
+    #: payload IMAGING + 2 s shutter + 30 s readout = 197 s, plus the
+    #: 1 s-per-telecommand allowance ActivityScheduler costs a sequence at
+    #: (8 telecommands). Kept in step with
+    #: configs/eosat1/planning/activity_types.yaml imaging_pass (asserted in
+    #: tests/test_planner/test_fly_a_plan.py).
+    CAPTURE_SEQUENCE_MIN_DURATION_S = 205.0
+
+    #: Of that, the part BEFORE PAYLOAD_CAPTURE — how far ahead of the
+    #: intended acquisition instant the activity has to start.
+    CAPTURE_SEQUENCE_LEAD_S = 167.0
 
     def __init__(
         self,
@@ -617,7 +636,50 @@ class ImagingPlanner:
         # below is retained as plan METADATA (display, access checking) —
         # it is no longer a command argument.
         scene_id = self._assign_scene_id(target_id, start_time)
+        # 2026-08d PLAN-1b. This target-driven sequence is the SECOND way the
+        # planner can order a capture (POST /api/imaging/schedule), and it
+        # commanded only the payload: no attitude mode, no shutter, no
+        # restoration. Against a real SimulationEngine that fails at
+        # `capture` with S1.8 / 0x0021 "AOCS not in FINE_POINT" — the same
+        # end state as the catalogue's own imaging_pass defect, reached a
+        # different way. It now mirrors
+        # configs/eosat1/planning/activity_types.yaml imaging_pass step for
+        # step; see the long note there for what the on-board gates are and
+        # why every real dwell is an explicit `wait_s` (the S11 upload path
+        # drops `wait_for` steps, so lead time expressed only as a telemetry
+        # check collapses to zero on board).
         command_sequence = [
+            {
+                "service": 8, "subtype": 1,
+                "func_id": 0x00,              # 0 = AOCS_SET_MODE (1 = DESAT)
+                "args": {"mode": 4},          # NOMINAL_NADIR
+                "description": "AOCS_SET_MODE_NOMINAL",
+            },
+            {"wait_s": 10},
+            {"wait_for": {"parameter": "aocs.mode", "value": 4,
+                          "timeout_s": 120}},
+            {
+                "service": 8, "subtype": 1,
+                "func_id": 0x1A,
+                "args": {"mode": 1},          # STANDBY starts the FPA cooler
+                "description": "PAYLOAD_SET_MODE_STANDBY",
+            },
+            {"wait_s": 60},
+            {"wait_for": {"parameter": "payload.fpa_ready", "value": 1,
+                          "timeout_s": 900}},
+            # The 0x02C5 FINE-entry precondition bitmask, read before FINE is
+            # commanded: AOCS_SET_MODE(5) is REFUSED (0x0A22) unless it is 0.
+            {"wait_for": {"parameter": "aocs.fine_ready", "value": 0,
+                          "timeout_s": 600}},
+            {
+                "service": 8, "subtype": 1,
+                "func_id": 0x00,
+                "args": {"mode": 5},          # FINE_POINT
+                "description": "AOCS_SET_MODE_FINE_POINT",
+            },
+            {"wait_s": 90},                   # settle: 0.05 deg / 0.005 deg/s
+            {"wait_for": {"parameter": "aocs.mode", "value": 5,
+                          "timeout_s": 180}},
             {
                 "service": 8,
                 "subtype": 1,
@@ -634,6 +696,13 @@ class ImagingPlanner:
                 },
             },
             {
+                "service": 8, "subtype": 1,
+                "func_id": 0x77,              # 119 = PAYLOAD_SET_SHUTTER
+                "args": {"position": 1},      # OPEN — `capture` refuses 0x0028
+                "description": "PAYLOAD_SET_SHUTTER_OPEN",
+            },
+            {"wait_s": 2},
+            {
                 "service": 8,
                 "subtype": 1,
                 "func_id": 0x1C,
@@ -641,6 +710,22 @@ class ImagingPlanner:
                 "description": (f"PAYLOAD_CAPTURE scene={scene_id} "
                                 f"lines={self.capture_lines} "
                                 f"(aim {capture_lat:.2f}, {capture_lon:.2f})"),
+            },
+            {"wait_s": 30},                   # readout
+            # Restoration: leaving the payload in IMAGING latches
+            # aocs.desat_inhibit_auto (the next momentum dump is refused) and
+            # leaving the AOCS in FINE makes AOCS_DESATURATE refuse outright.
+            {
+                "service": 8, "subtype": 1,
+                "func_id": 0x1A,
+                "args": {"mode": 1},
+                "description": "PAYLOAD_SET_MODE_STANDBY",
+            },
+            {
+                "service": 8, "subtype": 1,
+                "func_id": 0x00,
+                "args": {"mode": 4},
+                "description": "AOCS_SET_MODE_NOMINAL",
             },
         ]
 
@@ -650,7 +735,20 @@ class ImagingPlanner:
             "scene_id": scene_id,
             "lines": self.capture_lines,
             "start_time": start_time,
-            "duration_s": self.capture_duration_s,
+            # 2026-08d PLAN-1b: the booking has to cover the whole sequence,
+            # not just the shutter. 10+60+90+5+2+30 = 197 s of mandatory
+            # dwell; `capture_duration_s` (planner.yaml imaging, 120 s) is the
+            # ACQUISITION and is kept as `capture_duration_s` in the returned
+            # activity for the geometry code that centres on closest approach.
+            "duration_s": max(self.capture_duration_s,
+                              self.CAPTURE_SEQUENCE_MIN_DURATION_S),
+            "capture_duration_s": self.capture_duration_s,
+            "timing": {
+                "sequence_min_duration_s": self.CAPTURE_SEQUENCE_MIN_DURATION_S,
+                "lead_time_s": self.CAPTURE_SEQUENCE_LEAD_S,
+                "restore_time_s": 30,
+                "min_gap_after_s": 60,
+            },
             "power_w": self.capture_power_w,
             "data_volume_mb": self.image_size_mb,
             "priority": target.priority,

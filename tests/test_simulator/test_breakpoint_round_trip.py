@@ -55,8 +55,12 @@ def _make_engine() -> SimulationEngine:
 
 
 def _boot_rich_engine() -> SimulationEngine:
-    """Engine in application phase, past first AOS (~720 s) and eclipse entry
-    (~1280 s), with S11/S12/S19/failure/dump state all non-default."""
+    """Engine in application phase, past first AOS (~833 s) and eclipse entry
+    (~1974 s), with S11/S12/S19/failure/dump state all non-default.
+
+    (Timings re-measured 2026-08 after the epoch move to 2026-08-20T12:00:00Z
+    and the TLE-truth ~513 km altitude ruling: first AOS 833 s Iqaluit,
+    eclipse 1974-3996 s.)"""
     eng = _make_engine()
     # Boot the OBC application so the phase machine leaves the bootloader.
     eng.subsystems["obdh"]._state.sw_image = 1
@@ -65,7 +69,9 @@ def _boot_rich_engine() -> SimulationEngine:
     assert eng._spacecraft_phase >= 4
 
     # Run past the first AOS and into the first eclipse (sub-stepped ticks).
-    for _ in range(23):
+    # 23 -> 40 ticks (2026-08): eclipse entry moved from ~1280 s to ~1974 s
+    # with the new epoch; 40 min sits mid-eclipse (1974-3996 s).
+    for _ in range(40):
         eng._tick_once(60.0)
     assert eng.orbit.state.in_eclipse, "expected to be inside first eclipse"
     assert eng._prev_in_eclipse, "eclipse edge detector should be hot"

@@ -23,8 +23,18 @@ REPO = Path(__file__).resolve().parents[2]
 
 # sha256 recorded 2026-08-17 (Agent 1 baseline).
 CLASSIC_PAGES = {
+    # RE-PINNED 2026-08d (TZ-1), the one legitimate change this gate
+    # contemplates. The classic MCS page's S11 scheduler resolved its
+    # "Execution UTC (ISO 8601)" box with a bare `new Date(txt)`, which
+    # ECMAScript defines as browser-LOCAL for a zone-less string — so a typed
+    # time tag was shifted by the host's UTC offset (correct on a UTC machine,
+    # 5 h out in EST, 5 h 30 out in IST) and the S11 tags did not line up with
+    # the planner's window. This page is the FALLBACK console, so it cannot be
+    # left holding a wrong-time-tag defect while only the modern page is fixed
+    # (modern/mcs.js already appended the "Z"). Proof:
+    # tests/test_mcs/test_s11_time_tag_timezone.py.
     "packages/smo-mcs/src/smo_mcs/static/index.html":
-        "d3766c1787933e6ed8f669ac358554cb5d9896f0635e69ecc7b3d1f494d0fe1a",
+        "049d00b55de192552e48ea739bcd36f919d4423add347c3e7a91ed7252f6be01",
     "packages/smo-planner/src/smo_planner/static/index.html":
         "775196c579e52c4dffa04d082d02d13ad554e1d441b51e2ab3928f8c5fcf3b77",
     # rfsim radio page frozen 2026-08-18 (channel-model split: operator page

@@ -7,6 +7,12 @@
 # rule at every solar condition, and 0.2 yr with the wings commanded
 # broadside. A propulsive deorbit (450->300 km perigee) would cost 42.6 m/s —
 # a second complete propulsion system — and is explicitly excluded.
+# >>> 2026-08 CAUTION: those decay figures were derived at the retired 450 km
+# declaration. The TLE-true mean altitude is ~513 km (orbit.yaml), where
+# density is roughly half and natural decay is several times slower — the
+# solar-min case very likely EXCEEDS the FCC 5-year rule. The decay analysis
+# and the "no deorbit capability needed" ruling need re-deriving at 513 km;
+# OWNER decision, deliberately not taken in this sweep.
 #
 # Hardware sheet: LMP-103S/ADN-class monoprop, single thruster on the -X
 # face thrusting along +X body (= prograde in the nominal nadir attitude, so

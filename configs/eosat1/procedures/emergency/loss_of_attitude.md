@@ -9,7 +9,7 @@ Recovery procedure for EOSAT-1 when the spacecraft is tumbling with angular rate
 2 deg/s on any axis. This procedure commands a controlled detumble sequence, sheds non-essential
 loads to preserve power during potential unfavourable sun geometry, and restores safe sun-pointing
 attitude. Critical constraint: attitude must be stabilised before battery depletion during eclipse
-passes (~35 min max eclipse, minimum survival SoC = 10%).
+passes (~36 min max eclipse, minimum survival SoC = 10%).
 
 ## Prerequisites
 - [ ] Telemetry confirms `aocs.rate_roll` (0x0204), `aocs.rate_pitch` (0x0205), or `aocs.rate_yaw` (0x0206) > 2.0 deg/s
@@ -90,7 +90,7 @@ continue detumble for one additional orbit before proceeding.
 | Condition | Threshold | Action |
 |---|---|---|
 | Battery SoC during tumble | < 15% | Execute EMG-002 in parallel |
-| Eclipse entry while rates > 1 deg/s | ~35 min to depletion | Priority: reduce rate before eclipse |
+| Eclipse entry while rates > 1 deg/s | ~36 min to depletion | Priority: reduce rate before eclipse |
 | Detumble not converging (rates constant after 2 orbits) | ~190 min | Investigate magnetorquer failure, consider wheel-based backup |
 | Sun acquisition timeout | > 20 min at att_error > 10 deg | Re-command COARSE_SUN, check sun sensor data |
 

@@ -260,14 +260,51 @@ class RemoteDumpStore:
         return out
 
 
+#: A hole is called a gap when it exceeds this multiple of the SID's
+#: configured cadence. Same convention as
+#: smo_common.reporting.analysis.completeness, so the viewer and the
+#: generated reports cannot disagree about what a gap is.
+GAP_THRESHOLD_MULTIPLE = 3.0
+
+
+def find_sid_gaps(times: list[float], cadence: float,
+                  threshold_multiple: float = GAP_THRESHOLD_MULTIPLE
+                  ) -> list[dict[str, float]]:
+    """Holes in a SID's arrival times, in on-board CUC seconds.
+
+    A SID that the ground disabled (or that a boot switched off) simply stops
+    producing packets: the dump then contains two runs of samples with nothing
+    between them. Plotted naively that reads as one continuous line, which is
+    a lie about what the spacecraft measured. Every consumer of a decoded
+    series needs the gap list so it can BREAK the line instead.
+    """
+    if cadence <= 0 or len(times) < 2:
+        return []
+    threshold = threshold_multiple * cadence
+    gaps = []
+    for a, b in zip(times, times[1:]):
+        if (b - a) > threshold:
+            gaps.append({"start_cuc": a, "end_cuc": b,
+                         "duration_s": round(b - a, 3),
+                         "missing": max(int(round((b - a) / cadence)) - 1, 1)})
+    return gaps
+
+
 def analyse_dumps(paths: Iterable[Path], params_by_id: dict, hk_plist: dict,
-                  limits_by_pid: dict[int, Any] | None = None) -> dict[str, Any]:
+                  limits_by_pid: dict[int, Any] | None = None,
+                  hk_structs: dict[int, dict] | None = None) -> dict[str, Any]:
     """Decode one or more dump files into a JSON-friendly summary.
 
     ``limits_by_pid`` (G11): when given, every decoded series is run through
     the ground limits (mcs/limits.yaml) and each parameter carries
     time-in-yellow / time-in-red plus its band for plot shading; the result
     carries a per-dump ``limits`` summary line.
+
+    ``hk_structs`` supplies each SID's configured cadence so the decoded
+    series can be checked for GAPS — stretches where the SID produced nothing
+    because it was disabled (by TC(3,6), or by a boot resetting the enable
+    set). Each SID and each parameter carries its own ``gaps`` list, and the
+    plot breaks the line across them rather than drawing straight through.
     """
     an = PassAnalysis()
     files_used: list[dict[str, Any]] = []
@@ -296,6 +333,8 @@ def analyse_dumps(paths: Iterable[Path], params_by_id: dict, hk_plist: dict,
     lim_yellow: list[str] = []      # parameters whose worst state is yellow
     lim_red: list[str] = []         # parameters whose worst state is red
     lim_checked = 0
+    hk_structs = hk_structs or {}
+    gap_lines: list[str] = []
     for sid, samples in sorted(an.hk_samples.items()):
         if not samples:
             continue
@@ -304,6 +343,21 @@ def analyse_dumps(paths: Iterable[Path], params_by_id: dict, hk_plist: dict,
         for cuc, vals in samples:
             for pid, v in vals.items():
                 per_pid.setdefault(pid, []).append((cuc, v))
+        # Gap sweep for this SID, from its configured cadence. Done once per
+        # SID (the arrival times are shared by every parameter in the packet)
+        # and attached to every parameter so a plot can break its line.
+        struct_def = hk_structs.get(sid) or {}
+        try:
+            cadence = float(struct_def.get("interval_s") or 0.0)
+        except (TypeError, ValueError):
+            cadence = 0.0
+        sid_times = sorted(c for c, _ in samples)
+        sid_gaps = find_sid_gaps(sid_times, cadence)
+        if sid_gaps:
+            total = sum(g["duration_s"] for g in sid_gaps)
+            gap_lines.append(
+                f"SID {sid}: {len(sid_gaps)} gap(s), {total:.0f}s missing "
+                f"(cadence {cadence:g}s)")
         params_out: list[dict[str, Any]] = []
         for pid in sorted(per_pid):
             pts = per_pid[pid]
@@ -332,6 +386,9 @@ def analyse_dumps(paths: Iterable[Path], params_by_id: dict, hk_plist: dict,
                 "series": [[c, v] for c, v in pts],
                 # G11: ground-limit evaluation (None = no band configured)
                 "limit": None,
+                # Holes in this SID's arrival times. NON-EMPTY means the
+                # series is discontinuous and must NOT be drawn as one line.
+                "gaps": sid_gaps,
             }
             lim = limits_by_pid.get(pid)
             if lim is not None:
@@ -347,6 +404,8 @@ def analyse_dumps(paths: Iterable[Path], params_by_id: dict, hk_plist: dict,
             "sid": sid,
             "packet_count": an.hk_counts[sid],
             "sample_count": len(samples),
+            "cadence_s": cadence,
+            "gaps": sid_gaps,
             "params": params_out,
         })
 
@@ -383,6 +442,17 @@ def analyse_dumps(paths: Iterable[Path], params_by_id: dict, hk_plist: dict,
         # so an alarm dump is mostly this.
         "s12_transitions": an.s12_transitions,
         "s12_definitions": an.s12_definitions,
+        # Honest gap accounting (see find_sid_gaps). `summary` is what the
+        # page prints when nothing is plotted, so a dump taken across a
+        # SID-disable window says so in words as well as in the charts.
+        "gaps": {
+            "threshold_multiple": GAP_THRESHOLD_MULTIPLE,
+            "by_sid": {str(h["sid"]): h["gaps"] for h in hk if h.get("gaps")},
+            "summary": ("; ".join(gap_lines) if gap_lines
+                        else ("no HK gaps detected" if hk_structs
+                              else "gap detection unavailable "
+                                   "(no HK cadences loaded)")),
+        },
     }
 
 
@@ -394,13 +464,15 @@ def make_app(dump_dir: Path | None, api_base: str | None = None) -> web.Applicat
     Exactly one source is used: the local ``dump_dir`` (default), or the
     remote store at ``api_base`` when given.
     """
-    params_by_id, _, hk_plist = load_catalogs()
+    params_by_id, hk_by_sid, hk_plist = load_catalogs()
     app = web.Application()
     remote = RemoteDumpStore(api_base) if api_base else None
     app["dump_dir"] = dump_dir
     app["remote"] = remote
     app["params_by_id"] = params_by_id
     app["hk_plist"] = hk_plist
+    # Per-SID cadence, so a decoded series can be checked for gaps.
+    app["hk_structs"] = hk_by_sid
     # G11: ground limits applied to every decoded series.
     app["limits_by_pid"] = load_limits_by_pid(REPO / "configs" / "eosat1")
 
@@ -448,7 +520,8 @@ def make_app(dump_dir: Path | None, api_base: str | None = None) -> web.Applicat
                                       "total_packets": 0,
                                       "first_cuc": None, "last_cuc": None})
         result = analyse_dumps(paths, app["params_by_id"], app["hk_plist"],
-                               limits_by_pid=app["limits_by_pid"])
+                               limits_by_pid=app["limits_by_pid"],
+                               hk_structs=app.get("hk_structs"))
         return web.json_response(result)
 
     app.router.add_get("/", index)
@@ -518,6 +591,14 @@ th { color: var(--dim); font-weight: 500; position: sticky; top: 0; background: 
 td.num { text-align: right; }
 .sev-1 { color: #9bb; } .sev-2 { color: #34d399; } .sev-3 { color: var(--warn); } .sev-4 { color: var(--bad); }
 .flag { color: var(--warn); }
+/* Gaps in a decoded series — stretches where the SID produced nothing. They
+   are shown as an explicit, unmissable absence, never smoothed over. */
+.gap-badge { background: #7a2e12; color: #ffd9c2; border: 1px solid #b45309;
+             border-radius: 3px; padding: 1px 5px; font-size: 9px; font-weight: 700; }
+.gap-note { margin: 4px 0 8px; padding: 6px 8px; font-size: 10px; line-height: 1.5;
+            color: #ffd9c2; background: rgba(245,158,11,0.10);
+            border-left: 3px solid #b45309; }
+.gap-note table { margin-top: 4px; }
 /* G11: per-parameter ground-limit badges */
 .lim-badge { display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 10px; font-weight: 700; margin-right: 3px; white-space: nowrap; }
 .lim-badge.yellow { color: var(--warn); border: 1px solid var(--warn); }
@@ -741,9 +822,10 @@ function render(j) {
   // HK
   $("hk").innerHTML = j.hk.length
     ? j.hk.map(sid => `
-        <h3 style="font-size:11px;color:var(--accent);margin:8px 0 4px;">SID ${sid.sid} — ${sid.packet_count} pkts, ${sid.sample_count} samples
+        <h3 style="font-size:11px;color:var(--accent);margin:8px 0 4px;">SID ${sid.sid} — ${sid.packet_count} pkts, ${sid.sample_count} samples${(sid.gaps && sid.gaps.length) ? ` <span class="gap-badge">${sid.gaps.length} GAP(S)</span>` : ""}
         <button class="sm" onclick="plotAllForSid(${sid.sid}, ${JSON.stringify(sid.params).replace(/"/g, '&quot;')})">Plot All</button>
         </h3>
+        ${gapListHtml(sid)}
         <table><thead><tr><th>ID</th><th>Name</th><th>Units</th><th class='num'>Min</th><th class='num'>Max</th><th class='num'>Mean</th><th class='num'>N</th><th>Limits</th><th>Trend</th><th></th></tr></thead><tbody>
         ${sid.params.map(p => `<tr>
           <td>0x${p.pid.toString(16).padStart(4,"0").toUpperCase()}</td>
@@ -754,8 +836,8 @@ function render(j) {
           <td class='num'>${fmtNum(p.mean)}</td>
           <td class='num'>${p.n}</td>
           <td>${limitCell(p)}</td>
-          <td>${spark(p.series)}</td>
-          <td><button class="sm" onclick="addChart(${sid.sid}, ${p.pid}, ${JSON.stringify(p.name).replace(/"/g, '&quot;')}, ${JSON.stringify(p.series)}, ${JSON.stringify(p.units).replace(/"/g, '&quot;')}, ${JSON.stringify(p.limit).replace(/"/g, '&quot;')})">Plot</button> ${p.flag ? "<span class='flag'>Δ</span>" : ""}</td>
+          <td>${spark(p.series, p.gaps)}</td>
+          <td><button class="sm" onclick="addChart(${sid.sid}, ${p.pid}, ${JSON.stringify(p.name).replace(/"/g, '&quot;')}, ${JSON.stringify(p.series)}, ${JSON.stringify(p.units).replace(/"/g, '&quot;')}, ${JSON.stringify(p.limit).replace(/"/g, '&quot;')}, ${JSON.stringify(p.gaps || []).replace(/"/g, '&quot;')})">Plot</button> ${p.flag ? "<span class='flag'>Δ</span>" : ""}</td>
         </tr>`).join("")}
         </tbody></table>`).join("")
     : "No HK packets decoded.";
@@ -819,6 +901,69 @@ const limitBandPlugin = {
   }
 };
 
+/* A gap is a stretch where the SID produced NOTHING — it was disabled by
+   TC(3,6), or a boot/bootloader entry reset the HK enable set. Chart.js joins
+   consecutive data points regardless of how far apart they are in time, so
+   plotting the raw series drew a straight line right across the hole and the
+   category x-axis spaced the two runs one tick apart: the operator saw
+   invented continuity where the spacecraft measured nothing.
+
+   splitAcrossGaps() inserts one explicit `null` sample (and a labelled x slot)
+   in the middle of every gap. With `spanGaps: false` Chart.js then BREAKS the
+   line there, so the hole is drawn as a hole. */
+function splitAcrossGaps(series, gaps) {
+  if (!gaps || !gaps.length) {
+    return { labels: series.map(([c]) => formatCucTime(c)),
+             data: series.map(([, v]) => v), cucs: series.map(([c]) => c),
+             breaks: 0 };
+  }
+  const labels = [], data = [], cucs = [];
+  let gi = 0;
+  for (let i = 0; i < series.length; i++) {
+    const [cuc, v] = series[i];
+    while (gi < gaps.length && series[i - 1] !== undefined
+           && gaps[gi].start_cuc >= series[i - 1][0]
+           && gaps[gi].end_cuc <= cuc) {
+      const mid = (gaps[gi].start_cuc + gaps[gi].end_cuc) / 2;
+      labels.push(`— NO DATA (${Math.round(gaps[gi].duration_s)}s) —`);
+      data.push(null);
+      cucs.push(mid);
+      gi++;
+    }
+    labels.push(formatCucTime(cuc));
+    data.push(v);
+    cucs.push(cuc);
+  }
+  return { labels, data, cucs, breaks: gi };
+}
+
+/* Per-SID gap table shown above the parameter list: start, end and duration
+   of every stretch with no data, so the operator can line the hole up against
+   the HK_DISABLE / boot that caused it. */
+function gapListHtml(sid) {
+  const gaps = sid.gaps || [];
+  if (!gaps.length) return "";
+  const rows = gaps.map(g =>
+    `<tr><td>${formatCucTime(g.start_cuc)}</td><td>${formatCucTime(g.end_cuc)}</td>`
+    + `<td class='num'>${Math.round(g.duration_s)}</td>`
+    + `<td class='num'>~${g.missing}</td></tr>`).join("");
+  return `<div class="gap-note">&#9888; SID ${sid.sid} stopped producing `
+    + `housekeeping ${gaps.length} time(s) in this dump (cadence `
+    + `${sid.cadence_s}s). These are REAL holes — no value is interpolated `
+    + `across them.<table><thead><tr><th>Gap start</th><th>Gap end</th>`
+    + `<th class='num'>Seconds</th><th class='num'>Pkts missing</th></tr>`
+    + `</thead><tbody>${rows}</tbody></table></div>`;
+}
+
+function gapNoteHtml(gaps) {
+  if (!gaps || !gaps.length) return "";
+  const total = gaps.reduce((a, g) => a + g.duration_s, 0);
+  return `<div class="gap-note">&#9888; ${gaps.length} gap(s), `
+    + `${Math.round(total)}s with no data — the SID was not generating `
+    + `housekeeping. The trace is broken across each gap; it is NOT `
+    + `interpolated.</div>`;
+}
+
 function fmtNum(x) {
   if (x == null || !isFinite(x)) return "—";
   if (Number.isInteger(x)) return String(x);
@@ -829,15 +974,32 @@ function fmtNum(x) {
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
-function spark(pts) {
+/* Sparkline. Time-proportional on x (so a hole LOOKS like a hole) and drawn
+   as one polyline per contiguous run, so a gap is empty space rather than a
+   long straight segment implying data that was never measured. */
+function spark(pts, gaps) {
   if (!pts || pts.length < 2) return "";
   const w = 200, h = 28;
   const xs = pts.map(p => p[0]); const ys = pts.map(p => p[1]);
   const x0 = Math.min(...xs), x1 = Math.max(...xs);
   const y0 = Math.min(...ys), y1 = Math.max(...ys);
   const dx = (x1 - x0) || 1, dy = (y1 - y0) || 1;
-  const path = pts.map(([x,y]) => `${((x-x0)/dx*(w-2)+1).toFixed(1)},${((h-1)-((y-y0)/dy)*(h-2)).toFixed(1)}`).join(" ");
-  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline fill="none" stroke="#5fb7ff" stroke-width="1.2" points="${path}"/></svg>`;
+  const px = ([x, y]) => `${((x-x0)/dx*(w-2)+1).toFixed(1)},${((h-1)-((y-y0)/dy)*(h-2)).toFixed(1)}`;
+  const runs = [[]];
+  const gl = (gaps || []).slice();
+  let gi = 0;
+  for (let i = 0; i < pts.length; i++) {
+    if (i > 0 && gi < gl.length && pts[i-1][0] <= gl[gi].start_cuc
+        && pts[i][0] >= gl[gi].end_cuc) {
+      runs.push([]);
+      gi++;
+    }
+    runs[runs.length - 1].push(pts[i]);
+  }
+  const lines = runs.filter(r => r.length > 1)
+    .map(r => `<polyline fill="none" stroke="#5fb7ff" stroke-width="1.2" points="${r.map(px).join(" ")}"/>`)
+    .join("");
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${lines}</svg>`;
 }
 
 function isoOf(localInput) {
@@ -863,7 +1025,7 @@ function formatCucTime(cuc) {
   return new Date(CUC_EPOCH_UNIX_MS + cuc * 1000).toISOString().substr(11, 12);
 }
 
-function addChart(sid, pid, name, series, units, limit) {
+function addChart(sid, pid, name, series, units, limit, gaps) {
   if (!series || series.length < 1) return;
   const chartId = `chart-${sid}-${pid}`;
   const chartsBody = $("chartsBody");
@@ -875,8 +1037,11 @@ function addChart(sid, pid, name, series, units, limit) {
     return;
   }
 
-  const labels = series.map(([cuc]) => formatCucTime(cuc));
-  const data = series.map(([_, v]) => v);
+  // Break the trace across every gap instead of drawing through it.
+  const split = splitAcrossGaps(series, gaps);
+  const labels = split.labels;
+  const data = split.data;
+  const cucs = split.cucs;
 
   chartItem = document.createElement("div");
   chartItem.id = chartId;
@@ -886,6 +1051,7 @@ function addChart(sid, pid, name, series, units, limit) {
       <div class="title">SID ${sid} • 0x${pid.toString(16).padStart(4,"0").toUpperCase()} • ${escapeHtml(name)} (${escapeHtml(units)})</div>
       <button class="close-btn" onclick="removeChart('${chartId}')">✕</button>
     </div>
+    ${gapNoteHtml(gaps)}
     <div class="chart-container">
       <canvas id="${chartId}-canvas"></canvas>
     </div>
@@ -905,6 +1071,8 @@ function addChart(sid, pid, name, series, units, limit) {
         borderWidth: 2,
         fill: true,
         tension: 0.3,
+        // A null sample is a real hole in the data, not something to bridge.
+        spanGaps: false,
         pointRadius: 0,
         pointHoverRadius: 5,
         pointBackgroundColor: '#5fb7ff',
@@ -929,7 +1097,7 @@ function addChart(sid, pid, name, series, units, limit) {
           callbacks: {
             title: (ctx) => {
               const idx = ctx[0].dataIndex;
-              const cuc = series[idx][0];
+              const cuc = cucs[idx];
               return `CUC: ${cuc} (${formatCucTime(cuc)})`;
             },
             label: (ctx) => `${ctx.dataset.label}: ${fmtNum(ctx.parsed.y)}`
@@ -979,9 +1147,14 @@ function plotAllForSid(sid, params) {
   const minCuc = Math.min(...params.flatMap(p => p.series.map(s => s[0])));
   const maxDataPoints = Math.max(...params.map(p => p.series.length));
 
-  const labels = params[0].series.map(([cuc]) => formatCucTime(cuc));
+  // Every parameter in a SID shares the packet's arrival times, so one gap
+  // list splits them all identically — the x axis stays aligned and each
+  // trace breaks in the same place instead of running straight through.
+  const sidGaps = (params.find(p => p.gaps && p.gaps.length) || {}).gaps || [];
+  const labels = splitAcrossGaps(params[0].series, sidGaps).labels;
+  const allCucs = splitAcrossGaps(params[0].series, sidGaps).cucs;
   const datasets = params.map((p, idx) => {
-    const data = p.series.map(([_, v]) => v);
+    const data = splitAcrossGaps(p.series, sidGaps).data;
     return {
       label: `${p.name} (${p.units})`.trim(),
       data: data,
@@ -990,6 +1163,7 @@ function plotAllForSid(sid, params) {
       borderWidth: 2,
       fill: false,
       tension: 0.3,
+      spanGaps: false,
       pointRadius: 0,
       pointHoverRadius: 5,
       pointBackgroundColor: colors[idx % colors.length],
@@ -1004,6 +1178,7 @@ function plotAllForSid(sid, params) {
       <div class="title">SID ${sid} • All Parameters</div>
       <button class="close-btn" onclick="removeChart('${chartId}')">✕</button>
     </div>
+    ${gapNoteHtml(sidGaps)}
     <div class="chart-container" style="height: 400px;">
       <canvas id="${chartId}-canvas"></canvas>
     </div>
@@ -1034,7 +1209,7 @@ function plotAllForSid(sid, params) {
           callbacks: {
             title: (ctx) => {
               const idx = ctx[0].dataIndex;
-              const cuc = params[0].series[idx][0];
+              const cuc = allCucs[idx];
               return `CUC: ${cuc} (${formatCucTime(cuc)})`;
             },
             label: (ctx) => `${ctx.dataset.label}: ${fmtNum(ctx.parsed.y)}`
@@ -1133,7 +1308,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--var", action="append", default=[],
                         metavar="KEY=VALUE",
                         help="With --report: template vars "
-                             "(e.g. --var t0=2026-03-10T04:18:22Z)")
+                             "(e.g. --var t0=2026-08-20T16:18:22Z)")
     parser.add_argument("-o", "--out", default=None,
                         help="With --report: output HTML path "
                              "(default workspace/reports/<auto>)")

@@ -154,9 +154,10 @@ class TestInstantiation:
             los = datetime.fromisoformat(contact["los"])
             start = datetime.fromisoformat(d["start_time"])
             # Dumps are centred on closest approach, not hung off AOS: the
-            # 330 s activity has to sit above the 10 deg gate to hold the
-            # HIGH tier (defect #86).
-            assert start == aos + (los - aos) / 2 - timedelta(minutes=2.75)
+            # 360 s activity has to sit above the 10 deg gate to hold the
+            # HIGH tier (defect #86; 2026-08d PLAN-2 grew the activity from
+            # 330 s to 360 s, so the centring offset is 3.0 min not 2.75).
+            assert start == aos + (los - aos) / 2 - timedelta(minutes=3.0)
             # ...and only gate-clearing passes are offered to the template.
             assert contact["max_elevation_deg"] >= 10.0
             assert d["extras"]["pass_max_elevation_deg"] == \

@@ -43,6 +43,8 @@ def _route_subsystem(func_id: int) -> str | None:
         return "ttc"
     if 108 <= func_id < 119:
         return "prop"          # Phase D propulsion block
+    if func_id == 119:
+        return "payload"       # PAYLOAD_SET_SHUTTER (2026-08b PL-d)
     return None
 
 
@@ -63,25 +65,45 @@ def _func_id(step: dict) -> int:
 # tm rate=65, auto mode=45, load shed=25, aocs set-mode=0, desat=1,
 # eps set-mode=83).
 EXPECTED_S8_FUNCS = {
-    # 2026-08b PL-a: AOCS_SET_MODE (func 1) now leads, commanding FINE_POINT.
-    # Without it the payload's own capture gate refused every planner-scheduled
-    # image ("Capture refused: AOCS not in FINE_POINT") — the sequence never
-    # commanded FINE at all, and the activity's precondition asked for AOCS
-    # mode 1 = SAFE_BOOT, a mode in which nothing is pointing at anything.
-    "imaging_pass": [1, 26, 28],
+    # 2026-08d PLAN-1: this table used to read [1, 26, 28] and its comment
+    # claimed func 1 was AOCS_SET_MODE. It is not — service_dispatch
+    # _route_aocs_cmd routes func 0 to set_mode and func 1 to DESATURATE, so
+    # the shipped imaging_pass opened every acquisition with a 20-50 minute
+    # wheel desaturation and the capture was refused (S1.8 / 0x0021, "AOCS
+    # not in FINE_POINT"). The sequence is now
+    #   0  AOCS_SET_MODE NOMINAL      (a defined mode to enter FINE from)
+    #   26 PAYLOAD_SET_MODE STANDBY   (starts the FPA cooler)
+    #   0  AOCS_SET_MODE FINE_POINT   (the capture gate's mode)
+    #   26 PAYLOAD_SET_MODE IMAGING
+    #   119 PAYLOAD_SET_SHUTTER OPEN  (capture refuses 0x0028 when closed)
+    #   28 PAYLOAD_CAPTURE
+    #   26 PAYLOAD_SET_MODE STANDBY   } restoration: not left in IMAGING/FINE,
+    #   0  AOCS_SET_MODE NOMINAL      } which would refuse the next desat
+    "imaging_pass": [0, 26, 0, 26, 119, 28, 26, 0],
     # The HIGH tier is gated: enter DOWNLINK mode (79), raise the rate (65),
-    # dump, then leave DOWNLINK mode so the active tier falls back to LOW.
-    "data_dump": [79, 65, 79],
+    # dump, hold HIGH for the whole dump window, then step the ladder back
+    # DOWN to LOW (65) before leaving DOWNLINK mode (79) — leaving DOWNLINK
+    # mode alone only demotes the ACTIVE tier and leaves HIGH latched as the
+    # commanded one.
+    "data_dump": [79, 65, 65, 79],
     "calibration": [13],
     "housekeeping_collection": [],
     "software_upload": [],
-    "momentum_desaturation": [1],
+    # 2026-08d PLAN-3: a dump is REFUSED from FINE_POINT, so the activity
+    # leaves FINE deliberately (0 = AOCS_SET_MODE NOMINAL) before commanding
+    # the dump (1 = AOCS_DESATURATE), and watches it with AOCS_CHECK_MOMENTUM
+    # (11) rather than flying 29 minutes blind.
+    "momentum_desaturation": [0, 1, 11, 11, 11, 11, 11],
     "thermal_rebalance": [45],
     "load_shedding": [25],
     "fdir_recovery": [0, 83],
-    # Phase D: prop-line on (19), catbed preheat (42), set burn / arm /
-    # execute / disarm (110/108/111/109), heater off (42).
-    "orbit_manoeuvre": [19, 42, 110, 108, 111, 109, 42],
+    # Phase D: prop-line on (19), burn-capable AOCS mode (0), latch valves
+    # open (113 — its absence made PROP_ARM refuse 0x0B09), catbed preheat
+    # (42) watched with PROP_GET_STATUS (118), the mode re-asserted at ARM
+    # time (0), set burn / arm / execute / disarm (110/108/111/109), valves
+    # closed (114), heater off (42).
+    "orbit_manoeuvre": [19, 0, 113, 42, 118, 118, 118, 118, 0,
+                        110, 108, 111, 109, 114, 42],
 }
 
 
@@ -177,12 +199,30 @@ class TestImagingPlannerSequence:
         return planner.generate_capture_sequence(
             "T1", "2026-03-11T10:00:00Z")["command_sequence"]
 
-    def test_generated_funcs_route_to_payload(self):
+    def test_generated_funcs_route_to_payload_and_aocs(self):
+        """2026-08d PLAN-1b: the target-driven capture used to command the
+        payload ONLY — [26, 28] — with no attitude mode and no shutter, so
+        it hit the same 0x0021 "AOCS not in FINE_POINT" refusal as the
+        catalogue's imaging_pass did, by a different route. It now mirrors
+        activity_types.yaml imaging_pass step for step."""
         seq = self._sequence()
         funcs = [_func_id(s) for s in seq if s.get("service") == 8]
-        assert funcs == [26, 28]
+        assert funcs == [0, 26, 0, 26, 119, 28, 26, 0]
         for f in funcs:
-            assert _route_subsystem(f) == "payload"
+            assert _route_subsystem(f) in ("payload", "aocs")
+
+    def test_generated_capture_reaches_fine_point_before_the_shutter(self):
+        """The FINE_POINT command must PRECEDE the capture, and it must be
+        func 0 (AOCS_SET_MODE) — func 1 is AOCS_DESATURATE."""
+        seq = self._sequence()
+        s8 = [s for s in seq if s.get("service") == 8]
+        fine = [i for i, s in enumerate(s8)
+                if _func_id(s) == 0 and (s.get("args") or {}).get("mode") == 5]
+        capture = [i for i, s in enumerate(s8) if _func_id(s) == 28]
+        assert fine and capture, s8
+        assert fine[0] < capture[0]
+        assert 1 not in [_func_id(s) for s in s8], \
+            "func 1 is AOCS_DESATURATE — a desat immediately before a capture"
 
     def test_capture_scene_and_lines_encoded_as_uint16(self):
         """Phase E WP-1: the capture step carries scene_id + lines through
@@ -190,7 +230,8 @@ class TestImagingPlannerSequence:
         commanded)."""
         from smo_mcs.procedure_runner import ProcedureRunner
         seq = self._sequence()
-        capture = [s for s in seq if s.get("service") == 8][-1]
+        capture = next(s for s in seq
+                       if s.get("service") == 8 and _func_id(s) == 28)
         data = bytes.fromhex(ProcedureRunner._build_data_hex(capture))
         assert data[0] == 28
         scene_id, lines = struct.unpack(">HH", data[1:5])

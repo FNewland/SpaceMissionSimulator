@@ -24,6 +24,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SMO Mission Planner</title>
+<!-- Vendor: the modern planner pages were missing this script tag
+     (field report 2026-08-19, same defect as the MCS shell) -- the
+     ground-track map rendered its "did not load" notice permanently
+     even where vendor/ is present. Classic loads it identically. -->
+<script src="/static/vendor/js/svg-world-map.js"></script>
 <link rel="stylesheet" href="/static/shared/design-system.css?v=1">
 <style>
 /* Page-local layout only — component styling comes from the design system. */

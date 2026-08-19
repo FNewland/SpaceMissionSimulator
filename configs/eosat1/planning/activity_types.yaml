@@ -1,9 +1,15 @@
 activity_types:
   - name: imaging_pass
     description: "Payload imaging acquisition"
-    duration_s: 120
-    min_duration_s: 60
-    max_duration_s: 300
+    # 2026-08d PLAN-1: 120 s was the CAPTURE, not the activity. The command
+    # sequence below carries 197 s of mandatory dwell (mode lead-in, FPA
+    # cooler settle, FINE settle, readout) before the restoration steps, so a
+    # 120 s booking under-booked the spacecraft by a factor of two and the
+    # conflict checker could not see the overlap it caused. 300 s = 197 s of
+    # sequence + margin for the six telecommand round trips.
+    duration_s: 300
+    min_duration_s: 240
+    max_duration_s: 600
     power_w: 75
     # One raw frame. MUST track subsystems/payload.yaml image_size_mb
     # (defect #82; 800 -> 4, textbook pp. 360/404). The planner budgets the
@@ -27,20 +33,94 @@ activity_types:
     # 2026-08b PL-a (fourth root cause of "cannot do a capture"): the sequence
     # never commanded FINE_POINT at all, so every planner-scheduled capture was
     # refused by the payload's own gate ("Capture refused: AOCS not in
-    # FINE_POINT"). AOCS_SET_MODE is func 1 (0x01) and FINE_POINT is mode 5;
-    # the wait_for holds until the mode machine has actually settled there
-    # rather than assuming the transition is instantaneous. 120 s is generous
-    # against the measured slew-and-settle for a nadir-to-target manoeuvre.
+    # FINE_POINT"). 2026-08d PLAN-1 corrected the func id it used to do it
+    # with — see the block immediately below.
+    # 2026-08d PLAN-1 — THE "IMAGING PASS DOES A DESAT" DEFECT.
+    #
+    # The first step of this sequence used to be
+    #     service 8 / subtype 1 / func_id 0x01 / params [5]
+    # captioned "AOCS_SET_MODE_FINE_POINT". S8 func 1 is NOT set-mode. The
+    # simulator's dispatch table (service_dispatch._route_aocs_cmd) is
+    #     func 0 = AOCS_SET_MODE(mode u8)
+    #     func 1 = AOCS_DESATURATE (no arguments)
+    # so every planner-scheduled imaging pass opened with a WHEEL
+    # DESATURATION, the `params: [5]` byte was discarded, the spacecraft
+    # never went near FINE_POINT, the `wait_for aocs.mode == 5` timed out
+    # after 120 s and PAYLOAD_CAPTURE came back S1.8 / 0x0021
+    # ("Capture refused: AOCS not in FINE_POINT"). Reproduced against a real
+    # SimulationEngine in tests/test_planner/test_fly_a_plan.py.
+    #
+    # A desat is also the WORST thing to do here: it is a 20-50 minute
+    # activity (measured 29 min from 0.044 N.m.s) with a 3600 s on-board
+    # timeout, and while the payload is imaging the AOCS refuses one outright
+    # (desat_inhibit_auto). See momentum_desaturation below.
+    #
+    # WHAT THE SIMULATOR ACTUALLY REQUIRES FOR A CAPTURE
+    # (payload_basic.handle_command "capture" + aocs_basic set_mode):
+    #   1. AOCS mode == 5 FINE_POINT, and FINE entry is REFUSED (S1.8,
+    #      0x0A22) unless aocs.fine_ready (0x02C5) == 0. That bitmask needs a
+    #      star tracker holding >= 5 stars, >= 3 wheels, a converged MEKF
+    #      sustained 30 s, body rate < 0.01 deg/s, momentum < 70 % of the
+    #      envelope, a non-propagate-only estimator and the slew idle >= 60 s.
+    #      Measured: ~500 s of settled NOMINAL tracking gets 0x02C5 to 0.
+    #   2. total pointing error < 0.05 deg and rate stability < 0.005 deg/s
+    #      HELD at the shutter (0x0022 / 0x0023) — hence the 90 s dwell.
+    #   3. payload.mode == 2 IMAGING and payload.fpa_ready (0x0610), which is
+    #      the FPA temperature in band for a 60 s hysteresis. STANDBY (mode 1)
+    #      is what starts the cooler, so it leads the IMAGING transition.
+    #   4. shutter_position == 1 OPEN (0x0028) — PAYLOAD_SET_SHUTTER, func 119.
+    #
+    # WHY THE LEAD TIME IS `wait_s` AND NOT ONLY `wait_for`.
+    # The S11 upload path (MCS `_handle_s11_schedule_upload`) SKIPS every
+    # `wait_for` step — a telemetry check cannot run in the on-board
+    # time-tagged schedule — and advances the execution offset only on
+    # `wait_s`. A sequence whose settle time lives in a `wait_for` therefore
+    # collapses to back-to-back time tags on board. Every real minimum
+    # duration below is an explicit `wait_s`; the `wait_for` beside it is the
+    # ground-run confirmation, not the booking.
     command_sequence:
+      # ── Lead-in: a defined attitude mode to enter FINE from ──────────
       - service: 8
         subtype: 1
-        func_id: 0x01
+        func_id: 0x00         # 0 = AOCS_SET_MODE (func 1 is DESATURATE)
+        params: [4]            # mode 4 = NOMINAL_NADIR
+        description: "AOCS_SET_MODE_NOMINAL"
+      - wait_s: 10
+      - wait_for:
+          parameter: aocs.mode
+          value: 4
+          timeout_s: 120
+      # ── Lead-in: FPA cooler. STANDBY requests it (service_dispatch
+      # _route_payload_cmd drives both the TCS flag and the EPS fpa_cooler
+      # line); fpa_ready needs the temperature in band for 60 s.
+      - service: 8
+        subtype: 1
+        func_id: 0x1A
+        params: [1]            # mode 1 = STANDBY
+        description: "PAYLOAD_SET_MODE_STANDBY"
+      - wait_s: 60
+      - wait_for:
+          parameter: payload.fpa_ready
+          value: 1
+          timeout_s: 900
+      # ── The FINE gate, read before it is commanded ───────────────────
+      - wait_for:
+          parameter: aocs.fine_ready
+          value: 0
+          timeout_s: 600
+      - service: 8
+        subtype: 1
+        func_id: 0x00
         params: [5]            # mode 5 = FINE_POINT
         description: "AOCS_SET_MODE_FINE_POINT"
+      # Settle. The capture gate gives up at 0.05 deg / 0.005 deg/s, and the
+      # 0x02C5 slew-idle bit alone is 60 s wide.
+      - wait_s: 90
       - wait_for:
           parameter: aocs.mode
           value: 5
-          timeout_s: 120
+          timeout_s: 180
+      # ── Acquisition ─────────────────────────────────────────────────
       - service: 8
         subtype: 1
         func_id: 0x1A
@@ -51,6 +131,16 @@ activity_types:
           parameter: payload.mode
           value: 2
           timeout_s: 30
+      # 2026-08d PLAN-1: the shutter is part of the optical path and
+      # `capture` refuses (0x0028) when it is CLOSED. Nothing in the plan
+      # ever opened it, so an imaging pass that followed a COM-011 dark
+      # frame or a CTG shutter close was silently unflyable.
+      - service: 8
+        subtype: 1
+        func_id: 0x77          # 119 = PAYLOAD_SET_SHUTTER
+        params: [1]            # 1 = OPEN
+        description: "PAYLOAD_SET_SHUTTER_OPEN"
+      - wait_s: 2
       # Phase E WP-1: the capture MUST carry its arguments — the old
       # params-free step made every planner-scheduled image a zero-length
       # (0,0)-stamped capture. scene_id 0 = on-board auto-assign; lines 2048
@@ -62,11 +152,42 @@ activity_types:
         func_id: 0x1C
         args: { scene_id: 0, lines: 2048 }
         description: "PAYLOAD_CAPTURE_IMAGE"
+      # Readout: 2048 lines at the configured line rate, then the frame is
+      # in mass memory and the catalogue entry exists.
+      - wait_s: 30
+      # ── Restoration ─────────────────────────────────────────────────
+      # An activity that walks away leaving the payload in IMAGING holds
+      # aocs.desat_inhibit_auto asserted, so the NEXT momentum dump is
+      # refused; leaving the AOCS in FINE makes AOCS_DESATURATE refuse with
+      # DESAT_REFUSED_FINE. Hand the spacecraft back in routine ops config.
+      - service: 8
+        subtype: 1
+        func_id: 0x1A
+        params: [1]            # back to STANDBY (cooler stays on)
+        description: "PAYLOAD_SET_MODE_STANDBY"
+      - service: 8
+        subtype: 1
+        func_id: 0x00
+        params: [4]            # back to NOMINAL_NADIR
+        description: "AOCS_SET_MODE_NOMINAL"
+    # Machine-checked timing (see `timing:` on every type below and
+    # ActivityScheduler.check_sequence_timing). 10+60+90+5+2+30 = 197 s of
+    # explicit dwell; duration_s must cover it.
+    timing:
+      sequence_min_duration_s: 197
+      # Everything before PAYLOAD_CAPTURE: the plan must place the activity
+      # START this far ahead of the intended acquisition instant.
+      lead_time_s: 167
+      restore_time_s: 30
+      # A momentum dump immediately before an imaging pass cannot work: the
+      # dump runs 20-50 min, holds the attitude at DESAT entry and refuses to
+      # be interrupted. Keep a full desat-plus-FINE-reacquisition clear.
+      min_gap_after_s: 60
     conflicts_with:
       - software_upload
       - momentum_desaturation
     pre_conditions:
-      - "payload.fpa_temp_c < -3.0"
+      - "payload.fpa_temp < -3.0"
       - "eps.bus_voltage > 24.0"
       # 2026-08b PL-a: was `aocs.mode == 1`, i.e. SAFE_BOOT — a mode in which
       # the spacecraft is not pointing at anything and the payload's capture
@@ -99,8 +220,11 @@ activity_types:
     # The old 600 s was sized for the retired flat 64 kbps rate (600 s x 64000
     # x 0.8 = 3.66 MiB, just under one image). At 128 kbps the same 600 s is
     # 1.8 images — capacity the plan books but has nothing to put in.
-    duration_s: 330
-    min_duration_s: 180              # ~0.55 image; a short, late-in-pass top-up
+    # 2026-08d PLAN-2: 330 s is the DUMP WINDOW (one 4 MiB product at HIGH);
+    # the activity also has to book the ladder set-up and the restoration
+    # either side of it, which is 7 s of dwell plus six telecommands. 360 s.
+    duration_s: 360
+    min_duration_s: 210              # ~0.55 image; a short, late-in-pass top-up
     max_duration_s: 900              # ~2.7 images; more than any single pass holds
     power_w: 50
     data_volume_mb: 0
@@ -129,6 +253,10 @@ activity_types:
         params: [1]            # enter DOWNLINK / payload-dump mode
         description: "TTC_SET_DOWNLINK_MODE_ON"
       - wait_s: 2
+      - wait_for:
+          parameter: ttc.downlink_mode
+          value: 1
+          timeout_s: 30
       - service: 8
         subtype: 1
         func_id: 0x41
@@ -143,26 +271,86 @@ activity_types:
         subtype: 9
         store_id: 3
         description: "S15_DUMP_SCIENCE_STORE"
+      # 2026-08d PLAN-2: THE DUMP HAS TO STAY AT HIGH WHILE IT RUNS.
+      # TC(15,9) only STARTS the dump; the engine paces the release of the
+      # stored packets at the ACTIVE TM rate (engine._tick_dump_emission
+      # reads _current_tm_rate_bps every tick). The sequence used to leave
+      # DOWNLINK mode on the very next step, ~1 s later — which demotes the
+      # active tier to LOW (ttc_basic._effective_tier) and ran 99 % of a
+      # 330 s dump at 16 kbps, an eighth of the rate the plan budgeted, with
+      # the remainder simply not downlinked inside the pass. Dwell for the
+      # whole booked dump window before touching the ladder.
+      #
+      # The dwell is broken by a mid-dump link check rather than being 330 s
+      # of silence, for two reasons. It is how a dump is actually flown — the
+      # operator watches the TT&C HK set while the store empties — and the
+      # simulator's auto-TX hold-down (simulation.yaml ttc.auto_tx_hold_s,
+      # 300 s on EOSAT-1) de-energises the `ttc_tx` power line after 300 s
+      # with no accepted telecommand. A single 330 s gap therefore killed the
+      # transmitter mid-dump and the two restoration telecommands came back
+      # S1.2 / 0x0004 "subsystem power off". See the note in the report: the
+      # hold-down dropping an OPERATOR-COMMANDED line is arguably a simulator
+      # defect, but the plan should not be flying 5+ minutes blind either way.
+      - wait_s: 165
+      - service: 3
+        subtype: 27
+        sid: 6                 # SID 6 = TT&C housekeeping
+        description: "S3_REQUEST_HK_TTC mid-dump link check"
+      - wait_s: 165
+      # Restoration, in the order the gates require: step DOWN the ladder
+      # first so the COMMANDED tier is LOW (leaving DOWNLINK mode alone only
+      # demotes the ACTIVE tier and leaves HIGH latched as the commanded one,
+      # which is the "left in HIGH/DOWNLINK" defect class), then leave
+      # DOWNLINK mode.
+      - service: 8
+        subtype: 1
+        func_id: 0x41
+        params: [0]            # tier code 0 = LOW (16 kbps, routine ops)
+        description: "TTC_SET_TM_RATE_LOW"
+      - wait_s: 2
       - service: 8
         subtype: 1
         func_id: 0x4F
-        params: [0]            # leave DOWNLINK mode -> active tier back to LOW
+        params: [0]            # leave DOWNLINK mode
         description: "TTC_SET_DOWNLINK_MODE_OFF"
+      - wait_for:
+          parameter: ttc.tm_data_rate
+          value: 16000
+          timeout_s: 30
+    # 2+3+330+2 = 337 s of explicit dwell.
+    timing:
+      sequence_min_duration_s: 337
+      lead_time_s: 5          # DOWNLINK mode + HIGH before TC(15,9)
+      restore_time_s: 2
+      # The dump window itself, i.e. how long the ladder is held at HIGH.
+      dump_dwell_s: 330
     conflicts_with:
       - imaging_pass
       - software_upload
     pre_conditions:
-      - "ttc.in_contact == true"
+      # 2026-08d PLAN-8: these have to be evaluable. `ttc.in_contact` is not
+      # a telemetry parameter (telemetry/parameters.yaml has no such name) and
+      # `== true` is not a value the checker's comparator accepts, so BOTH of
+      # these were reported as "not available"/"unparseable" rather than
+      # checked. 0x0501 ttc.link_status 2 = LOCKED is the real "we are in a
+      # pass" reading, and 0x0520 antenna_deployed is a 0/1 flag.
+      - "ttc.link_status >= 2"
       - "eps.bus_voltage > 24.0"
       # The HIGH tier's own gates, expressed where the planner can check them.
-      - "ttc.antenna_deployed == true"
+      - "ttc.antenna_deployed == 1"
       - "ttc.contact_elevation >= 10.0"
 
   - name: calibration
     description: "Sensor calibration sequence"
-    duration_s: 180
-    min_duration_s: 120
-    max_duration_s: 300
+    # 2026-08d PLAN-4: the AOCS gyro-bias arc is 300 s of averaging —
+    # subsystems/aocs.yaml `gyro_calibration.duration_s: 300.0`, clamped to
+    # [30, 1800] — and the activity has to hold the attitude for all of it.
+    # 180 s was the value in this file and it matched nothing: a bare
+    # AOCS_GYRO_CALIBRATION takes the spacecraft's default arc, so the plan
+    # booked 40 % less time than the command it sends actually runs for.
+    duration_s: 330
+    min_duration_s: 300
+    max_duration_s: 1800
     power_w: 50
     # AOCS_GYRO_CALIBRATION produces calibration telemetry, not imagery: gyro
     # and star-tracker samples over 180 s. The old 50 MB was scaled to the
@@ -186,6 +374,29 @@ activity_types:
         subtype: 1
         func_id: 0x0D
         description: "AOCS_GYRO_CALIBRATION"
+      # 2026-08d PLAN-4: the arc is a REAL 300 s of averaging (the model
+      # defers the S1.7 until it completes and aborts loudly if the
+      # reference is lost part-way), so the activity has to sit through it
+      # rather than book 180 s and emit a single fire-and-forget TC. The
+      # `wait_for` confirms the bias estimate was published.
+      - wait_s: 300
+      - wait_for:
+          parameter: aocs.gyro_cal_progress
+          value: 100
+          operator: ">="
+          timeout_s: 600
+    timing:
+      sequence_min_duration_s: 300
+      lead_time_s: 0
+      restore_time_s: 0
+      # 2026-08d PLAN-4: the whole 300 s averaging arc has to fit inside one
+      # sunlit pass. `_gyro_cal_blocker` is re-evaluated EVERY TICK of the
+      # run and aborts the arc the moment the star-tracker attitude reference
+      # goes away — and at umbra entry the estimator drops to propagate-only,
+      # so a calibration started with less than an arc's worth of daylight
+      # left aborts part way and publishes nothing. `requires_daylight: true`
+      # said "start in daylight"; this says how much of it is needed.
+      daylight_required_at_offset_s: 300
     conflicts_with:
       - imaging_pass
     pre_conditions:
@@ -194,7 +405,28 @@ activity_types:
       # `requires_attitude: nominal`, so the mode it needs is 4 = NOMINAL — not
       # 5 (this is not an imaging activity and does not need fine pointing).
       - "aocs.mode == 4"
-      - "payload.fpa_temp_c < -3.0"
+      - "payload.fpa_temp < -3.0"
+      # 2026-08d PLAN-4: the refusal the planner could not see. AOCS gyro
+      # calibration is gated on a live STAR-TRACKER attitude reference
+      # (aocs_basic._gyro_cal_blocker -> CAL_ERR_NO_REFERENCE 0x0A03): the
+      # selected head valid, >= 5 stars tracked, and est_source bit 0 set,
+      # i.e. the last MEKF update really came from the tracker. A plan that
+      # scheduled this with the trackers dark got a bare S1.8/0x0A03 in the
+      # pass. Expressed here so the checker refuses it on the ground.
+      - "aocs.st1_num_stars >= 5"
+      - "aocs.est_source >= 1"
+      # QUIESCENT. The bias is only separable from the true rate when the
+      # vehicle is not manoeuvring, so `_gyro_cal_blocker` refuses (and, mid
+      # arc, aborts) above aocs.yaml `gyro_calibration.max_rate_dps` = 0.10.
+      # Measured: a calibration booked in the wake of an eclipse hand-over
+      # came back S1.8 / 0x0A04 CAL_ERR_RATE_HIGH with nothing in the plan
+      # able to have predicted it.
+      - "aocs.rate_stability_3sig < 0.10"
+      # ...and the attitude actually HELD, not merely commanded: the model
+      # measures the rate against the reference, so a vehicle still settling
+      # after an eclipse hand-over or a momentum dump reads quiet on the
+      # jitter metric while the tracking error is still being worked off.
+      - "aocs.att_error < 0.5"
     thermal_constraints:
       max_continuous_minutes: 5
       # DERIVED: fpa_envelope.imaging_max_c (G3-d).
@@ -222,6 +454,10 @@ activity_types:
         subtype: 27
         sid: 1
         description: "S3_REQUEST_HK_ALL"
+    timing:
+      sequence_min_duration_s: 0     # one-shot request, no dwell
+      lead_time_s: 0
+      restore_time_s: 0
     conflicts_with: []
     pre_conditions: []
 
@@ -242,27 +478,63 @@ activity_types:
     # Was NOM-005 "HK Configuration"; software_upload's procedure is
     # NOM-006 "Software Upload".
     procedure_ref: NOM-006
-    # S6.2 MEM_LOAD needs address(4)+data; 0x40000000 is a writable region
-    # (Boot ROM 0x0-0x1FFFF is read-only). Previously sent with no data and
-    # silently did nothing.
+    # S6.2 MEM_LOAD needs address(4)+data.
+    #
+    # 2026-08d PLAN-5: 0x40000000 IS NOT MAPPED. memory/memory_map.yaml
+    # declares boot_rom 0x00000000, boot_backup 0x00010000, app_a 0x00100000,
+    # app_b 0x00180000, config 0x00200000, scratch_ram 0x20000000,
+    # aocs_gains 0x20100000 — and nothing at 0x40000000. Worse, the
+    # dispatcher tries the CATALOGUED wire form (memory_id u8 + address u32)
+    # before the historical address-first one, so `40 00 00 00 DE AD BE EF`
+    # decoded as memory_id 0x40 / address 0x000000DE — inside the read-only
+    # boot ROM — and every planner software upload came back
+    # "region 'boot_rom' is read-only" (S1.4). app_b is the region the
+    # memory map itself labels "redundant / upload target".
     command_sequence:
       - service: 6
         subtype: 2
-        address: 0x40000000
+        address: 0x00180000    # app_b — the declared upload target
         data: "DEADBEEF"
-        description: "S6_LOAD_MEMORY"
+        description: "S6_LOAD_MEMORY app_b"
+      - wait_s: 2
+      # Read the patch back and CRC it. An upload the ground never verified
+      # is not an upload; S6.9 MEM_CHECK answers with TM(6,10).
+      - service: 6
+        subtype: 9
+        address: 0x00180000
+        data: "0004"           # length uint16 = 4 bytes, per S6.9 address+length
+        description: "S6_CHECK_MEMORY app_b"
+    timing:
+      sequence_min_duration_s: 2
+      lead_time_s: 0
+      restore_time_s: 0
     conflicts_with:
       - imaging_pass
       - data_dump
     pre_conditions:
-      - "ttc.in_contact == true"
-      - "eps.battery_soc > 60"
+      # 2026-08d PLAN-8: `ttc.in_contact` and `eps.battery_soc` are not
+      # telemetry parameter names (the real ones are 0x0501 ttc.link_status
+      # and 0x0101 eps.bat_soc), so neither pre-condition was ever evaluated.
+      - "ttc.link_status >= 2"
+      - "eps.bat_soc > 60"
 
   - name: momentum_desaturation
     description: "Reaction wheel momentum dump using magnetorquers"
-    duration_s: 600
-    min_duration_s: 300
-    max_duration_s: 1200
+    # 2026-08d PLAN-3: A DESAT IS A 20-50 MINUTE ACTIVITY, NOT TEN MINUTES.
+    # aocs_basic runs the MTQ dump law m = k(h x B)/|B|^2 at
+    # gain_per_s 0.002 down to a 5e-4 N.m.s deadband, with a 3600 s
+    # `timeout_s` after which it gives up and reports the dump INEFFECTIVE.
+    # Measured against a real SimulationEngine: 29 min from 0.044 N.m.s
+    # (0.0435 -> 0.0062 N.m.s in 1740 s), consistent with the owner's
+    # 25 min-to-0.005 / 48 min-to-0.001 figures. Booking 600 s meant the
+    # plan believed the wheels were clean 20 minutes before they were, and
+    # let the scheduler put an imaging pass on top of a running dump.
+    duration_s: 1800
+    min_duration_s: 1200
+    # The on-board timeout is the hard ceiling: past it the AOCS abandons
+    # the dump and returns to the pre-desat mode (aocs.yaml desaturation
+    # timeout_s / aocs_basic._desat_timeout_s).
+    max_duration_s: 3600
     power_w: 30
     data_volume_mb: 0
     requires_attitude: null
@@ -274,20 +546,98 @@ activity_types:
     # Was NOM-006 "Software Upload"; desaturation's procedure is
     # NOM-007 "Momentum Management".
     procedure_ref: NOM-007
+    # The dump is REFUSED (aocs_basic "desaturate") in OFF / SAFE_BOOT /
+    # DETUMBLE, while the payload is imaging (desat_inhibit_auto) and — the
+    # one the plan can actually walk into — in FINE_POINT
+    # ("DESAT_REFUSED_FINE: a dump drops fine pointing and the strip is
+    # lost"). So the activity leaves FINE first, deliberately, instead of
+    # discovering it as an S1.8 in the pass.
     command_sequence:
       - service: 8
         subtype: 1
-        func_id: 0x01
+        func_id: 0x00          # 0 = AOCS_SET_MODE
+        params: [4]            # mode 4 = NOMINAL_NADIR — legal to dump from
+        description: "AOCS_SET_MODE_NOMINAL"
+      - wait_s: 10
+      - wait_for:
+          parameter: aocs.mode
+          value: 4
+          timeout_s: 120
+      - service: 8
+        subtype: 1
+        func_id: 0x01          # 1 = AOCS_DESATURATE (no arguments)
         description: "AOCS_DESAT"
+      # The dump itself: 29 minutes, measured. Explicit `wait_s` because the
+      # S11 on-board schedule cannot run the `wait_for` beside it.
+      #
+      # Broken into 290 s legs with AOCS_CHECK_MOMENTUM (func 11 -> TM(8,130)
+      # momentum + saturation %) between them. That is how a dump is
+      # monitored — the operator watches |h| fall — and it keeps the
+      # telecommand cadence inside the simulator's 300 s auto-TX hold-down,
+      # which otherwise de-energises `ttc_tx` half way through and leaves the
+      # ground blind for the rest of the dump.
+      - wait_s: 290
+      - service: 8
+        subtype: 1
+        func_id: 0x0B          # 11 = AOCS_CHECK_MOMENTUM
+        description: "AOCS_CHECK_MOMENTUM (dump progress)"
+      - wait_s: 290
+      - service: 8
+        subtype: 1
+        func_id: 0x0B
+        description: "AOCS_CHECK_MOMENTUM (dump progress)"
+      - wait_s: 290
+      - service: 8
+        subtype: 1
+        func_id: 0x0B
+        description: "AOCS_CHECK_MOMENTUM (dump progress)"
+      - wait_s: 290
+      - service: 8
+        subtype: 1
+        func_id: 0x0B
+        description: "AOCS_CHECK_MOMENTUM (dump progress)"
+      - wait_s: 290
+      - service: 8
+        subtype: 1
+        func_id: 0x0B
+        description: "AOCS_CHECK_MOMENTUM (dump progress)"
+      - wait_s: 290
+      # The dump has ENDED. Written as "not DESAT" rather than "== NOMINAL"
+      # because the return path is to the pre-desat COMMANDED mode, and a
+      # desat that finishes near umbra entry hands over to ECLIPSE_PROPAGATE
+      # (mode 8) on the way — which is the mode machine working, not the dump
+      # failing. `aocs.desat_ineffective` / the 0x0212 event say whether it
+      # actually removed momentum.
+      - wait_for:
+          parameter: aocs.mode
+          value: 7
+          operator: "!="
+          timeout_s: 3600
+    timing:
+      sequence_min_duration_s: 1750
+      lead_time_s: 10
+      restore_time_s: 0
+      # Everything the dump inhibits needs the wheels settled AND the FINE
+      # preconditions (0x02C5) satisfied again afterwards — the star-tracker
+      # / MEKF / slew-idle sustain alone is ~10 min. An imaging pass booked
+      # inside this gap cannot reach FINE_POINT.
+      min_gap_after_s: 600
     conflicts_with:
       - imaging_pass
       - data_dump
     pre_conditions:
       - "aocs.total_momentum > 0.5"
+      # Encoded so the conflict checker can refuse the plan the owner hit:
+      # a desat commanded from FINE_POINT is refused outright.
+      - "aocs.mode != 5"
     aocs_constraints:
       resets_momentum: true
       target_momentum: 0.0
-      required_gap_s_after: 30
+      # Was 30 s. See timing.min_gap_after_s: the number that matters is how
+      # long FINE_POINT takes to become re-enterable, not how long the
+      # magnetorquers take to de-energise.
+      required_gap_s_after: 600
+      on_board_timeout_s: 3600
 
   - name: thermal_rebalance
     description: "Thermal subsystem heater duty redistribution"
@@ -315,6 +665,10 @@ activity_types:
         func_id: 0x2D
         params: [0]            # circuit 0 = battery thermostat auto mode
         description: "TCS_AUTO_MODE_BATTERY"
+    timing:
+      sequence_min_duration_s: 0     # hand-over to the thermostat; no dwell
+      lead_time_s: 0
+      restore_time_s: 0
     conflicts_with:
       - imaging_pass
     pre_conditions:
@@ -350,6 +704,10 @@ activity_types:
         func_id: 0x19
         params: [1]            # load-shed stage 1
         description: "EPS_EMERGENCY_LOAD_SHED"
+    timing:
+      sequence_min_duration_s: 0
+      lead_time_s: 0
+      restore_time_s: 0
     conflicts_with:
       - imaging_pass
       - data_dump
@@ -386,6 +744,13 @@ activity_types:
         func_id: 0x53
         params: [1]            # EPS mode 1 = safe
         description: "EPS_SET_MODE_SAFE"
+    timing:
+      sequence_min_duration_s: 10
+      lead_time_s: 10
+      restore_time_s: 0
+      # This activity DELIBERATELY leaves the spacecraft safed. Nothing that
+      # needs an operational attitude mode may follow it without a recovery.
+      min_gap_after_s: 600
     conflicts_with:
       - imaging_pass
       - data_dump
@@ -399,9 +764,14 @@ activity_types:
   # 0x6F EXECUTE) — verified against service_dispatch._route_prop_cmd.
   - name: orbit_manoeuvre
     description: "Orbit-maintenance / debris-avoidance delta-V burn (NOM-004 planning, NOM-013 execution)"
-    duration_s: 1500          # 1200 s catbed preheat + burn + margin
-    min_duration_s: 900
-    max_duration_s: 2400
+    # 2026-08d PLAN-6: 1500 s could not cover its own command sequence —
+    # 1200 s of preheat + a 600 s catbed `wait_for` + a 120 s burn dwell is
+    # 1920 s before any margin. Measured end-to-end against a real
+    # SimulationEngine: 2620 s with the equality-comparison catbed wait,
+    # ~2050 s once it became a threshold.
+    duration_s: 2100          # 1200 s catbed preheat + settle + burn + margin
+    min_duration_s: 1500
+    max_duration_s: 3000
     power_w: 14               # 12 W catbed heater + 2 W valve drivers
     data_volume_mb: 0
     requires_attitude: nominal
@@ -414,22 +784,101 @@ activity_types:
       - tcs
     priority: high
     procedure_ref: NOM-004
+    # 2026-08d PLAN-6. Three defects in the shipped sequence, all of them
+    # things the ARM interlock mask (prop_basic._interlock_mask) rejects:
+    #
+    #  (a) NO LATCH VALVE. PROP_ARM refuses with INH_VALVES (0x0B09) unless
+    #      branch A or B is open, and nothing in the plan ever sent
+    #      PROP_ISO_OPEN (func 113). It is added below, and closed again in
+    #      the restoration.
+    #  (b) NO ATTITUDE MODE. INH_AOCS_MODE (0x0B04) demands NOMINAL /
+    #      FINE_POINT / INERTIAL. The plan declared `aocs.mode == 4` as a
+    #      pre-condition and then never commanded it; flown from anything
+    #      else — an eclipse demotion, a preceding desat — PROP_ARM was
+    #      refused 0x0B04. Measured: ARM 0x0B04 then EXECUTE 0x0B11
+    #      ("not ARMED"), i.e. no burn at all, on a real SimulationEngine.
+    #  (c) EQUALITY ON A TEMPERATURE. `wait_for prop.catbed_temp == 180` on
+    #      a continuously-varying float never matches: the bed passes 180 C
+    #      and settles near 230 C, so the step burned its full 600 s timeout
+    #      on every run. It is a threshold, so it takes `operator: ">="`.
     command_sequence:
       - service: 8
         subtype: 1
         func_id: 0x13
         params: [8]            # EPS_POWER_LINE_ON line 8 = prop
         description: "EPS_POWER_LINE_ON prop"
+      - wait_s: 5
+      # (b) the burn-capable attitude mode the ARM interlock demands.
+      - service: 8
+        subtype: 1
+        func_id: 0x00          # 0 = AOCS_SET_MODE
+        params: [4]            # mode 4 = NOMINAL_NADIR
+        description: "AOCS_SET_MODE_NOMINAL"
+      - wait_s: 10
+      - wait_for:
+          parameter: aocs.mode
+          value: 4
+          timeout_s: 120
+      # (a) the propellant path.
+      - service: 8
+        subtype: 1
+        func_id: 0x71          # 113 = PROP_ISO_OPEN
+        params: [2]            # branch 2 = BOTH
+        description: "PROP_ISO_OPEN both"
+      - wait_s: 5
       - service: 8
         subtype: 1
         func_id: 0x2A
         params: [1]            # HEATER_THRUSTER ON — catbed preheat
         description: "HEATER_THRUSTER_ON"
-      - wait_s: 1200
+      # 1200 s of catbed preheat, watched with PROP_GET_STATUS (func 118 ->
+      # TM(8,2): state, tank P, propellant, catbed, dv remaining and the ARM
+      # inhibit mask) rather than flown blind. The 290 s legs also stay
+      # inside the simulator's 300 s auto-TX hold-down, which de-energises
+      # `ttc_tx` after 300 s with no accepted telecommand.
+      - wait_s: 290
+      - service: 8
+        subtype: 1
+        func_id: 0x76          # 118 = PROP_GET_STATUS
+        description: "PROP_GET_STATUS (preheat progress)"
+      - wait_s: 290
+      - service: 8
+        subtype: 1
+        func_id: 0x76
+        description: "PROP_GET_STATUS (preheat progress)"
+      - wait_s: 290
+      - service: 8
+        subtype: 1
+        func_id: 0x76
+        description: "PROP_GET_STATUS (preheat progress)"
+      - wait_s: 290
+      - service: 8
+        subtype: 1
+        func_id: 0x76
+        description: "PROP_GET_STATUS (preheat progress)"
+      - wait_s: 40
       - wait_for:
           parameter: prop.catbed_temp
           value: 180
+          operator: ">="       # (c) a threshold, not an equality
           timeout_s: 600
+      # The ARM interlock reads the mode AT ARM TIME, and 20 minutes of
+      # preheat is long enough for an eclipse entry to have demoted the AOCS
+      # to ECLIPSE_PROPAGATE (mode 8) since the lead-in. Re-assert the mode
+      # here so the interlock sees what the plan promised. Measured: without
+      # this, PROP_ARM returned 0x0B04 with inhibit mask 0x488 — AOCS mode
+      # AND eclipse — on a manoeuvre whose ACTIVITY start was in daylight but
+      # whose BURN was not. See timing.daylight_required_at_offset_s.
+      - service: 8
+        subtype: 1
+        func_id: 0x00
+        params: [4]
+        description: "AOCS_SET_MODE_NOMINAL (re-assert before ARM)"
+      - wait_s: 10
+      - wait_for:
+          parameter: aocs.mode
+          value: 4
+          timeout_s: 120
       - service: 8
         subtype: 1
         func_id: 0x6E
@@ -445,15 +894,49 @@ activity_types:
         func_id: 0x6F
         description: "PROP_EXECUTE"
       - wait_s: 120
+      # The burn has ENDED, one way or the other: 3 = complete, 4 = aborted.
+      # Both are terminal and both lead to the same next steps (disarm, close
+      # the valves, then post-burn orbit determination — NOM-013 step 6 is
+      # mandatory after an abort too, because the partial delta-V has already
+      # changed the orbit). Waiting for 3 alone hangs the plan on a burn the
+      # on-board autonomy cut short; `prop.abort_reason` (0x0B14) says why.
+      - wait_for:
+          parameter: prop.burn_status
+          value: 3
+          operator: ">="
+          timeout_s: 600
       - service: 8
         subtype: 1
         func_id: 0x6D
         description: "PROP_DISARM"
+      # ── Restoration: no propellant path, no heater, left in NOMINAL ──
+      - service: 8
+        subtype: 1
+        func_id: 0x72          # 114 = PROP_ISO_CLOSE
+        params: [2]            # branch 2 = BOTH
+        description: "PROP_ISO_CLOSE both"
       - service: 8
         subtype: 1
         func_id: 0x2A
         params: [0]
         description: "HEATER_THRUSTER_OFF"
+    # 5+10+5+1200+120 = 1340 s of explicit dwell, and the catbed `wait_for`
+    # can legitimately add up to another 600 s before the bed reaches
+    # 180 C — which is what duration_s has to cover.
+    timing:
+      sequence_min_duration_s: 1350
+      lead_time_s: 1230        # everything up to PROP_SET_BURN
+      restore_time_s: 5
+      catbed_preheat_s: 1200
+      min_gap_after_s: 300
+      # `requires_daylight` is about the BURN, not the activity start. The
+      # ARM interlock refuses in eclipse (INH_ECLIPSE 0x0B08) and the AOCS
+      # demotes to ECLIPSE_PROPAGATE, so the sunlit arc has to still have
+      # this much of it left when the activity STARTS. EOSAT-1's sunlit arc
+      # is ~57 min, so a manoeuvre started less than ~21 min before umbra
+      # entry cannot fly — which is a plan the scheduler can now reject
+      # instead of discovering as an S1.8 at the thruster.
+      daylight_required_at_offset_s: 1230
     conflicts_with:
       - imaging_pass
       - data_dump

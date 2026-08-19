@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="EPS" Creator="EOSAT-1 SMDL Generator" Version="1.0+f46653e0637e">
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="EPS" Creator="EOSAT-1 SMDL Generator" Version="1.0+590a05ec5309">
   <Description>SMP2 model catalogue for EPS subsystem</Description>
   <Type Name="UInt8" Uuid="1b57882a-4b2d-53f8-a27f-be0563caa586" xsi:type="Integer" Size="1" Signed="false"/>
   <Type Name="UInt16" Uuid="5fcf9bfd-72b9-5f0c-b036-3cad6f5a8506" xsi:type="Integer" Size="2" Signed="false"/>
@@ -229,6 +229,9 @@
     </Field>
     <Field Name="eps_subsys_power_obdh" Uuid="07757abe-c165-5556-84da-dc1a97c4ecd5" Type="UInt16" Kind="Output" View="true">
       <Description>OBDH subsystem power draw [W]</Description>
+    </Field>
+    <Field Name="eps_sun_fraction" Uuid="b7814882-82da-5a71-af9a-3a9c63bfa1ee" Type="UInt16" Kind="Output" View="true">
+      <Description>Illuminated fraction of the solar disc from the single eclipse authority (0.0 = umbra, 1.0 = full sun; between = penumbra). eps.eclipse_flag/eps.eclipse_active are its boolean spelling</Description>
     </Field>
     <Field Name="eps_actual_charge_current_a" Uuid="e2514a6e-12c0-5a4b-b4cd-e321f7d4b3b1" Type="UInt16" Kind="Output" View="true">
       <Description>Actual battery charge current [A]</Description>

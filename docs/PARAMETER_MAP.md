@@ -19,8 +19,8 @@ Columns:
 
 | | Count |
 |---|---:|
-| Catalogued parameters | 449 |
-| In at least one HK SID | 349 |
+| Catalogued parameters | 452 |
+| In at least one HK SID | 352 |
 | On-demand (S20-readable) | 125 |
 | Declared stubs (model does not compute) | 14 |
 | Ground limit bands | 52 |
@@ -34,11 +34,11 @@ Columns:
 | 1 | EPS | 54 |
 | 2 | AOCS | 86 |
 | 3 | TCS | 17 |
-| 4 | Platform | 34 |
+| 4 | Platform | 36 |
 | 5 | Payload | 31 |
 | 6 | TTC | 32 |
 | 7 | AOCS_DETERMINATION | 49 |
-| 8 | EPS Power Management | 13 |
+| 8 | EPS Power Management | 14 |
 | 9 | PROP | 26 |
 | 11 | Beacon | 7 |
 | 12 | GPS_NAV | 12 |
@@ -272,6 +272,7 @@ Columns:
 | `0x013F` | eps.subsys_power_ttc | W | 8 |  |  |  |  |
 | `0x0140` | eps.subsys_power_payload | W | 8 |  |  |  |  |
 | `0x0141` | eps.subsys_power_obdh | W | 8 |  |  |  |  |
+| `0x0142` | eps.sun_fraction |  | 8 |  |  |  |  |
 | `0x0143` | eps.actual_charge_current_a | A | 1 |  |  |  |  |
 | `0x0144` | eps.wing_status |  | 1, 8 |  |  |  |  |
 | `0x0145` | eps.wing_deploy_timer | s |  | yes |  |  |  |
@@ -331,6 +332,8 @@ Columns:
 | `0x0A12` | obdh.obc_time_fine |  | 4 |  |  |  |  |
 | `0x0A13` | obdh.time_ref |  | 4 |  |  |  |  |
 | `0x0A14` | obdh.time_since_sync_s | s | 4 |  | 0…43200 / 0…86400 |  |  |
+| `0x0A15` | obdh.boot_state |  | 4 |  |  |  |  |
+| `0x0A16` | obdh.boot_time_remaining_s | s | 4 |  |  |  |  |
 
 ## payload
 

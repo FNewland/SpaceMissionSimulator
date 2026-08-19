@@ -19,7 +19,13 @@ class OrbitPlanner:
                 "lat": round(state.lat_deg, 4),
                 "lon": round(state.lon_deg, 4),
                 "alt_km": round(state.alt_km, 2),
+                # FUTURE eclipse — a legitimate ground propagation, but it
+                # runs the SAME geometry the spacecraft uses
+                # (smo_common.orbit.eclipse.shadow_state), so a track anchored
+                # at "now" agrees with the spacecraft's own flag exactly.
                 "in_eclipse": bool(state.in_eclipse),
+                "sun_fraction": round(float(getattr(
+                    state, "sun_fraction", 0.0 if state.in_eclipse else 1.0)), 4),
                 "solar_beta_deg": round(state.solar_beta_deg, 2),
             })
         return track

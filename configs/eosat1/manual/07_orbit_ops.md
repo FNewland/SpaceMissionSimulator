@@ -18,13 +18,13 @@ planning for ocean current monitoring, and pass-based scheduling.
 | Parameter              | Value                        |
 |------------------------|------------------------------|
 | Orbit Type             | Sun-Synchronous (SSO)        |
-| Semi-Major Axis        | 6828.14 km                   |
-| Altitude               | 450 km (circular)            |
+| Semi-Major Axis        | 6873.7 km                    |
+| Altitude               | ~513 km mean geodetic (503–530 km) |
 | Inclination            | 98 deg                       |
 | Eccentricity           | ~0 (near-circular)           |
 | LTAN                   | 06:00 / 18:00 (dawn-dusk)    |
-| Orbital Period         | ~93.4 min                    |
-| Revolutions per Day    | ~15.4                        |
+| Orbital Period         | ~94.5 min                    |
+| Revolutions per Day    | 15.24                        |
 | Nodal Regression Rate  | ~0.9856 deg/day (= 1 deg/day)|
 | Ground Track Velocity  | ~7.07 km/s                   |
 
@@ -42,23 +42,23 @@ The 98 deg inclination causes the orbital plane to precess eastward at approxima
 
 The ground track repeats approximately every 5 days. The sub-satellite point traces a
 sinusoidal pattern between latitudes +/- 82 deg (complement of the inclination). Adjacent
-ground tracks at the equator are separated by approximately 170 km. The 450 km altitude
-provides an improved ground sampling distance (~9 m vs ~10 m at 500 km) for ocean feature
-detection.
+ground tracks at the equator are separated by approximately 170 km. At the ~513 km mean
+altitude the imager delivers a ~33 m ground sampling distance and a ~273 km swath
+(both scale linearly with altitude), well matched to ocean feature detection.
 
 ## 3. Eclipse Cycle
 
 ### 3.1 Eclipse Geometry
 
-At 450 km altitude, the Earth's shadow cone produces eclipses when the spacecraft passes
+At the ~513 km mean altitude, the Earth's shadow cone produces eclipses when the spacecraft passes
 through the anti-solar region. For the dawn-dusk SSO:
 
 | Parameter              | Value                        |
 |------------------------|------------------------------|
-| Max Eclipse Duration   | ~35 min (near solstice)      |
+| Max Eclipse Duration   | ~36 min                      |
 | Min Eclipse Duration   | ~0 min (near equinox)        |
 | Eclipse Season         | Seasonal variation           |
-| Orbit Fraction (max)   | ~37% of orbital period       |
+| Orbit Fraction (max)   | ~38% of orbital period       |
 
 ### 3.2 Seasonal Variation
 
@@ -70,7 +70,7 @@ However, eclipses still occur due to the beta angle variation:
 | |beta| > 70 deg  | 0 min            | Full sunlight (no eclipse)   |
 | |beta| ~ 60 deg  | ~15 min          | Short eclipse                |
 | |beta| ~ 30 deg  | ~30 min          | Moderate eclipse             |
-| |beta| < 25 deg  | ~35 min          | Maximum eclipse duration     |
+| |beta| < 25 deg  | ~36 min          | Maximum eclipse duration     |
 
 ### 3.3 Eclipse Operational Impact
 
@@ -181,7 +181,7 @@ is a passive payload platform operating under natural orbital decay.
 | Drag Area             | ~0.06 m² (6U, 1U face)      |
 | Ballistic Coefficient | ~200 kg/m²                   |
 | Expected Decay Rate   | 2–5 km/year                  |
-| Mission Lifetime      | ~7–15 years from 450 km      |
+| Mission Lifetime      | >7 years (450 km estimate; decay from the true ~513 km is slower — re-estimate pending) |
 
 **Operational Implications:**
 

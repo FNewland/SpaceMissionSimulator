@@ -610,7 +610,7 @@ healthy rather than exercising a switchover that does not exist. (A stale
 
 **MCS screen: aocs tab** → `aocs.mag_enabled` (0x025C) = 1; `aocs.mag_x/y/z`
 (0x020B-0D) plausible against the IGRF field for the current position;
-`aocs.mag_field_total` (0x0277) 20 000–55 000 nT in the 450 km orbit.
+`aocs.mag_field_total` (0x0277) 20 000–55 000 nT in the ~513 km orbit.
 
 **GO/NO-GO:** Magnetometer healthy. A failure here is a mission-level
 degradation (B-dot and magnetic desaturation are blind) — raise it, do not

@@ -146,6 +146,7 @@ creating GitHub issues.
 | 131 | Minor    | Fixed      | Procedure audit cannot resolve event citations — 9 false findings           |
 | 132 | Major    | Fixed      | Commanded FPA setpoint lost on breakpoint load                              |
 | 133 | Major    | Fixed      | FPA thermal envelope disagreed across five files; legal command read red    |
+| 134 | Critical | Fixed      | Commissioned HK SIDs silently switched off by a mission-phase declaration   |
 
 Severity key:
 - **Critical** — mission cannot operate safely without this

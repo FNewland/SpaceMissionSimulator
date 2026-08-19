@@ -18,6 +18,18 @@ from smo_simulator.failure_spec import (
 SW_BOOTLOADER = 0
 SW_APPLICATION = 1
 
+# obdh.boot_state (0x0A15) — the operator-visible boot progress that
+# sw_image (0x0311) cannot express on its own.
+BOOT_STATE_BOOTLOADER = 0   # in the bootloader, nothing in flight
+BOOT_STATE_VERIFYING = 1    # OBC_BOOT_APP accepted, CRC window open
+BOOT_STATE_APPLICATION = 2  # application image running
+BOOT_STATE_FAILED = 3       # the last boot attempt failed its CRC
+
+#: Deferred-completion key for OBC_BOOT_APP (S8.1 func 55).
+COMPLETION_BOOT_APP = "obdh.boot_app"
+#: Deferred-completion key for OBDH_MEMORY_SCRUB (S8.1 func 60).
+COMPLETION_MEMORY_SCRUB = "obdh.memory_scrub"
+
 # OBC unit status
 OBC_OFF = 0
 OBC_STANDBY = 1
@@ -150,6 +162,13 @@ class OBDHState:
     boot_app_pending: bool = False
     boot_inhibit: bool = False  # Prevent auto-boot
     boot_image_corrupt: bool = False  # Application image CRC fail
+    # Boot progress, downlinked at 0x0A15 (obdh.boot_state). sw_image alone
+    # cannot tell "still in the bootloader" apart from "a boot is running" or
+    # "the last boot failed CRC", which is exactly what an operator watching a
+    # 10 s CRC window needs to know:
+    #   0 BOOTLOADER (idle)  1 VERIFYING (CRC window open)
+    #   2 APPLICATION        3 FAILED (last boot failed its CRC)
+    boot_state: int = BOOT_STATE_BOOTLOADER
 
     # ── Dual CAN Bus ──
     active_bus: int = 0  # 0=A, 1=B
@@ -231,6 +250,12 @@ class OBDHBasicModel(SubsystemModel):
         self._cpu_base_nominal = 35.0
         self._param_ids: dict[str, int] = {}
         self._event_to_emit: tuple[int, str] | None = None  # (event_id, event_name)
+        # Deferred-completion reports drained by Engine._tick_pending_completions
+        # (verification-semantics ruling, 2026-08). A long-running command
+        # returns {"deferred": key} from handle_command and pushes the
+        # matching completion here when the effect actually lands, so the
+        # S1.7 arrives when the boot/scrub finished, not when it started.
+        self._completions: list[dict] = []
         self._prev_mode = 0
         self._prev_reboot_count = 0
         self._prev_bus_a_status = 0
@@ -600,16 +625,41 @@ class OBDHBasicModel(SubsystemModel):
 
         # Boot application pending (10s simulated CRC check)
         if s.boot_app_pending:
+            s.boot_state = BOOT_STATE_VERIFYING
             s.boot_app_timer -= dt
             if s.boot_app_timer <= 0.0:
                 s.boot_app_pending = False
+                s.boot_app_timer = 0.0
                 if s.boot_image_corrupt:
-                    # CRC fail — stay in boot loader, generate BOOT_FAILURE event
+                    # CRC fail — stay in boot loader, generate BOOT_FAILURE
+                    # event, and FAIL the telecommand that asked for the boot.
+                    # Before the deferred-completion contract this path was
+                    # silent on the verification service: the operator had
+                    # already been told S1.7 "execution complete".
                     s.sw_image = SW_BOOTLOADER
+                    s.boot_state = BOOT_STATE_FAILED
                     self._event_to_emit = (0x0305, "BOOT_FAILURE")
+                    self._push_event(
+                        0x0305, "HIGH",
+                        "BOOT_FAILURE: application image failed its CRC — "
+                        "the OBC stays in the bootloader")
+                    self._complete(
+                        COMPLETION_BOOT_APP, False, 0x0009,
+                        "OBC_BOOT_APP: the application image failed its CRC "
+                        "check — the OBC is still running the bootloader")
                 else:
                     s.sw_image = SW_APPLICATION
+                    s.boot_state = BOOT_STATE_APPLICATION
                     s.mode = 0  # nominal
+                    self._push_event(
+                        0x0310, "MEDIUM",
+                        "BOOT_COMPLETE: application image verified and "
+                        "running (obdh.sw_image = 1)")
+                    self._complete(COMPLETION_BOOT_APP, True)
+        elif s.sw_image == SW_APPLICATION:
+            s.boot_state = BOOT_STATE_APPLICATION
+        elif s.boot_state not in (BOOT_STATE_FAILED,):
+            s.boot_state = BOOT_STATE_BOOTLOADER
 
         # CPU load depends on mode and sw_image
         if s.sw_image == SW_BOOTLOADER:
@@ -667,6 +717,7 @@ class OBDHBasicModel(SubsystemModel):
                 # Scrub corrects SEU errors
                 s.mem_errors = max(0, s.mem_errors - 3)
                 self._event_to_emit = (0x0308, "SCRUB_COMPLETE")
+                self._complete(COMPLETION_MEMORY_SCRUB, True)
 
         # Task count and stack/heap usage
         if s.sw_image == SW_APPLICATION:
@@ -818,6 +869,15 @@ class OBDHBasicModel(SubsystemModel):
         active_bus_status = (s.bus_a_status if s.active_bus == 0
                              else s.bus_b_status)
         shared_params[0x0A11] = 0.0 if active_bus_status == BUS_FAILED else 1.0
+        # 0x0A15 obdh.boot_state / 0x0A16 obdh.boot_time_remaining_s. The
+        # operator watching a 10 s CRC window used to have nothing to look at:
+        # sw_image (0x0311) reads 0 both for "sitting in the bootloader" and
+        # for "a boot is in flight", and there was no countdown at all — so a
+        # boot that had not started and a boot half-way through were the same
+        # telemetry picture. Both are in HK SID 4 and on the modern OBDH page.
+        shared_params[0x0A15] = float(s.boot_state)
+        shared_params[0x0A16] = max(0.0, float(s.boot_app_timer)
+                                    if s.boot_app_pending else 0.0)
 
     def _reboot(self, cause: int = REBOOT_COMMAND) -> None:
         """Reboot OBC — drop to boot loader, reset counters."""
@@ -838,8 +898,21 @@ class OBDHBasicModel(SubsystemModel):
         s.watchdog_timer = 0
         s.sw_image = SW_BOOTLOADER
         s.mode = 1  # safe mode
+        # A reboot destroys anything that was in flight. Fail the held
+        # verification reports rather than leaving them to time out silently.
+        if s.boot_app_pending:
+            self._complete(COMPLETION_BOOT_APP, False, 0x0009,
+                           "OBC_BOOT_APP: the OBC rebooted before the CRC "
+                           "verification window closed")
+        if s.scrub_active:
+            self._complete(COMPLETION_MEMORY_SCRUB, False, 0x0009,
+                           "OBDH_MEMORY_SCRUB: the OBC rebooted before the "
+                           "scrub finished")
+        s.scrub_active = False
+        s.scrub_progress_pct = 0.0
         s.boot_app_pending = False
         s.boot_app_timer = 0.0
+        s.boot_state = BOOT_STATE_BOOTLOADER
 
         # Increment per-unit boot count
         if s.active_obc == 0:
@@ -889,6 +962,38 @@ class OBDHBasicModel(SubsystemModel):
 
     def record_tc_accepted(self):
         self._state.tc_acc_count += 1
+
+    # ── Deferred completion (verification-semantics ruling, 2026-08) ──
+
+    def _complete(self, key: str, success: bool = True,
+                  error_code: int = 0x0001, reason: str = "") -> None:
+        """Queue a completion report for a deferred telecommand.
+
+        Drained by ``Engine._tick_pending_completions``, which releases the
+        held S1.7 (or emits S1.8 with ``reason``) against the sequence count
+        of the telecommand that started the effect.
+        """
+        self._completions.append({"key": str(key), "success": bool(success),
+                                  "error_code": int(error_code),
+                                  "reason": str(reason or "")})
+
+    def pop_completions(self) -> list[dict]:
+        """Return and clear queued deferred-completion reports."""
+        out, self._completions = self._completions, []
+        return out
+
+    def _push_event(self, event_id: int, severity: str,
+                    description: str) -> None:
+        """Raise an S5 event through the engine's model event queue."""
+        engine = getattr(self, "_engine", None)
+        if engine is None:
+            return
+        try:
+            engine._model_event_queue.put_nowait({
+                'event_id': int(event_id), 'severity': severity,
+                'subsystem': 'obdh', 'description': description})
+        except Exception:  # noqa: BLE001 — queue full must not kill the tick
+            pass
 
     def record_tc_rejected(self):
         self._state.tc_rej_count += 1
@@ -1027,7 +1132,13 @@ class OBDHBasicModel(SubsystemModel):
         elif command == "memory_scrub":
             self._state.scrub_active = True
             self._state.scrub_progress_pct = 0.0
-            return {"success": True}
+            # ~20 min sweep (5 %/min). S1.7 lands with SCRUB_COMPLETE.
+            return {"success": True,
+                    "deferred": COMPLETION_MEMORY_SCRUB,
+                    "deferred_timeout_s": 2400.0,
+                    "deferred_label": "OBDH_MEMORY_SCRUB (~20 min sweep)",
+                    "message": ("Memory scrub started; progress in "
+                                "obdh.scrub_progress (0x031A)")}
 
         elif command == "obc_reboot":
             self._reboot(REBOOT_COMMAND)
@@ -1055,7 +1166,18 @@ class OBDHBasicModel(SubsystemModel):
                 return {"success": False, "message": "Already in application"}
             s.boot_app_pending = True
             s.boot_app_timer = 10.0  # 10s CRC verification
-            return {"success": True}
+            s.boot_state = BOOT_STATE_VERIFYING
+            # Execution has STARTED, not completed: sw_image only flips when
+            # the CRC window closes 10 s from now. The engine holds the S1.7
+            # until this model reports COMPLETION_BOOT_APP done, and turns a
+            # CRC failure into an S1.8 instead of the silence it used to be.
+            return {"success": True,
+                    "deferred": COMPLETION_BOOT_APP,
+                    "deferred_timeout_s": 60.0,
+                    "deferred_label": "OBC_BOOT_APP (10 s CRC verification)",
+                    "message": ("Application boot started: CRC verification "
+                                "over 10 s, obdh.boot_state (0x0A15) = 1 "
+                                "VERIFYING until it completes")}
 
         elif command == "obc_boot_inhibit":
             inhibit = bool(cmd.get("inhibit", True))
@@ -1268,7 +1390,13 @@ class OBDHBasicModel(SubsystemModel):
             # can be drilled without waiting for a reboot.
             s.boot_image_corrupt = True
             s.sw_image = SW_BOOTLOADER
+            if s.boot_app_pending:
+                self._complete(COMPLETION_BOOT_APP, False, 0x0009,
+                               "OBC_BOOT_APP: the application image was "
+                               "found corrupt mid-verification — the OBC "
+                               "stays in the bootloader")
             s.boot_app_pending = False
+            s.boot_state = BOOT_STATE_FAILED
             s.boot_inhibit = True
             self._event_to_emit = (0x0305, "BOOT_FAILURE")
 

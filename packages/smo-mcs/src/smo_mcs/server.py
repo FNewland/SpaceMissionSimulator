@@ -141,10 +141,14 @@ class MCSServer:
         self._running = False
         # Ground time system: MCS maintains its own clock.
         # - sim_epoch=None → use real UTC (wall clock)
-        # - sim_epoch="2026-03-10T00:00:00Z" → fixed simulation epoch
+        # - sim_epoch="2026-08-20T12:00:00Z" → fixed simulation epoch
         self._ground_epoch: Optional[datetime] = None
         self._ground_start_wall: float = _time_mod.time()
         self._ground_time_offset: float = 0.0  # manual adjustment (seconds)
+        # Present-time illumination as reported by the spacecraft (the single
+        # eclipse authority). Filled by _ingest_sim_illumination from the
+        # sim-state poll; None in real mode or before the first poll.
+        self._sim_illum: Optional[dict] = None
         self._sim_speed: float = 1.0
         if sim_epoch:
             self._ground_epoch = datetime.fromisoformat(sim_epoch.replace("Z", "+00:00"))
@@ -246,6 +250,12 @@ class MCSServer:
         # means "nobody told us" — the UI infers PERIODIC/SILENT from the age.
         self._sid_last_seen: dict[int, float] = {}
         self._sid_enabled_reported: dict[int, bool] = {}
+        # Why the on-board HK enable set last changed on its own — a boot or a
+        # bootloader entry rather than an operator TC(3,5)/TC(3,6). Without
+        # this the HK Manager shows SIDs flipping to DISABLED with no
+        # explanation and the operator's next clue is a hole in the S15 dump.
+        # `None` = the spacecraft has never reported such a reset.
+        self._hk_enable_reset: dict | None = None
 
         # Wire up the real HK decoder. Two prior fix passes left _process_tm
         # only logging packet metadata into a debug dict; the param cache was
@@ -1123,17 +1133,37 @@ class MCSServer:
                     "time_to_eclipse_entry_s": None,
                     "time_to_eclipse_exit_s": None,
                 }
-            return {
+            out = {
                 "lat": round(o.lat_deg, 4),
                 "lon": round(o.lon_deg, 4),
                 "alt_km": round(o.alt_km, 2),
                 "in_eclipse": bool(o.in_eclipse),
+                "sun_fraction": float(getattr(
+                    o, "sun_fraction", 0.0 if o.in_eclipse else 1.0)),
+                "in_penumbra": bool(getattr(o, "in_penumbra", False)),
+                "shadow_model": getattr(o, "shadow_model", ""),
+                "eclipse_source": "ground_propagator",
                 "in_contact": bool(o.in_contact),
                 "ground_station_name": getattr(o, "active_gs", None) or "",
                 "gs_elevation_deg": round(o.gs_elevation_deg, 1),
                 "time_to_eclipse_entry_s": ecl["time_to_eclipse_entry_s"],
                 "time_to_eclipse_exit_s": ecl["time_to_eclipse_exit_s"],
             }
+            # PRESENT time belongs to the on-board authority; the ground
+            # propagation above stays for the future-transition scan (and for
+            # real mode, where there is no authority to read).
+            illum = getattr(self, "_sim_illum", None)
+            if (illum and self._time_source == "sim"
+                    and (_time_mod.time() - illum["wall"]) <= self._SIM_ILLUM_MAX_AGE_S):
+                out["in_eclipse"] = illum["in_eclipse"]
+                out["sun_fraction"] = illum["sun_fraction"]
+                out["in_penumbra"] = illum["in_penumbra"]
+                out["shadow_model"] = illum["shadow_model"] or out["shadow_model"]
+                out["eclipse_source"] = "spacecraft"
+                for k in ("time_to_eclipse_entry_s", "time_to_eclipse_exit_s"):
+                    if illum.get(k) is not None:
+                        out[k] = illum[k]
+            return out
         except Exception as e:
             logger.debug("Orbit propagation error: %s", e)
             return {}
@@ -1966,11 +1996,52 @@ class MCSServer:
                 # deliberately optional so the display improves for free when a
                 # sim-side `hk_enabled` map lands (defect #68 hand-off).
                 self._ingest_reported_hk_enabled(payload.get("hk_enabled"))
+                self._ingest_hk_enable_reset(payload.get("hk_enable_reset"))
                 self._ingest_sim_health(payload)
                 self._ingest_orbit_elset(payload)
+                self._ingest_sim_illumination(payload)
             except Exception as e:
                 logger.debug("sim-state poll failed (keeping last anchor): %s", e)
             await asyncio.sleep(1.5)
+
+    def _ingest_sim_illumination(self, payload: dict) -> None:
+        """Cache the simulator's PRESENT-TIME eclipse state (the authority).
+
+        The MCS owns an orbit propagator because it has to PREDICT eclipse
+        (next entry/exit, the SoC-at-eclipse-exit projection). It must not use
+        it to re-derive what the eclipse state is RIGHT NOW: that answer is
+        computed on board, from the same geometry but on the simulator's
+        clock, and the MCS clock is an anchored extrapolation of that clock.
+        Two clocks + one geometry = two answers near the terminator, which is
+        exactly how the console came to show ECLIPSE next to a positive
+        `eps.power_gen` (and how the AOCS looked "in eclipse" when the planner
+        said otherwise).
+
+        SIM-ONLY, like the elset ingest: in real mode there is no such
+        endpoint and the ground propagator remains the only source.
+        """
+        if self._time_source != "sim" or not isinstance(payload, dict):
+            return
+        if "in_eclipse" not in payload:
+            return
+        try:
+            self._sim_illum = {
+                "in_eclipse": bool(payload.get("in_eclipse")),
+                "sun_fraction": (float(payload["sun_fraction"])
+                                 if payload.get("sun_fraction") is not None
+                                 else (0.0 if payload.get("in_eclipse") else 1.0)),
+                "in_penumbra": bool(payload.get("in_penumbra", False)),
+                "shadow_model": payload.get("shadow_model") or "",
+                "time_to_eclipse_entry_s": payload.get("time_to_eclipse_entry_s"),
+                "time_to_eclipse_exit_s": payload.get("time_to_eclipse_exit_s"),
+                "wall": _time_mod.time(),
+            }
+        except (TypeError, ValueError):
+            self._sim_illum = None
+
+    #: How stale (wall seconds) the cached sim illumination may be before the
+    #: MCS falls back to its own propagator. Three poll intervals.
+    _SIM_ILLUM_MAX_AGE_S = 4.5
 
     def _ingest_orbit_elset(self, payload: dict) -> None:
         """Adopt the simulator's post-burn element set (Phase D).
@@ -2284,6 +2355,35 @@ class MCSServer:
             except (TypeError, ValueError):
                 continue
 
+    def _ingest_hk_enable_reset(self, reported: Any) -> None:
+        """Absorb the spacecraft's explanation of a wholesale HK enable reset.
+
+        The simulator raises S5 0x0056 and publishes the same record on its
+        state endpoint whenever a boot or a bootloader entry replaces the HK
+        enable set. Keeping it here lets the HK Manager answer the operator's
+        actual question — "who turned my SIDs off?" — instead of leaving them
+        to infer it from a gap in the next dump.
+        """
+        if not isinstance(reported, dict):
+            return
+        reason = reported.get("reason")
+        if not reason:
+            return
+        self._hk_enable_reset = {
+            "reason": str(reason),
+            "sids_disabled": [int(s) for s in reported.get("sids_disabled", [])
+                              if isinstance(s, (int, float, str))
+                              and str(s).lstrip("-").isdigit()],
+            "sids_enabled": [int(s) for s in reported.get("sids_enabled", [])
+                             if isinstance(s, (int, float, str))
+                             and str(s).lstrip("-").isdigit()],
+            "enabled_now": [int(s) for s in reported.get("enabled_now", [])
+                            if isinstance(s, (int, float, str))
+                            and str(s).lstrip("-").isdigit()],
+            "obc_time_s": reported.get("obc_time_s"),
+            "source": "sim_state",
+        }
+
     async def _state_poll_loop(self):
         """Periodically build state from param_cache and broadcast.
 
@@ -2411,6 +2511,10 @@ class MCSServer:
                 }
                 if sid_reported:
                     data["hk_enabled"] = {str(k): v for k, v in sid_reported.items()}
+                if self._hk_enable_reset:
+                    # "Why did my SIDs go quiet?" — the HK Manager renders
+                    # this as a banner next to the enable column.
+                    data["hk_enable_reset"] = self._hk_enable_reset
 
                 # Include S15 storage status if available
                 async with self._param_cache_lock:
@@ -3210,6 +3314,9 @@ class MCSServer:
             out.append(meta)
         return web.json_response({"structures": out,
                                   "age_time_base": "sim",
+                                  # Why the enable set last reset itself, if it
+                                  # ever has (see _ingest_hk_enable_reset).
+                                  "enable_reset": self._hk_enable_reset,
                                   "spacecraft_apid": self._spacecraft_apid,
                                   "bootloader_apid": self._bootloader_apid})
 
@@ -3250,18 +3357,42 @@ class MCSServer:
         return {"status": "sent", "seq": seq}
 
     def _proc_get_telemetry(self, param_path: str) -> Any:
-        """Read a telemetry value by dot-path from the latest state."""
-        state = self._latest_state
-        if not state:
-            return None
+        """Read a telemetry value by dot-path for a procedure step.
+
+        TWO vocabularies, because there are two (2026-08d PLAN-9):
+
+        * the engine's STATE SUMMARY, whose keys carry display unit suffixes
+          (``aocs.att_error_deg``, ``payload.fpa_temp_C``,
+          ``ttc.data_rate_bps``) and which omits fields nobody drew yet;
+        * ``telemetry/parameters.yaml``, the mission's own parameter names
+          (``aocs.att_error``, ``payload.fpa_temp``, ``ttc.tm_data_rate``,
+          ``aocs.fine_ready``), which is what procedure cards, activity
+          templates and every operator document are written in.
+
+        Only the first was resolvable, so a ``tlm_check`` written in the
+        mission's vocabulary either failed validation ("not a telemetry
+        parameter the procedure runner can read") or, before that check
+        existed, timed out after 30 s mid-pass. The shipped ``data_dump``
+        activity's ``wait_for ttc.tm_data_rate == 128000`` is exactly that
+        case: a real parameter (0x0506) the runner could not read, because the
+        summary calls it ``data_rate_bps``.
+
+        The state summary still WINS on a name collision, so nothing that
+        resolved before resolves differently now; the catalogue is a fallback
+        served from the MCS's own parameter cache.
+        """
+        state = self._latest_state or {}
         # Try direct subsystem.param lookup in latest state dict
         parts = param_path.split(".", 1)
         if len(parts) == 2:
             subsystem, param = parts
             sub_data = state.get(subsystem, {})
-            if isinstance(sub_data, dict):
+            if isinstance(sub_data, dict) and param in sub_data:
                 return sub_data.get(param)
-        return state.get(param_path)
+        if param_path in state:
+            return state.get(param_path)
+        # Fallback: the mission's own parameter catalogue, via the id cache.
+        return self._cached_value(param_path)
 
     # ── S11 time-tagged scheduling helpers (defects #44/#46) ─────────
 
@@ -3489,6 +3620,14 @@ class MCSServer:
                 paths.add(key)
             else:
                 paths.add(key)
+        # 2026-08d PLAN-9: plus the mission's own parameter names, which
+        # `_proc_get_telemetry` now resolves from the parameter cache. See the
+        # note there: procedure cards and planner activity templates are
+        # written in `telemetry/parameters.yaml` names, not in the state
+        # summary's display names, and rejecting them made a correct step
+        # unrunnable.
+        paths.update(str(m.get("name", "")) for m in self._param_meta.values()
+                     if m.get("name"))
         return paths
 
     def _custom_procedure_path(self, rel_path: str) -> Path | None:
@@ -5063,7 +5202,7 @@ def main():
     parser.add_argument("--tc-port", type=int, default=None,
                         help="TC destination port (default: same host, port 8001)")
     parser.add_argument("--sim-epoch", default=None,
-                        help="Fixed simulation epoch (ISO 8601 UTC, e.g. 2026-03-10T00:00:00Z). "
+                        help="Fixed simulation epoch (ISO 8601 UTC, e.g. 2026-08-20T12:00:00Z). "
                              "If omitted, ground time uses real wall-clock UTC.")
     parser.add_argument("--time-source", default=None, choices=["sim", "real"],
                         help="Ground clock source: 'sim' (closed-loop follow simulator "

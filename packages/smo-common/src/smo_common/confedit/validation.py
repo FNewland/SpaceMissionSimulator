@@ -89,9 +89,10 @@ def _plaus_orbit(data: dict) -> list[dict]:
                                  f"TLE line must be 69 characters, got "
                                  f"{len(line)}"))
         elif line and not _tle_checksum_ok(line):
-            # Warning, not error: the shipped synthetic TLE carries an
-            # invalid checksum and sgp4 accepts it — an error here would
-            # block every legitimate orbit.yaml edit on the shipped config.
+            # Warning, not error: sgp4 accepts a bad checksum, and the
+            # shipped synthetic TLE historically carried one (fixed 2026-08,
+            # but hand-edited elsets in the field routinely have stale
+            # checksums and must not be blocked).
             issues.append(_issue("warning", "plausibility", key,
                                  "TLE checksum invalid (sgp4 will still "
                                  "accept the line)"))

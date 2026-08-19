@@ -32,15 +32,15 @@ monitoring and coastal zone observation. Primary mission objectives are:
 | Parameter              | Value                        |
 |------------------------|------------------------------|
 | Orbit Type             | Sun-Synchronous (SSO)        |
-| Altitude               | 450 km (nominal)             |
+| Altitude               | ~513 km mean (503–530 km)    |
 | Inclination            | 98 deg                       |
 | LTAN                   | Dawn-dusk (~06:00/18:00 LT)  |
-| Orbital Period         | ~93.4 min                    |
-| Eclipse Duration       | ~35 min (seasonal variation)  |
+| Orbital Period         | ~94.5 min                    |
+| Eclipse Duration       | ~34–36 min (seasonal variation) |
 | Repeat Cycle           | ~5 days                      |
 | Ground Track Velocity  | ~7.07 km/s                   |
 
-The 450 km altitude provides an improved ground sampling distance compared to higher orbits,
+The ~513 km mean altitude keeps a ground sampling distance in the tens of metres,
 while maintaining a sun-synchronous orbit at 98 deg inclination. The dawn-dusk SSO provides
 favourable illumination conditions for the multispectral imager and maximises solar panel
 exposure, reducing the depth of discharge on the battery during eclipse periods.

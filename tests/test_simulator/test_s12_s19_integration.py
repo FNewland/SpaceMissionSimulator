@@ -293,10 +293,14 @@ class TestS19EventActionTrigger:
         """Multiple rules for the same severity should all trigger."""
         engine = make_mock_engine()
         d = ServiceDispatcher(engine)
-        # Rule 1: severity 3 -> func 52 (OBDH reboot)
-        d.dispatch(19, 1, struct.pack('>HBB', 1, 3, 52), None)
-        # Rule 2: severity 3 -> func 0 (AOCS set mode)
-        d.dispatch(19, 1, struct.pack('>HBB', 2, 3, 0), None)
+        # Rule 1: event 3 -> func 52 (OBDH reboot; takes no argument)
+        d.dispatch(19, 1, struct.pack('>HBHB', 1, 0, 3, 52), None)
+        # Rule 2: event 3 -> func 0 (AOCS set mode) + its mandatory `mode`
+        # byte. An argument-taking action must carry its argument: since the
+        # 2026-08 command-safety fix the dispatcher REFUSES a missing one
+        # instead of substituting a default, and TC(19,1) carries the rule's
+        # action data in the octets after the sixth.
+        d.dispatch(19, 1, struct.pack('>HBHB', 2, 0, 3, 0) + bytes([3]), None)
         engine.subsystems["obdh"].handle_command.reset_mock()
         engine.subsystems["aocs"].handle_command.reset_mock()
         d.trigger_event_action(3)
@@ -308,8 +312,9 @@ class TestS19EventActionTrigger:
         """Event-action targeting EPS func_id range (16-25)."""
         engine = make_mock_engine()
         d = ServiceDispatcher(engine)
-        # Rule: severity 4 -> func_id 16 (EPS set payload mode)
-        d.dispatch(19, 1, struct.pack('>HBB', 1, 4, 16), None)
+        # Rule: event 4 -> func_id 16 (EPS set payload mode) + its mandatory
+        # `mode` byte (0 = payload OFF, the load-shedding action).
+        d.dispatch(19, 1, struct.pack('>HBHB', 1, 0, 4, 16) + bytes([0]), None)
         d.trigger_event_action(4)
         engine.subsystems["eps"].handle_command.assert_called()
 

@@ -135,10 +135,21 @@ class TestPerActivityRateSplit:
                        / (p["dump_rate_bps"] * (1 - p["protocol_overhead"])))
         assert one_image_s == pytest.approx(327.68, abs=0.1)
         assert one_image_s <= dump["duration_s"] <= one_image_s * 1.1
-        # ...and it commands the gate before it commands the rate.
+        # The dump WINDOW — how long the ladder is actually held at HIGH —
+        # is the one-image number; duration_s also books the ladder set-up
+        # and the restoration either side of it (2026-08d PLAN-2).
+        assert one_image_s <= dump["timing"]["dump_dwell_s"] <= one_image_s * 1.02
+        # ...and the sequence really dwells for it, rather than firing
+        # TC(15,9) and dropping the gate on the next step.
+        dwell = sum(s["wait_s"] for s in dump["command_sequence"]
+                    if float(s.get("wait_s", 0)) >= 100.0)
+        assert dwell == pytest.approx(dump["timing"]["dump_dwell_s"], abs=1.0)
+        # ...and it commands the gate before it commands the rate, holds HIGH
+        # for the dump, then steps the ladder DOWN before dropping the gate.
         s8 = [s for s in dump["command_sequence"] if s.get("service") == 8]
         assert [int(str(s["func_id"]), 0) if isinstance(s["func_id"], str)
-                else int(s["func_id"]) for s in s8] == [0x4F, 0x41, 0x4F]
+                else int(s["func_id"]) for s in s8] == \
+            [0x4F, 0x41, 0x41, 0x4F]
 
     def test_housekeeping_is_a_channel_cost_at_the_routine_rung(self):
         """HK is 36 % of the day's contact time at LOW and 4.5 % at HIGH —
@@ -182,7 +193,12 @@ class TestPerActivityRateSplit:
         # +55 bps total. SID 12 is NOT default-enabled, so the ROUTINE channel
         # a spacecraft actually flies is lower than this all-SIDs figure --
         # this test deliberately prices the everything-enabled worst case.
-        assert hk_bps == pytest.approx(1696.0, abs=2.0)
+        # 2026-08 eclipse single-authority: eps.sun_fraction (0x0142, u16)
+        # joined EPS SID 8 (8 s) so the illumination the arrays actually
+        # see rides the SAME packet as the power terms — the console can
+        # no longer pair a telemetered wattage with a locally re-derived
+        # eclipse flag. 2 bytes every 8 s = +3.5 bps of channel.
+        assert hk_bps == pytest.approx(1699.5, abs=2.0)
         contacts = _contacts([("Svalbard", 20 + 45 * i, 445, 25.0)
                               for i in range(24)])
         b = BudgetTracker.from_config(CONFIG_DIR, contacts=contacts
@@ -322,8 +338,15 @@ class TestNominalOpsDayClosesOnTheLadder:
                        for w in budget["warnings"])
         dump_passes = [p for p in budget["pass_downlink"] if p["dump_scheduled"]]
         assert len(dump_passes) >= 6
-        assert all(p["dump_capable"] for p in dump_passes)
-        assert all(p["max_elevation_deg"] >= 10.0 for p in dump_passes)
+        # No dump is gated: every one has at least one station in view above
+        # the 10 deg HIGH-tier gate while it runs. A dump may CLIP a
+        # simultaneous low window at another station — the five stations
+        # produce overlapping passes and there is one transmit chain — which
+        # is why the assertion is on `dump_gated`, not on each overlapped
+        # window's own elevation (2026-08d PLAN-2).
+        assert not any(p["dump_gated"] for p in dump_passes)
+        assert any(p["dump_capable"] and p["max_elevation_deg"] >= 10.0
+                   for p in dump_passes)
 
     def test_the_margin_is_real_and_comes_from_the_high_tier(self):
         budget, _schedule = self._budget()

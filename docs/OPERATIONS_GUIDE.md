@@ -1424,7 +1424,7 @@ S13 subtype 1:  Transfer initiation (blocks other downlink activities)
 
 ### Overview
 
-The EOSAT-1 Launch and Early Orbit Phase (LEOP) and commissioning sequence takes the spacecraft from separation through to nominal operations over approximately 24 hours across 16 ground station passes. The spacecraft uses a 450 km sun-synchronous orbit at 98° inclination (period ~93.4 min, 15.4 rev/day). Two ground stations provide coverage: Troll (Antarctica, -72.012°S) and Iqaluit (Canada, 63.747°N).
+The EOSAT-1 Launch and Early Orbit Phase (LEOP) and commissioning sequence takes the spacecraft from separation through to nominal operations over approximately 24 hours across 16 ground station passes. The spacecraft uses a ~513 km (mean) sun-synchronous orbit at 98° inclination (period ~94.5 min, 15.24 rev/day). Two ground stations provide coverage: Troll (Antarctica, -72.012°S) and Iqaluit (Canada, 63.747°N).
 
 ### Spacecraft Phases
 

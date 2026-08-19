@@ -51,7 +51,7 @@ for mission operations.
 **GO/NO-GO:** Solar array power generation within expected range
 
 ### Step 4 — Eclipse Discharge Monitoring
-**Action:** Monitor battery through a full eclipse period (~35 minutes at the mission's 450 km SSO).
+**Action:** Monitor battery through a full eclipse period (~34–36 minutes at the mission's ~513 km SSO).
 **TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27) — at eclipse entry
 **Verify:** `eps.power_gen` (0x0107) = ~0W within 30s of eclipse entry
 **Verify:** `eps.bat_soc` (0x0101) decreasing at < 1.5% per minute within 60s

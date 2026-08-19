@@ -140,9 +140,10 @@ class TestMutualExclusionIsTimeGated:
 
     def test_back_to_back_exclusive_pair_is_not_a_conflict(self, activity_types):
         s = _sched(activity_types)
-        # data_dump is 330 s: 10:00:00 -> 10:05:30
+        # data_dump is 360 s: 10:00:00 -> 10:06:00 (2026-08d PLAN-2 — the
+        # 330 s dump window plus the ladder set-up and restoration).
         s.add_activity("data_dump", "2026-03-10T10:00:00+00:00")
-        s.add_activity("imaging_pass", "2026-03-10T10:05:30+00:00")
+        s.add_activity("imaging_pass", "2026-03-10T10:06:00+00:00")
         assert s.validate_pass_plan([]) == []
 
     def test_cancelled_activities_are_ignored(self, activity_types):

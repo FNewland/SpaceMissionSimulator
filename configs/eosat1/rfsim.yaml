@@ -66,9 +66,9 @@ channel:
   ber_target: 1.0e-6       # Target BER for bit-flip injection (FRAME mode)
   frequency_hz: 2200.0e6   # S-band downlink centre frequency (Hz)
   uplink_frequency_hz: 2025.0e6   # S-band uplink centre frequency (Hz)
-  path_loss_db: 152.4      # Free-space path loss at 450 km, 2200 MHz
+  path_loss_db: 153.5      # Free-space path loss at 513 km (nadir), 2200 MHz
   doppler_hz: 0.0          # Doppler shift (updated from orbit model)
-  delay_ms: 1.5            # One-way propagation delay (450 km / c)
+  delay_ms: 1.71           # One-way propagation delay (513 km / c)
   awgn_enabled: true
   seed: 42                 # deterministic impairments
 

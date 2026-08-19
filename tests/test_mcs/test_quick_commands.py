@@ -129,7 +129,12 @@ def _func_ids_tested(test: ast.expr) -> list[int]:
 
 
 #: Attribute calls that mean "the handler did something with this command".
-_ACTION_CALLS = {"_cmd", "handle_command", "generate_s1_exec_fail"}
+# `_require_u8` / `_require_bytes` are the 2026-08 mandatory-argument guards:
+# they either yield the argument or record the refusal, so like
+# `generate_s1_exec_fail` they are an ACTION — a short telecommand is answered,
+# not silently dropped. Their argument appetite is read by `_octets_consumed`.
+_ACTION_CALLS = {"_cmd", "handle_command", "generate_s1_exec_fail",
+                 "_require_u8", "_require_bytes"}
 
 
 def _length_guard(test: ast.expr):
@@ -209,6 +214,17 @@ def _octets_consumed(body: list[ast.stmt]) -> int:
                         need = max(need, cmp.value)
                     elif isinstance(op, ast.Gt):
                         need = max(need, cmp.value + 1)
+        # `self._require_u8(data, ...)` eats exactly one octet;
+        # `self._require_bytes(data, n, ...)` eats n.
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr in ("_require_u8", "_require_bytes")
+                and node.args and isinstance(node.args[0], ast.Name)
+                and node.args[0].id == "data"):
+            if node.func.attr == "_require_u8":
+                need = max(need, 1)
+            elif (len(node.args) > 1 and isinstance(node.args[1], ast.Constant)
+                    and isinstance(node.args[1].value, int)):
+                need = max(need, node.args[1].value)
         if (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)
                 and node.value.id == "data"):
             sl = node.slice

@@ -48,14 +48,12 @@ at the centre of the Earth".
 **TC:** `GET_PARAM(param_id=0x0212)` (Service 20, Subtype 3) --- `aocs.gps_alt` (km)
 **Verify:** `aocs.gps_lat` (0x0210) in range [-90, +90] within 10s
 **Verify:** `aocs.gps_lon` (0x0211) in range [-180, +180] within 10s
-**Verify:** `aocs.gps_alt` (0x0212) in range [400 km, 550 km] within 10s
-**Note:** The acceptance band is deliberately wide. The mission DESIGN orbit is
-450 km (`orbit.yaml` `altitude_km: 450`), but the shipped TLE's mean motion
-(15.24 rev/day) propagates to a 503-530 km orbit --- a known
-configuration inconsistency (see the model-bug register; do not "fix" it from
-the console). Record the measured altitude and hand the discrepancy to Flight
-Dynamics; tighten this band to [430, 470] once the TLE matches the declared
-orbit.
+**Verify:** `aocs.gps_alt` (0x0212) in range [495 km, 540 km] within 10s
+**Note:** Band = the TLE-propagated geodetic altitude range (503-530 km over
+an orbit, mean 513 km) plus ~8-10 km of margin. The historical 450 km
+declaration was retired by the 2026-08 owner ruling: the orbit.yaml TLE
+(mean motion 15.24 rev/day) is the truth and `altitude_km` now records the
+propagated mean, 513 km.
 **GO/NO-GO:** Position fix valid and altitude in the accepted LEO band
 
 ### Step 3 --- Read the ECEF State Vector

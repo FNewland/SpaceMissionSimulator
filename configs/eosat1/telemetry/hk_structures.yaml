@@ -90,6 +90,10 @@ structures:
       - { param_id: 0x0147, pack_format: H, scale: 1000 }  # -Y wing current
       - { param_id: 0x0148, pack_format: H, scale: 1000 }  # total load current
       - { param_id: 0x013A, pack_format: B, scale: 1 }     # eclipse_active
+      # The illumination AUTHORITY (0.0 umbra … 1.0 full sun). Rides the
+      # same packet as the power terms so an operator can never see
+      # generation and an eclipse flag from two different instants.
+      - { param_id: 0x0142, pack_format: H, scale: 10000 } # sun_fraction
       - { param_id: 0x013B, pack_format: h, scale: 10 }    # power_margin
       - { param_id: 0x013C, pack_format: H, scale: 10 }    # subsys_power_eps
       - { param_id: 0x013D, pack_format: H, scale: 10 }    # subsys_power_aocs
@@ -284,6 +288,13 @@ structures:
       - { param_id: 0x0A12, pack_format: H, scale: 1 }   # obc_time_fine (1/65536 s)
       - { param_id: 0x0A13, pack_format: B, scale: 1 }   # time_ref
       - { param_id: 0x0A14, pack_format: I, scale: 1 }   # time_since_sync_s
+      # Application boot progress (verification-semantics ruling). OBC_BOOT_APP's
+      # S1.7 now arrives when the 10 s CRC window CLOSES, not when the command
+      # is accepted, so the operator has to be able to SEE that window: 0x0A15
+      # says which of bootloader / verifying / application / failed the OBC is
+      # in, 0x0A16 counts the window down.
+      - { param_id: 0x0A15, pack_format: B, scale: 1 }   # boot_state
+      - { param_id: 0x0A16, pack_format: H, scale: 10 }  # boot_time_remaining_s
       # FDIR summary (design_2026-08 disposition M5-M7): the modern console
       # derives its spacecraft-mode / FDIR story from TELEMETRY instead of
       # the simulator's state endpoint, so these four (written every tick by

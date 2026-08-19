@@ -30,7 +30,7 @@ provides a staged recovery plan. No loads may be re-enabled until SoC exceeds 30
 | AOCS | Reaction wheels (standby) | 2 | STANDBY |
 | **Total** | | **~45W** | |
 
-Solar array capability at sun-pointing: ~64W (BOL, wings deployed, 450 km SSO). Eclipse fraction: ~37%.
+Solar array capability at sun-pointing: ~64W (BOL, wings deployed, ~513 km SSO). Eclipse fraction: ~36–38%.
 Orbit-average power generation at sun-pointing: ~35W. Margin over survival: limited — careful load management required.
 
 ## Procedure Steps
@@ -88,7 +88,7 @@ generation rate to 1/60s, disables non-essential data recording.
 **Critical threshold:** If SoC < 8% at eclipse entry, spacecraft may enter under-voltage lockout.
 **Monitor:** `eps.bus_voltage` (0x0105) throughout eclipse --- must remain > 25.0V.
 **Monitor:** `tcs.temp_battery` (0x0407) --- verify battery heater thermostat activates if needed.
-**Duration:** Eclipse lasts ~35 minutes at 500km SSO.
+**Duration:** Eclipse lasts ~34–36 minutes at the ~513 km SSO.
 **Expected drain:** ~32W x 35 min = ~19 Wh consumed. Battery capacity ~120 Wh, so ~16% SoC consumed.
 **GO/NO-GO:** Bus voltage remains > 25.0V throughout eclipse. If voltage drops below 25.0V,
 under-voltage protection will disconnect non-essential buses automatically.

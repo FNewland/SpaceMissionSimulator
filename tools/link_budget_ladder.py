@@ -24,7 +24,7 @@ does the arithmetic, so this tool cannot drift from the flight model.
 Usage:
     python tools/link_budget_ladder.py [--config configs/eosat1]
                                        [--elevations 5,10,30,90]
-                                       [--altitude-km 450]
+                                       [--altitude-km 513]
 """
 from __future__ import annotations
 
@@ -55,8 +55,9 @@ def slant_range_km(elevation_deg: float, altitude_km: float) -> float:
 
     d(eps) = R_e * [ sqrt((r/R_e)^2 - cos^2 eps) - sin eps ]
 
-    At 450 km this gives 2437.8 km at 0 deg, 1944.5 km at 5 deg, 1570.0 km at
-    10 deg and 450.0 km at zenith — the report's table B.1.
+    At the 513 km mean altitude (2026-08 epoch/altitude ruling) this gives
+    2603.4 km at 0 deg, 2110.9 km at 5 deg, 1723.5 km at 10 deg and 513.0 km
+    at zenith.
     """
     r_ratio = (EARTH_RADIUS_KM + altitude_km) / EARTH_RADIUS_KM
     eps = math.radians(elevation_deg)
@@ -83,7 +84,8 @@ def main(argv=None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", default=str(REPO / "configs" / "eosat1"))
     ap.add_argument("--elevations", default="5,10,30,90")
-    ap.add_argument("--altitude-km", type=float, default=450.0)
+    # 2026-08: default 450 -> 513 (orbit.yaml TLE-true mean altitude).
+    ap.add_argument("--altitude-km", type=float, default=513.0)
     ap.add_argument("--min-margin-db", type=float, default=3.0)
     args = ap.parse_args(argv)
 

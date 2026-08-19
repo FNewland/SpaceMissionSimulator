@@ -18,6 +18,13 @@ class PowerBudget:
     time_to_eclipse_entry_s: Optional[float]
     time_to_eclipse_exit_s: Optional[float]
     per_subsystem_power: dict[str, float]  # subsystem -> watts
+    #: Illuminated fraction of the solar disc (0.0 umbra … 1.0 full sun) —
+    #: the authority's number, telemetered at eps.sun_fraction (0x0142).
+    #: Defaulted (and placed last) so existing constructors keep working.
+    sun_fraction: float = 1.0
+    #: Where eclipse_active came from: "telemetry" (the same packet as the
+    #: wattage — self-consistent) or "ground_propagator" (fallback).
+    eclipse_source: str = "none"
 
     @property
     def power_margin_w(self) -> float:
@@ -80,6 +87,8 @@ class PowerBudgetMonitor:
             time_to_eclipse_entry_s=None,
             time_to_eclipse_exit_s=None,
             per_subsystem_power={},
+            sun_fraction=1.0,
+            eclipse_source="none",
         )
         #: False until telemetry has actually been seen. The console must be
         #: able to tell "no data" from "0 W" — a power budget that reads as a
@@ -109,8 +118,38 @@ class PowerBudgetMonitor:
                 breakdown[name] = float(val)
         self._current_state.per_subsystem_power = breakdown
 
-        # Eclipse status (may be in state or computed)
-        self._current_state.eclipse_active = bool(state.get("in_eclipse", state.get("eclipse_active", False)))
+        # ── Eclipse status: the flag that arrived WITH the generation ──────
+        # This panel puts an eclipse label next to `eps.power_gen` and asks
+        # the operator to reconcile them. If the label comes from a ground
+        # propagation on the ground clock and the wattage comes from a TM
+        # packet, the two describe different instants and the panel can (and
+        # did) show "ECLIPSE" beside 85 W of generation near the terminator.
+        # `eps.eclipse_flag` (0x0108) / `eps.eclipse_active` (0x013A) /
+        # `eps.sun_fraction` (0x0142) are downlinked in the same HK packet as
+        # `eps.power_gen` and are all derived from the ONE authority on board,
+        # so preferring them makes the panel self-consistent by construction.
+        # The ground-propagated value stays as the fallback (no EPS TM yet,
+        # or a reduced harness).
+        ecl_tm = eps.get("eclipse_flag", eps.get("eclipse_active"))
+        sun_frac_tm = eps.get("sun_fraction")
+        if isinstance(sun_frac_tm, (int, float)) and not isinstance(sun_frac_tm, bool):
+            self._current_state.eclipse_active = float(sun_frac_tm) <= 0.0
+            self._current_state.sun_fraction = float(sun_frac_tm)
+            self._current_state.eclipse_source = "telemetry"
+        elif ecl_tm is not None:
+            self._current_state.eclipse_active = bool(ecl_tm)
+            self._current_state.sun_fraction = 0.0 if ecl_tm else 1.0
+            self._current_state.eclipse_source = "telemetry"
+        else:
+            self._current_state.eclipse_active = bool(
+                state.get("in_eclipse", state.get("eclipse_active", False)))
+            sf = state.get("sun_fraction")
+            self._current_state.sun_fraction = (
+                float(sf) if isinstance(sf, (int, float))
+                and not isinstance(sf, bool)
+                else (0.0 if self._current_state.eclipse_active else 1.0))
+            self._current_state.eclipse_source = str(
+                state.get("eclipse_source", "ground_propagator"))
         self._current_state.time_to_eclipse_entry_s = state.get("time_to_eclipse_entry_s")
         self._current_state.time_to_eclipse_exit_s = state.get("time_to_eclipse_exit_s")
         if eps:
@@ -130,6 +169,8 @@ class PowerBudgetMonitor:
             "load_shedding_stage": state.load_shedding_stage,
             "load_shedding_label": self._stage_to_label(state.load_shedding_stage),
             "eclipse_active": state.eclipse_active,
+            "sun_fraction": round(state.sun_fraction, 4),
+            "eclipse_source": state.eclipse_source,
             "time_to_eclipse_entry_s": state.time_to_eclipse_entry_s,
             "time_to_eclipse_exit_s": state.time_to_eclipse_exit_s,
             "per_subsystem_power": {

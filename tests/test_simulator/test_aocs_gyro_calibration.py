@@ -154,6 +154,34 @@ def sc(_booted_snapshot):
     return fresh
 
 
+
+def _coast_gyro_only(sc, seconds: float = 600.0) -> float:
+    """Tracker-less coast, flown INSIDE eclipse, returning the drift (deg).
+
+    The coast must be genuinely gyro-only for the drift arithmetic to mean
+    anything: in sunlight the coarse sun sensors keep aiding the filter even
+    with both star trackers off. At the pre-2026-08 epoch the ~1030 s boot
+    happened to land the coast inside the first eclipse; the 2026-08 epoch
+    move (t0 -> 2026-08-20T12:00:00Z, eclipse now 1974-3996 s from t0) broke
+    that accident, so the eclipse wait is now explicit.
+    """
+    for _ in range(2500):
+        if sc.eng.orbit.state.in_eclipse:
+            break
+        sc.eng._tick_once(1.0)
+    assert sc.eng.orbit.state.in_eclipse, "never reached eclipse"
+    sc.device(0x0204, False)
+    sc.device(0x0205, False)
+    # Reinitialise the filter's bias state AFTER the trackers are gone (a
+    # post-safe-mode filter restart): with the trackers still in the loop
+    # during the eclipse wait, the EKF would simply re-learn the bias and
+    # the gyro-only coast would prove nothing.
+    sc.aocs._ekf.b = np.zeros(3)
+    sc.run(seconds)
+    return att.quat_angle_deg(np.asarray(sc.aocs._state.q_true, float),
+                              sc.aocs._ekf.q)
+
+
 # ══ 1. The S2 gyro device path ═══════════════════════════════════════
 
 def test_all_three_gyro_units_start_powered_and_are_visible(sc):
@@ -344,12 +372,7 @@ def test_calibration_estimates_the_injected_bias_and_stops_the_drift(sc):
     # 4. The estimate stops drifting on a gyro-only coast. Take the trackers
     #    away and restart the filter's bias state, exactly as a post-safe-mode
     #    filter reinitialisation would.
-    sc.aocs._ekf.b = np.zeros(3)
-    sc.device(0x0204, False)
-    sc.device(0x0205, False)
-    sc.run(600)
-    drift = att.quat_angle_deg(np.asarray(sc.aocs._state.q_true, float),
-                               sc.aocs._ekf.q)
+    drift = _coast_gyro_only(sc)
     assert drift < 1.0, (
         f"the attitude estimate drifted {drift:.2f} deg over a 600 s "
         f"gyro-only coast after a successful calibration")
@@ -365,12 +388,7 @@ def test_without_the_calibration_the_same_coast_walks_away(sc):
     """
     sc.aocs.inject_failure("gyro_bias", axis="all", bias=0.05)
     sc.run(30)
-    sc.aocs._ekf.b = np.zeros(3)
-    sc.device(0x0204, False)
-    sc.device(0x0205, False)
-    sc.run(600)
-    drift = att.quat_angle_deg(np.asarray(sc.aocs._state.q_true, float),
-                               sc.aocs._ekf.q)
+    drift = _coast_gyro_only(sc)
     assert drift > 20.0, (
         f"an uncompensated 0.05 deg/s three-axis bias should walk the estimate "
         f"tens of degrees in 600 s; it moved {drift:.2f} deg")

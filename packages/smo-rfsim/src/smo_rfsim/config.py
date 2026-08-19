@@ -185,7 +185,7 @@ class ChannelConfig:
     """
     eb_n0_db: float = 10.0          # Eb/N0 in dB
     ber_target: float = 1e-6        # target BER for bit-flip injection (FRAME mode)
-    path_loss_db: float = 152.4     # free-space path loss, 450 km @ 2200 MHz
+    path_loss_db: float = 153.5     # free-space path loss, 513 km (nadir) @ 2200 MHz
     doppler_hz: float = 0.0         # Doppler frequency shift
     delay_ms: float = 1.5           # one-way propagation delay (450 km)
     range_km: float = 0.0           # slant range (updated from sim)

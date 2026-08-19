@@ -142,6 +142,7 @@ result into an on-board compensation table applied on the gyro measurement path.
 It is not instantaneous and it is not a reset.
 **Verify:** `aocs.gyro_cal_state` (0x02C9) == 1 within 20s --- RUNNING
 **Verify:** `event 0x0210 AOCS_GYRO_CAL_START` received within 20s
+**Note:** The S1.7 execution complete for this telecommand arrives when the ARC ENDS, not on acceptance — the verification row stays open for the whole arc, and an abort part-way through reports S1.8 against the same telecommand carrying the blocking code.
 **Note:** If the command is refused, the S1.8 failure notice names the gate.
 0x0A01 = AOCS unpowered, 0x0A02 = a gyro unit is off (Step 2), 0x0A03 = no star
 tracker in the loop (Steps 3-4), 0x0A04 = body rate above the 0.10 deg/s
@@ -152,6 +153,13 @@ hunts at up to ~0.2 deg/s. Wait for a quiet spell (all rates < 0.08 deg/s on
 SID 2) and retry; after the auto-promotion to NOMINAL the vehicle settles and
 the calibration usually starts first time. Retrying is the card's nominal
 loop, not an anomaly.
+**⚠ 2026-08 (epoch/altitude ruling):** at the re-epoched mission T-0
+(2026-08-20T12:00:00Z, TLE-true ~513 km orbit) the wheels-off MTQ control
+hunts at 0.1–0.4 deg/s **continuously** — measured attempts every 10 s over
+three orbits never found a spell below the 0.10 deg/s gate. Until the owner
+rules (relax the gate, allow an MTQ-quiet calibration arc, or move this card
+after COM-004), expect Step 6 to refuse with 0x0A04 indefinitely at this
+epoch; record the refusals and escalate rather than looping forever.
 **GO/NO-GO:** Calibration RUNNING
 
 ### Step 7 — Monitor the Calibration Arc

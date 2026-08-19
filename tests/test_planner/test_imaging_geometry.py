@@ -285,7 +285,13 @@ class TestConfigWiring:
 # ── The swath is 240 km (owner ruling, 2026-08) ────────────────────
 
 class TestSwathIs240Km:
-    """The planner's swath must be the instrument's 240 km swath.
+    """The planner's swath must follow from the instrument's FOV.
+
+    (2026-08 note: the 240-km-swath owner ruling was made at the retired
+    450 km altitude declaration. The FOV — the instrument constant — is
+    unchanged; at the TLE-true ~513 km mean altitude it computes ~273 km.
+    Whether the FOV should be re-derived to restore 240 km is an open owner
+    decision; these tests pin the geometry, not the marketing number.)
 
     DERIVATION — the planner works from the full across-track FOV, which is
     the one the payload optics give (configs/eosat1/subsystems/payload.yaml:
@@ -307,9 +313,13 @@ class TestSwathIs240Km:
         planner = ImagingPlanner([GULF_STREAM], altitude_km=450.0)
         assert planner.swath_km == pytest.approx(240.0, abs=2.0)
 
-    def test_module_constant_is_240_km(self):
+    def test_module_constant_follows_the_fov_at_the_true_altitude(self):
+        # 2026-08 epoch/altitude ruling: the module fallback altitude is the
+        # TLE-true 513 km mean, so the same 29.856 deg FOV gives ~273.5 km
+        # (it gives 240 km at the retired 450 km declaration — the per-test
+        # altitude_km=450.0 cases above still pin that invariant).
         from smo_planner.imaging_planner import SWATH_KM, FOV_DEG
-        assert SWATH_KM == pytest.approx(240.0, abs=2.0)
+        assert SWATH_KM == pytest.approx(273.5, abs=2.0)
         assert FOV_DEG == pytest.approx(29.856, abs=0.01)
 
     def test_mission_config_swath_is_240_km(self):

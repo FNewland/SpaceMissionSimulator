@@ -72,8 +72,11 @@ application-running platform.
 ### Step 5 — Boot OBC into Application Image
 **TC:** `OBC_BOOT_APP` (Service 8, Subtype 1, func_id 55)
 **Action:** Issue the boot-app command. The OBDH model verifies the application CRC over a 10s window then transitions `sw_image` to APPLICATION (1). Until that transition completes, only the bootloader command set is accepted.
-**Verify:** S1.1 acceptance + S1.7 execution complete received within 5s
-**Verify:** `obdh.sw_image` (0x0311) = 1 (APPLICATION) within 15s
+**Verify:** S1.1 acceptance + S1.3 execution start received within 5s
+**Verify:** `obdh.boot_state` (0x0A15) = 1 (VERIFYING), `obdh.boot_time_remaining_s` (0x0A16) counting down — the CRC window is open
+**Verify:** S1.7 execution complete received within 15s. It arrives when the CRC window CLOSES, not on acceptance, so it is the confirmation that the boot actually happened. A CRC failure reports S1.8 naming the reason, plus event 0x0305 BOOT_FAILURE; success reports event 0x0310 BOOT_COMPLETE.
+**Verify:** `obdh.sw_image` (0x0311) = 1 (APPLICATION) and `obdh.boot_state` (0x0A15) = 2 within 15s
+**Note:** Do not send the next telecommand until that S1.7 arrives. Inside the CRC window the OBC is still the bootloader, and anything outside its subset is refused S1.2 — the refusal notice reads `0x0A15 = 1 VERIFYING` and tells you to wait.
 **Verify:** Periodic HK **SID 1 (EPS) and SID 11 (Beacon)** — and only those two — begin appearing on the downlink. Application boot re-applies `simulation.yaml` `default_enabled_sids: [1, 11]` (`engine.py::_apply_default_hk_enable`, called from the boot handler), so every other SID (2 AOCS, 3 TCS, 4 OBDH/Platform, 5 Payload, 6 TT&C, 8 EPS-extended, 9 PROP) is DISABLED at boot and must be commanded on with `HK_ENABLE(sid=N)` (Service 3, Subtype 5). Powering a subsystem's line does not enable its SID.
 **TC:** `HK_ENABLE(sid=3)` (Service 3, Subtype 5) — TCS periodic housekeeping
 **TC:** `HK_ENABLE(sid=4)` (Service 3, Subtype 5) — OBDH / Platform periodic housekeeping
@@ -118,7 +121,7 @@ boot-then-sync logic is written exactly once. This card sends no time command.
 
 ## Off-Nominal Handling
 - **No S1.1 returned to CONNECTION_TEST:** the platform's auto-TX hold-down only fires on accepted TCs, so if S1.1 never arrives, either the uplink is not getting through (check the pass geometry and ground-station pointing) or the receiver is unhealthy. Retry once. If still nothing, repoint and try Troll on its next scheduled pass.
-- **`obdh.sw_image` does not transition after OBC_BOOT_APP:** the boot-app countdown is 10s. Wait 30s, then re-request HK SID 11 (which carries `obdh.sw_image`). If still 0, the application CRC is failing — escalate to OBDH engineer and consider `OBC_BOOT_INHIBIT(0)` then `OBC_REBOOT`.
+- **`obdh.sw_image` does not transition after OBC_BOOT_APP:** the boot-app countdown is 10s. Read `obdh.boot_state` (0x0A15) first: 1 = still VERIFYING (wait for the S1.7), 3 = FAILED, the application CRC is failing — there will also be an S1.8 against the boot-app telecommand and event 0x0305 BOOT_FAILURE. On a FAILED boot, escalate to the OBDH engineer and consider `OBC_BOOT_INHIBIT(0)` then `OBC_REBOOT`.
 - **SID 1 not emitting after boot_app, or SIDs 3/4/6 still absent after the `HK_ENABLE`s in Step 5:** verify `obdh.sw_image` actually went to 1. If yes, remember that application boot re-applies `default_enabled_sids: [1, 11]` and disables everything else, so any SID commanded on before the boot is switched back off. Re-issue `HK_ENABLE(sid=N)` (Service 3, Subtype 5) for each missing SID after the boot.
 - **`TTC_SET_DATA_RATE` answered with S1.8 error 0x0007 after the application booted:** beacon mode is still latched — Step 5a was skipped or its `TTC_SET_BEACON_MODE(on=0)` was not accepted. Read the S1.8 failure notice: it names the gate verbatim ("TM rate is forced to the beacon tier in beacon mode (LOW refused)"), and the same text appears as S5 event `0x030B COMMAND_REJECTED` in the event log and the FDIR journal. Re-issue Step 5a. The application boot deliberately does not clear beacon mode.
 - **Auto-TX hold-down expires before procedure complete:** any subsequent accepted TC re-arms the timer to 15 minutes, so this should not happen during a normal pass. If the operator goes 15 minutes without commanding, the link will drop — re-issue any TC to re-energise.
