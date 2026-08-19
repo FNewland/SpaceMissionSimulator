@@ -16,6 +16,34 @@ and the transition to nominal operations. All GO/NO-GO checkpoints are identifie
 
 ## 2. LEOP Overview
 
+**Definitive procedure-card order (2026-08c flow redesign).** The LEOP flight
+cards are executed in this order — NOT in card-number order — and each card
+declares its Entry state and Exit state and ends with an explicit NEXT:
+
+1. **LEOP-001** First Acquisition & OBC Boot — link, application image,
+   beacon-mode clear, LOW rung, platform HK SIDs.
+2. **LEOP-002** Initial Health Check — observation only; confirms the
+   unpowered subsystems (AOCS, payload, cooler, prop) are still dark.
+3. **LEOP-004** Solar Array Verification — wing deployment.
+4. **LEOP-007** Sequential Power-On — LEOP loads ONLY: heater lines as
+   needed, the AOCS suite line, magnetometer + magnetorquers + GPS devices,
+   then the commanded DETUMBLE. The payload line belongs to COM-009, the FPA
+   cooler to COM-010, the wheel ENABLE to COM-004, the prop line to
+   manoeuvre preparation.
+5. **LEOP-005** Sun Acquisition — OBSERVES the automatic DETUMBLE →
+   COARSE_SUN handover (nothing is commanded); LEOP parks in the sun hold.
+6. **LEOP-006** Time Synchronisation — BOTH paths in one card: ground
+   SET_TIME immediately, then OBC_GPS_TIME_SYNC once the GPS fix is in;
+   enables HK SID 12 (GPS_NAV).
+7. **LEOP-003** Initial Orbit Determination — verifies the SID-12 PVT, and
+   as the LAST LEOP card declares `SYS_SET_MISSION_PHASE(phase=5)` and hands
+   over to commissioning (COM-001).
+
+Commissioning then runs COM-001 … COM-010, **COM-012 (First Light),
+COM-011 (Calibration)**, COM-013 — with COM-003 (gyro calibration,
+startable in the COARSE_SUN hold) deliberately BEFORE COM-004 (wheel
+enable), and COM-013 alone declaring phase 6.
+
 LEOP begins at spacecraft separation from the launcher and concludes when the spacecraft
 is declared operational in nominal mode. The phase typically lasts 1-3 days and proceeds
 through the following major milestones:
@@ -45,7 +73,7 @@ The separation sequence follows a 7-phase state machine implemented in the OBC:
 | POWER_STABILIZE   | Unswitchable PDM active    | ~30 s      | OBC boots; RX powers on           |
 | TIMER_WAIT        | OBC boot complete          | ~30 min    | No RF transmissions; OBC in BOOTLOADER |
 | ANTENNA_DEPLOY    | 30-min timer expires       | ~60 s      | Burn wire commanded; antenna deploys |
-| BEACON_START      | Antenna deploy confirmed   | ~10 s      | TX enabled; beacon SID 11 on the BEACON tier (1 kbps) |
+| BEACON_START      | Antenna deploy confirmed   | ~10 s      | TX enabled; beacon SID 11 on the SAFE tier (1 kbps; renamed from BEACON, 2026-08c) |
 | NOMINAL           | Beacon transmission active | —          | Ready for ground contact          |
 
 ### 3.2 Unswitchable Line Power-On
@@ -90,7 +118,7 @@ Once the antenna is deployed:
 
 1. The TX switchable PDM line (SW-1) is enabled.
 2. The transmitter and power amplifier power on.
-3. The OBC begins transmitting beacon packets (**SID 11**) on the **BEACON tier** of the TM rate ladder — 1 kbps, 1 kBd, BPSK with conv(7,1/2)+RS, ~3.1 kHz occupied bandwidth — sourced from the **bootloader APID (0x002)**. This is the ONLY HK packet emitted in bootloader mode — SIDs 1–6 remain silent until application boot. No TM storage, no attitude control, and no payload operations are possible while in bootloader. BEACON is a lifeline rung, not an operations rate: at 1 kbps it carries SID 11 with over 100x headroom but cannot carry the 1557 bps periodic housekeeping stream at all.
+3. The OBC begins transmitting beacon packets (**SID 11**) on the **SAFE tier** of the TM rate ladder (renamed from BEACON, 2026-08c — “beacon” now always means the UHF whip transmitter) — 1 kbps, 1 kBd, BPSK with conv(7,1/2)+RS, ~3.1 kHz occupied bandwidth — sourced from the **bootloader APID (0x002)**. This is the ONLY HK packet emitted in bootloader mode — SIDs 1–6 remain silent until application boot. No TM storage, no attitude control, and no payload operations are possible while in bootloader. SAFE is a lifeline rung, not an operations rate: at 1 kbps it carries SID 11 with over 100x headroom but cannot carry the 1557 bps periodic housekeeping stream at all.
 4. The 15-minute TX auto-off timer starts, but is reset each time a beacon is transmitted.
 
 The spacecraft is now ready for ground acquisition.
@@ -106,7 +134,7 @@ The spacecraft is now ready for ground acquisition.
 Before the expected first contact window:
 
 1. Configure ground station antenna for VHF/UHF acquisition at predicted AOS azimuth/elevation.
-2. Set the demodulator to the BEACON tier: 1 kBd, BPSK, conv(7,1/2)+RS. This is the only
+2. Set the demodulator to the SAFE tier: 1 kBd, BPSK, conv(7,1/2)+RS. This is the only
    waveform the bootloader transmits; a demodulator configured for the LOW tier (16 kBd)
    will not lock it.
 3. Load EOSAT-1 frequency plan (2200.0 MHz downlink, 2025.0 MHz uplink, S-band).
@@ -265,17 +293,24 @@ verified before proceeding.
 
 | Step | Subsystem           | PDM Line | Verification                          | Power Impact |
 |------|---------------------|----------|---------------------------------------|--------------|
-| 1    | Battery heater      | SW-5     | htr_battery = 1; bat_temp stabilising | +8 W         |
-| 2    | Magnetometer A      | SW-2     | mag_a_valid = 1; mag readings nominal | +1 W         |
-| 3    | CSS (6 heads)       | SW-2     | css_1 through css_6 responding        | +0.5 W       |
-| 4    | Gyros               | SW-2     | Rate readings nominal                 | +3 W         |
-| 5    | Star camera (zenith)| SW-2     | Valid attitude fix (if conditions met) | +2 W         |
-| 6    | GPS receiver        | SW-2     | Position fix (may take 15-30 min)     | +1 W         |
-| 7    | Reaction wheels     | SW-3     | All 4 wheels responding, 0 RPM        | +4 W (idle)  |
-| 8    | Magnetorquers       | SW-3     | Coil currents responding to commands  | +2 W         |
+| 1    | Battery heater      | SW-5     | ONLY if bat_temp < +5 C: htr line on, temp stabilising | +8 W |
+| 2    | Magnetometer        | SW-2     | aocs.mag_enabled (0x025C) = 1; mag readings nominal | +1 W |
+| 3    | Magnetorquers       | SW-2     | MTQ_ENABLE accepted; aocs.mtq_enabled (0x025E) = 1 | +2 W |
+| 4    | GPS receiver        | SW-2     | TTFF running (fix may take 15-30 min) | +1 W |
 
-**Note:** Do not power on the payload (SW-4) or redundant units (SW-6, SW-7) during LEOP
-unless specifically required for recovery.
+Then command DETUMBLE (`AOCS_SET_MODE(mode=2)`) — the mode command REFUSES if
+the magnetometer or the magnetorquers are missing (0x0A20 / 0x0A21), which is
+why steps 2-3 come first.
+
+**Deliberately NOT powered or enabled during LEOP (2026-08c):**
+
+| Load | Enabled by | Why deferred |
+|------|-----------|--------------|
+| Star trackers, gyro units | COM-003 | not needed for the sun-safe hold |
+| Reaction wheel ENABLE | COM-004 | line SW-2 is hot, but the wheels stay disabled — a power switch never hands authority to the control loop |
+| Payload line (SW-4) | COM-009 | commissioning load, not a LEOP need |
+| FPA cooler | COM-010 | ~15 W continuous; switching it on in LEOP burnt margin for days (owner finding) |
+| Propulsion line | NOM-004/NOM-013 | manoeuvre preparation only |
 
 ### 7.2 Power Budget Monitoring
 
@@ -286,8 +321,9 @@ After each power-on step, verify:
 - `power_gen` (0x0107) exceeds `power_cons` during sunlit portions of the orbit.
 
 **GO/NO-GO Checkpoint 4: Sequential Power-On Complete**
-- Criteria: All AOCS sensors and actuators powered and healthy.
-- Decision: Proceed to ADCS commissioning.
+- Criteria: The LEOP load set (and only it) powered and healthy; DETUMBLE
+  active on magnetometer + magnetorquers; wheels still disabled.
+- Decision: Proceed to LEOP-005 (observe the automatic sun acquisition).
 
 ## 8. ADCS Commissioning Sequence
 
@@ -299,7 +335,7 @@ control loops.
 
 #### Step 1: Magnetometer Calibration
 
-1. Verify MAG-A is powered and `mag_a_valid` = 1.
+1. Verify the magnetometer is powered and `aocs.mag_enabled` (0x025C) = 1.
 2. Record magnetometer readings over one full orbit.
 3. Compare measured magnetic field against the IGRF model for the current position.
 4. Compute and upload calibration offsets if residuals exceed 500 nT.
@@ -442,11 +478,36 @@ Before declaring the spacecraft operational, verify the following:
    routine operations run at. `ttc.tm_data_rate` (0x0506) = 16000 and `ttc.tm_tier`
    (0x0539) = 1. Do NOT leave the spacecraft commanded to HIGH: that tier is raised per
    dump (NOM-011 / NOM-003) and released afterwards.
-8. Record transition time for mission log.
+8. **Declare the mission phase.** `SYS_SET_MISSION_PHASE(phase=6, flags=0)`
+   (Service 8, Subtype 1, func_id 120). Verify `eps.spacecraft_phase` (0x0129) = 6
+   and confirm event `MISSION_PHASE_CHANGED` (0x0055) in the log.
+9. Record transition time for mission log.
+
+**On the phase declaration.** This is a real telecommand, not bookkeeping and
+not an instructor action. The on-board phase state machine advances itself only
+as far as LEOP (4); COMMISSIONING (5) and NOMINAL (6) are ground declarations.
+Until phase 6 is declared:
+
+* `sat.mode` (0x0001) and the console header stay **SAFE** no matter how
+  healthy the spacecraft is — the phase gate outranks the FDIR latches in the
+  `sc_mode` derivation;
+* the advanced fault-propagation model is **disarmed**, as are the two
+  phase-gated legacy FDIR rules (`aocs.wheels_enabled`, `aocs.att_error`);
+* the propulsion interlock refuses to arm — `prop.yaml` declares
+  `min_phase: 6`, so **no manoeuvre is possible at all** (NOM-004 / NOM-013
+  will fail at PROP_ARM).
+
+Phase 5 is declared earlier, at LEOP-003 Step 7 — the last card of the LEOP
+sequence (the declaration moved out of LEOP-007 in the 2026-08c redesign, so
+exactly one card owns each declaration). Going backwards (NOMINAL →
+COMMISSIONING or → LEOP) is refused unless the FORCE flag is set (`flags` bit
+0 = 1); use it only to unwind a premature declaration, and record the reason.
+Phases 0–2 are pre-separation states and are never ground-commandable. The full
+gate inventory is in `00_mission_overview.md` §6.0.
 
 **GO/NO-GO Checkpoint 9: Transition to Nominal Operations**
 - Criteria: All checklist items passed, all positions report GO.
-- Decision: Spacecraft declared operational; LEOP phase complete.
+- Decision: Spacecraft declared operational; LEOP phase complete; phase = 6.
 
 ### 9.3 Post-LEOP Activities
 
@@ -491,7 +552,9 @@ If the OBC cannot transition from BOOTLOADER to APPLICATION:
 If body rates exceed 5 deg/s after detumble attempt:
 
 1. Verify magnetometer readings are valid (not stuck or noisy).
-2. If magnetometer is faulty, switch to MAG-B.
+2. The magnetometer is single-string — there is no MAG-B to switch to. A faulty
+   unit means B-dot is blind; expect to rely on passive damping and instructor
+   intervention.
 3. If rates continue to increase, check for stuck magnetorquer (driving torque in wrong
    direction).
 4. As a last resort, power off all AOCS actuators and allow passive magnetic damping

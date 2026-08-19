@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="EPS" Creator="EOSAT-1 SMDL Generator" Version="1.0+2fdbeaed7708">
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="EPS" Creator="EOSAT-1 SMDL Generator" Version="1.0+f46653e0637e">
   <Description>SMP2 model catalogue for EPS subsystem</Description>
   <Type Name="UInt8" Uuid="1b57882a-4b2d-53f8-a27f-be0563caa586" xsi:type="Integer" Size="1" Signed="false"/>
   <Type Name="UInt16" Uuid="5fcf9bfd-72b9-5f0c-b036-3cad6f5a8506" xsi:type="Integer" Size="2" Signed="false"/>
@@ -200,10 +200,10 @@
     <Field Name="eps_fpa_cooler_cmd" Uuid="9d11244a-25fd-5fda-9db3-bc3b36ec2501" Type="Float32" Kind="Output" View="true">
       <Description>EPS-side FPA cooler command flag (S8 func 17)</Description>
     </Field>
-    <Field Name="eps_pl_prop" Uuid="ef5d28a5-a006-5d61-84cc-40ae1207c387" Type="Float32" Kind="Output" View="true">
+    <Field Name="eps_pl_prop" Uuid="ef5d28a5-a006-5d61-84cc-40ae1207c387" Type="UInt8" Kind="Output" View="true">
       <Description>Power line Propulsion (catbed heater + valve drivers; LAST in the shed order)</Description>
     </Field>
-    <Field Name="eps_line_current_8" Uuid="94e3625c-57bd-52fa-9f6d-3e61d6368dd4" Type="Float32" Kind="Output" View="true">
+    <Field Name="eps_line_current_8" Uuid="94e3625c-57bd-52fa-9f6d-3e61d6368dd4" Type="UInt16" Kind="Output" View="true">
       <Description>Power line 8 (Propulsion) current [A]</Description>
     </Field>
     <Field Name="eps_eclipse_active" Uuid="67f3e8b4-3f75-57a3-a175-f15ee8de8070" Type="UInt8" Kind="Output" View="true">

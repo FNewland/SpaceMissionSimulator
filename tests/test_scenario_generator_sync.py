@@ -1,58 +1,47 @@
 """Guard against drift between tools/scenario_generator.py and the simulator.
 
-The scenario generator ships a hard-coded ``SUBSYSTEMS`` catalog that mirrors the
-``inject_failure()`` handlers in each subsystem model. Because it is a manual copy
-(no runtime import of the models), it silently drifts: at one point it was missing
-the entire ``payload`` subsystem plus several TTC/OBDH failure modes, so those
-failures could never be selected from the generator UI and broken scenarios looked
-fine. This test fails if the two ever diverge again.
+The generator used to ship a hard-coded ``SUBSYSTEMS`` catalog that mirrored the
+``inject_failure()`` handlers in each subsystem model. Because it was a manual
+copy it silently drifted: at one point it was missing the entire ``payload``
+subsystem plus several TTC/OBDH failure modes, so those failures could never be
+selected from the generator UI and broken scenarios looked fine.
+
+It now builds ``SUBSYSTEMS`` from ``smo_simulator.failure_catalog`` — the same
+declarative FAILURE_SPECS the instructor console and the FailureManager use — so
+the drift is structurally impossible. These tests hold that property: the
+generator must expose exactly the catalogue's failures, per subsystem, with the
+typed parameter specs attached.
 """
-import ast
-import re
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GENERATOR = REPO_ROOT / "tools" / "scenario_generator.py"
-MODEL_DIR = REPO_ROOT / "packages" / "smo-simulator" / "src" / "smo_simulator" / "models"
 
-# Subsystems the generator is expected to cover, mapped to their model file stem.
-SUBSYSTEMS = {
-    "eps": "eps_basic.py",
-    "aocs": "aocs_basic.py",
-    "tcs": "tcs_basic.py",
-    "ttc": "ttc_basic.py",
-    "obdh": "obdh_basic.py",
-    "payload": "payload_basic.py",
-}
+# Subsystems the generator must cover. `prop` is here because propulsion
+# (S8 funcs 108-118, HK SID 9) landed after the generator's hand-copied table
+# was written and never made it in.
+SUBSYSTEMS = ("eps", "aocs", "tcs", "ttc", "obdh", "payload", "prop")
 
 
-def _generator_catalog() -> dict[str, set[str]]:
-    """Extract {subsystem: {failure names}} from the generator's SUBSYSTEMS dict.
+def _generator_catalog() -> dict[str, dict]:
+    """The generator's live SUBSYSTEMS catalogue.
 
-    Parsed with ast.literal_eval so the test has no dependency on aiohttp (which
-    importing the module would pull in).
+    Imported (not ast-parsed) now that it is derived rather than literal.
     """
-    tree = ast.parse(GENERATOR.read_text())
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Name) and t.id == "SUBSYSTEMS" for t in node.targets
-        ):
-            data = ast.literal_eval(node.value)
-            return {sub: set(spec["failures"].keys()) for sub, spec in data.items()}
-    raise AssertionError("SUBSYSTEMS dict not found in scenario_generator.py")
+    import sys
+
+    sys.path.insert(0, str(REPO_ROOT / "tools"))
+    import scenario_generator  # noqa: PLC0415
+
+    return scenario_generator.SUBSYSTEMS
 
 
-def _model_failures(model_file: str) -> set[str]:
-    """Extract the failure names handled by a model's inject_failure() method."""
-    src = (MODEL_DIR / model_file).read_text()
-    tree = ast.parse(src)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "inject_failure":
-            body_src = ast.get_source_segment(src, node)
-            return set(re.findall(r'failure == "([a-z_]+)"', body_src))
-    raise AssertionError(f"inject_failure() not found in {model_file}")
+def _catalog_failures() -> dict[str, set[str]]:
+    from smo_simulator.failure_catalog import catalog
+
+    return {sub: set(specs) for sub, specs in catalog().items()}
 
 
 def test_generator_covers_every_subsystem():
@@ -62,16 +51,37 @@ def test_generator_covers_every_subsystem():
     assert not missing, f"Generator SUBSYSTEMS missing subsystem(s): {sorted(missing)}"
 
 
-@pytest.mark.parametrize("subsystem,model_file", sorted(SUBSYSTEMS.items()))
-def test_generator_matches_model_failures(subsystem, model_file):
-    """The generator's failure list for each subsystem must equal the model's."""
-    catalog = _generator_catalog()
-    gen = catalog.get(subsystem, set())
-    model = _model_failures(model_file)
-    missing_from_gen = model - gen
-    extra_in_gen = gen - model
-    assert not missing_from_gen and not extra_in_gen, (
-        f"{subsystem}: generator/model failure lists differ.\n"
-        f"  in model but not generator: {sorted(missing_from_gen)}\n"
-        f"  in generator but not model: {sorted(extra_in_gen)}"
+@pytest.mark.parametrize("subsystem", sorted(SUBSYSTEMS))
+def test_generator_matches_model_failures(subsystem):
+    """The generator's failure list for each subsystem equals the catalogue's."""
+    gen = set(_generator_catalog().get(subsystem, {}).get("failures", {}))
+    model = _catalog_failures().get(subsystem, set())
+    assert gen == model, (
+        f"{subsystem}: generator/catalogue failure lists differ.\n"
+        f"  in catalogue but not generator: {sorted(model - gen)}\n"
+        f"  in generator but not catalogue: {sorted(gen - model)}"
     )
+
+
+def test_generator_covers_the_propulsion_subsystem():
+    """Propulsion landed after the generator's hand-copied table was written."""
+    assert "prop" in _generator_catalog(), (
+        "the scenario generator cannot author a propulsion failure")
+
+
+@pytest.mark.parametrize("subsystem", sorted(SUBSYSTEMS))
+def test_generator_carries_the_typed_parameter_specs(subsystem):
+    """Each generator failure entry carries its ParamSpec list.
+
+    The generator's form is rendered from these, so an entry without them
+    would fall back to the model defaults — which is exactly the "no way to
+    choose which wheel" complaint this work fixes.
+    """
+    from smo_simulator.failure_catalog import get_spec
+
+    for name, entry in _generator_catalog()[subsystem]["failures"].items():
+        assert "params" in entry and "magnitude" in entry, (
+            f"{subsystem}.{name}: generator entry has no parameter spec")
+        spec = get_spec(subsystem, name)
+        assert [p["name"] for p in entry["params"]] == [p.name for p in spec.params], (
+            f"{subsystem}.{name}: generator parameter list differs from the spec")

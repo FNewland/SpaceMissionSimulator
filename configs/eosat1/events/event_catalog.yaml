@@ -5,6 +5,17 @@ events:
   - { id: 0x0010, name: ECLIPSE_ENTRY, severity: INFO, subsystem: orbital, description: "Eclipse entry" }
   - { id: 0x0011, name: ECLIPSE_EXIT, severity: INFO, subsystem: orbital, description: "Eclipse exit (sunlight entry)" }
 
+  # Mission-phase / power-up state machine (0x0050-0x005F). The OBC owns the
+  # phase, so these are filed against obdh. 0x0050-0x0054 have been emitted by
+  # Engine._tick_spacecraft_phase and the instructor set_phase handler since
+  # the state machine landed but were never catalogued, so the console showed
+  # them as bare ids.
+  - { id: 0x0050, name: SEPARATION_TIMER_EXPIRED, severity: MEDIUM, subsystem: obdh, description: "Separation timer expired — initial power-on (phase 1 -> 2)" }
+  - { id: 0x0051, name: OBC_BOOTLOADER_STARTED, severity: MEDIUM, subsystem: obdh, description: "OBC bootloader started — beacon mode (phase 2 -> 3)" }
+  - { id: 0x0052, name: OBC_APPLICATION_BOOTED, severity: MEDIUM, subsystem: obdh, description: "OBC application software booted — LEOP started (phase 3 -> 4)" }
+  - { id: 0x0054, name: OBC_REVERTED_TO_BOOTLOADER, severity: HIGH, subsystem: obdh, description: "OBC reboot detected — reverted to bootloader/beacon mode" }
+  - { id: 0x0055, name: MISSION_PHASE_CHANGED, severity: MEDIUM, subsystem: obdh, description: "Mission phase declared by ground telecommand (SYS_SET_MISSION_PHASE, S8.1 func 120) — carries the from and to phases" }
+
   # EPS events (0x0100-0x01FF)
   - { id: 0x0100, name: EPS_MODE_CHANGE, severity: MEDIUM, subsystem: eps, description: "EPS mode transition" }
   - { id: 0x0101, name: BATTERY_SOC_WARNING, severity: MEDIUM, subsystem: eps, description: "Battery SoC below 20%" }
@@ -44,6 +55,13 @@ events:
   - { id: 0x020D, name: AOCS_FAST_LOOP_BYPASSED, severity: LOW, subsystem: aocs, description: "AOCS attitude fast loop bypassed/restored (secular fidelity mode above 60x time acceleration; see aocs.fidelity_mode 0x02C6)" }
   - { id: 0x020E, name: AOCS_DESAT_INEFFECTIVE, severity: MEDIUM, subsystem: aocs, description: "Desaturation timed out without converging: the dump could not remove the stored body momentum within desaturation.timeout_s. AOCS returns to the pre-desat mode instead of parking in DESAT" }
   - { id: 0x020F, name: AOCS_MODE_RESTORED, severity: INFO, subsystem: aocs, description: "AOCS returned to the mode the ground commanded (aocs.commanded_mode 0x0297) after a transient or an automatic demotion" }
+  # Gyro bias calibration (S8.1 func 13 AOCS_GYRO_CALIBRATION). The calibration
+  # averages over a real, configurable arc rather than completing instantly, so
+  # the ground needs a start marker, a result and an abort; progress in between
+  # is aocs.gyro_cal_progress (0x02CA).
+  - { id: 0x0210, name: AOCS_GYRO_CAL_START, severity: INFO, subsystem: aocs, description: "Gyro bias calibration started. Aux text carries the commanded averaging duration; progress is aocs.gyro_cal_progress (0x02CA) and state aocs.gyro_cal_state (0x02C9)" }
+  - { id: 0x0211, name: AOCS_GYRO_CAL_COMPLETE, severity: INFO, subsystem: aocs, description: "Gyro bias calibration completed. Aux text carries the estimated per-axis bias (also aocs.gyro_cal_bias_x/y/z 0x02CB-0x02CD); the estimate is applied as an on-board compensation, so the residual bias at the gyro output falls to zero while the hardware fault itself is untouched" }
+  - { id: 0x0212, name: AOCS_GYRO_CAL_ABORT, severity: MEDIUM, subsystem: aocs, description: "Gyro bias calibration aborted before completion — a precondition was lost (star tracker stopped tracking, a gyro unit was switched off, body rate above the limit) or the operator abandoned it. Reason code in aocs.gyro_cal_reject (0x02D0)" }
 
   # OBDH events (0x0300-0x03FF)
   - { id: 0x0300, name: OBDH_MODE_CHANGE, severity: MEDIUM, subsystem: obdh, description: "OBC mode transition" }

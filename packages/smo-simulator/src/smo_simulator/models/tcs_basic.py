@@ -20,6 +20,9 @@ from typing import Any
 from smo_common.config.fpa_envelope import FPAEnvelope
 from smo_common.config.schemas import TCSConfig
 from smo_common.models.subsystem import SubsystemModel
+from smo_simulator.failure_spec import (
+    FailureSpec, ParamSpec, T_FLOAT, T_BOOL, enum, number,
+)
 # The FPA setpoint arrives on the same wire field (S8 func 36, uint16
 # centi-kelvin) whether it is routed to the payload or to TCS, so both sides
 # must apply the same decode tolerance or the two will disagree about which
@@ -992,6 +995,85 @@ class TCSBasicModel(SubsystemModel):
             }
             return {"success": True, "thermal_map": thermal_map}
         return {"success": False, "message": f"Unknown: {command}"}
+
+    # ─── Failure injection ───────────────────────────────────────────
+    # Declarative parameter specs — single source for the instructor form,
+    # FailureManager validation and the scenario content gate.
+    _HEATER_CIRCUITS = ["battery", "obc", "thruster"]
+    _HEATER_LABELS = ["Battery heater", "OBC heater", "Thruster catbed heater"]
+    # Thermal zones = the `temp_<zone>` fields the model publishes.
+    _ZONES = ["battery", "obc", "fpa", "thruster",
+              "panel_px", "panel_mx", "panel_py", "panel_my",
+              "panel_pz", "panel_mz"]
+
+    FAILURE_SPECS = {
+        "heater_failure": FailureSpec(
+            name="heater_failure", label="Heater circuit failure",
+            effect="Selected heater cannot energise — its zone cools to the "
+                   "passive equilibrium and the low-temperature limit trips.",
+            magnitude=ParamSpec(name="magnitude", type=T_BOOL,
+                                label="Failed", default=True),
+            params=(enum("circuit", "Heater circuit", _HEATER_CIRCUITS,
+                         labels=_HEATER_LABELS, default="battery"),),
+        ),
+        "heater_stuck_on": FailureSpec(
+            name="heater_stuck_on", label="Heater stuck ON",
+            effect="Selected heater cannot be commanded off — the zone "
+                   "overheats and heater power stays on the EPS budget.",
+            magnitude=None,
+            params=(enum("circuit", "Heater circuit", _HEATER_CIRCUITS,
+                         labels=_HEATER_LABELS, default="battery"),),
+        ),
+        "heater_open_circuit": FailureSpec(
+            name="heater_open_circuit", label="Heater open circuit",
+            effect="Heater commands are accepted and the status reads ON, but "
+                   "no heat is delivered and no current is drawn — the "
+                   "'commanded on but still cooling' teaching case.",
+            magnitude=None,
+            params=(enum("circuit", "Heater circuit", _HEATER_CIRCUITS,
+                         labels=_HEATER_LABELS, default="battery"),),
+        ),
+        "cooler_failure": FailureSpec(
+            name="cooler_failure", label="FPA cooler failure",
+            effect="The Stirling-class FPA cooler stops: the focal plane warms "
+                   "off its centi-kelvin setpoint and imaging quality degrades.",
+            magnitude=ParamSpec(name="magnitude", type=T_BOOL,
+                                label="Failed", default=True),
+        ),
+        "obc_thermal": FailureSpec(
+            name="obc_thermal", label="OBC internal heat rise",
+            effect="Extra dissipation inside the OBC box drives temp_obc "
+                   "(0x0406) up toward its red limit.",
+            magnitude=None,
+            params=(number("heat_w", "Extra dissipation", unit="W", lo=0.0,
+                           hi=200.0, default=30.0, step=0.5),),
+        ),
+        "sensor_drift": FailureSpec(
+            name="sensor_drift", label="Temperature sensor drift",
+            effect="Adds a fixed offset to ONE reported zone temperature while "
+                   "the true temperature is unchanged — the classic "
+                   "'is it the sensor or the hardware?' exercise.",
+            magnitude=ParamSpec(
+                name="magnitude", type=T_FLOAT, label="Sensor offset",
+                unit="degC", min=-100.0, max=100.0, default=10.0, step=0.1),
+            params=(enum("zone", "Thermal zone", _ZONES,
+                         labels=[z.replace("_", " ").upper() for z in _ZONES],
+                         default="battery"),),
+        ),
+        "temp_anomaly": FailureSpec(
+            name="temp_anomaly", label="Zone over-temperature",
+            effect="Pushes a zone over its red limit and holds it there, "
+                   "driving the thermal-exceedance contingency.",
+            magnitude=None,
+            params=(
+                enum("zone", "Thermal zone", _ZONES,
+                     labels=[z.replace("_", " ").upper() for z in _ZONES],
+                     default="battery"),
+                number("offset_c", "Temperature rise", unit="degC", lo=-100.0,
+                       hi=200.0, default=30.0, step=0.5),
+            ),
+        ),
+    }
 
     def inject_failure(self, failure: str, magnitude: float = 1.0, **kw) -> None:
         if failure == "heater_failure":

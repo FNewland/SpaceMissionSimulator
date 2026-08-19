@@ -1,8 +1,16 @@
 # COM-010: FPA Cooler Activation
 **Subsystem:** Payload / TCS
 **Phase:** COMMISSIONING
-**Revision:** 1.0
+**Revision:** 2.0 --- 2026-08c: the cooler is now THIS card's to activate ---
+LEOP-007 no longer starts it (owner finding: the FPA cooler went on far too
+early, burning power through the whole of LEOP). Entry/exit states declared.
 **Approved:** Flight Operations Director
+
+**Entry state:** COM-009 exit state --- payload in STANDBY on its own line,
+SID 5 emitting, FPA at the uncooled equilibrium. The cooler EPS line
+(`eps.pl_fpa_cooler` 0x0114) may ALREADY read 1 --- COM-009's mode command is
+itself a cooler-line path since Phase 4 --- but the cooler has not been
+commanded and `tcs.cooler_fpa`/`payload.fpa_ready` still read 0.
 
 ## Purpose
 Activate the Focal Plane Array (FPA) cooler on the multispectral imager. Monitor
@@ -25,9 +33,8 @@ imaging operations can begin.
 - [ ] `payload.fpa_temp` (0x0601) at the uncooled equilibrium (+8C to +14C)
 - [ ] `eps.bat_soc` (0x0101) > 70% (cooler adds 15 W continuous load)
 - [ ] `eps.power_gen` (0x0107) > 40W (sunlit phase, wings deployed)
-- [ ] AOCS holding attitude: `aocs.mode` (0x020F) = 3 (COARSE_SUN) or 4 (NOMINAL).
-      Mode 2 is DETUMBLE and mode 3 is COARSE_SUN — there is no COARSE_SUN or
-      NOMINAL (`configs/eosat1/aocs/aocs_mode_codes.yaml`).
+- [ ] AOCS holding attitude in the NOMINAL family: `aocs.mode` (0x020F) = 4
+      (or 8 in eclipse); codes per `configs/eosat1/aocs/aocs_mode_codes.yaml`.
 - [ ] Bidirectional S-band link active
 - [ ] Ground station pass covers at least 15 minutes (or multiple passes available)
 - [ ] Payload and thermal engineers on console
@@ -175,4 +182,12 @@ and above 1.0C indicates a degraded loop.
 - [ ] Cooldown curve documented
 - [ ] Eclipse performance verified (if tested)
 - [ ] FPA Cooler Activation Report distributed
-- [ ] GO decision for COM-012 (First Light)
+
+## Exit state
+- Cooler RUNNING (`tcs.cooler_fpa` 0x040C = 1, line 0x0114 = 1) and left
+  running --- COM-011/COM-012 and every imaging card need the FPA regulating;
+  restoring "cooler off" here would defeat the card's purpose
+- `payload.fpa_ready` (0x0610) = 1 --- FPA at setpoint
+- No other state touched
+
+**NEXT:** COM-011 (Payload Calibration)

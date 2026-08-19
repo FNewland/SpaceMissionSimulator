@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SMO MCS — EOSAT-1 — Modern Console</title>
+<!-- ==========================================================================
+  SMO MCS MODERN CONSOLE — shell (execution plan §2.1)
+  Mockup B console shell + Mockup A ISA-101 component discipline + Mockup C
+  teaching layer. One HTML file, one ES module (mcs.js), one schematic file
+  (schematics.svg). No build step. All shared assets from /static/shared/
+  (frozen Agent-1 contract). The classic console is byte-untouched at /classic.
+=========================================================================== -->
+<link rel="stylesheet" href="/static/shared/design-system.css?v=1">
+<style>
+/* Page-layout CSS only — components/tokens come from the design system.  */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--tx);font-family:var(--sans);font-size:14px;
+  line-height:1.45;display:flex;flex-direction:column;overflow:hidden}
+button,select,input,textarea{font:inherit;color:inherit}
+button{background:none;border:none;cursor:pointer}
+:focus-visible{outline:2px solid var(--info);outline-offset:2px}
+.hide{display:none!important}
+a{color:var(--info)}
+
+/* ── SA header (chrome budget: 58px row + 52px SA cards + optional strips) ── */
+header{flex:0 0 auto;background:var(--s1);border-bottom:1px solid var(--line)}
+/* min-height + wrap (Agent 5 screenshot fix): at 1366 px the row content is
+   wider than the viewport; the old fixed 58 px height clipped the brand and
+   clocks. Wrapping costs ~30 px of chrome at narrow widths only. */
+.hrow{display:flex;align-items:center;gap:6px 14px;min-height:58px;
+  flex-wrap:wrap;padding:4px 16px}
+.mark{display:flex;align-items:center;gap:10px;padding-right:14px;border-right:1px solid var(--line)}
+.mark .g{width:30px;height:30px;border:1.5px solid var(--tx3);border-radius:7px;display:grid;
+  place-items:center;font-family:var(--mono);font-size:12px;font-weight:700;color:var(--tx2)}
+.mark b{font-size:15px;display:block;line-height:1.1}
+.mark span{font-size:12px;color:var(--tx3);letter-spacing:1.4px}
+.clk{display:flex;flex-direction:column;line-height:1.12}
+.clk label{font-size:12px;letter-spacing:1px;color:var(--tx3);text-transform:uppercase}
+.clk b{font-family:var(--mono);font-size:16px;font-weight:600}
+.grow{flex:1}
+.pos-wrap{display:flex;align-items:center;gap:8px;background:var(--s2);
+  border:1px solid var(--line);border-radius:var(--r);padding:4px 10px}
+.pos-wrap label{font-size:12px;letter-spacing:1px;color:var(--tx3)}
+.pos-wrap select{background:var(--s2);border:none;font-size:13px;color:var(--tx)}
+.abtn{display:flex;align-items:center;gap:8px;background:var(--alarm-wash);
+  border:1px solid var(--alarm);border-radius:var(--r);padding:5px 12px;
+  color:var(--alarm);font-weight:600;font-size:13px}
+.abtn .n{font-family:var(--mono);font-size:15px}
+.ibtn{border:1px solid var(--line-2);border-radius:var(--r);padding:5px 10px;
+  font-size:12.5px;color:var(--tx2);text-decoration:none;white-space:nowrap}
+.ibtn:hover{background:var(--s2);color:var(--tx)}
+.ibtn[aria-pressed="true"]{border-color:var(--info);color:var(--info)}
+#ws-dot{width:9px;height:9px;border-radius:50%;background:var(--alarm)}
+#ws-dot.on{background:var(--ok)}
+.sa{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);
+  border-top:1px solid var(--line)}
+.sacard{background:var(--s1);padding:7px 16px;display:flex;align-items:center;gap:12px;min-width:0}
+.sacard .q{font-size:12px;letter-spacing:1px;color:var(--tx3);text-transform:uppercase;flex:0 0 78px}
+.sacard .a{min-width:0}
+.sacard .a b{display:block;font-family:var(--mono);font-size:14px;font-weight:600;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sacard .a span{display:block;font-size:12px;color:var(--tx3);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sacard.w .a b{color:var(--warn)} .sacard.a-st .a b{color:var(--alarm)}
+.sadot{width:8px;height:8px;border-radius:50%;background:var(--ok);flex:0 0 auto}
+.sadot.w{background:var(--warn)} .sadot.a{background:var(--alarm)} .sadot.stale{background:var(--stale)}
+
+/* ── shell ── */
+.shell{flex:1;display:flex;min-height:0}
+nav.rail{flex:0 0 62px;background:var(--s1);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:4px;overflow-y:auto}
+.rail button{width:46px;height:40px;border-radius:var(--r);display:grid;place-items:center;
+  font-family:var(--mono);font-size:12px;font-weight:700;color:var(--tx3);position:relative}
+.rail button:hover{background:var(--s2);color:var(--tx2)}
+.rail button.on{background:var(--s3);color:var(--tx);box-shadow:inset 2px 0 0 var(--info)}
+.rail button .hd{position:absolute;top:3px;right:4px;font-family:var(--mono);font-size:10px;
+  font-weight:700;display:flex;align-items:center;gap:2px}
+.rail button .hd::before{content:"";width:6px;height:6px;border-radius:50%;background:transparent}
+.rail button .hd.w{color:var(--warn)} .rail button .hd.w::before{background:var(--warn)}
+.rail button .hd.a{color:var(--alarm)} .rail button .hd.a::before{background:var(--alarm)}
+.rail .sep{width:34px;border-top:1px solid var(--line-2);margin:5px 0}
+.work{flex:1;overflow:auto;min-width:0;position:relative}
+.pad{padding:14px 18px 20px;max-width:1780px}
+h1.pt{font-size:20px;font-weight:600;margin-bottom:2px}
+p.sub{color:var(--tx3);font-size:13px;margin-bottom:12px}
+.g{display:grid;gap:12px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.fld{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--tx3)}
+.fld input,.fld select,.fld textarea,.in{background:var(--s2);border:1px solid var(--line-2);
+  border-radius:var(--r);padding:6px 9px;font-size:13px;color:var(--tx)}
+.mono{font-family:var(--mono)}
+table.plain{width:100%;border-collapse:collapse;font-size:13px}
+table.plain th{font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--tx3);
+  text-align:left;padding:5px 8px;border-bottom:1px solid var(--line-2)}
+table.plain td{padding:4px 8px;border-bottom:1px solid var(--line)}
+.scroll-y{overflow-y:auto}
+.stage{background:radial-gradient(120% 90% at 50% 0%,#171B21 0%,#0F1216 70%);border-radius:10px;padding:8px}
+:root[data-theme="light"] .stage{background:var(--s2)}
+/* Height clamp (Agent 5 screenshot fix): schematics keep their aspect but
+   never render taller than ~46vh, so an L2 page's first card leaves room
+   for the panels below it at 1366×768. */
+svg.sc{width:100%;display:block;max-height:min(46vh,500px);margin:0 auto}
+
+/* L1 viewport fit (Agent 5 screenshot fix, plan §2.1 "L1 fits 1366×768
+   without scroll"): the overview page is a column that exactly fills the
+   work area; the schematic card absorbs the leftover height (the svg
+   scales down inside it) and the side column scrolls internally if the
+   live map ever outgrows it. */
+#pages{height:100%}
+#page-ovr{height:100%;display:flex;flex-direction:column;overflow:hidden}
+#page-ovr .ovr-grid{flex:1;min-height:0;align-items:stretch}
+.ovr-left{grid-template-rows:minmax(0,1fr) auto;min-height:0}
+.ovr-schem-card{display:flex;flex-direction:column;min-height:0}
+.ovr-schem-card .bd{flex:1;min-height:0;display:flex}
+.ovr-schem-card .stage{flex:1;display:flex;min-height:0}
+.ovr-schem-card svg.sc{width:100%;height:100%;max-height:100%}
+.ovr-right{overflow-y:auto;min-height:0;grid-auto-rows:max-content}
+
+/* L2 viewport fit (Agent 5 screenshot fix): each subsystem page fills the
+   work area exactly; its two columns scroll internally. No content is
+   removed — the work area itself just never grows a scrollbar. */
+.l2-page{height:100%;display:flex;flex-direction:column;overflow:hidden}
+.l2-grid{flex:1;min-height:0;align-items:stretch}
+/* grid-auto-rows:max-content: without it a constrained-height grid column
+   shrinks its auto rows (the cards clip instead of the column scrolling) */
+.l2-col{overflow-y:auto;min-height:0;align-content:start;grid-auto-rows:max-content}
+.sc .body{fill:var(--s2);stroke:var(--line-2);stroke-width:1.5}
+.sc .panelfill{fill:var(--s1);stroke:var(--line-2)}
+.sc .cell line{stroke:var(--line);stroke-width:1}
+.sc .wire{stroke:var(--line-2);stroke-width:1.4;fill:none}
+.sc .wire.flow{stroke-dasharray:5 5;animation:flow 2.4s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-20}}
+@media (prefers-reduced-motion:reduce){.sc .wire.flow{animation:none}}
+.sc .cap{font-family:var(--mono);font-size:12px;fill:var(--tx3);letter-spacing:2px}
+.sc .sm{font-family:var(--mono);font-size:12px;fill:var(--tx3)}
+.sc .ant{fill:none;stroke:var(--line-2);stroke-width:1.5}
+.sc [data-nav]{cursor:pointer}
+.sc [data-nav]:hover rect.bx{stroke:var(--info)}
+.sc .ds-node.stale rect.bx{stroke-dasharray:3 3;stroke:var(--stale)}
+.sc .ds-node.stale .vl{fill:var(--tx2)}
+.sc g.warn .vl,.sc [data-param].warn .vl{fill:var(--warn)}
+.sc g.alarm .vl,.sc [data-param].alarm .vl{fill:var(--alarm)}
+.sc [data-param] .vl{fill:var(--tx)}
+
+/* ── bottom drawer ── */
+#bottom-drawer{flex:0 0 auto;background:var(--s1);border-top:1px solid var(--line);
+  display:flex;flex-direction:column;min-height:24px}
+#bottom-drawer .bd-tabs{display:flex;align-items:center;gap:2px;height:24px;padding:0 8px}
+#bottom-drawer .bd-tabs button{font-size:12px;letter-spacing:.6px;color:var(--tx3);
+  padding:2px 10px;border-radius:4px 4px 0 0}
+#bottom-drawer .bd-tabs button[aria-selected="true"]{color:var(--tx);background:var(--s3)}
+#bottom-drawer .bd-body{height:168px;overflow:hidden;display:none}
+#bottom-drawer.open .bd-body{display:block}
+.bd-pane{height:100%;overflow-y:auto;padding:4px 10px;font-size:12.5px}
+.logrow{font-family:var(--mono);font-size:12px;padding:1px 0;color:var(--tx2);white-space:pre-wrap}
+.logrow.warn{color:var(--warn)} .logrow.alarm{color:var(--alarm)} .logrow.nom{color:var(--tx3)}
+.jump-chip{position:sticky;top:0;float:right;background:var(--s3);border:1px solid var(--line-2);
+  border-radius:10px;font-size:12px;padding:1px 9px;color:var(--info);cursor:pointer}
+
+/* blind-TC tagging (G12): visually distinct from every limit colour — an
+   outlined violet chip, because "unconfirmed" is neither nominal nor alarm */
+.blind-chip{display:inline-block;border:1.5px dashed #B48EE0;color:#B48EE0;
+  border-radius:9px;font-family:var(--mono);font-size:11px;font-weight:700;
+  padding:0 7px;letter-spacing:.5px;vertical-align:middle}
+.blind-chip.confirmed{border-style:solid;opacity:.75}
+
+/* first-out alarm grouping (G6) */
+.alarm-group{border-left:3px solid var(--alarm);margin:4px 0;padding-left:2px}
+.alarm-group-hd{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  font-size:12px;color:var(--tx2);padding:4px 8px}
+.alarm-group-hd b{color:var(--alarm);letter-spacing:.5px}
+.alarm-group-note{flex-basis:100%;font-size:11.5px;color:var(--tx3)}
+.alarm-group-kids{margin-left:14px;border-left:1px solid var(--line-2)}
+
+/* derived projection rows (G1) */
+.derived-row{padding:3px 0;border-bottom:1px solid var(--line)}
+
+/* ── alarm drawer (docked, non-modal) ── */
+#alarm-drawer{position:fixed;top:0;right:0;bottom:0;width:520px;background:var(--s1);
+  border-left:1px solid var(--line-2);box-shadow:-20px 0 60px rgba(0,0,0,.5);
+  transform:translateX(100%);transition:transform .2s;z-index:60;display:flex;flex-direction:column}
+#alarm-drawer.open{transform:none}
+@media (prefers-reduced-motion:reduce){#alarm-drawer{transition:none}}
+#alarm-drawer .hd{padding:12px 16px;border-bottom:1px solid var(--line);
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+#alarm-drawer .hd h2{font-size:12px;letter-spacing:1.5px;text-transform:uppercase;color:var(--tx3)}
+#alarm-list{flex:1;overflow-y:auto}
+#alarm-drawer .ft{padding:10px 16px;border-top:1px solid var(--line);font-size:12px;color:var(--tx3)}
+
+/* ── overlays ── */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:70;display:none;
+  align-items:center;justify-content:center}
+.overlay.open{display:flex}
+.dlg{background:var(--s1);border:1px solid var(--line-2);border-radius:10px;
+  max-width:860px;width:92%;max-height:86vh;overflow-y:auto;padding:18px 22px}
+.dlg h2{font-size:14px;letter-spacing:1px;text-transform:uppercase;color:var(--tx2);margin-bottom:10px}
+
+@media(max-width:1280px){.sa{grid-template-columns:repeat(2,1fr)}}
+/* Compact header ≤1500px (Agent 5 screenshot fix): keeps the top row on a
+   single 58 px line at 1366 px instead of wrapping to two. */
+@media(max-width:1500px){
+  .hrow{gap:6px 8px}
+  .clk b{font-size:13.5px}
+  .mark span{display:none}
+  .ibtn{padding:4px 7px;font-size:11.5px}
+  .abtn{padding:4px 9px;font-size:12px}
+  .pos-wrap{padding:2px 7px}
+}
+</style>
+</head>
+<body>
+<a class="ds-skip" href="#main">Skip to main content</a>
+
+<header id="top-bar">
+  <div class="hrow">
+    <div class="mark"><div class="g">EO1</div><div><b>EOSAT-1</b><span>MCS · MODERN</span></div></div>
+    <div class="clk"><label>UTC</label><b id="utc-clock" class="num">—</b></div>
+    <div class="clk"><label>MET</label><b id="met-clock" class="num">—</b></div>
+    <div class="clk"><label>SC time</label><b id="sc-time-clock" class="num">—</b></div>
+    <span id="training-chip" class="ds-training hide" title="Ground clock is simulator time (training). Absent on a real mission.">TRAINING</span>
+    <div class="grow"></div>
+    <div class="pos-wrap" id="pos-bar"><label for="pos-select">POSITION</label>
+      <select id="pos-select" aria-label="Console position"></select></div>
+    <button class="abtn" id="alarms-btn" aria-haspopup="dialog">
+      <span class="n" id="alarm-unack-n">0</span> ALARMS</button>
+    <a class="ibtn" href="/dumps" target="_blank" rel="noopener">DELAYED&nbsp;TM</a>
+    <a class="ibtn" href="/reports" target="_blank" rel="noopener">REPORTS</a>
+    <button class="ibtn" id="grey-btn" aria-pressed="false"
+      title="Greyscale check: the console must stay operable without colour (P6)">GREY</button>
+    <button class="ibtn" id="theme-btn" aria-pressed="false" title="Light/dark theme">THEME</button>
+    <button class="ibtn" id="help-btn" title="Keyboard shortcuts and design notes">?</button>
+    <span id="ws-dot" role="img" aria-label="server link"></span>
+  </div>
+  <div id="contingency-banner" class="ds-banner alarm hide" role="alert"></div>
+  <div class="sa" id="sa-strip">
+    <div class="sacard" id="sa-see"><div class="q">Can I see it?</div><span class="sadot" id="sa-see-dot"></span>
+      <div class="a"><b id="sa-see-v">—</b><span id="sa-see-s">no telemetry yet</span></div></div>
+    <div class="sacard" id="sa-talk"><div class="q">Can I talk?</div><span class="sadot" id="sa-talk-dot"></span>
+      <div class="a"><b id="sa-talk-v">—</b><span id="sa-talk-s">no link data</span></div></div>
+    <div class="sacard" id="sa-well"><div class="q">Is it well?</div><span class="sadot" id="sa-well-dot"></span>
+      <div class="a"><b id="sa-well-v">—</b><span id="sa-well-s">no alarm data</span></div></div>
+    <div class="sacard" id="sa-next"><div class="q">What's next?</div><span class="sadot" id="sa-next-dot"></span>
+      <div class="a"><b id="sa-next-v">—</b><span id="sa-next-s">no schedule</span></div></div>
+  </div>
+</header>
+
+<div class="shell">
+  <nav class="rail" id="nav-rail" aria-label="Pages"></nav>
+  <main class="work" id="main" tabindex="-1">
+    <!-- Page sections are generated by mcs.js into #pages -->
+    <div id="pages"></div>
+  </main>
+</div>
+
+<!-- collapsible bottom drawer: EVENTS / TM PACKETS / CMD HISTORY / HANDOVER / GO-NOGO -->
+<div id="bottom-drawer" role="region" aria-label="Console log drawer">
+  <div class="bd-tabs" role="tablist" id="bd-tabs">
+    <button role="tab" data-bd="events" aria-selected="true">EVENTS</button>
+    <button role="tab" data-bd="tm" aria-selected="false">TM PACKETS</button>
+    <button role="tab" data-bd="cmdhist" aria-selected="false">CMD HISTORY</button>
+    <button role="tab" data-bd="conlog" aria-selected="false">LOG</button>
+    <button role="tab" data-bd="handover" aria-selected="false">HANDOVER</button>
+    <button role="tab" data-bd="gonogo" aria-selected="false" id="bd-tab-gonogo">GO/NO-GO</button>
+    <span class="grow" style="flex:1"></span>
+    <select id="evt-sev-filter" class="in" style="padding:0 4px;font-size:12px" aria-label="Event severity filter">
+      <option value="all">All</option><option value="info">Info</option><option value="nom">Nominal</option>
+      <option value="warn">Warning</option><option value="alarm">High/Alarm</option><option value="warnplus">Warning+</option>
+    </select>
+    <button id="bd-toggle" aria-expanded="false" title="Expand/collapse log drawer">▤</button>
+  </div>
+  <div class="bd-body">
+    <div class="bd-pane" id="bdp-events" role="tabpanel"></div>
+    <div class="bd-pane hide" id="bdp-tm" role="tabpanel"></div>
+    <div class="bd-pane hide" id="bdp-cmdhist" role="tabpanel">
+    </div>
+    <!-- G8: console/mission log — the merged decision record (server
+         auto-entries + operator notes/marks), filterable by kind -->
+    <div class="bd-pane hide" id="bdp-conlog" role="tabpanel">
+      <div class="row" style="margin:4px 0">
+        <select id="conlog-kind" class="in" aria-label="Console log kind filter" style="font-size:12px">
+          <option value="all">All kinds</option><option value="tc">TC</option>
+          <option value="ack">Alarm ack</option><option value="shelve">Shelve</option>
+          <option value="procedure">Procedure</option><option value="gonogo">GO/NO-GO</option>
+          <option value="mark">Mark</option><option value="note">Note</option>
+        </select>
+        <input id="conlog-input" class="in" style="flex:1"
+          placeholder="Console note… (Enter logs it as your position)">
+        <button class="ds-btn" data-conlog="note">NOTE</button>
+        <button class="ds-btn" data-conlog="mark" title="timestamped MARK in the mission log (book §7)">MARK</button>
+      </div>
+      <div id="conlog-list"></div>
+    </div>
+    <div class="bd-pane hide" id="bdp-handover" role="tabpanel">
+      <div class="row" style="margin:4px 0">
+        <input id="handover-input" class="in" style="flex:1" placeholder="Handover note… (Enter to add)">
+        <button class="ds-btn" id="handover-add">ADD</button>
+      </div>
+      <div id="handover-list"></div>
+    </div>
+    <div class="bd-pane hide" id="bdp-gonogo" role="tabpanel">
+      <div class="row" style="margin:4px 0">
+        <input id="gonogo-label" class="in" placeholder="Poll label (e.g. BURN GO/NO-GO)">
+        <button class="ds-btn" id="gonogo-start">START POLL</button>
+        <span class="grow" style="flex:1"></span>
+        <button class="ds-btn" data-gonogo="GO">GO</button>
+        <button class="ds-btn" data-gonogo="NOGO">NO-GO</button>
+        <button class="ds-btn" data-gonogo="STANDBY">STANDBY</button>
+      </div>
+      <div id="gonogo-status"></div>
+    </div>
+  </div>
+</div>
+
+<!-- docked non-modal alarm drawer -->
+<aside id="alarm-drawer" role="region" aria-label="Alarm journal">
+  <div class="hd">
+    <h2>Alarms</h2>
+    <span class="ds-badge alarm" id="alarm-drawer-unack">0 UNACK</span>
+    <select id="alarm-f-sub" class="in" aria-label="Filter subsystem">
+      <option value="">All subsystems</option>
+      <option value="eps">EPS</option><option value="tcs">TCS</option><option value="aocs">AOCS</option>
+      <option value="ttc">TTC</option><option value="payload">PAYLOAD</option>
+      <option value="prop">PROP</option><option value="obdh">OBDH</option>
+    </select>
+    <select id="alarm-f-sev" class="in" aria-label="Filter severity">
+      <option value="0">All severities</option><option value="2">Medium+</option><option value="3">High only</option>
+    </select>
+    <button class="ds-btn" id="alarm-ack-all">ACK ALL</button>
+    <a class="ibtn" href="/dumps" target="_blank" rel="noopener">ARCHIVE</a>
+    <button class="ds-btn" id="alarm-close" aria-label="Close alarm drawer">✕</button>
+  </div>
+  <div id="alarm-list" role="table" aria-label="Alarm rows"></div>
+  <div class="ft">Blink is reserved for unacknowledged P1 and stops on acknowledgement.
+    <kbd class="ds-kbd">a</kbd> open · <kbd class="ds-kbd">k</kbd> ack first · click ⛓ for the causal chain.</div>
+</aside>
+
+<!-- causal chain screen (Mockup C spine) -->
+<div class="overlay" id="chain-overlay">
+  <div class="dlg" role="dialog" aria-modal="true" aria-label="Causal chain">
+    <h2>Causal chain <button class="ds-btn" id="chain-close" style="float:right">✕</button></h2>
+    <div id="chain-body"></div>
+  </div>
+</div>
+
+<!-- keyboard help -->
+<div class="overlay" id="help-overlay">
+  <div class="dlg" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+    <h2>Keyboard &amp; design <button class="ds-btn" id="help-close" style="float:right">✕</button></h2>
+    <div id="help-body">
+      <table class="plain">
+        <tr><td><kbd class="ds-kbd">F6</kbd></td><td>cycle regions (header → rail → main → drawer)</td></tr>
+        <tr><td><kbd class="ds-kbd">←</kbd> <kbd class="ds-kbd">→</kbd></td><td>previous / next page on the nav rail</td></tr>
+        <tr><td><kbd class="ds-kbd">Esc</kbd></td><td>close dialog / drawer, else back to Overview</td></tr>
+        <tr><td><kbd class="ds-kbd">Enter</kbd></td><td>send (command data field) · add (handover note)</td></tr>
+        <tr><td><kbd class="ds-kbd">a</kbd></td><td>open the alarm drawer</td></tr>
+        <tr><td><kbd class="ds-kbd">k</kbd></td><td>acknowledge the first unacknowledged alarm</td></tr>
+        <tr><td><kbd class="ds-kbd">?</kbd></td><td>this dialog</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div id="alert-live" role="alert" aria-live="assertive" class="ds-skip"></div>
+
+<script type="module" src="/static/modern/mcs.js?v=1"></script>
+</body>
+</html>

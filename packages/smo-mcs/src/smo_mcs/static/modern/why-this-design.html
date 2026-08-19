@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Why this design — SMO MCS modern console</title>
+<link rel="stylesheet" href="/static/shared/design-system.css">
+<style>
+body{background:var(--bg);color:var(--tx);font-family:var(--sans);max-width:860px;
+  margin:0 auto;padding:40px 24px;line-height:1.6;font-size:15px}
+h1{font-size:24px;margin-bottom:4px}
+h2{font-size:16px;letter-spacing:1px;text-transform:uppercase;color:var(--tx2);
+  margin:28px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}
+p.lead{color:var(--tx2);font-size:16px}
+code{font-family:var(--mono);background:var(--s2);padding:1px 5px;border-radius:4px;font-size:13px}
+.q{border-left:3px solid var(--info);padding:6px 12px;background:var(--info-wash);
+  border-radius:0 6px 6px 0;margin:10px 0;font-size:14px}
+table{border-collapse:collapse;width:100%;font-size:14px}
+td,th{border-bottom:1px solid var(--line);padding:6px 10px;text-align:left}
+a{color:var(--info)}
+</style>
+</head>
+<body>
+<h1>Why this console looks the way it does</h1>
+<p class="lead">EOSAT-1's console is a teaching artefact. A student who spends forty
+hours in it will absorb its habits — so every choice here models the practice of
+real mission control rooms, and this page says why. The full rationale lives in
+<code>docs/design_2026-08/PRINCIPLES.md</code>.</p>
+
+<h2>Grey is the resting state</h2>
+<p>A fully nominal spacecraft produces a screen with essentially no colour on it.
+This is the ISA-101 / high-performance-HMI rule: colour is the strongest
+pre-attentive signal we have, so it is spent only on deviation — amber for a
+yellow-limit violation, red-orange for a red one, hatched grey for stale data,
+blue only for interaction and the <em>commanded</em> state. Industrial studies
+report roughly a 48&nbsp;% improvement in detecting abnormal situations before
+alarms occur on greyscale-baseline displays. If this page looks subdued,
+that is the point: the day it lights up, something is wrong.</p>
+<div class="q">Try the GREY toggle in the header. The console must stay fully
+operable in greyscale — every status carries a glyph, a border or a text label
+alongside its colour, because ~8&nbsp;% of male students cannot reliably
+separate red from green.</div>
+
+<h2>The four-question header</h2>
+<p>The situational-awareness header answers, permanently and in order, the four
+questions a spacecraft operator must never have to hunt for:</p>
+<table>
+<tr><th>SEE</th><td>Can I see it? — telemetry link freshness, active vs commanded
+TM tier (a demoted link says so), on-board store fill.</td></tr>
+<tr><th>TALK</th><td>Can I talk to it? — the carrier→bit→frame lock chain, the
+last telecommand verdict, which ground station we are in contact with.</td></tr>
+<tr><th>WELL</th><td>Is it well? — spacecraft mode <em>as telemetered</em> (the
+sub-label tells you the source), alarm counts, load-shed level.</td></tr>
+<tr><th>NEXT</th><td>What's next? — AOS/LOS countdown, next eclipse, next
+scheduled activity. Real flight controllers are graded on anticipation.</td></tr>
+</table>
+
+<h2>The schematic is the navigation</h2>
+<p>You reach the EPS page by clicking the battery on the overview schematic, not
+by decoding a tab acronym. This is the ISA-101 display hierarchy: L1 overview
+(one screen, whole spacecraft), L2 subsystem (the controller's home), L3
+equipment, L4 diagnostics (the raw PUS service panels). The rail on the left is
+an accelerator for people who already know where they are going.</p>
+
+<h2>A number without its limits is not information</h2>
+<p>Every limit-checked parameter renders as a triad — numeral, unit, deviation
+bar with the yellow and red boundaries drawn as ticks. Ground limit checking is
+<em>the</em> core MCS concept this simulator teaches; on the old console the
+limits were invisible, so a student saw a number turn yellow and could not learn
+what yellow meant. Parameters without limits say <em>no limit defined</em>
+out loud rather than looking identical.</p>
+
+<h2>Stale must never look like steady</h2>
+<p>After loss of signal, charts stop appending and values become a hatched
+em-dash. A flat line of repeated last-values is a lie the display tells
+confidently — distinguishing "the spacecraft is fine" from "I cannot see the
+spacecraft" is a core LEOP lesson, so a post-LOS screen is <em>supposed</em>
+to look loudly empty.</p>
+
+<h2>Alarms are a managed system, not a log</h2>
+<p>The alarm drawer follows ISA-18.2: four priorities assigned by consequence
+and required response time (not raw event severity), per-alarm rationalisation
+(cause · consequence · response) where the config provides it, one single alarm
+authority that every other indicator merely counts, a one-click link from any
+alarm to its procedure, and blink reserved exclusively for unacknowledged P1.
+The ⛓ button on every row opens the <b>causal chain</b>: command → acceptance →
+execution → parameter moves → limit crossed → alarm → procedure, assembled on
+one screen — because that chain <em>is</em> the mental model this simulator
+exists to install.</p>
+
+<h2>What is honestly simulation</h2>
+<p>This is a training system, and it says so rather than pretending. The
+<code>TRAINING</code> chip appears only when the ground clock is simulator time;
+the FDIR page's autonomy panel is titled <em>SIMULATED ON-BOARD AUTONOMY
+(instructor truth — not downlinked)</em> and vanishes in real-mission mode,
+because no real spacecraft downlinks its own fault-cascade queue. Spacecraft
+mode is read from telemetry parameter <code>0x0700</code> and every rendering
+carries a provenance sub-label. When a value only exists inside the simulator,
+the console either labels it as such or refuses to show it.</p>
+
+<h2>GUIDED mode</h2>
+<p>The GUIDED toggle overlays numbered teaching annotations (from
+<code>configs/eosat1/mcs/annotations.yaml</code>) and expands every deviation
+bar's tick labels. It is off by default: the annotations are scaffolding, and
+scaffolding comes down.</p>
+
+<p style="margin-top:32px;color:var(--tx3);font-size:13px">
+SMO — spacecraft mission operations trainer · modern console 2026-08 ·
+<a href="/classic">classic console</a> remains available for comparison.</p>
+</body>
+</html>

@@ -17,16 +17,34 @@ cd "$SCRIPT_DIR"
 RF_MODE=""
 PUBLIC=""
 REAL=""
+UI_ARG=""
 for arg in "$@"; do
     case "$arg" in
         --rf)       RF_MODE="RF" ;;
         --rf=*)     RF_MODE="${arg#--rf=}" ;;
         --public)   PUBLIC=1 ;;
         --real)     REAL=1 ;;
+        --classic)  UI_ARG="classic" ;;
+        --modern)   UI_ARG="modern" ;;
         --host=*)   SMO_BIND="${arg#--host=}" ;;
-        *)          echo "Unknown option: $arg"; echo "Usage: $0 [--rf | --rf=FRAME | --rf=RF] [--public] [--real] [--host=ADDR]"; exit 1 ;;
+        *)          echo "Unknown option: $arg"; echo "Usage: $0 [--rf | --rf=FRAME | --rf=RF] [--public] [--real] [--classic | --modern] [--host=ADDR]"; exit 1 ;;
     esac
 done
+
+# ── UI generation (design_2026-08 plan §1.2) ──
+# Which console every server's "/" serves. Precedence in each service:
+# --ui CLI (passed below) > SMO_UI env > mission-config `ui:` > default.
+# Per-request ?ui= and the /classic and /modern routes always work for
+# live comparison, whatever is selected here.
+#
+# FINAL FLIP (2026-08-18): the Agent-5 verification gate passed — modern is
+# the shipped default. Escape hatches: ./start.sh --classic, SMO_UI=classic,
+# per-request ?ui=classic, and GET /classic on every server.
+SMO_UI="${SMO_UI:-modern}"
+if [ -n "$UI_ARG" ]; then
+    SMO_UI="$UI_ARG"
+fi
+export SMO_UI
 
 # ── Time source (ground UTC / Planner "now") ──
 # "sim"  → MCS & Planner closed-loop follow the simulator's sim_time/speed.
@@ -209,7 +227,7 @@ export SMO_SIM_STATE_URL="${SMO_SIM_STATE_URL:-http://$PROBE_HOST:$SMO_SIM_HTTP_
 
 # Start Simulator (TC:8001, TM:8002, HTTP/WS:$SMO_SIM_HTTP_PORT)
 echo "==> Starting Simulator on $SMO_BIND:$SMO_SIM_HTTP_PORT..."
-smo-simulator --config configs/eosat1/ --host "$SMO_BIND" --port "$SMO_SIM_HTTP_PORT" &
+smo-simulator --config configs/eosat1/ --host "$SMO_BIND" --port "$SMO_SIM_HTTP_PORT" --ui "$SMO_UI" &
 SIM_PID=$!
 # The simulator is the root dependency: MCS and Planner showing an empty but
 # plausible console because it died on a bad config is the exact failure mode
@@ -267,10 +285,10 @@ fi
 # Start MCS — in RF mode, connect through the bridge; otherwise direct to sim
 if [ -n "$RF_MODE" ]; then
     echo "==> Starting MCS on $SMO_BIND:9090 (via RF bridge: TM:8012, TC:8011)..."
-    smo-mcs --config configs/eosat1/ --port 9090 --host "$SMO_BIND" --connect "$PROBE_HOST:8012" --tc-port 8011 --time-source "$SMO_TIME_SOURCE" &
+    smo-mcs --config configs/eosat1/ --port 9090 --host "$SMO_BIND" --connect "$PROBE_HOST:8012" --tc-port 8011 --time-source "$SMO_TIME_SOURCE" --ui "$SMO_UI" &
 else
     echo "==> Starting MCS on $SMO_BIND:9090 (direct: TM:8002, TC:8001)..."
-    smo-mcs --config configs/eosat1/ --port 9090 --host "$SMO_BIND" --connect "$PROBE_HOST:8002" --time-source "$SMO_TIME_SOURCE" &
+    smo-mcs --config configs/eosat1/ --port 9090 --host "$SMO_BIND" --connect "$PROBE_HOST:8002" --time-source "$SMO_TIME_SOURCE" --ui "$SMO_UI" &
 fi
 MCS_PID=$!
 wait_for_http "MCS" "http://$PROBE_HOST:9090/api/state" "$MCS_PID" 40 \
@@ -278,7 +296,7 @@ wait_for_http "MCS" "http://$PROBE_HOST:9090/api/state" "$MCS_PID" 40 \
 
 # Start Planner (HTTP:9091)
 echo "==> Starting Planner on $SMO_BIND:9091..."
-smo-planner --config configs/eosat1/ --port 9091 --host "$SMO_BIND" --connect-host "$PROBE_HOST" --time-source "$SMO_TIME_SOURCE" &
+smo-planner --config configs/eosat1/ --port 9091 --host "$SMO_BIND" --connect-host "$PROBE_HOST" --time-source "$SMO_TIME_SOURCE" --ui "$SMO_UI" &
 PLANNER_PID=$!
 wait_for_http "Planner" "http://$PROBE_HOST:9091/api/schedule" "$PLANNER_PID" 40 \
     || die "the planner never became ready"
@@ -348,14 +366,15 @@ echo ""
 echo "========================================="
 echo "  SMO Suite Running"
 echo "========================================="
-echo "  Simulator:        http://$ACCESS_HOST:$SMO_SIM_HTTP_PORT"
+echo "  Simulator:        http://$ACCESS_HOST:$SMO_SIM_HTTP_PORT   (classic: /classic  modern: /modern)"
 echo "  Config editor:    http://$ACCESS_HOST:$SMO_SIM_HTTP_PORT/config    (instructor, read-write)"
 echo "  Report generator: http://$ACCESS_HOST:$SMO_SIM_HTTP_PORT/reports"
 echo "  MCS:              http://$ACCESS_HOST:9090"
+echo "    UI generation:  $SMO_UI   (classic: http://$ACCESS_HOST:9090/classic  modern: http://$ACCESS_HOST:9090/modern)"
 echo "  MCS reports:      http://$ACCESS_HOST:9090/reports"
 echo "  MCS config view:  http://$ACCESS_HOST:9090/config    (read-only)"
 echo "  Delayed TM:       http://$ACCESS_HOST:9090/dumps    <- students use this"
-echo "  Planner:          http://$ACCESS_HOST:9091"
+echo "  Planner:          http://$ACCESS_HOST:9091   (classic: /classic  modern: /modern)"
 echo "  Planner (wide):   http://$ACCESS_HOST:9091/wide"
 echo "  Delayed TM view:  http://$ACCESS_HOST:8092          (rich decode/plots)"
 if [ -n "${ORB_PID:-}" ]; then
@@ -368,6 +387,7 @@ echo "  Scenario Gen:     http://$ACCESS_HOST:8096"
 echo "  ADCS Failure Sim: http://$ACCESS_HOST:8097"
 echo "  Dump store:       $DUMP_DIR"
 echo "  Time source:      $SMO_TIME_SOURCE  (sim_state_url=$SMO_SIM_STATE_URL)"
+echo "  UI generation:    $SMO_UI  (--classic/--modern or SMO_UI to change; ?ui= per tab)"
 if [ -n "$RFSIM_MSG" ]; then
     echo "$RFSIM_MSG"
     echo "$RADIO_MSG"

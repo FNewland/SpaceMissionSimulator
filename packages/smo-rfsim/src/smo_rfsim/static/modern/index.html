@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SMO Radio — Ground Station Receiver</title>
+<!--
+  SMO RADIO — MODERN OPERATOR CONSOLE (design_2026-08)
+
+  Standing rule: ground tools are spacecraft-agnostic. This page shows ONLY
+  what real ground-station receive equipment shows — lock states, measured
+  signal levels, spectrum, constellation, eye diagram, Doppler as MEASURED,
+  frame/CLTU counters. Simulation truth (injected link degradations and
+  their settings) is NOT displayed and NOT linked from here; its effects
+  appear only as what the receiver genuinely sees.
+-->
+<link rel="stylesheet" href="/static/shared/design-system.css">
+<style>
+  /* Page-local layout only; all tokens/components from the design system. */
+  header{ display:flex; align-items:center; gap:14px; padding:10px 18px;
+    border-bottom:1px solid var(--line); background:var(--s1); }
+  header .mark b{ font-size:14px; letter-spacing:1.5px; }
+  header .mark span{ display:block; font-size:12px; color:var(--tx3);
+    letter-spacing:.5px; }
+  header .grow{ flex:1; }
+  .grid{ display:grid; grid-template-columns:repeat(3, minmax(0,1fr));
+    gap:12px; padding:14px 18px; max-width:1400px; margin:0 auto; }
+  .two-col{ grid-column:span 2; }
+  @media (max-width:1000px){ .grid{ grid-template-columns:1fr; }
+    .two-col{ grid-column:auto; } }
+  .rows .row{ display:flex; justify-content:space-between; gap:12px;
+    padding:5px 0; border-bottom:1px solid var(--line); }
+  .rows .row:last-child{ border-bottom:none; }
+  .rows .k{ color:var(--tx3); font-size:13px; }
+  .rows .v{ font-family:var(--mono); font-size:14px; font-weight:600;
+    font-variant-numeric:tabular-nums; }
+  .chart-container{ position:relative; height:150px; }
+  canvas{ width:100%; height:100%; display:block; }
+  canvas.fixed{ height:auto; }
+  .meter{ height:8px; background:var(--s3); border-radius:4px;
+    overflow:hidden; margin-top:4px; }
+  .meter .fill{ height:100%; border-radius:4px; transition:width .3s;
+    background:var(--tx3); }
+  .meter .fill.w{ background:var(--warn); }
+  .meter .fill.a{ background:var(--alarm); }
+  .stat-row{ display:flex; gap:10px; flex-wrap:wrap; }
+  .stat-box{ flex:1; min-width:90px; text-align:center; padding:8px 4px;
+    background:var(--s2); border:1px solid var(--line); border-radius:var(--r); }
+  .stat-box .big{ font-family:var(--mono); font-size:20px; font-weight:600; }
+  .stat-box .big.a{ color:var(--alarm); }
+  .stat-box .lbl{ font-size:12px; color:var(--tx3); margin-top:2px; }
+  .locks{ display:flex; flex-direction:column; gap:8px; }
+  .locks .lk{ display:flex; align-items:center; justify-content:space-between; }
+  .vc-list{ display:flex; gap:10px; flex-wrap:wrap; }
+  #footer{ text-align:center; color:var(--tx3); font-size:12px;
+    padding:10px 0 16px; }
+  .diag-grid{ display:grid; grid-template-columns:1fr auto; gap:2px 10px;
+    font-size:12.5px; }
+  .diag-grid .k{ color:var(--tx3); }
+  .diag-grid .v{ font-family:var(--mono); }
+  body.stale-feed .v, body.stale-feed .stat-box .big{ color:var(--tx2); }
+</style>
+</head>
+<body>
+<a class="ds-skip" href="#main-grid">Skip to receiver status</a>
+
+<header>
+  <div class="mark"><b>SMO RADIO</b><span>Ground station receiver</span></div>
+  <span class="ds-badge" id="mode-badge" title="Bridge operating mode">MODE —</span>
+  <span class="ds-badge" id="mod-badge" title="Detected downlink scheme">—</span>
+  <div class="grow"></div>
+  <span id="feed-chip"><span class="ds-chip"><span>FEED —</span></span></span>
+  <span class="num" id="last-update" style="font-size:12px;color:var(--tx3)">—</span>
+</header>
+
+<div class="ds-banner stale" id="stale-banner" hidden>
+  RECEIVER FEED STALE — displayed values are the last received; charts have
+  stopped appending.
+</div>
+
+<div class="grid" id="main-grid">
+
+  <div class="ds-card">
+    <h2>Lock status</h2>
+    <div class="bd locks">
+      <div class="lk"><span class="rows k">SC transmitter</span><span id="sctx-chip"></span></div>
+      <div class="lk"><span class="rows k">Carrier</span><span id="carrier-chip"></span></div>
+      <div class="lk"><span class="rows k">Bit sync</span><span id="bitsync-chip"></span></div>
+      <div class="lk"><span class="rows k">Frame sync</span><span id="framesync-chip"></span></div>
+      <div>
+        <div class="rows k">Signal quality (Eb/N0 vs 15 dB ref)</div>
+        <div class="meter"><div id="signal-bar" class="fill" style="width:0%"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="ds-card">
+    <h2>RF measurements <span class="r" title="As measured at the receiver">measured</span></h2>
+    <div class="bd rows">
+      <div class="row"><span class="k">RSSI</span><span class="v" id="rssi">—</span></div>
+      <div class="row"><span class="k">Eb/N0</span><span class="v" id="ebn0">—</span></div>
+      <div class="row"><span class="k">BER</span><span class="v" id="ber">—</span></div>
+      <div class="row"><span class="k">Link margin</span><span class="v" id="margin">—</span></div>
+      <div class="row"><span class="k">RX SNR (EVM)</span><span class="v" id="pl-evm">—</span></div>
+      <div>
+        <div class="k">Link margin</div>
+        <div class="meter"><div id="margin-bar" class="fill" style="width:0%"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="ds-card">
+    <h2>Dynamics <span class="r">tracking</span></h2>
+    <div class="bd rows">
+      <div class="row"><span class="k">Doppler (measured)</span><span class="v" id="doppler">—</span></div>
+      <div class="row"><span class="k">Range</span><span class="v" id="range">—</span></div>
+      <div class="row"><span class="k">Data rate</span><span class="v" id="datarate">—</span></div>
+      <div class="row"><span class="k">Prop delay</span><span class="v" id="delay">—</span></div>
+      <div class="row"><span class="k">Symbol rate</span><span class="v" id="pl-symrate">—</span></div>
+      <div class="row"><span class="k">Achieved TM</span><span class="v" id="pl-thr">—</span></div>
+    </div>
+  </div>
+
+  <div class="ds-card two-col">
+    <h2>Eb/N0 &amp; BER history</h2>
+    <div class="bd"><div class="chart-container"><canvas id="ebn0-chart"></canvas></div></div>
+  </div>
+
+  <div class="ds-card">
+    <h2>Frame counters</h2>
+    <div class="bd">
+      <div class="stat-row">
+        <div class="stat-box"><div id="good-frames" class="big">0</div><div class="lbl">Good frames</div></div>
+        <div class="stat-box"><div id="bad-frames" class="big a">0</div><div class="lbl">Bad frames</div></div>
+      </div>
+      <div class="stat-row" style="margin-top:8px;">
+        <div class="stat-box"><div id="cltu-sent" class="big">0</div><div class="lbl">CLTU sent</div></div>
+        <div class="stat-box"><div id="cltu-ack" class="big">0</div><div class="lbl">CLTU ack</div></div>
+      </div>
+      <div style="margin-top:8px;">
+        <div class="rows k">Frame error rate</div>
+        <div class="meter"><div id="fer-bar" class="fill" style="width:0%"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="ds-card two-col">
+    <h2>Frame rate <span class="r">frames/sec</span></h2>
+    <div class="bd"><div class="chart-container"><canvas id="frame-chart"></canvas></div></div>
+  </div>
+
+  <div class="ds-card">
+    <h2>Virtual channels</h2>
+    <div class="bd">
+      <div class="vc-list">
+        <span id="vc0-chip"></span>
+        <span id="vc1-chip"></span>
+        <span id="vc7-chip"></span>
+      </div>
+      <div class="rows" style="margin-top:10px;">
+        <div class="row"><span class="k">Uplink CLTU rate</span><span class="v" id="cltu-rate">—</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="ds-card">
+    <h2>Baseband constellation <span class="r">I/Q</span></h2>
+    <div class="bd">
+      <canvas id="constellation" class="fixed" width="500" height="360"
+              style="height:190px;background:var(--bg);border-radius:var(--r);"></canvas>
+    </div>
+  </div>
+
+  <div class="ds-card two-col">
+    <h2>Spectrum analyzer <span class="r">baseband</span></h2>
+    <div class="bd"><div class="chart-container"><canvas id="spectrum-chart"></canvas></div></div>
+  </div>
+
+  <div class="ds-card">
+    <h2>Eye diagram</h2>
+    <div class="bd">
+      <canvas id="eye-diagram" class="fixed" width="400" height="300"
+              style="height:160px;background:var(--bg);border-radius:var(--r);"></canvas>
+    </div>
+  </div>
+
+  <div class="ds-card">
+    <h2>Link budget <span class="r" title="Predicted from the configured link geometry">predicted</span></h2>
+    <div class="bd rows">
+      <div class="row"><span class="k">EIRP</span><span class="v" id="lb-eirp">—</span></div>
+      <div class="row"><span class="k">FSPL</span><span class="v" id="lb-fspl">—</span></div>
+      <div class="row"><span class="k">C/N0</span><span class="v" id="lb-cn0">—</span></div>
+      <div class="row"><span class="k">Coding gain</span><span class="v" id="lb-coding">—</span></div>
+      <div class="row"><span class="k">Frequency</span><span class="v" id="lb-freq">—</span></div>
+      <div class="row"><span class="k">Bandwidth</span><span class="v" id="lb-bw">—</span></div>
+    </div>
+  </div>
+
+  <div class="ds-card">
+    <h2>Receiver diagnostics</h2>
+    <div class="bd"><div id="diag-body" class="rows k">no data</div></div>
+  </div>
+
+</div>
+
+<div id="footer">SMO Ground Segment — radio receiver console ·
+  <a href="/classic">classic page</a></div>
+
+<script type="module">
+import { renderChip, freshness } from "/static/shared/components.js";
+import { fmtAge } from "/static/shared/format.js";
+
+/* ── Mini chart (dependency-free canvas line chart, from the classic page,
+      restyled to the design-system palette) ──────────────────────────── */
+const CSS = getComputedStyle(document.documentElement);
+const TOK = (n) => CSS.getPropertyValue(n).trim();
+const C_LINE = TOK("--line") || "#2B313A";
+const C_TX3  = TOK("--tx3")  || "#8A93A0";
+const C_TX2  = TOK("--tx2")  || "#A3ACB9";
+const C_INFO = TOK("--info") || "#5AA9FF";
+const C_WARN = TOK("--warn") || "#E8A317";
+const C_ALRM = TOK("--alarm")|| "#FF5C4D";
+const C_OK   = TOK("--ok")   || "#8A93A0";
+const C_BG   = TOK("--bg")   || "#0E1013";
+
+class MiniChart {
+  constructor(canvasId, opts) {
+    this.canvas = document.getElementById(canvasId);
+    this.ctx = this.canvas.getContext("2d");
+    this.maxPoints = opts.maxPoints || 120;
+    this.series = {};
+    this.colors = opts.colors || {};
+    this.yMin = opts.yMin ?? null;
+    this.yMax = opts.yMax ?? null;
+    this.labels = opts.labels || {};
+    for (const key of (opts.keys || [])) this.series[key] = [];
+  }
+  push(values) {
+    for (const [key, val] of Object.entries(values)) {
+      if (!this.series[key]) this.series[key] = [];
+      this.series[key].push(val);
+      if (this.series[key].length > this.maxPoints) this.series[key].shift();
+    }
+    this.draw();
+  }
+  draw() {
+    const c = this.canvas, ctx = this.ctx;
+    const dpr = window.devicePixelRatio || 1;
+    const w = c.clientWidth, h = c.clientHeight;
+    c.width = w * dpr; c.height = h * dpr;
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, w, h);
+    let allVals = [];
+    for (const arr of Object.values(this.series)) allVals.push(...arr);
+    if (allVals.length === 0) return;
+    let yMin = this.yMin ?? Math.min(...allVals);
+    let yMax = this.yMax ?? Math.max(...allVals);
+    if (yMax === yMin) { yMax += 1; yMin -= 1; }
+    const pad = (yMax - yMin) * 0.1;
+    if (this.yMin === null) yMin -= pad;
+    if (this.yMax === null) yMax += pad;
+    ctx.strokeStyle = C_LINE; ctx.lineWidth = 0.5;
+    for (let i = 0; i <= 4; i++) {
+      const y = h - (i / 4) * h;
+      ctx.beginPath(); ctx.moveTo(30, y); ctx.lineTo(w, y); ctx.stroke();
+      ctx.fillStyle = C_TX3; ctx.font = "10px monospace";
+      ctx.fillText((yMin + (i / 4) * (yMax - yMin)).toFixed(1), 0, y + 3);
+    }
+    for (const [key, arr] of Object.entries(this.series)) {
+      if (arr.length < 2) continue;
+      ctx.strokeStyle = this.colors[key] || C_INFO;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      for (let i = 0; i < arr.length; i++) {
+        const x = 30 + (i / (this.maxPoints - 1)) * (w - 35);
+        const y = h - ((arr[i] - yMin) / (yMax - yMin)) * h;
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+    let lx = 35;
+    ctx.font = "10px monospace";
+    for (const [key, color] of Object.entries(this.colors)) {
+      ctx.fillStyle = color;
+      ctx.fillRect(lx, 4, 12, 3);
+      ctx.fillStyle = C_TX2;
+      ctx.fillText(this.labels[key] || key, lx + 15, 9);
+      lx += 80;
+    }
+  }
+}
+
+const ebn0Chart = new MiniChart("ebn0-chart", {
+  keys: ["ebn0", "ber"], maxPoints: 120,
+  colors: { ebn0: C_TX2, ber: C_ALRM },
+  labels: { ebn0: "Eb/N0 dB", ber: "BER log10" },
+  yMin: -12, yMax: 20
+});
+const frameChart = new MiniChart("frame-chart", {
+  keys: ["good", "bad"], maxPoints: 120,
+  colors: { good: C_TX2, bad: C_ALRM },
+  labels: { good: "Good/s", bad: "Bad/s" },
+  yMin: 0
+});
+
+/* ── Chips ─────────────────────────────────────────────────────────────── */
+const $ = (id) => document.getElementById(id);
+function lockChip(el, state) {
+  const kind = state === "LOCKED" ? "ok"
+             : state === "ACQUIRING" ? "warn" : "alarm";
+  el.innerHTML = renderChip({ kind, label: state || "—",
+    dir: "down", title: "Receiver lock state" });
+}
+function vcChip(el, label, vcActive, vcid, ts) {
+  const age = ts - (vcActive[vcid] || 0);
+  const f = freshness(age);
+  const kind = f === "fresh" ? "ok" : f === "degraded" ? "warn" : "stale";
+  el.innerHTML = renderChip({ kind, label,
+    title: "Last frame " + fmtAge(Math.min(age, 9e5)) });
+}
+
+/* ── WS feed with display-wide freshness (P4) ──────────────────────────── */
+let lastGood = 0, lastBad = 0, lastCltu = 0, lastTs = 0;
+let lastMsgWall = 0;
+
+setInterval(() => {
+  const age = lastMsgWall ? (Date.now() - lastMsgWall) / 1000 : null;
+  const f = freshness(age);
+  const kind = f === "fresh" ? "ok" : f === "degraded" ? "warn" : "stale";
+  $("feed-chip").innerHTML = renderChip({ kind,
+    label: "FEED " + f.toUpperCase(),
+    title: age === null ? "no data received yet" : "last message " + fmtAge(age) });
+  $("stale-banner").hidden = f !== "stale";
+  document.body.classList.toggle("stale-feed", f === "stale");
+}, 1000);
+
+let ws;
+function connect() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  ws = new WebSocket(proto + "//" + location.host + "/ws");
+  ws.onmessage = (e) => { lastMsgWall = Date.now(); render(JSON.parse(e.data)); };
+  ws.onclose = () => setTimeout(connect, 2000);
+  ws.onerror = () => ws.close();
+}
+connect();
+
+function meter(el, pct, cls) {
+  el.style.width = Math.max(0, Math.min(100, pct)) + "%";
+  el.className = "fill" + (cls ? " " + cls : "");
+}
+
+function render(d) {
+  $("mode-badge").textContent = "MODE " + (d.mode || "—");
+  $("mod-badge").textContent = d.modulation_name || "—";
+  // Spacecraft transmitter state (2026-08c item 6): the sim's tx_active
+  // gate. PA off ⇒ no downlink carrier whatever the pass geometry — and the
+  // instructor pass override forces GEOMETRIC visibility only; it cannot
+  // resurrect a transmitter that is off.
+  const sctx = $("sctx-chip");
+  if (sctx) {
+    const on = d.sc_tx_on;
+    const ovrTitle = d.pass_override
+      ? "Instructor pass override ON — geometric visibility forced; TX state is still the spacecraft's own"
+      : "Spacecraft transmitter (tx_active from the sim)";
+    if (on === true) {
+      sctx.innerHTML = renderChip({ kind: "ok",
+        label: d.pass_override ? "RADIATING · OVR" : "RADIATING", title: ovrTitle });
+    } else if (on === false) {
+      const why = d.sc_pa_on === false ? "TX OFF · PA OFF" : "TX OFF";
+      sctx.innerHTML = renderChip({ kind: "alarm",
+        label: d.pass_override ? why + " · OVR" : why, title: ovrTitle });
+    } else {
+      sctx.innerHTML = renderChip({ kind: "stale", label: "—",
+        title: "no sim feedback yet" });
+    }
+  }
+  lockChip($("carrier-chip"), d.carrier_lock);
+  lockChip($("bitsync-chip"), d.bit_sync);
+  lockChip($("framesync-chip"), d.frame_sync);
+
+  const sigPct = (d.eb_n0_db / 15) * 100;
+  meter($("signal-bar"), sigPct, sigPct > 60 ? "" : sigPct > 30 ? "w" : "a");
+
+  $("rssi").textContent = d.rssi_dbm.toFixed(1) + " dBm";
+  $("ebn0").textContent = d.eb_n0_db.toFixed(1) + " dB";
+  $("ber").textContent = "10^" + d.ber_log10.toFixed(1);
+  $("margin").textContent = d.link_margin_db.toFixed(1) + " dB";
+  $("pl-evm").textContent = (d.evm_snr_db || 0).toFixed(1) + " dB";
+  const mPct = ((d.link_margin_db + 5) / 20) * 100;
+  meter($("margin-bar"), mPct,
+        d.link_margin_db > 3 ? "" : d.link_margin_db > 0 ? "w" : "a");
+
+  $("doppler").textContent = (d.doppler_hz >= 0 ? "+" : "") +
+                             d.doppler_hz.toFixed(1) + " Hz";
+  $("range").textContent = d.range_km.toFixed(1) + " km";
+  $("datarate").textContent = d.data_rate_kbps.toFixed(1) + " kbps";
+  $("delay").textContent = (d.range_km / 299.792).toFixed(2) + " ms";
+  $("pl-symrate").textContent = ((d.symbol_rate_bd || 0) / 1000).toFixed(2) + " kBd";
+  $("pl-thr").textContent = ((d.throughput_bps || 0) / 1000).toFixed(2) + " kbps";
+
+  $("good-frames").textContent = d.good_frames;
+  $("bad-frames").textContent = d.bad_frames;
+  $("cltu-sent").textContent = d.cltu_sent;
+  $("cltu-ack").textContent = d.cltu_acked;
+  const total = d.good_frames + d.bad_frames;
+  const fer = total > 0 ? (d.bad_frames / total) * 100 : 0;
+  meter($("fer-bar"), fer * 10, fer < 1 ? "" : fer < 5 ? "w" : "a");
+
+  const dt = d.timestamp - lastTs;
+  if (dt > 0 && lastTs > 0) {
+    frameChart.push({ good: (d.good_frames - lastGood) / dt,
+                      bad: (d.bad_frames - lastBad) / dt });
+    $("cltu-rate").textContent = ((d.cltu_sent - lastCltu) / dt).toFixed(1) + "/s";
+  }
+  lastGood = d.good_frames; lastBad = d.bad_frames;
+  lastCltu = d.cltu_sent; lastTs = d.timestamp;
+
+  ebn0Chart.push({ ebn0: d.eb_n0_db, ber: d.ber_log10 });
+
+  vcChip($("vc0-chip"), "VC0 RT HK", d.vc_active || {}, 0, d.timestamp);
+  vcChip($("vc1-chip"), "VC1 Playback", d.vc_active || {}, 1, d.timestamp);
+  vcChip($("vc7-chip"), "VC7 Idle", d.vc_active || {}, 7, d.timestamp);
+
+  if (d.iq_samples && d.iq_samples.length > 0) {
+    drawConstellation(d.iq_samples, d.modulation || 0);
+  } else {
+    canvasNote("constellation", "No I/Q data");
+  }
+
+  const setTxt = (id, v) => { const e = $(id); if (e) e.textContent = v; };
+  setTxt("lb-eirp", (d.eirp_dbw || 0).toFixed(1) + " dBW");
+  setTxt("lb-fspl", (d.fspl_db || 0).toFixed(1) + " dB");
+  setTxt("lb-cn0", (d.cn0_dbhz || 0).toFixed(1) + " dBHz");
+  setTxt("lb-coding", (d.coding_gain_db || 0).toFixed(1) + " dB");
+  setTxt("lb-freq", ((d.frequency_hz || 437e6) / 1e6).toFixed(3) + " MHz");
+  setTxt("lb-bw", ((d.bandwidth_hz || 0) / 1e3).toFixed(1) + " kHz");
+
+  if (d.mode !== "RF") {
+    canvasNote("spectrum-chart", "Spectrum: RF mode only (current mode: " + d.mode + ")");
+    canvasNote("eye-diagram", "Eye diagram: RF mode only");
+  } else {
+    if (d.spectrum_db && d.spectrum_db.length > 4) {
+      drawSpectrum(d.spectrum_db, d.spectrum_freq_range_hz || 256000);
+    } else {
+      canvasNote("spectrum-chart", "No spectrum data");
+    }
+    if (d.eye_i && d.eye_i.length > 4) {
+      drawEyeDiagram(d.eye_i, d.eye_q || [], d.eye_sps || 8);
+    } else {
+      canvasNote("eye-diagram", "No eye data");
+    }
+  }
+
+  renderDiagnostics(d.diagnostics || {});
+  $("last-update").textContent =
+      new Date(d.timestamp * 1000).toLocaleTimeString();
+}
+
+/* ── Canvas renderers (kept from the classic page, palette retokened) ──── */
+const IDEAL_CONSTELLATIONS = {
+  0: [[-1,0],[1,0]],
+  1: [[0.707,0.707],[-0.707,0.707],[-0.707,-0.707],[0.707,-0.707]],
+  2: [[1,0],[0.707,0.707],[0,1],[-0.707,0.707],[-1,0],[-0.707,-0.707],[0,-1],[0.707,-0.707]],
+  3: [[0.707,0.707],[-0.707,0.707],[-0.707,-0.707],[0.707,-0.707]],
+  4: [],
+  5: [[0.707,0.707],[-0.707,0.707],[-0.707,-0.707],[0.707,-0.707]],
+  6: [[-1,0],[1,0]],
+  7: [[-1,0],[1,0]],
+};
+(function () {
+  const r1 = 1, r2 = 2.7, pts = [];
+  for (let k = 0; k < 4; k++)
+    pts.push([r1*Math.cos(Math.PI/4+k*Math.PI/2), r1*Math.sin(Math.PI/4+k*Math.PI/2)]);
+  for (let k = 0; k < 12; k++)
+    pts.push([r2*Math.cos(Math.PI/12+k*Math.PI/6), r2*Math.sin(Math.PI/12+k*Math.PI/6)]);
+  const norm = Math.sqrt((4*r1*r1 + 12*r2*r2) / 16);
+  IDEAL_CONSTELLATIONS[4] = pts.map(p => [p[0]/norm, p[1]/norm]);
+})();
+const MOD_NAMES = {0:"BPSK",1:"QPSK",2:"8PSK",3:"OQPSK",4:"16-APSK",5:"π/4-DQPSK",6:"GMSK",7:"GFSK"};
+
+function canvasNote(id, msg) {
+  const c = $(id);
+  if (!c) return;
+  const ctx = c.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const w = c.clientWidth || c.width, h = c.clientHeight || c.height;
+  if (c.clientWidth && !c.classList.contains("fixed")) {
+    c.width = w * dpr; c.height = h * dpr; ctx.scale(dpr, dpr);
+  }
+  ctx.clearRect(0, 0, c.width, c.height);
+  ctx.fillStyle = C_BG; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.fillStyle = C_TX3; ctx.font = "12px monospace";
+  ctx.fillText(msg, 8, (c.classList.contains("fixed") ? c.height : h) / 2);
+}
+
+function drawSpectrum(specDb, freqRange) {
+  const c = $("spectrum-chart");
+  if (!c) return;
+  const ctx = c.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const w = c.clientWidth, h = c.clientHeight;
+  c.width = w * dpr; c.height = h * dpr;
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, h);
+  const yMin = -40, yMax = 10;
+  ctx.strokeStyle = C_LINE; ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 4; i++) {
+    const y = h - (i / 4) * h;
+    ctx.beginPath(); ctx.moveTo(30, y); ctx.lineTo(w, y); ctx.stroke();
+    ctx.fillStyle = C_TX3; ctx.font = "10px monospace";
+    ctx.fillText((yMin + (i / 4) * (yMax - yMin)).toFixed(0) + " dB", 0, y + 3);
+  }
+  ctx.strokeStyle = C_TX2; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let i = 0; i < specDb.length; i++) {
+    const x = 30 + (i / (specDb.length - 1)) * (w - 35);
+    const y = h - ((specDb[i] - yMin) / (yMax - yMin)) * h;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  ctx.fillStyle = C_TX3; ctx.font = "10px monospace";
+  ctx.fillText("-" + (freqRange / 2e3).toFixed(0) + "kHz", 30, h - 2);
+  ctx.fillText("+" + (freqRange / 2e3).toFixed(0) + "kHz", w - 48, h - 2);
+  ctx.fillText("0", w / 2, h - 2);
+}
+
+function drawEyeDiagram(eyeI, eyeQ, sps) {
+  const c = $("eye-diagram");
+  if (!c) return;
+  const ctx = c.getContext("2d");
+  const w = c.width, h = c.height;
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = C_BG; ctx.fillRect(0, 0, w, h);
+  if (eyeI.length < 4) return;
+  const period = 2 * (sps || 8);
+  const nTraces = Math.min(30, Math.floor(eyeI.length / period));
+  const scale = h / 4;
+  ctx.strokeStyle = C_LINE; ctx.lineWidth = 0.5;
+  ctx.beginPath(); ctx.moveTo(0, h/2); ctx.lineTo(w, h/2); ctx.stroke();
+  ctx.strokeStyle = C_WARN; ctx.setLineDash([3, 3]);
+  ctx.beginPath(); ctx.moveTo(w/2, 0); ctx.lineTo(w/2, h); ctx.stroke();
+  ctx.setLineDash([]);
+  const rails = [
+    { data: eyeI, color: "rgba(90,169,255,0.35)" },
+    { data: eyeQ || [], color: "rgba(163,172,185,0.35)" },
+  ];
+  for (const rail of rails) {
+    if (!rail.data || rail.data.length < period) continue;
+    ctx.strokeStyle = rail.color; ctx.lineWidth = 1;
+    for (let t = 0; t < nTraces; t++) {
+      ctx.beginPath();
+      for (let i = 0; i < period && t*period + i < rail.data.length; i++) {
+        const x = (i / (period - 1)) * w;
+        const y = h/2 - rail.data[t*period + i] * scale;
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+  }
+  ctx.fillStyle = C_INFO; ctx.font = "10px monospace";
+  ctx.fillText("I", 5, 12);
+  ctx.fillStyle = C_TX2;
+  ctx.fillText("Q", 16, 12);
+  ctx.fillStyle = C_WARN;
+  ctx.fillText("decision", w/2 + 4, 12);
+  ctx.fillStyle = C_TX3;
+  ctx.fillText("+1", w - 18, h/2 - scale + 5);
+  ctx.fillText("-1", w - 18, h/2 + scale + 5);
+}
+
+function drawConstellation(samples, modulation) {
+  const c = $("constellation");
+  if (!c) return;
+  const ctx = c.getContext("2d");
+  const w = c.width, h = c.height;
+  ctx.clearRect(0, 0, w, h);
+  const cx = w / 2, cy = h / 2;
+  const scale = Math.min(w, h) / 4.0;
+  ctx.fillStyle = C_BG; ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = C_LINE; ctx.lineWidth = 0.5;
+  ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, h); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, cy); ctx.lineTo(w, cy); ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx, cy, scale, 0, 2 * Math.PI); ctx.stroke();
+  const ideal = IDEAL_CONSTELLATIONS[modulation] || IDEAL_CONSTELLATIONS[0];
+  ctx.fillStyle = "rgba(255,255,255,0.25)";
+  for (const [ri, rq] of ideal) {
+    ctx.beginPath();
+    ctx.arc(cx + ri * scale, cy - rq * scale, 3, 0, 2 * Math.PI);
+    ctx.fill();
+  }
+  ctx.fillStyle = C_INFO;
+  for (const [i, q] of samples) {
+    ctx.fillRect(cx + i * scale - 1, cy - q * scale - 1, 2, 2);
+  }
+  ctx.fillStyle = C_TX3; ctx.font = "10px monospace";
+  ctx.fillText("I", w - 12, cy - 4);
+  ctx.fillText("Q", cx + 4, 10);
+  ctx.fillText("+1", cx + scale - 6, cy + 12);
+  ctx.fillText("-1", cx - scale - 8, cy + 12);
+  ctx.fillStyle = C_TX2; ctx.font = "11px monospace";
+  ctx.fillText(MOD_NAMES[modulation] || "BPSK", w - 60, h - 6);
+}
+
+function renderDiagnostics(diag) {
+  const el = $("diag-body");
+  if (!el) return;
+  const keys = Object.keys(diag);
+  if (keys.length === 0) { el.textContent = "no data"; return; }
+  let html = '<div class="diag-grid">';
+  for (const k of keys) {
+    html += '<span class="k">' + k.replace(/_/g, " ") +
+            '</span><span class="v">' + diag[k] + "</span>";
+  }
+  el.innerHTML = html + "</div>";
+}
+</script>
+</body>
+</html>

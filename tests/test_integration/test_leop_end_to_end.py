@@ -141,7 +141,9 @@ class TestTTCBeaconMode:
         params = {}
         orbit = make_orbit_state()
         ttc.tick(1.0, orbit, params)
-        assert ttc.tier_name(ttc._state.tm_tier) == "BEACON"
+        # Tier renamed BEACON -> SAFE (2026-08-19): "beacon" now always means
+        # the UHF whip; the S-band survival rung is SAFE (1 kbps).
+        assert ttc.tier_name(ttc._state.tm_tier) == "SAFE"
         assert ttc._state.tm_data_rate == 1000
 
     def test_antenna_deployment_increases_rate(self):

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="Payload" Creator="EOSAT-1 SMDL Generator" Version="1.0+2fdbeaed7708">
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="Payload" Creator="EOSAT-1 SMDL Generator" Version="1.0+f46653e0637e">
   <Description>SMP2 model catalogue for Payload subsystem</Description>
   <Type Name="UInt8" Uuid="7981e083-ea41-5360-ad7d-c285223a099c" xsi:type="Integer" Size="1" Signed="false"/>
   <Type Name="UInt16" Uuid="64b04f7d-63c1-5e74-90d1-38d9516374dc" xsi:type="Integer" Size="2" Signed="false"/>

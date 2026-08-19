@@ -86,7 +86,11 @@ def test_sim_mode_contacts_compute_from_sim_time():
 
 
 def test_sim_mode_falls_back_to_wall_clock_when_unreachable():
-    server = _make_planner(time_source="sim")
+    # Unreachable by construction: the first anchor is taken in __init__, so
+    # the default localhost:8080 would make this test pass or fail depending on
+    # whether a simulator happens to be running locally.
+    server = _make_planner(time_source="sim",
+                           sim_state_url="http://127.0.0.1:59999/api/state")
     server._fetch_sim_state = lambda: None  # sim never reachable
     now = server._get_now()
     assert abs((now - datetime.now(timezone.utc)).total_seconds()) < 2.0

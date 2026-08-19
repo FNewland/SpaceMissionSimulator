@@ -158,6 +158,23 @@ sensors:
     # covariance grows honestly instead of claiming arcsecond knowledge from a
     # dead channel.
     dead_axis_arw_dps_rtsec: 0.1
+    # ── On-board gyro bias calibration (S8.1 func 13) ──
+    # A real bias calibration averages the observed bias over a quiet arc
+    # against a stable attitude reference; it does not complete instantly.
+    # These are the preconditions and the arc length COM-003 flies.
+    calibration:
+      # Default averaging arc. AOCS_GYRO_CALIBRATION may override per command
+      # (duration_s field, 0 = use this default); clamped to [min, max].
+      duration_s: 300.0
+      min_duration_s: 30.0
+      max_duration_s: 1800.0
+      # Refuse (0x0A04) above this body rate: the bias is only separable from
+      # the true rate when the vehicle is quiescent. COM-003 flies a
+      # sun-pointing hold, which sits an order of magnitude below this.
+      max_rate_dps: 0.10
+      # Samples are only accumulated once the filter's bias state has had time
+      # to respond; the first `settle_s` of the arc are discarded.
+      settle_s: 30.0
 
 num_wheels: 4
 attitude_error_deadband_deg: 0.005   # FINE control deadband (real, WP-6)
@@ -193,9 +210,16 @@ param_ids:
   gps_lat: 0x0210
   gps_lon: 0x0211
   gps_alt: 0x0212
-  gps_vx: 0x0213
-  gps_vy: 0x0214
-  gps_vz: 0x0215
+  # GPS ECEF PVT block (2026-08c item 2). The old gps_vx/vy/vz mapping to
+  # 0x0213-0x0215 collided with aocs.css_sun_confidence (0x0215) and wrote
+  # TRUTH velocity to undeclared ids; the measured ECEF solution now lives
+  # in the catalogue block 0x0231-0x0236 (HK SID 12).
+  gps_ecef_x: 0x0231
+  gps_ecef_y: 0x0232
+  gps_ecef_z: 0x0233
+  gps_vel_x: 0x0234
+  gps_vel_y: 0x0235
+  gps_vel_z: 0x0236
   solar_beta: 0x0216
   att_error: 0x0217
   rw1_temp: 0x0218

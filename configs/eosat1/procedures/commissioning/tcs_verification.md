@@ -1,8 +1,20 @@
 # COM-002: TCS Verification
 **Subsystem:** TCS
 **Phase:** COMMISSIONING
-**Revision:** 1.0
+**Revision:** 2.0 --- 2026-08c item on the heater flow: the old card
+power-cycled heaters whose EPS LINES had never been turned on (the heater
+switch obeyed, nothing warmed, and the "verify heating" steps read ambient
+drift). Each heater test now ESTABLISHES ITS STATE FIRST --- power the line,
+then cycle the heater, then restore the line to its entry state. The old
+Steps 4/5 also commanded the WRONG functions (func 41 HEATER_OBC labelled
+"battery", func 42 HEATER_THRUSTER labelled "OBC"); the funcs now match the
+circuits: 40 = battery, 41 = OBC.
 **Approved:** Flight Operations Director
+
+**Entry state:** COM-001 exit state --- COARSE_SUN hold, phase 5. Heater lines
+`htr_bat` (5) / `htr_obc` (6) are OFF unless LEOP-007 Step 2 energised one for
+cause; read the LEOP log and `eps.pl_htr_bat` (0x0115) / `eps.pl_htr_obc`
+(0x0116) before starting, and record both as the entry state to restore.
 
 ## Purpose
 Verify the Thermal Control System by checking all monitored thermal zones against
@@ -41,22 +53,34 @@ propulsion (if applicable). Establish baseline thermal profiles over a full orbi
 **Action:** Record temperature drop rates. OBC expected to cool ~0.5C/min; battery should be thermally buffered.
 **GO/NO-GO:** All zones above minimum operational limits during eclipse
 
-### Step 4 — Test Battery Heater Circuit
-**TC:** `HEATER_OBC(on=1)` (Service 8, Subtype 1, func_id 41)
+### Step 4 — Test Battery Heater Circuit (establish state FIRST)
+**Action:** Record the entry state of `eps.pl_htr_bat` (0x0115). A heater
+whose LINE is dark obeys the switch command and heats nothing — the exact
+trap the old card fell into.
+**TC:** `EPS_POWER_ON(line_index=5)` (Service 8, Subtype 1, func_id 19) — energise the htr_bat line
+**Verify:** `eps.pl_htr_bat` (0x0115) = 1 within 5s
+**TC:** `HEATER_BATTERY(on=1)` (Service 8, Subtype 1, func_id 40) — the battery circuit (func 40, not 41)
 **Verify:** Battery heater ON acknowledged within 5s
 **Action:** Monitor `tcs.temp_battery` (0x0407) for 3 minutes to confirm heating effect.
 **Verify:** `tcs.temp_battery` (0x0407) rising or stable (heater counteracting cooling) within 180s
-**TC:** `HEATER_OBC(on=0)` (Service 8, Subtype 1, func_id 41)
+**TC:** `HEATER_BATTERY(on=0)` (Service 8, Subtype 1, func_id 40)
 **Verify:** Battery heater OFF acknowledged within 5s
-**GO/NO-GO:** Battery heater circuit operational
+**TC:** `EPS_POWER_OFF(line_index=5)` (Service 8, Subtype 1, func_id 20) — restore, ONLY if the line was OFF at entry
+**Verify:** `eps.pl_htr_bat` (0x0115) back to its recorded entry value within 5s
+**GO/NO-GO:** Battery heater circuit operational, line state restored
 
-### Step 5 — Test OBC Heater Circuit
-**TC:** `HEATER_THRUSTER(on=1)` (Service 8, Subtype 1, func_id 42)
+### Step 5 — Test OBC Heater Circuit (establish state FIRST)
+**Action:** Record the entry state of `eps.pl_htr_obc` (0x0116).
+**TC:** `EPS_POWER_ON(line_index=6)` (Service 8, Subtype 1, func_id 19) — energise the htr_obc line
+**Verify:** `eps.pl_htr_obc` (0x0116) = 1 within 5s
+**TC:** `HEATER_OBC(on=1)` (Service 8, Subtype 1, func_id 41) — the OBC circuit (func 41, not 42 — 42 is the THRUSTER catbed heater and stays untouched outside manoeuvre prep)
 **Verify:** OBC heater ON acknowledged within 5s
 **Verify:** `tcs.temp_obc` (0x0406) stable or increasing within 120s
-**TC:** `HEATER_THRUSTER(on=0)` (Service 8, Subtype 1, func_id 42)
+**TC:** `HEATER_OBC(on=0)` (Service 8, Subtype 1, func_id 41)
 **Verify:** OBC heater OFF acknowledged within 5s
-**GO/NO-GO:** OBC heater circuit operational
+**TC:** `EPS_POWER_OFF(line_index=6)` (Service 8, Subtype 1, func_id 20) — restore, ONLY if the line was OFF at entry
+**Verify:** `eps.pl_htr_obc` (0x0116) back to its recorded entry value within 5s
+**GO/NO-GO:** OBC heater circuit operational, line state restored
 
 ### Step 6 — Verify Autonomous Heater Thermostat Settings
 **TC:** `GET_PARAM(param_id=0x0410)` (Service 20, Subtype 3) — battery heater ON threshold
@@ -97,4 +121,10 @@ propulsion (if applicable). Establish baseline thermal profiles over a full orbi
 - [ ] Autonomous heater thresholds confirmed correct
 - [ ] FPA cooler interface checked, baseline temperature recorded
 - [ ] Thermal Baseline Report generated
-- [ ] GO decision for COM-003 (OBDH Checkout)
+
+## Exit state
+- Heater lines restored to their recorded entry state (LEOP-007's
+  as-needed configuration); heater switches OFF
+- No mode, tier or latch changed by this card
+
+**NEXT:** COM-003 (AOCS Sensor Calibration)

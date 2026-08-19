@@ -374,3 +374,61 @@ class TestWebRoutes:
             assert r.status == 400
         finally:
             await client.close()
+
+
+class TestSpacecraftTxGating:
+    """2026-08c item 6: PA-off must drop the carrier; pass-override must not
+    resurrect a transmitter that is off."""
+
+    def _feedback(self, bridge, *, tx_active, in_contact=True,
+                  override=False, pa_on=None):
+        bridge._apply_sim_feedback({"state": {
+            "ttc": {"tx_active": tx_active,
+                    **({"pa_on": pa_on} if pa_on is not None else {})},
+            "in_contact": in_contact,
+            "override_passes": override,
+        }})
+
+    def test_pa_off_drops_the_carrier_even_in_view(self):
+        from smo_rfsim.bridge import RFSimBridge
+        bridge = RFSimBridge(_rf_config())
+        try:
+            self._feedback(bridge, tx_active=True, in_contact=True)
+            assert bridge._pipeline._tx._transmitting is True
+            # PA goes off mid-pass: the sim reports tx_active False.
+            self._feedback(bridge, tx_active=False, in_contact=True,
+                           pa_on=False)
+            assert bridge._pipeline._tx._transmitting is False
+            assert bridge.radio.status.sc_tx_on is False
+            assert bridge.radio.status.sc_pa_on is False
+        finally:
+            bridge._pipeline.stop()
+
+    def test_pass_override_cannot_resurrect_a_dead_tx(self):
+        from smo_rfsim.bridge import RFSimBridge
+        bridge = RFSimBridge(_rf_config())
+        try:
+            # Out of geometric contact, override ON, but the PA is OFF:
+            # the override forces VISIBILITY only — no carrier.
+            self._feedback(bridge, tx_active=False, in_contact=False,
+                           override=True)
+            assert bridge._pipeline._link_in_view is True
+            assert bridge._pipeline._tx._transmitting is False
+            assert bridge.radio.status.pass_override is True
+            # PA back on with the override still up: carrier returns.
+            self._feedback(bridge, tx_active=True, in_contact=False,
+                           override=True)
+            assert bridge._pipeline._tx._transmitting is True
+        finally:
+            bridge._pipeline.stop()
+
+    def test_manual_transmit_override_wins(self):
+        from smo_rfsim.bridge import RFSimBridge
+        bridge = RFSimBridge(_rf_config())
+        try:
+            bridge.apply_link({"transmitting": True})
+            self._feedback(bridge, tx_active=False, in_contact=True)
+            # The /api/link manual override outranks the sim feedback.
+            assert bridge._pipeline._tx._transmitting is True
+        finally:
+            bridge._pipeline.stop()

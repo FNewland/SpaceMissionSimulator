@@ -291,6 +291,40 @@ class TableSection(_Strict):
     columns: list[str] = Field(default_factory=list)
 
 
+class ConsoleLogSection(_Strict):
+    """Console/mission log section (POSITION_NEEDS G8).
+
+    Fed from the MCS console-log store (``GET /api/console-log``) — the
+    decision record (TC sends + S1 verdicts, alarm acks, GO/NO-GO polls,
+    marks, notes) the telemetry-only report was missing. When the store is
+    unreachable the section renders an explicit notice, never invented
+    entries. ``source_url`` defaults to ``$SMO_MCS_URL`` (or
+    ``http://localhost:9090``) + ``/api/console-log``.
+    """
+    type: Literal["console_log"]
+    id: str
+    title: str = "Console log"
+    source_url: str = ""
+    kinds: list[str] = Field(default_factory=list)  # empty = all kinds
+    limit: int = 500
+
+
+class PassRollupSection(_Strict):
+    """Plan-vs-achieved pass line items (POSITION_NEEDS G14).
+
+    Consumes the rfsim end-of-pass rollup store
+    (``GET /api/pass-rollups``: predicted AOS vs achieved lock, mean
+    Eb/N0, FER, data volume) when reachable; renders an explicit notice
+    otherwise. ``source_url`` defaults to ``$SMO_RFSIM_URL`` (or
+    ``http://localhost:8094``) + ``/api/pass-rollups``.
+    """
+    type: Literal["pass_rollup"]
+    id: str
+    title: str = "Pass rollups — plan vs achieved"
+    source_url: str = ""
+    limit: int = 50
+
+
 class AppendixSection(_Strict):
     type: Literal["appendix"]
     id: str
@@ -303,7 +337,8 @@ class AppendixSection(_Strict):
 Section = Union[
     HeaderSection, NarrativeSection, CompletenessSection, PlotSection,
     StatsSection, EventsSection, AlarmsSection, CommandsSection,
-    BreakdownSection, TableSection, AppendixSection,
+    BreakdownSection, TableSection, ConsoleLogSection, PassRollupSection,
+    AppendixSection,
 ]
 
 

@@ -324,8 +324,14 @@ class TestShippedNominalOpsDay:
         assert budget["overflow_mb"] == 0.0
         assert budget["backlog_growth_mb"] <= 0.001
         assert budget["onboard_data_mb"] == pytest.approx(0.0, abs=0.05)
+        # Both figures are reported rounded to 0.1 MB, so comparing them can
+        # only ever be good to one quantum each; 0.05 was tighter than the
+        # numbers can express and tripped as soon as the dump cadence changed
+        # by a few minutes. What matters is that essentially everything the
+        # plan generates also goes down, which the overflow / backlog / final
+        # onboard assertions above already pin.
         assert budget["planned_downlink_mb"] == pytest.approx(
-            budget["planned_generation_mb"], abs=0.05)
+            budget["planned_generation_mb"], abs=0.15)
 
         # Real margin, not a knife edge: the passes the plan actually dumps on
         # carry at least twice the data the plan generates.

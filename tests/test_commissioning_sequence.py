@@ -520,18 +520,38 @@ class TestPhase7:
         assert eng.params.get(0x0117, 0) == 1, "aocs_wheels power line should be ON"
 
     def test_aocs_set_mode_detumble(self):
-        """Phase 7.4: AOCS_SET_MODE(2) should transition to DETUMBLE."""
+        """Phase 7.4: AOCS_SET_MODE(2) transitions to DETUMBLE — after the
+        B-dot legs are enabled. 2026-08c: DETUMBLE refuses honestly when the
+        magnetometer or the magnetorquers are missing (0x0A20/0x0A21), so the
+        sequence, like LEOP-007, enables MAG + MTQ FIRST."""
         eng = self._make_booted_engine()
-        # First power on AOCS wheels
+        # First power on the AOCS suite line
         _send_tc(eng, 8, 1, bytes([19, 7]))
         _run_ticks(eng, 3)
+        # Enable the B-dot legs: magnetometer device + magnetorquers
+        _send_tc(eng, 2, 1, struct.pack(">HB", 0x0209, 1))
+        _send_tc(eng, 8, 1, bytes([9, 1]))   # MTQ_ENABLE
+        _run_ticks(eng, 2)
         # Set mode to DETUMBLE (mode=2)
         pkts = _send_tc(eng, 8, 1, bytes([0, 2]))  # func_id 0, data=2
         svcs = _svc_subtypes(pkts)
         assert (1, 1) in svcs, f"AOCS_SET_MODE(2) should be accepted, got {svcs}"
+        assert (1, 8) not in svcs, f"AOCS_SET_MODE(2) refused: {svcs}"
         _run_ticks(eng, 5)
         aocs_mode = eng.params.get(0x020F, -1)
         assert aocs_mode == 2, f"AOCS mode should be 2 (DETUMBLE), got {aocs_mode}"
+
+    def test_aocs_detumble_refused_without_mtq(self):
+        """2026-08c: without MTQ_ENABLE, DETUMBLE is refused with 0x0A21
+        (an honest refusal, not an accepted-but-inert mode)."""
+        eng = self._make_booted_engine()
+        _send_tc(eng, 8, 1, bytes([19, 7]))
+        _run_ticks(eng, 3)
+        pkts = _send_tc(eng, 8, 1, bytes([0, 2]))
+        svcs = _svc_subtypes(pkts)
+        assert (1, 8) in svcs, f"expected S1.8 refusal, got {svcs}"
+        _run_ticks(eng, 2)
+        assert eng.params.get(0x020F, -1) == 0
 
     def test_aocs_rates_visible_after_detumble(self):
         """Phase 7.4: Body rates should be non-zero in DETUMBLE mode."""
@@ -582,20 +602,18 @@ class TestPhase8:
         _run_ticks(eng, 12)
         return eng
 
-    def test_set_param_orbit_epoch(self):
-        """Phase 8.1: SET_PARAM for orbit epoch should work.
-        Note: Phase 8 follows Phase 7 which powers on AOCS wheels + DETUMBLE.
-        """
+    def test_set_param_on_telemetry_channel_is_refused(self):
+        """Phase 8.1 (2026-08c): the "orbit epoch upload" at 0x0240 was a
+        fiction — 0x0240 is `aocs.st1_status`, read-only telemetry, and the
+        redesigned LEOP-003 determines the orbit from the SID-12 GPS PVT
+        instead of uploading state to a propagator. A ground write to a
+        telemetry channel must be REFUSED, not silently absorbed."""
         eng = self._make_booted_engine()
-        # Power on AOCS (Phase 7 prerequisite)
-        _send_tc(eng, 8, 1, bytes([19, 7]))  # AOCS wheels ON
+        _send_tc(eng, 8, 1, bytes([19, 7]))
         _run_ticks(eng, 3)
-        _send_tc(eng, 8, 1, bytes([0, 2]))  # DETUMBLE mode
-        _run_ticks(eng, 3)
-        # Now SET_PARAM for orbit epoch (0x0240 in AOCS range)
         pkts = _send_tc(eng, 20, 1, struct.pack(">Hf", 0x0240, 1712700000.0))
         svcs = _svc_subtypes(pkts)
-        assert (1, 1) in svcs, f"S20.1 should be accepted, got {svcs}"
+        assert (1, 2) in svcs, f"S20.1 on read-only TM should be refused, got {svcs}"
 
 
 # ===================================================================
@@ -612,6 +630,9 @@ class TestPhase9:
         _send_tc(eng, 8, 1, bytes([19, 6]))
         _send_tc(eng, 8, 1, bytes([19, 7]))  # aocs wheels
         _run_ticks(eng, 3)
+        _send_tc(eng, 2, 1, struct.pack(">HB", 0x0209, 1))  # magnetometer ON
+        _send_tc(eng, 8, 1, bytes([9, 1]))  # MTQ_ENABLE (DETUMBLE gate, 2026-08c)
+        _run_ticks(eng, 2)
         _send_tc(eng, 8, 1, bytes([0, 2]))  # DETUMBLE
         _run_ticks(eng, 30)  # Let rates damp
         return eng

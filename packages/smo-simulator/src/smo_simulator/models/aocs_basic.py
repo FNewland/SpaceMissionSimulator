@@ -9,7 +9,7 @@ gravity-gradient + aero + SRP + residual-dipole disturbance torques, and a
 declared SECULAR fast-forward mode above 60x time acceleration.
 
 Retains the original 9-mode state machine + guards, dual star-tracker /
-CSS / magnetometer health & redundancy FSMs, GPS TTFF model, S2 device
+CSS health FSM, the single magnetometer, GPS TTFF model, S2 device
 gates, failure injection and the 0x0217 ``att_error`` semantics (total
 attitude pointing error, degrees — see brief 02 §Risks).
 """
@@ -23,6 +23,10 @@ import numpy as np
 
 from smo_common.models.subsystem import SubsystemModel
 from smo_common import attitude as att
+from smo_common.protocol.pus_services import failure_code_text
+from smo_simulator.failure_spec import (
+    FailureSpec, ParamSpec, T_FLOAT, T_BOOL, enum, number,
+)
 from smo_simulator.models.aocs_estimator import MEKF6
 
 logger = logging.getLogger(__name__)
@@ -55,26 +59,16 @@ class AOCSState:
     rw_current: list[float] = field(default_factory=lambda: [0.1] * 4)
     active_wheels: list[bool] = field(default_factory=lambda: [True] * 4)
 
-    # Magnetometer (composite — fed by active mag source)
+    # Magnetometer — ONE 3-axis unit (owner ruling 2026-08c: no redundancy,
+    # like the gyros — no spare, failure teaching via injection only).
+    # mag_x/y/z are the MEASURED body-frame field (IGRF truth rotated into
+    # the body frame + bias + noise), zeroed when unpowered/failed.
     mag_x: float = 25000.0
     mag_y: float = 10000.0
     mag_z: float = -40000.0
     mag_valid: bool = True
-
-    # Dual magnetometer
-    mag_a_x: float = 0.0
-    mag_a_y: float = 0.0
-    mag_a_z: float = 0.0
-    mag_b_x: float = 0.0
-    mag_b_y: float = 0.0
-    mag_b_z: float = 0.0
-    mag_select: str = 'A'  # Which mag is active source: 'A' or 'B'
-    mag_a_bias: tuple = (0.0, 0.0, 0.0)
-    mag_b_bias: tuple = (0.0, 0.0, 0.0)
-    mag_a_noise: float = 50.0   # σ in nT (primary)
-    mag_b_noise: float = 75.0   # σ in nT (backup, slightly noisier)
-    mag_a_failed: bool = False
-    mag_b_failed: bool = False
+    mag_bias: tuple = (0.0, 0.0, 0.0)
+    mag_noise: float = 50.0   # σ in nT
 
     # Star trackers (2 units, cold redundant)
     # Star trackers start OFF at power-up. They're powered on by the
@@ -129,6 +123,34 @@ class AOCSState:
     gyro_bias_y: float = 0.0
     gyro_bias_z: float = 0.0
     gyro_temp: float = 22.0
+
+    # ── Gyro bias calibration (S8.1 func 13 AOCS_GYRO_CALIBRATION) ──
+    # Every field here lives in the dataclass on purpose: an in-flight
+    # calibration, its accumulator AND the compensation it produced all have to
+    # survive a breakpoint save/load. A compensation that vanished on restore
+    # would silently un-calibrate the gyros, and an accumulator that vanished
+    # would make a restored mid-run calibration finish on a partial average —
+    # the "persistent state that heals on restore" bug this codebase keeps
+    # re-growing.
+    # 0=IDLE, 1=RUNNING, 2=COMPLETE, 3=ABORTED
+    gyro_cal_state: int = 0
+    gyro_cal_elapsed: float = 0.0        # s into the current arc
+    gyro_cal_duration_s: float = 300.0   # commanded arc length
+    gyro_cal_settle_s: float = 30.0      # discard the first N s of the arc
+    gyro_cal_progress: float = 0.0       # %
+    # Running sum / count of the observed bias [deg/s] over the averaging arc.
+    gyro_cal_acc: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    gyro_cal_n: int = 0
+    # Result of the LAST completed calibration [deg/s per body axis].
+    gyro_cal_bias: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    # Compensation currently applied on the measurement path [deg/s]. This is
+    # the calibration's only lasting effect: it cancels the hardware bias at
+    # the gyro output. It does NOT touch `_gyro_bias_inject` — an injected
+    # gyro_bias fault is a HARDWARE defect and stays exactly where the
+    # instructor put it (visible in 0x0296), which is the teaching point.
+    gyro_cal_comp: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    gyro_cal_result: int = 0             # 0=never run, 1=SUCCESS, 2=FAILED
+    gyro_cal_reject: int = 0             # last refusal/abort failure code
 
     # GPS receiver model
     gps_fix: int = 3       # 0=no fix, 1=2D, 2=3D, 3=3D+velocity
@@ -285,8 +307,8 @@ class AOCSState:
         0x0206: True,   # Gyroscope 0
         0x0207: True,   # Gyroscope 1
         0x0208: True,   # Gyroscope 2
-        0x0209: True,   # Magnetometer A
-        0x020A: True,   # Magnetometer B
+        0x0209: True,   # Magnetometer (the ONE unit — no redundant B unit;
+                        # 0x020A retired with the fabricated Magnetometer B)
         0x020B: True,   # Magnetorquer X
         0x020C: True,   # Magnetorquer Y
         0x020D: True,   # Magnetorquer Z
@@ -426,11 +448,21 @@ class AOCSBasicModel(SubsystemModel):
         # Density used for an axis with NO rate measurement (unit off /
         # saturated): the attitude error there grows at the unknown body rate.
         self._gyro_dead_arw_dps_rts = 0.1
+        # Gyro bias calibration spec (aocs.yaml sensors.gyro.calibration)
+        self._gyro_cal_duration_s = 300.0
+        self._gyro_cal_min_duration_s = 30.0
+        self._gyro_cal_max_duration_s = 1800.0
+        self._gyro_cal_max_rate_dps = 0.10
+        self._gyro_cal_settle_s = 30.0
         # Injected constant bias per axis [deg/s] — the failure surface the
         # instructor book advertises as "IMU drifts" (scenario `gyro_bias`).
         self._gyro_bias_inject = [0.0, 0.0, 0.0]
         self._gyro_temp_bias = 0.0
         self._gyro_saturated = False
+        # Star trackers deliberately blinded by an injection (see the
+        # `st_blind` failure). Persistent failure state — carried through
+        # breakpoint save/load in `_EXTRA_STATE_KEYS`.
+        self._st_blind_units: set[int] = set()
         self._st_nea_cross_arcsec = 6.0
         self._st_nea_roll_arcsec = 40.0
         self._st_lf_bias_arcsec = 3.0       # 1σ, per axis, 1/e ≈ 1 orbit
@@ -627,6 +659,16 @@ class AOCSBasicModel(SubsystemModel):
             gy.get("tempco_dps_per_k", 2.0e-6))
         self._gyro_dead_arw_dps_rts = float(
             gy.get("dead_axis_arw_dps_rtsec", 0.1))
+        gcal = gy.get("calibration", {}) or {}
+        self._gyro_cal_duration_s = float(gcal.get("duration_s", 300.0))
+        self._gyro_cal_min_duration_s = float(
+            gcal.get("min_duration_s", 30.0))
+        self._gyro_cal_max_duration_s = float(
+            gcal.get("max_duration_s", 1800.0))
+        self._gyro_cal_max_rate_dps = float(gcal.get("max_rate_dps", 0.10))
+        self._gyro_cal_settle_s = float(gcal.get("settle_s", 30.0))
+        self._state.gyro_cal_duration_s = self._gyro_cal_duration_s
+        self._state.gyro_cal_settle_s = self._gyro_cal_settle_s
         st = sens.get("star_tracker", {})
         self._st_nea_cross_arcsec = float(st.get("nea_cross_arcsec", 6.0))
         self._st_nea_roll_arcsec = float(st.get("nea_roll_arcsec", 40.0))
@@ -1004,8 +1046,14 @@ class AOCSBasicModel(SubsystemModel):
             # FOV geometry (Phase C, consistent with the LVLH airframe where
             # +Z is the nadir payload boresight — manual §2.1.3): ST1 zenith
             # on -Z, ST2 nadir on +Z. The old assignment was inverted.
-            blinded = False
-            if not orbit_state.in_eclipse:
+            # An INJECTED blinding is sticky: `_tick_star_trackers` recomputes
+            # blinding from sun geometry every tick, so the injection's
+            # `st{n}_status = 3` used to be overwritten on the very next tick
+            # and st_blind had no observable effect at all (it "healed" itself
+            # instantly). The injected set is honoured here and cleared only by
+            # clear_failure.
+            blinded = unit in self._st_blind_units
+            if not blinded and not orbit_state.in_eclipse:
                 sun_body = self._get_sun_body_vector(orbit_state)
                 if unit == 1:
                     # ST1 zenith (-Z boresight)
@@ -1167,6 +1215,12 @@ class AOCSBasicModel(SubsystemModel):
 
         # Normalise
         mag = math.sqrt(s.css_sun_x ** 2 + s.css_sun_y ** 2 + s.css_sun_z ** 2)
+        # Sun-pointing confidence (0x0215, on-demand): the pre-normalisation
+        # composite magnitude, clamped to 0..1 — near 1 with one face square
+        # to the sun, degrading toward 0 in eclipse, at grazing geometry or
+        # with failed heads. Declared in the catalogue but never written
+        # before (S20.3 returned a plausible 0.0).
+        self._css_sun_confidence = max(0.0, min(1.0, mag))
         if mag > 0.01:
             s.css_sun_x /= mag
             s.css_sun_y /= mag
@@ -1182,71 +1236,38 @@ class AOCSBasicModel(SubsystemModel):
         return (C @ env['B_eci']) * 1e9
 
     def _tick_magnetometer(self, s: AOCSState, orbit_state: Any = None) -> None:
-        """Dual magnetometer readings: B_body = C(q_true)·B_IGRF + bias + noise.
+        """The ONE magnetometer: B_body = C(q_true)·B_IGRF + bias + noise.
 
         WP-3: the field is the tilted-dipole IGRF evaluated at the true ECI
         position and rotated through the TRUE attitude — rotating the
         spacecraft now rotates the measured field.
+
+        2026-08c (owner ruling, item 8): EO-Sat-1 flies a SINGLE 3-axis
+        magnetometer — no redundant B unit, no prime/backup switch, exactly
+        like the gyro fit. The old dual-mag A/B model (cross-strap, mag_select,
+        S2 device 0x020A) fabricated a spare that does not exist; magnetometer
+        failure teaching is by instructor injection (`mag_failure`) only.
+        mag_x/y/z are the MEASURED values (noisy, failure-affected) and are
+        zeroed — never frozen — when the unit is failed, unpowered (S2 device
+        0x0209 off) or the AOCS suite is dark.
         """
-        if s.mag_failed:
-            s.mag_valid = False
-            return
-        # Power gate: magnetometers are part of the AOCS sensor suite, only
-        # energised when AOCS is on. While OFF/SAFE_BOOT, they produce no data.
-        if s.mode == MODE_OFF or s.mode == MODE_SAFE_BOOT:
+        # Power/failure gate applied HERE rather than only in the post-tick
+        # `_apply_device_power_gates` sweep: the sweep runs AFTER the mode
+        # tick, so a powered-off magnetometer would still feed the control law
+        # with a fresh reading for the whole tick. B-dot is a magnetometer-only
+        # law, so this is the sensor whose loss it has to show.
+        unit_on = s.device_states.get(0x0209, True)
+        if (s.mag_failed or not unit_on
+                or s.mode == MODE_OFF or s.mode == MODE_SAFE_BOOT):
             s.mag_valid = False
             s.mag_x = s.mag_y = s.mag_z = 0.0
-            s.mag_a_x = s.mag_a_y = s.mag_a_z = 0.0
-            s.mag_b_x = s.mag_b_y = s.mag_b_z = 0.0
             return
 
         true_x, true_y, true_z = (float(x) for x in self._true_B_body_nT())
-
-        # Mag A reading
-        if not s.mag_a_failed:
-            s.mag_a_x = true_x + s.mag_a_bias[0] + self.rng.gauss(0, s.mag_a_noise)
-            s.mag_a_y = true_y + s.mag_a_bias[1] + self.rng.gauss(0, s.mag_a_noise)
-            s.mag_a_z = true_z + s.mag_a_bias[2] + self.rng.gauss(0, s.mag_a_noise)
-
-        # Mag B reading
-        if not s.mag_b_failed:
-            s.mag_b_x = true_x + s.mag_b_bias[0] + self.rng.gauss(0, s.mag_b_noise)
-            s.mag_b_y = true_y + s.mag_b_bias[1] + self.rng.gauss(0, s.mag_b_noise)
-            s.mag_b_z = true_z + s.mag_b_bias[2] + self.rng.gauss(0, s.mag_b_noise)
-
-        # S2 device gate, applied HERE rather than only in the post-tick
-        # `_apply_device_power_gates` sweep. The sweep runs AFTER the mode tick,
-        # so a powered-off magnetometer still fed the control law with a fresh
-        # reading for the whole tick — switching both units off made no
-        # difference to DETUMBLE at all (measured: identical convergence with
-        # and without the magnetometers). B-dot is a magnetometer-only law, so
-        # this is the sensor whose loss it has to show.
-        ds = s.device_states
-        if not ds.get(0x0209, True):
-            s.mag_a_x = s.mag_a_y = s.mag_a_z = 0.0
-        if not ds.get(0x020A, True):
-            s.mag_b_x = s.mag_b_y = s.mag_b_z = 0.0
-        a_ok = (not s.mag_a_failed) and ds.get(0x0209, True)
-        b_ok = (not s.mag_b_failed) and ds.get(0x020A, True)
-
-        # Active mag feeds into control loop (keep existing mag_x/y/z for compat)
-        if s.mag_select == 'A' and a_ok:
-            s.mag_x, s.mag_y, s.mag_z = s.mag_a_x, s.mag_a_y, s.mag_a_z
-            s.mag_valid = True
-        elif s.mag_select == 'B' and b_ok:
-            s.mag_x, s.mag_y, s.mag_z = s.mag_b_x, s.mag_b_y, s.mag_b_z
-            s.mag_valid = True
-        else:
-            # Selected unit failed or unpowered — cross-strap to the other
-            if a_ok:
-                s.mag_x, s.mag_y, s.mag_z = s.mag_a_x, s.mag_a_y, s.mag_a_z
-                s.mag_valid = True
-            elif b_ok:
-                s.mag_x, s.mag_y, s.mag_z = s.mag_b_x, s.mag_b_y, s.mag_b_z
-                s.mag_valid = True
-            else:
-                s.mag_x = s.mag_y = s.mag_z = 0.0
-                s.mag_valid = False
+        s.mag_x = true_x + s.mag_bias[0] + self.rng.gauss(0, s.mag_noise)
+        s.mag_y = true_y + s.mag_bias[1] + self.rng.gauss(0, s.mag_noise)
+        s.mag_z = true_z + s.mag_bias[2] + self.rng.gauss(0, s.mag_noise)
+        s.mag_valid = True
 
     def _tick_magnetorquers(self, s: AOCSState, dt: float) -> None:
         """Housekeeping for MTQ telemetry: zero duty when disabled. The
@@ -1597,8 +1618,38 @@ class AOCSBasicModel(SubsystemModel):
         ds = s.device_states
         return [bool(ds.get(d, True)) for d in self._GYRO_DEVICES]
 
+    def _gyro_units_mask(self, s: AOCSState) -> int:
+        """Bitmask of the three gyro units (bit0 X / bit1 Y / bit2 Z).
+
+        0x0294 only counts how many units are on. WHICH one is off matters —
+        losing the pitch channel of a nadir-tracking spacecraft is a different
+        problem from losing roll — so 0x02D1 publishes the identity too."""
+        return sum(1 << i for i, on in enumerate(self._gyro_axes_powered(s))
+                   if on)
+
+    def _gyro_bias_total(self, s: AOCSState) -> list[float]:
+        """TOTAL bias present in the hardware, per axis [deg/s].
+
+        Gauss-Markov drift + thermal term + any injected hardware fault. This
+        is the quantity a calibration has to estimate; it is NOT what the
+        gyro output shows once a calibration has been applied (see
+        `_gyro_bias_residual`)."""
+        t_bias = getattr(self, '_gyro_temp_bias', 0.0)
+        return [self._gyro_bias[i] + t_bias + self._gyro_bias_inject[i]
+                for i in range(3)]
+
+    def _gyro_bias_residual(self, s: AOCSState) -> list[float]:
+        """Bias still visible at the gyro OUTPUT after on-board compensation.
+
+        A successful calibration drives this to ~0 while the hardware bias
+        (0x0296) is untouched: calibration compensates a fault, it does not
+        repair it."""
+        total = self._gyro_bias_total(s)
+        return [total[i] - s.gyro_cal_comp[i] for i in range(3)]
+
     def _gyro_measurement(self, s: AOCSState, dt: float) -> np.ndarray:
-        """Measured body rate [rad/s]: truth + true bias + ARW noise.
+        """Measured body rate [rad/s]: truth + true bias + ARW noise, minus the
+        on-board calibration compensation.
 
         A powered-off unit is a DEAD CHANNEL: it reports zero rate, and
         `_gyro_axis_sigma` inflates that axis's process noise so the MEKF
@@ -1606,11 +1657,16 @@ class AOCSBasicModel(SubsystemModel):
         Rate saturation is modelled too — a tactical-grade unit clips at
         `max_rate_dps`, so a violent separation tumble genuinely loses rate
         knowledge on the saturated axis (the reason DETUMBLE is specified on
-        the magnetometer and not on the gyro)."""
+        the magnetometer and not on the gyro).
+
+        `gyro_cal_comp` is the bias table AOCS_GYRO_CALIBRATION writes. It is
+        subtracted BEFORE saturation, exactly where a flight unit applies its
+        compensation coefficients — downstream of the sensing element and
+        upstream of the range limit."""
         sigma_dps = (self._gyro_arw_dps_rts / math.sqrt(max(dt, 1e-3))
                      + self._gyro_noise_dps)
         powered = self._gyro_axes_powered(s)
-        t_bias = getattr(self, '_gyro_temp_bias', 0.0)
+        resid = self._gyro_bias_residual(s)
         w_max = self._gyro_max_rate_dps * _DEG
         out = np.zeros(3)
         sat = False
@@ -1619,8 +1675,7 @@ class AOCSBasicModel(SubsystemModel):
                 out[i] = 0.0
                 continue
             w = (s.omega_true[i]
-                 + (self._gyro_bias[i] + t_bias
-                    + self._gyro_bias_inject[i]) * _DEG
+                 + resid[i] * _DEG
                  + self.rng.gauss(0.0, sigma_dps) * _DEG)
             if abs(w) > w_max:
                 w = math.copysign(w_max, w)
@@ -1683,6 +1738,19 @@ class AOCSBasicModel(SubsystemModel):
         # describing — no CSS/sun reference is available in umbra).
         use_st = (s.st_valid and s.mode not in (MODE_DETUMBLE,
                                                 MODE_COARSE_SUN))
+        # 2026-08c item 11: once the vehicle is quiescent, a TRACKING star
+        # tracker aids the filter in COARSE_SUN as well. Physically nothing
+        # about the ST update needs wheel control — it needs a tracking head
+        # and low rates — and gating it on NOMINAL forced the commissioning
+        # order backwards (gyro calibration at COM-003 needed an ST-in-the-
+        # loop estimate, but NOMINAL needs the wheels COM-004 enables).
+        # Early COARSE acquisition (high rates / no track) still runs the
+        # CSS+MAG TRIAD path below.
+        if (not use_st and s.mode == MODE_COARSE_SUN and s.st_valid
+                and getattr(s, f"st{s.st_selected}_num_stars", 0) >= 5
+                and float(np.linalg.norm(
+                    getattr(self, '_omega_est', np.zeros(3)))) * _RAD < 0.25):
+            use_st = True
         # Update-then-propagate: the sensor measurements correspond to the
         # CURRENT truth state; the mode tick integrates the truth over dt
         # afterwards, so propagating after the update keeps the estimate
@@ -2289,6 +2357,87 @@ class AOCSBasicModel(SubsystemModel):
 
     # ─── Gyro and GPS models ─────────────────────────────────────────
 
+    def _publish_gps_pvt(self, s: AOCSState, orbit_state: Any,
+                         shared_params: dict[int, float]) -> None:
+        """Publish the GPS receiver's MEASURED PVT solution (2026-08c item 2).
+
+        Gating: gps_fix (0x0274) < 2 => all nine PVT parameters are zero —
+        honest-invalid, with 0x0274 as the validity flag. Fix 2 gives
+        position only; fix 3 adds velocity. Noise is per-axis Gaussian,
+        1σ = 5 m x PDOP (position) and 0.05 m/s x PDOP (velocity).
+
+        ECEF comes from the propagator's true ECI state rotated through GMST
+        (the same transform the contact geometry uses); reduced test
+        harnesses whose orbit_state has no usable ECI state fall back to the
+        geodetic truth via _lla_to_ecef, and anything unresolvable publishes
+        zeros rather than a fabricated value.
+        """
+        p = self._param_ids
+        pids = (p.get("gps_lat", 0x0210), p.get("gps_lon", 0x0211),
+                p.get("gps_alt", 0x0212),
+                p.get("gps_ecef_x", 0x0231), p.get("gps_ecef_y", 0x0232),
+                p.get("gps_ecef_z", 0x0233),
+                p.get("gps_vel_x", 0x0234), p.get("gps_vel_y", 0x0235),
+                p.get("gps_vel_z", 0x0236))
+        if s.gps_fix < 2:
+            for pid in pids:
+                shared_params[pid] = 0.0
+            return
+        pdop = max(0.8, float(s.gps_pdop))
+        sig_pos_m = 5.0 * pdop
+        sig_vel_ms = 0.05 * pdop
+        # Geodetic solution (measured): truth + noise mapped to angle.
+        try:
+            lat = float(orbit_state.lat_deg)
+            lon = float(orbit_state.lon_deg)
+            alt = float(orbit_state.alt_km)
+        except (TypeError, ValueError):
+            lat = lon = alt = 0.0
+        m_per_deg = 111320.0
+        shared_params[pids[0]] = lat + self.rng.gauss(0, sig_pos_m) / m_per_deg
+        shared_params[pids[1]] = lon + self.rng.gauss(0, sig_pos_m) / (
+            m_per_deg * max(0.1, math.cos(math.radians(lat))))
+        shared_params[pids[2]] = alt + self.rng.gauss(0, sig_pos_m) / 1000.0
+        # ECEF position/velocity from the true ECI state.
+        r_ecef_m = v_ecef_ms = None
+        try:
+            from smo_common.orbit.propagator import (
+                _eci_to_ecef, _gmst, _lla_to_ecef)
+            r_eci = np.asarray(getattr(orbit_state, "pos_eci", None), float)
+            utc = getattr(orbit_state, "utc", None)
+            if (r_eci is not None and r_eci.shape == (3,)
+                    and float(np.linalg.norm(r_eci)) > 6000.0
+                    and utc is not None):
+                # Julian date from the orbit-state epoch (UT1 ~= UTC here).
+                jd = (utc.timestamp() / 86400.0) + 2440587.5
+                gmst = _gmst(jd)
+                r_ecef_m = _eci_to_ecef(r_eci, gmst) * 1000.0
+                v_eci = np.asarray(
+                    getattr(orbit_state, "vel_eci", None), float)
+                if v_eci is not None and v_eci.shape == (3,)                         and float(np.linalg.norm(v_eci)) > 0.1:
+                    omega_e = 7.2921150e-5  # rad/s
+                    v_rot = _eci_to_ecef(v_eci, gmst) * 1000.0
+                    v_ecef_ms = v_rot - np.cross(
+                        np.array([0.0, 0.0, omega_e]), r_ecef_m)
+            if r_ecef_m is None:
+                r_ecef_m = _lla_to_ecef(lat, lon, alt) * 1000.0
+        except Exception:   # noqa: BLE001 — mock harness, publish zeros
+            r_ecef_m = None
+        if r_ecef_m is not None:
+            for i in range(3):
+                shared_params[pids[3 + i]] = (
+                    float(r_ecef_m[i]) + self.rng.gauss(0, sig_pos_m))
+        else:
+            for i in range(3):
+                shared_params[pids[3 + i]] = 0.0
+        if s.gps_fix >= 3 and v_ecef_ms is not None:
+            for i in range(3):
+                shared_params[pids[6 + i]] = (
+                    float(v_ecef_ms[i]) + self.rng.gauss(0, sig_vel_ms))
+        else:
+            for i in range(3):
+                shared_params[pids[6 + i]] = 0.0
+
     def _tick_gyro_and_gps(self, s: AOCSState, dt: float,
                             orbit_state: Any) -> None:
         """Model gyroscope bias truth state and GPS receiver."""
@@ -2317,13 +2466,18 @@ class AOCSBasicModel(SubsystemModel):
             bias = self._gyro_bias[i]
             bias += -bias / tau * dt + self.rng.gauss(0.0, q_step)
             self._gyro_bias[i] = max(-0.1, min(0.1, bias))
-            # Telemetry reports the TOTAL bias the channel exhibits (random
-            # component + thermal term + any injected bias fault), which is
-            # what an operator comparing 0x0270-0x0272 against the MEKF's
-            # estimate would see.
-            setattr(s, attr, self._gyro_bias[i] + t_bias
-                    + self._gyro_bias_inject[i])
         self._gyro_temp_bias = t_bias
+        # 0x0270-0x0272 report the bias an operator can actually SEE at the
+        # gyro output: random component + thermal term + any injected fault,
+        # MINUS whatever the last calibration compensated. Before the
+        # calibration was implemented `gyro_cal_comp` was always zero and this
+        # was the raw total, so the change is invisible on an uncalibrated
+        # spacecraft — but it is the difference between a card that says
+        # "confirm the bias fell" meaning something and meaning nothing.
+        for i, attr in enumerate(("gyro_bias_x", "gyro_bias_y",
+                                  "gyro_bias_z")):
+            setattr(s, attr, self._gyro_bias[i] + t_bias
+                    + self._gyro_bias_inject[i] - s.gyro_cal_comp[i])
 
         # Gyro temperature (correlated with RW proximity heat)
         avg_rw_temp = sum(s.rw_temp) / 4.0
@@ -2390,6 +2544,196 @@ class AOCSBasicModel(SubsystemModel):
         s.mag_field_total = math.sqrt(
             s.mag_x ** 2 + s.mag_y ** 2 + s.mag_z ** 2
         )
+
+    # ─── Gyro bias calibration (S8.1 func 13) ────────────────────────
+    #
+    # What this replaces: `gyro_calibration` used to be one line —
+    # `self._gyro_bias = [0, 0, 0]` — which zeroed the TRUTH state of the
+    # Gauss-Markov drift (a ~1e-6 deg/s quantity that mean-reverts on its own
+    # in half an hour anyway), completed instantly, ignored the injected
+    # hardware bias entirely, reported nothing, raised no event and had no
+    # preconditions. It was a command that reached into the physics and
+    # deleted a number the spacecraft cannot observe. On the shipped build an
+    # instructor could inject a 0.05 deg/s gyro_bias, fly COM-003 to the
+    # letter, get "Gyro calibration complete", and the bias would be exactly
+    # where it started.
+    #
+    # What a bias calibration really is: with the vehicle quiescent and a
+    # stable attitude reference in the loop, the difference between what the
+    # gyro says and what the reference says the vehicle is doing IS the bias.
+    # On board that observation is exactly the MEKF's bias state, so the
+    # calibration averages `MEKF6.b` over a quiet arc and writes the result
+    # into a compensation table applied on the measurement path
+    # (`gyro_cal_comp`, subtracted in `_gyro_measurement`). Estimate the bias,
+    # compensate it in the sensor chain, and reset the filter's bias state
+    # because the measurement it now sees is bias-free.
+    #
+    # Crucially the compensation does NOT touch `_gyro_bias_inject`. An
+    # injected gyro_bias is a HARDWARE fault: calibration cancels its effect,
+    # it does not repair the unit. 0x0296 keeps showing the instructor the
+    # fault is still there while 0x02D2 shows the operator the residual has
+    # gone — which is the whole teaching point of the scenario.
+
+    GYRO_CAL_IDLE = 0
+    GYRO_CAL_RUNNING = 1
+    GYRO_CAL_COMPLETE = 2
+    GYRO_CAL_ABORTED = 3
+
+    # Refusal / abort codes — the shared vocabulary in
+    # smo_common.protocol.pus_services.FAILURE_CODES.
+    CAL_ERR_UNPOWERED = 0x0A01
+    CAL_ERR_UNIT_OFF = 0x0A02
+    CAL_ERR_NO_REFERENCE = 0x0A03
+    CAL_ERR_RATE_HIGH = 0x0A04
+    CAL_ERR_BUSY = 0x0A05
+    CAL_ERR_LOST = 0x0A06
+    CAL_ERR_NOT_RUNNING = 0x0A07
+    CAL_ERR_OPERATOR = 0x0A08
+
+    def _gyro_cal_blocker(self, s: AOCSState) -> int:
+        """First unmet gyro-calibration precondition, or 0 when all hold.
+
+        Checked at command time AND every tick of the run: a calibration that
+        lost its attitude reference half way through has averaged nonsense,
+        and must abort loudly rather than publish a bias estimate nobody can
+        tell apart from a good one."""
+        if s.mode in (MODE_OFF, MODE_SAFE_BOOT):
+            return self.CAL_ERR_UNPOWERED
+        if not all(self._gyro_axes_powered(s)):
+            return self.CAL_ERR_UNIT_OFF
+        # A stable attitude reference means the tracker is not merely powered
+        # but actually IN the determination loop. 2026-08c item 11: this is
+        # no longer a MODE gate — bias calibration does not physically need
+        # wheel control, only a tracking head feeding the filter and low
+        # rates, so the check is on the ESTIMATOR CONFIGURATION itself:
+        # est_source bit 0 says the last tick's MEKF update really came from
+        # the star tracker. In COARSE_SUN that bit sets once the vehicle is
+        # quiescent and the tracker holds >=5 stars (see _tick_estimator),
+        # which is exactly the state COM-003 reaches before COM-004 enables
+        # the wheels. DETUMBLE never sets it (CSS+MAG TRIAD only), so the
+        # refusal there is unchanged in effect.
+        sel_stars = getattr(s, f"st{s.st_selected}_num_stars", 0)
+        if (not s.st_valid or sel_stars < 5
+                or not (int(getattr(s, "est_source", 0)) & 0x01)):
+            return self.CAL_ERR_NO_REFERENCE
+        # Quiescent: the bias is only separable from the true rate when the
+        # vehicle is not manoeuvring. Measured against the ESTIMATE relative
+        # to the reference, so LVLH nadir tracking (a genuine ~0.06 deg/s
+        # orbital rate) is not mistaken for a slew.
+        w_rel = (getattr(self, '_omega_est', np.zeros(3))
+                 - np.asarray(s.omega_ref, float))
+        if float(np.linalg.norm(w_rel)) * _RAD > self._gyro_cal_max_rate_dps:
+            return self.CAL_ERR_RATE_HIGH
+        return 0
+
+    def _emit_event(self, event_id: int, severity: str,
+                    description: str) -> None:
+        """Queue one S5 event (same path `_generate_events` uses)."""
+        engine = getattr(self, '_engine', None)
+        if engine is not None:
+            engine._model_event_queue.put({
+                'event_id': event_id,
+                'severity': severity,
+                'description': description,
+            })
+
+    def _start_gyro_calibration(self, duration_s: float = 0.0) -> dict:
+        """AOCS_GYRO_CALIBRATION start. Refuses with a specific code."""
+        s = self._state
+        if s.gyro_cal_state == self.GYRO_CAL_RUNNING:
+            s.gyro_cal_reject = self.CAL_ERR_BUSY
+            return {"success": False, "error_code": self.CAL_ERR_BUSY,
+                    "message": ("Gyro calibration already running "
+                                f"({s.gyro_cal_progress:.0f} % complete)")}
+        blocker = self._gyro_cal_blocker(s)
+        if blocker:
+            s.gyro_cal_reject = blocker
+            return {"success": False, "error_code": blocker,
+                    "message": failure_code_text(blocker)}
+        dur = float(duration_s) or self._gyro_cal_duration_s
+        dur = max(self._gyro_cal_min_duration_s,
+                  min(self._gyro_cal_max_duration_s, dur))
+        s.gyro_cal_duration_s = dur
+        s.gyro_cal_settle_s = min(self._gyro_cal_settle_s, 0.5 * dur)
+        s.gyro_cal_state = self.GYRO_CAL_RUNNING
+        s.gyro_cal_elapsed = 0.0
+        s.gyro_cal_progress = 0.0
+        s.gyro_cal_acc = [0.0, 0.0, 0.0]
+        s.gyro_cal_n = 0
+        s.gyro_cal_reject = 0
+        self._emit_event(0x0210, 'INFO',
+                         f'Gyro bias calibration started: {dur:.0f} s arc '
+                         f'({s.gyro_cal_settle_s:.0f} s settle)')
+        return {"success": True,
+                "message": (f"Gyro bias calibration started ({dur:.0f} s); "
+                            "progress in aocs.gyro_cal_progress (0x02CA)"),
+                "duration_s": dur}
+
+    def _abort_gyro_calibration(self, code: int, why: str) -> None:
+        s = self._state
+        s.gyro_cal_state = self.GYRO_CAL_ABORTED
+        s.gyro_cal_result = 2
+        s.gyro_cal_reject = code
+        s.gyro_cal_progress = 0.0
+        s.gyro_cal_acc = [0.0, 0.0, 0.0]
+        s.gyro_cal_n = 0
+        self._emit_event(0x0212, 'MEDIUM',
+                         f'Gyro bias calibration aborted: {why} '
+                         f'(code 0x{code:04X})')
+
+    def _tick_gyro_calibration(self, s: AOCSState, dt: float) -> None:
+        """Advance a running calibration by dt."""
+        if s.gyro_cal_state != self.GYRO_CAL_RUNNING:
+            return
+        blocker = self._gyro_cal_blocker(s)
+        if blocker:
+            # The shared text is phrased as a REFUSAL ("Gyro calibration
+            # refused: ..."); mid-run it is an abort, so strip the prefix and
+            # let `_abort_gyro_calibration` supply the verb.
+            why = failure_code_text(blocker).split(": ", 1)[-1]
+            self._abort_gyro_calibration(blocker, why)
+            return
+        s.gyro_cal_elapsed += dt
+        s.gyro_cal_progress = min(100.0, 100.0 * s.gyro_cal_elapsed
+                                  / max(1e-6, s.gyro_cal_duration_s))
+        # Accumulate only after the settle window: the filter's bias state
+        # needs a few star-tracker fixes to respond, and averaging its
+        # transient in would bias the calibration toward zero.
+        if s.gyro_cal_elapsed >= s.gyro_cal_settle_s:
+            b_dps = np.asarray(self._ekf.b, float) * _RAD
+            for i in range(3):
+                s.gyro_cal_acc[i] += float(b_dps[i])
+            s.gyro_cal_n += 1
+        if s.gyro_cal_elapsed < s.gyro_cal_duration_s:
+            return
+        # ── Complete ──
+        if s.gyro_cal_n <= 0:
+            self._abort_gyro_calibration(
+                self.CAL_ERR_LOST, "no samples accumulated over the arc")
+            return
+        n = float(s.gyro_cal_n)
+        # The filter observes the bias of the ALREADY-COMPENSATED measurement,
+        # so the new table is the old table plus what is left over. Running
+        # the calibration twice therefore converges rather than double-
+        # counting, which a naive `comp = mean(b)` would not.
+        new_comp = [s.gyro_cal_comp[i] + s.gyro_cal_acc[i] / n
+                    for i in range(3)]
+        s.gyro_cal_comp = new_comp
+        s.gyro_cal_bias = list(new_comp)
+        s.gyro_cal_state = self.GYRO_CAL_COMPLETE
+        s.gyro_cal_result = 1
+        s.gyro_cal_reject = 0
+        s.gyro_cal_progress = 100.0
+        s.gyro_cal_acc = [0.0, 0.0, 0.0]
+        s.gyro_cal_n = 0
+        # The measurement the filter sees from the next tick is bias-free, so
+        # carrying the old bias state forward would double-correct it.
+        self._ekf.b = np.zeros(3)
+        self._emit_event(
+            0x0211, 'INFO',
+            'Gyro bias calibration complete: '
+            f'X={new_comp[0]:+.5f} Y={new_comp[1]:+.5f} '
+            f'Z={new_comp[2]:+.5f} deg/s applied as compensation')
 
     # ─── Wheels and momentum ─────────────────────────────────────────
 
@@ -2475,21 +2819,11 @@ class AOCSBasicModel(SubsystemModel):
             s.rate_roll = s.rate_pitch = s.rate_yaw = 0.0
             s.gyro_bias_x = s.gyro_bias_y = s.gyro_bias_z = 0.0
 
-        # Magnetometers A/B (0x0209/0x020A). If the selected unit (or both) is
-        # powered off, the magnetometer reading is invalid.
-        mag_a_on = ds.get(0x0209, True)
-        mag_b_on = ds.get(0x020A, True)
-        if not mag_a_on:
-            s.mag_a_x = s.mag_a_y = s.mag_a_z = 0.0
-        if not mag_b_on:
-            s.mag_b_x = s.mag_b_y = s.mag_b_z = 0.0
-        if not mag_a_on and not mag_b_on:
+        # The magnetometer (0x0209 — the single unit). Powered off => the
+        # reading is invalid and zeroed, never frozen.
+        if not ds.get(0x0209, True):
             s.mag_valid = False
             s.mag_x = s.mag_y = s.mag_z = 0.0
-        elif s.mag_select == 'A' and not mag_a_on:
-            s.mag_valid = False
-        elif s.mag_select == 'B' and not mag_b_on:
-            s.mag_valid = False
 
         # Sun sensor array (0x020E) — collapse the coarse sun vector.
         if not ds.get(0x020E, True):
@@ -2611,6 +2945,9 @@ class AOCSBasicModel(SubsystemModel):
         # Without this, AOCS continues to publish a valid attitude, valid
         # rates and current draws even though the EPS line is dark.
         _line_aocs_on = bool(shared_params.get(0x0117, 1))
+        # Remembered for command-time precondition checks (handle_command has
+        # no shared_params): DETUMBLE entry refuses when the suite is dark.
+        self._line_aocs_on = _line_aocs_on
         if not _line_aocs_on and s.mode != MODE_OFF:
             s.mode = MODE_OFF
             s.submode = 0
@@ -2644,13 +2981,17 @@ class AOCSBasicModel(SubsystemModel):
                 self._orbit_phase + dt * (360.0 / 5700.0)
             ) % 360.0
 
-        # GPS from orbit state
-        shared_params[p.get("gps_lat", 0x0210)] = orbit_state.lat_deg
-        shared_params[p.get("gps_lon", 0x0211)] = orbit_state.lon_deg
-        shared_params[p.get("gps_alt", 0x0212)] = orbit_state.alt_km
-        shared_params[p.get("gps_vx", 0x0213)] = orbit_state.vel_x
-        shared_params[p.get("gps_vy", 0x0214)] = orbit_state.vel_y
-        shared_params[p.get("gps_vz", 0x0215)] = orbit_state.vel_z
+        # ── GPS PVT (2026-08c item 2) ──────────────────────────────────
+        # MEASURED, not truth. The old code wrote orbit-state TRUTH straight
+        # into 0x0210-0x0212 unconditionally (no fix gate, no noise) and
+        # wrote truth velocity to 0x0213-0x0215 — ids that collide with
+        # aocs.css_sun_confidence (0x0215) and are not GPS parameters at all.
+        # The receiver now publishes a noisy PVT solution gated on its own
+        # fix state: position (lat/lon/alt + ECEF 0x0231-0x0233) only while
+        # gps_fix >= 2, velocity (ECEF 0x0234-0x0236) only at fix 3, honest
+        # zeros otherwise. Noise scales with PDOP — 5 m·PDOP 1σ per axis in
+        # position, 0.05 m/s·PDOP in velocity (commodity LEO receiver class).
+        self._publish_gps_pvt(s, orbit_state, shared_params)
         shared_params[p.get("solar_beta", 0x0216)] = orbit_state.solar_beta_deg
 
         # ── External-poke sync (tests / scenarios / separation tumble) ──
@@ -2693,6 +3034,11 @@ class AOCSBasicModel(SubsystemModel):
 
         # Attitude determination (MEKF / TRIAD path)
         self._tick_estimator(s, dt, secular)
+
+        # Gyro bias calibration — runs off the filter's bias observation, so it
+        # has to come AFTER the estimator has consumed this tick's star-tracker
+        # fix, not before.
+        self._tick_gyro_calibration(s, dt)
 
         # Desat inhibit follows the payload: a dump drops fine pointing, so it
         # must never pre-empt a strip. 0x0600 payload.mode == 2 is IMAGING.
@@ -2864,14 +3210,8 @@ class AOCSBasicModel(SubsystemModel):
         shared_params[0x0221] = s.css_sun_y
         shared_params[0x0222] = s.css_sun_z
 
-        # Dual magnetometer params
-        shared_params[0x0223] = s.mag_a_x
-        shared_params[0x0224] = s.mag_a_y
-        shared_params[0x0225] = s.mag_a_z
-        shared_params[0x0226] = s.mag_b_x
-        shared_params[0x0227] = s.mag_b_y
-        shared_params[0x0228] = s.mag_b_z
-        shared_params[0x0229] = 0.0 if s.mag_select == 'A' else 1.0
+        # 0x0223-0x0229 (dual-magnetometer block) retired — one magnetometer
+        # only (2026-08c item 8). The measured field is 0x020B-0x020D above.
 
         # CSS per-head illumination params
         _css_head_pids = {
@@ -2893,6 +3233,10 @@ class AOCSBasicModel(SubsystemModel):
         shared_params[p.get("css_sun_y", 0x0246)] = s.css_sun_y
         shared_params[p.get("css_sun_z", 0x0247)] = s.css_sun_z
         shared_params[p.get("css_valid", 0x0248)] = 1 if s.css_valid else 0
+        # Sun-pointing confidence 0x0215 (declared on-demand; never written
+        # before — S20.3 returned a plausible 0.0).
+        shared_params[p.get("css_sun_confidence", 0x0215)] = float(
+            getattr(self, "_css_sun_confidence", 0.0))
 
         # Magnetorquers
         shared_params[p.get("mtq_x_duty", 0x0258)] = s.mtq_x_duty
@@ -2919,6 +3263,23 @@ class AOCSBasicModel(SubsystemModel):
                                                False) else 0.0
         shared_params[0x0296] = float(math.sqrt(
             sum(b * b for b in self._gyro_bias_inject)))
+        # 0x02D1: WHICH unit is off, not only how many. 0x02D2: the bias still
+        # present at the gyro output after on-board compensation — the number
+        # that says whether a calibration took.
+        shared_params[0x02D1] = float(self._gyro_units_mask(s))
+        _resid = self._gyro_bias_residual(s)
+        shared_params[0x02D2] = float(math.sqrt(sum(b * b for b in _resid)))
+
+        # ── Gyro bias calibration (S8.1 func 13) ──
+        shared_params[0x02C9] = float(s.gyro_cal_state)
+        shared_params[0x02CA] = float(s.gyro_cal_progress)
+        shared_params[0x02CB] = float(s.gyro_cal_bias[0])
+        shared_params[0x02CC] = float(s.gyro_cal_bias[1])
+        shared_params[0x02CD] = float(s.gyro_cal_bias[2])
+        shared_params[0x02CE] = float(math.sqrt(
+            sum(c * c for c in s.gyro_cal_comp)))
+        shared_params[0x02CF] = float(s.gyro_cal_result)
+        shared_params[0x02D0] = float(s.gyro_cal_reject)
 
         # ── Mode-management / degraded-FINE / desat telemetry ──
         # These make the mode machine observable from the ground: what mode was
@@ -3125,6 +3486,8 @@ class AOCSBasicModel(SubsystemModel):
         tm[p.get("css_sun_y", 0x0246)] = s.css_sun_y
         tm[p.get("css_sun_z", 0x0247)] = s.css_sun_z
         tm[p.get("css_valid", 0x0248)] = float(1 if s.css_valid else 0)
+        tm[p.get("css_sun_confidence", 0x0215)] = float(
+            getattr(self, "_css_sun_confidence", 0.0))
 
         # Magnetorquers
         tm[p.get("mtq_x_duty", 0x0258)] = s.mtq_x_duty
@@ -3323,9 +3686,12 @@ class AOCSBasicModel(SubsystemModel):
 
         # GYRO_BIAS_HIGH (0x020B) — rising-edge: fire once when bias drift first
         # exceeds the threshold, not every tick after.
-        bias_mag = math.sqrt(sum(
-            (b + self._gyro_temp_bias + inj) ** 2
-            for b, inj in zip(self._gyro_bias, self._gyro_bias_inject)))
+        # Measured on the RESIDUAL (post-compensation) bias: what the flight
+        # software can see at the gyro output. A successful calibration
+        # therefore clears the alarm, which is the correct operational story —
+        # the hardware fault is still there (0x0296) but the vehicle is no
+        # longer suffering from it.
+        bias_mag = math.sqrt(sum(b * b for b in self._gyro_bias_residual(s)))
         gyro_bias_high = bias_mag > 0.05  # deg/s threshold
         if gyro_bias_high and not self._prev_gyro_bias_high:
             events.append({
@@ -3361,6 +3727,39 @@ class AOCSBasicModel(SubsystemModel):
             mode = int(cmd.get("mode", 0))
             if not (0 <= mode <= 9):
                 return {"success": False, "message": f"Invalid mode: {mode}"}
+            if mode == MODE_DETUMBLE and self._state.mode != MODE_DETUMBLE:
+                # 2026-08c item 9: DETUMBLE is the B-dot law — magnetometer
+                # in, magnetorquers out. It used to be enterable with nothing
+                # enabled (accepted, then sat there doing no physics). The
+                # command now refuses honestly, one failure code per missing
+                # leg, mirroring the FINE_POINT precondition gate.
+                sd = self._state
+                if not getattr(self, "_line_aocs_on", True):
+                    return {"success": False, "error_code": 0x0004,
+                            "code": "AOCS_UNPOWERED",
+                            "message": ("DETUMBLE refused: EPS aocs_wheels "
+                                        "line (0x0117) is off — the AOCS "
+                                        "suite is unpowered")}
+                mag_ok = (not sd.mag_failed
+                          and sd.device_states.get(0x0209, True))
+                if not mag_ok:
+                    return {"success": False, "error_code": 0x0A20,
+                            "code": "DETUMBLE_NO_MAG",
+                            "message": ("DETUMBLE refused: the magnetometer "
+                                        "(S2 device 0x0209) is off or failed "
+                                        "— B-dot has no field reference")}
+                mtq_ok = sd.mtq_enabled and any(
+                    (not getattr(sd, f"mtq_{ax}_failed"))
+                    and sd.device_states.get(dev, True)
+                    for ax, dev in (("x", 0x020B), ("y", 0x020C),
+                                    ("z", 0x020D)))
+                if not mtq_ok:
+                    return {"success": False, "error_code": 0x0A21,
+                            "code": "DETUMBLE_NO_MTQ",
+                            "message": ("DETUMBLE refused: magnetorquers "
+                                        "disabled (MTQ_ENABLE) or all rods "
+                                        "off/failed — B-dot has no "
+                                        "actuator")}
             if mode == MODE_FINE_POINT and self._state.mode != MODE_FINE_POINT:
                 # WP-6: FINE entry is gated on the 0x02C5 precondition
                 # bitmask — refuse loudly instead of accept-then-drop-back.
@@ -3368,6 +3767,7 @@ class AOCSBasicModel(SubsystemModel):
                 if mask != 0:
                     return {"success": False,
                             "code": "FINE_NOT_READY",
+                            "error_code": 0x0A22,
                             "fine_ready_mask": mask,
                             "message": (
                                 f"FINE_POINT refused: preconditions unmet "
@@ -3536,24 +3936,15 @@ class AOCSBasicModel(SubsystemModel):
             return {"success": True}
 
         elif command == "mag_select":
-            source = cmd.get("source", cmd.get("on", "A"))
-            # Support legacy boolean interface (on=True/False)
-            if isinstance(source, bool):
-                if self._state.mag_failed and source:
-                    return {"success": False, "message": "Magnetometer failed"}
-                self._state.mag_valid = source
-                return {"success": True}
-            # New dual-mag select interface (source='A' or 'B')
-            source = str(source).upper()
-            if source in ('A', 'B'):
-                s = self._state
-                if source == 'A' and s.mag_a_failed:
-                    return {"success": False, "message": "Mag A failed"}
-                if source == 'B' and s.mag_b_failed:
-                    return {"success": False, "message": "Mag B failed"}
-                s.mag_select = source
-                return {"success": True}
-            return {"success": False, "message": "Invalid mag source, use A or B"}
+            # 2026-08c (owner ruling, item 8): EO-Sat-1 flies ONE 3-axis
+            # magnetometer — there is no redundant unit to select, exactly
+            # like the gyro fit. Refused honestly rather than pretending to
+            # switch to hardware that does not exist. Power switching of the
+            # one unit remains legitimate via S2 device 0x0209.
+            return {"success": False, "error_code": 0x0007,
+                    "message": ("MAG_SELECT refused: a single magnetometer "
+                                "is fitted — no redundant unit exists "
+                                "(power the one unit via S2 device 0x0209)")}
 
         elif command == "rw_set_speed_bias":
             wheel = int(cmd.get("wheel", 0))
@@ -3609,9 +4000,38 @@ class AOCSBasicModel(SubsystemModel):
             return {"success": False, "message": "Cannot start acquisition from current mode"}
 
         elif command == "gyro_calibration":
-            # Reset gyro bias estimate
-            self._gyro_bias = [0.0, 0.0, 0.0]
-            return {"success": True, "message": "Gyro calibration complete"}
+            # Was: `self._gyro_bias = [0, 0, 0]; return success`. That reached
+            # into the truth state of a process the spacecraft cannot observe,
+            # left the injected hardware bias untouched, and completed in zero
+            # time with no preconditions and no telemetry. See the
+            # "Gyro bias calibration" block above for what it does now.
+            action = int(cmd.get("action", 0))
+            if action == 1:            # operator abort
+                s = self._state
+                if s.gyro_cal_state != self.GYRO_CAL_RUNNING:
+                    s.gyro_cal_reject = self.CAL_ERR_NOT_RUNNING
+                    return {"success": False,
+                            "error_code": self.CAL_ERR_NOT_RUNNING,
+                            "message": failure_code_text(
+                                self.CAL_ERR_NOT_RUNNING)}
+                self._abort_gyro_calibration(self.CAL_ERR_OPERATOR,
+                                             "abandoned by the operator")
+                return {"success": True,
+                        "message": "Gyro bias calibration aborted"}
+            return self._start_gyro_calibration(
+                float(cmd.get("duration_s", 0.0)))
+
+        elif command == "gyro_cal_status":
+            s = self._state
+            return {
+                "success": True,
+                "state": int(s.gyro_cal_state),
+                "progress_pct": float(s.gyro_cal_progress),
+                "result": int(s.gyro_cal_result),
+                "reject_code": int(s.gyro_cal_reject),
+                "bias_dps": list(s.gyro_cal_bias),
+                "comp_dps": list(s.gyro_cal_comp),
+            }
 
         elif command == "rw_ramp_down":
             wheel = int(cmd.get("wheel", -1))
@@ -3667,6 +4087,129 @@ class AOCSBasicModel(SubsystemModel):
 
     # ─── Failure injection ───────────────────────────────────────────
 
+    # ─── Failure injection ───────────────────────────────────────────
+    #
+    # Single source of truth for the injection parameters (see
+    # smo_simulator/failure_spec.py). The instructor form, the
+    # FailureManager's validation and the scenario content gate all read this.
+    _WHEEL_LABELS = ["RW1 (pyramid +X)", "RW2 (pyramid +Y)",
+                     "RW3 (pyramid -X)", "RW4 (pyramid -Y)"]
+    _BODY_FACES = ["px", "mx", "py", "my", "pz", "mz"]
+
+    FAILURE_SPECS = {
+        "rw_bearing": FailureSpec(
+            name="rw_bearing", label="Reaction wheel bearing degradation",
+            effect="Adds bearing friction on the selected wheel: current and "
+                   "temperature rise, torque authority falls; >= 0.95 takes "
+                   "the wheel offline.",
+            magnitude=ParamSpec(
+                name="magnitude", type=T_FLOAT, label="Bearing degradation",
+                unit="fraction", min=0.0, max=1.0, default=0.5, step=0.01),
+            params=(enum("wheel", "Reaction wheel", [0, 1, 2, 3],
+                         labels=_WHEEL_LABELS, default=0),),
+        ),
+        "rw_seizure": FailureSpec(
+            name="rw_seizure", label="Reaction wheel seizure",
+            effect="Selected wheel seizes: speed to zero, wheel disabled, "
+                   "momentum dumped to the body — the 4-wheel pyramid drops "
+                   "to 3-wheel control.",
+            magnitude=None,
+            params=(enum("wheel", "Reaction wheel", [0, 1, 2, 3],
+                         labels=_WHEEL_LABELS, default=0),),
+            reversible=False,
+            notes="Clear removes the friction but the wheel stays disabled "
+                  "until re-enabled by command.",
+        ),
+        "multi_wheel_failure": FailureSpec(
+            name="multi_wheel_failure", label="Multiple wheel failure",
+            effect="Fails two or more wheels at once; with fewer than 3 active "
+                   "the AOCS drops to COARSE_SUN.",
+            magnitude=None,
+            params=(enum("wheels", "Wheels to fail", [0, 1, 2, 3],
+                         labels=_WHEEL_LABELS, default=(0, 1), multi=True),),
+        ),
+        "gyro_bias": FailureSpec(
+            name="gyro_bias", label="Gyro rate bias",
+            effect="Adds a PERSISTENT rate bias to the selected gyro channel "
+                   "(0x0210-0x0212 and the MEKF input). Not the mean-reverting "
+                   "Gauss-Markov state — this one does not heal itself.",
+            magnitude=None,
+            params=(
+                enum("axis", "Gyro axis", [0, 1, 2, "all"],
+                     labels=["X (roll)", "Y (pitch)", "Z (yaw)",
+                             "All three axes"], default=0),
+                number("bias", "Rate bias", unit="deg/s", lo=-5.0, hi=5.0,
+                       default=0.05, step=0.001),
+            ),
+            notes="Three gyros, no spare: a biased channel is not switchable "
+                  "away from.",
+        ),
+        "st_blind": FailureSpec(
+            name="st_blind", label="Star tracker blinded",
+            effect="Selected tracker reports BLIND (status 3) and stops "
+                   "supplying attitude; the MEKF coasts on gyros.",
+            magnitude=ParamSpec(name="magnitude", type=T_BOOL,
+                                label="Blinded", default=True),
+            params=(enum("unit", "Star tracker", [1, 2],
+                         labels=["STR-1 (primary)", "STR-2 (redundant)"],
+                         default=1),),
+        ),
+        "st_failure": FailureSpec(
+            name="st_failure", label="Star tracker hardware failure",
+            effect="Selected tracker permanently FAILED (status 4, 0 stars); "
+                   "redundancy logic must switch to the other unit.",
+            magnitude=None,
+            params=(enum("unit", "Star tracker", [1, 2],
+                         labels=["STR-1 (primary)", "STR-2 (redundant)"],
+                         default=1),),
+        ),
+        "css_failure": FailureSpec(
+            name="css_failure", label="Coarse sun sensor assembly failure",
+            effect="Whole CSS assembly invalid — sun vector unavailable, "
+                   "coarse sun pointing degraded.",
+            magnitude=None,
+        ),
+        "css_head_fail": FailureSpec(
+            name="css_head_fail", label="Coarse sun sensor head failure",
+            effect="One CSS head on the selected body face reads zero; the "
+                   "sun vector skews toward the remaining heads.",
+            magnitude=None,
+            params=(enum("face", "CSS head (body face)", _BODY_FACES,
+                         labels=[f.upper() for f in _BODY_FACES],
+                         default="px"),),
+        ),
+        "mag_failure": FailureSpec(
+            name="mag_failure", label="Magnetometer assembly failure",
+            effect="Both magnetometers invalid — B-dot detumble and MTQ "
+                   "momentum dumping lose their field reference.",
+            magnitude=None,
+        ),
+        # mag_a_fail / mag_b_fail retired (2026-08c item 8): there is ONE
+        # magnetometer and no fail-over — use `mag_failure`.
+        "mtq_failure": FailureSpec(
+            name="mtq_failure", label="Magnetorquer failure",
+            effect="Selected magnetorquer produces no dipole: that axis loses "
+                   "detumble/momentum-dump authority.",
+            magnitude=None,
+            params=(enum("axis", "Magnetorquer axis", ["x", "y", "z"],
+                         labels=["MTQ-X", "MTQ-Y", "MTQ-Z"], default="x"),),
+        ),
+        "gain_corruption": FailureSpec(
+            name="gain_corruption", label="Control gain register corruption",
+            effect="Writes a wrong scale factor into the AOCS torque-gain "
+                   "register for one body axis (0x20100000 block). The control "
+                   "law over/under-drives that axis and attitude error diverges; "
+                   "diagnose with S6 MEM_DUMP, recover with MEM_LOAD.",
+            magnitude=None,
+            params=(
+                enum("axis", "Body axis", ["x", "y", "z"],
+                     labels=["X (roll)", "Y (pitch)", "Z (yaw)"], default="y"),
+                number("factor", "Corrupted gain", unit="x nominal", lo=0.0,
+                       hi=100.0, default=10.0, step=0.1),
+            ),
+        ),
+    }
+
     def inject_failure(self, failure: str, magnitude: float = 1.0,
                        **kw) -> None:
         s = self._state
@@ -3696,13 +4239,21 @@ class AOCSBasicModel(SubsystemModel):
                 self._gyro_bias_inject[int(axis) % 3] = bias
 
         elif failure == "st_blind":
-            # Temporary blinding of selected tracker
-            sel = s.st_selected
-            if magnitude:
+            # Temporary blinding of a SPECIFIC tracker. This used to blind
+            # whichever unit happened to be `st_selected`, so an instructor
+            # could not blind STR-2 while STR-1 was primary — and the clear
+            # path (which does take `unit`) could then un-blind a different
+            # box than the inject blinded.
+            sel = int(kw.get("unit", s.st_selected))
+            if sel not in (1, 2):
+                logger.warning("AOCS st_blind: invalid unit %r (no-op)", sel)
+            elif magnitude:
                 setattr(s, f"st{sel}_status", 3)  # BLIND
+                self._st_blind_units.add(sel)
                 self._gyro_bias = [self.rng.gauss(0, 0.005) for _ in range(3)]
             else:
                 setattr(s, f"st{sel}_status", 2)  # TRACKING
+                self._st_blind_units.discard(sel)
 
         elif failure == "st_failure":
             # Permanent hardware failure of a specific unit
@@ -3722,12 +4273,6 @@ class AOCSBasicModel(SubsystemModel):
         elif failure == "mtq_failure":
             axis = kw.get("axis", "x")
             setattr(s, f"mtq_{axis}_failed", True)
-
-        elif failure == "mag_a_fail":
-            s.mag_a_failed = True
-
-        elif failure == "mag_b_fail":
-            s.mag_b_failed = True
 
         elif failure == "css_head_fail":
             face = kw.get("face", "px")
@@ -3784,12 +4329,24 @@ class AOCSBasicModel(SubsystemModel):
         elif failure == "gyro_bias":
             self._gyro_bias = [0.0, 0.0, 0.0]
             self._gyro_bias_inject = [0.0, 0.0, 0.0]
+            # `gyro_cal_comp` is deliberately NOT cleared. The compensation
+            # table is flight-software state the OPERATOR loaded with
+            # AOCS_GYRO_CALIBRATION, not failure state the instructor injected,
+            # and clearing it here would reach into the spacecraft on the
+            # operator's behalf. If a crew calibrated against this bias and the
+            # instructor then removes the hardware fault, the stale table
+            # over-corrects and the gyro reads the compensation back with the
+            # opposite sign — which is exactly what would happen in flight, is
+            # fully diagnosable (aocs.gyro_bias_resid 0x02D2 non-zero with
+            # aocs.gyro_cal_comp_mag 0x02CE non-zero), and is fixed by
+            # re-running the calibration.
 
         elif failure in ("st_blind", "st_failure"):
             unit = int(kw.get("unit", s.st_selected))
             setattr(s, f"st{unit}_failed", False)
             setattr(s, f"st{unit}_status", 2)  # TRACKING
             if failure == "st_blind":
+                self._st_blind_units.discard(unit)
                 self._gyro_bias = [0.0, 0.0, 0.0]
 
         elif failure == "css_failure":
@@ -3801,12 +4358,6 @@ class AOCSBasicModel(SubsystemModel):
         elif failure == "mtq_failure":
             axis = kw.get("axis", "x")
             setattr(s, f"mtq_{axis}_failed", False)
-
-        elif failure == "mag_a_fail":
-            s.mag_a_failed = False
-
-        elif failure == "mag_b_fail":
-            s.mag_b_failed = False
 
         elif failure == "css_head_fail":
             face = kw.get("face", "px")
@@ -3831,7 +4382,7 @@ class AOCSBasicModel(SubsystemModel):
 
     # Model-level (non-dataclass) entries carried in the state dict.
     _EXTRA_STATE_KEYS = ("_gyro_bias", "_gyro_bias_inject",
-                         "_bearing_degradation",
+                         "_bearing_degradation", "_st_blind_units",
                          "_gain_corruption_saved", "_rng_state", "_ekf")
 
     def get_state(self) -> dict[str, Any]:
@@ -3844,6 +4395,9 @@ class AOCSBasicModel(SubsystemModel):
         # heal an active gyro_bias failure on restore.
         d["_gyro_bias_inject"] = list(self._gyro_bias_inject)
         d["_bearing_degradation"] = list(self._bearing_degradation)
+        # Injected star-tracker blinding is persistent failure state; a
+        # snapshot that dropped it healed the fault on restore.
+        d["_st_blind_units"] = sorted(self._st_blind_units)
         d["_gain_corruption_saved"] = dict(self._gain_corruption_saved)
         d["_rng_state"] = rng_state_to_json(self.rng.getstate())
         d["_ekf"] = self._ekf.get_state()
@@ -3858,6 +4412,7 @@ class AOCSBasicModel(SubsystemModel):
         self._gyro_bias = list(state.get("_gyro_bias", [0.0] * 3))
         self._gyro_bias_inject = list(state.get("_gyro_bias_inject", [0.0] * 3))
         self._bearing_degradation = list(state.get("_bearing_degradation", [0.0] * 4))
+        self._st_blind_units = {int(u) for u in state.get("_st_blind_units", ())}
         self._gain_corruption_saved = dict(state.get("_gain_corruption_saved", {}))
         ekf_state = state.get("_ekf")
         if ekf_state is not None:

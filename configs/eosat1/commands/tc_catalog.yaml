@@ -108,19 +108,16 @@ commands:
     fields:
       - { name: device_id, type: uint16, description: "Device ID (0x0208)" }
       - { name: state, type: uint8, description: "0=OFF, 1=ON" }
-  - name: S2_AOCS_MAGNETOMETER_A
+  # 2026-08c (owner ruling, item 8): ONE magnetometer, like the single gyro
+  # set — no redundant B unit. S2_AOCS_MAGNETOMETER_B is gone (device 0x020A
+  # retired); power switching of the one unit stays legitimate.
+  - name: S2_AOCS_MAGNETOMETER
+    aliases: [S2_AOCS_MAGNETOMETER_A]
     service: 2
     subtype: 1
-    description: "Control magnetometer A (device 0x0209)"
+    description: "Control the magnetometer (single 3-axis unit, device 0x0209 — no redundant unit is fitted)"
     fields:
       - { name: device_id, type: uint16, description: "Device ID (0x0209)" }
-      - { name: state, type: uint8, description: "0=OFF, 1=ON" }
-  - name: S2_AOCS_MAGNETOMETER_B
-    service: 2
-    subtype: 1
-    description: "Control magnetometer B (device 0x020A)"
-    fields:
-      - { name: device_id, type: uint16, description: "Device ID (0x020A)" }
       - { name: state, type: uint8, description: "0=OFF, 1=ON" }
   - name: S2_AOCS_MAGNETORQUER_X
     service: 2
@@ -542,15 +539,15 @@ commands:
     func_id: 6
     description: "Select primary star tracker"
     fields:
-      - { name: unit, type: uint8, description: "0=ST1, 1=ST2" }
-  - name: MAG_SELECT
-    aliases: [SET_MAG_SELECT]
-    service: 8
-    subtype: 1
-    func_id: 7
-    description: "Select magnetometer source"
-    fields:
-      - { name: unit, type: uint8, description: "0=primary, 1=redundant" }
+      # 2026-08c: the wire encoding is 1=ST1, 2=ST2 (the on-board handler
+      # refuses 0) — the old "0=ST1, 1=ST2" text sent operators a refused
+      # byte for ST1 and silently selected ST1 when they wanted ST2.
+      - { name: unit, type: uint8, description: "1=ST1, 2=ST2 (0 is refused)" }
+  # MAG_SELECT (S8 func 7) removed from the catalogue (2026-08c item 8):
+  # a single magnetometer is fitted, so there is nothing to select. The
+  # on-board handler survives and REFUSES with 0x0007 + an explanatory S1.8,
+  # so a stale procedure that still sends func 7 gets an honest failure
+  # rather than a fabricated success.
   - name: RW_SET_SPEED_BIAS
     service: 8
     subtype: 1
@@ -598,8 +595,32 @@ commands:
     service: 8
     subtype: 1
     func_id: 13
-    description: "Reset gyro bias estimate"
-    fields: []
+    arg_schema_version: 1
+    position: aocs
+    description: >-
+      Start (or abort) an on-board gyro bias calibration. The spacecraft
+      averages the attitude filter's observed gyro bias over a quiet arc with
+      the star tracker in the determination loop, then applies the result as a
+      compensation on the gyro measurement path. Refused with a specific code
+      if the preconditions do not hold (0x0A01 AOCS unpowered, 0x0A02 a gyro
+      unit off, 0x0A03 no star-tracker reference, 0x0A04 body rate too high,
+      0x0A05 already running). Progress is aocs.gyro_cal_progress (0x02CA) and
+      the estimate lands in aocs.gyro_cal_bias_x/y/z (0x02CB-0x02CD). NOTE the
+      description used to read "Reset gyro bias estimate", and that is exactly
+      what the on-board handler did — it zeroed a truth state and returned
+      success without estimating anything.
+    fields:
+      - name: action
+        type: uint8
+        offset: 1
+        unit: ""
+        calibration: { type: enum }
+        default: 0
+        enum:
+          - { value: 0, label: START }
+          - { value: 1, label: ABORT }
+        description: "0=START a calibration, 1=ABORT the one in progress"
+      - { name: duration_s, type: uint16, offset: 2, unit: s, calibration: { type: none }, range: { min: 0, max: 1800 }, default: 0, description: "Averaging arc length. 0 = the configured default (sensors.gyro.calibration.duration_s, 300 s); other values are clamped to [30, 1800] s" }
 
   - name: AOCS_RW_RAMP_DOWN
     service: 8
@@ -1746,9 +1767,10 @@ commands:
       commanded tier survives the tick and is authoritative. Three tiers:
       LOW 16 kbps BPSK conv(7,1/2)+RS — ROUTINE OPERATIONS, and the safe-mode
       / FDIR fallback; HIGH 128 kbps QPSK RS(255,223) — delayed-telemetry
-      playback and image dumps only; BEACON 1 kbps BPSK conv(7,1/2)+RS —
-      bootloader/beacon lifeline, entered with TTC_SET_BEACON_MODE, not
-      selectable here.
+      playback and image dumps only; SAFE 1 kbps BPSK conv(7,1/2)+RS —
+      bootloader/contingency lifeline rate (renamed from BEACON, 2026-08c —
+      "beacon" always means the UHF whip transmitter now), entered with
+      TTC_SET_BEACON_MODE, not selectable here.
       LEGACY ENCODING PRESERVED VERBATIM: rate=0 still means "the low rate"
       and rate=1 still means "the high rate" — they now select LOW (16 kbps)
       and HIGH (128 kbps) instead of 1 kbps and 64 kbps, so existing
@@ -1756,9 +1778,12 @@ commands:
       meaning.
       Permission rules are enforced by REJECTION with an S1.8 execution
       failure (error 0x0007), never by silent clamping: HIGH requires a
-      deployed antenna, DOWNLINK/dump mode (TTC_SET_DOWNLINK_MODE) and
-      elevation >= 10 deg, and every tier except BEACON is refused while
-      beacon mode is latched. An unknown tier code gives error 0x0003.
+      deployed antenna and DOWNLINK/dump mode (TTC_SET_DOWNLINK_MODE), and
+      every tier except SAFE is refused while beacon mode is latched. An
+      unknown tier code gives error 0x0003. There is NO on-board elevation
+      gate (2026-08c): the 10 deg HIGH policy is a GROUND rule — the MCS
+      warns when HIGH is commanded below 10 deg from its own contact
+      geometry, and the planner schedules HIGH dumps above it.
     arg_schema_version: 1
     readback: { param_id: 0x0510, description: "ttc.tm_data_rate" }
     deprecated_aliases:
@@ -1777,8 +1802,8 @@ commands:
         enum:
           - { value: 0, label: LOW, description: "16 kbps BPSK conv(7,1/2)+RS - routine operations" }
           - { value: 1, label: HIGH, description: "128 kbps QPSK RS(255,223) - dumps only (gated)" }
-          - { value: 255, label: BEACON, description: "1 kbps bootloader beacon - not selectable here" }
-        description: "Tier code: 0=LOW(16 kbps, routine operations), 1=HIGH(128 kbps, dumps only), 255=BEACON(1 kbps, bootloader only). Codes come from tm_rate_tiers[].command_code in subsystems/ttc.yaml."
+          - { value: 255, label: SAFE, description: "1 kbps bootloader lifeline rate (ex-BEACON) - not selectable here" }
+        description: "Tier code: 0=LOW(16 kbps, routine operations), 1=HIGH(128 kbps, dumps only), 255=SAFE(1 kbps, bootloader only). Codes come from tm_rate_tiers[].command_code in subsystems/ttc.yaml."
   - name: TTC_PA_ON
     service: 8
     subtype: 1
@@ -1827,7 +1852,7 @@ commands:
     service: 8
     subtype: 1
     func_id: 70
-    description: "Enable/disable beacon mode (low-rate telemetry)"
+    description: "Enable/disable beacon MODE — pins the S-band ladder to the SAFE (1 kbps) rung. NOT the UHF beacon transmitter (TTC_BEACON_TX_ON/OFF)."
     fields:
       - { name: "on", type: uint8, description: "0=off, 1=on" }
   - name: TTC_CMD_CHANNEL_START
@@ -1917,7 +1942,7 @@ commands:
   # commandable exactly then. 99 remains free.
   #
   # NOT to be confused with TTC_SET_BEACON_MODE (func 70), which selects the
-  # BEACON rung of the S-band TM rate ladder and touches no hardware. These
+  # SAFE rung of the S-band TM rate ladder and touches no hardware. These
   # two switch a physically separate radio: 437.5 MHz, 1 W RF into a
   # deployable dipole, billed to the non-switchable `ttc_rx` line, carrying
   # HK SID 11 and nothing else.
@@ -2301,6 +2326,72 @@ commands:
     fields: []
     position: eps
 
+  # ===== S8 Function Management — System / mission level (func_id 120-127) =====
+  # A fresh block. 99 and 119-127 were the free ids; 119 went to
+  # PAYLOAD_SET_SHUTTER and 99 sits immediately below the 100-107 legacy
+  # quick-action block, so the system commands open a clean contiguous range
+  # at 120 rather than filling the last hole in someone else's block.
+  - name: SYS_SET_MISSION_PHASE
+    service: 8
+    subtype: 1
+    func_id: 120
+    arg_schema_version: 1
+    criticality: critical
+    readback: { param_id: 0x0129, description: "eps.spacecraft_phase — the achieved mission phase" }
+    description: >-
+      Declare the mission phase. Nothing else advances the phase past 4 (LEOP):
+      the on-board state machine only implements the automatic power-up chain
+      1->2->3->4 and the reboot revert to 3, so COMMISSIONING (5) and NOMINAL
+      (6) are ground declarations and this is the telecommand that makes them.
+
+      WHAT THE PHASE ACTUALLY GATES — the phase is not a label, it is a live
+      interlock on six mechanisms:
+        * which subsystems tick at all (phases 0-1 tick nothing);
+        * telecommand acceptance — at phase <= 3 the OBC is running the
+          bootloader and only the bootloader command subset is accepted
+          (S17.1, S9.1, S3 beacon HK, S20.1/3, S8.1 funcs 19/20/52-57/61/
+          66/67/69, and this command);
+        * the derived spacecraft mode — sc_mode (and its telemetered copy
+          sat.mode 0x0001) is forced to SAFE at any phase < 6, so the console
+          header cannot read NOMINAL until this command has been sent;
+        * arming of the advanced fault-propagation model, which is disarmed
+          below phase 6 because during LEOP the wheels are legitimately
+          unpowered;
+        * the phase-gated legacy FDIR rules (fdir.yaml `min_phase`);
+        * the propulsion interlock — prop.yaml declares `min_phase: 6`, so
+          with the phase stuck at 4 no burn can ever be armed.
+
+      GUARDS. Out-of-range (> 6) is refused with 0x0C01. Phases 0-2 are
+      pre-separation states owned by the launch vehicle and are never
+      ground-commandable, forced or not (0x0C02) — commanding phase 0 would
+      stop the subsystem ticks that carry the uplink and lock the operator
+      out. Entering an application phase (>= 4) while the OBC is running the
+      bootloader is refused with 0x0C03; boot the application first with
+      OBC_BOOT_APP (func 55) and the state machine advances 3->4 by itself.
+      A BACKWARDS transition is refused with 0x0C04 unless the FORCE flag is
+      set: a real mission does not casually go NOMINAL -> LEOP, but an
+      operator rehearsing a regression or unwinding a premature declaration
+      must be able to, so the answer is reject-with-reason plus an explicit
+      opt-in, not a blanket refusal. Every accepted change raises the S5
+      event MISSION_PHASE_CHANGED (0x0055) carrying the from and to phases.
+    fields:
+      - name: phase
+        type: uint8
+        offset: 1
+        calibration: { type: enum }
+        default: 6
+        enum:
+          - { value: 3, label: BOOTLOADER_OPS, description: "OBC in bootloader, beacon HK only (backwards only, requires FORCE)" }
+          - { value: 4, label: LEOP, description: "Application software booted, sequential checkout" }
+          - { value: 5, label: COMMISSIONING, description: "All subsystems being checked out" }
+          - { value: 6, label: NOMINAL, description: "Declared operational — unlocks sc_mode NOMINAL and the propulsion interlock" }
+        description: "Target mission phase. 3-6 only; 0-2 are pre-separation states and are always refused."
+      - name: flags
+        type: uint8
+        offset: 2
+        default: 0
+        description: "Bit 0 = FORCE (permit a backwards transition). Bits 1-7 reserved, must be 0."
+
 # ═════════════════════════════════════════════════════════════════════
 # Phase E (brief 04 WP-5) — the MCS QUICK COMMANDS panel, schema-driven.
 # Each entry names a catalogued command plus ENGINEERING argument values;
@@ -2332,6 +2423,29 @@ quick_commands:
   - { group: "AOCS EQUIPMENT", label: "ST1 Off", command: ST1_POWER, name: ST1_OFF, args: { "on": 0 } }
   - { group: "AOCS EQUIPMENT", label: "ST2 On",  command: ST2_POWER, name: ST2_ON,  args: { "on": 1 } }
   - { group: "AOCS EQUIPMENT", label: "ST2 Off", command: ST2_POWER, name: ST2_OFF, args: { "on": 0 } }
+  # The three single-axis gyros. EO-Sat-1 has NO redundant IMU and NO IMU power
+  # LINE — the units are S2 devices 0x0206-0x0208 (518-520), one per body axis,
+  # and these buttons are the operator's only one-click power control for them.
+  # They were missing from this list, so the console's AOCS EQUIPMENT panel
+  # offered star-tracker and GPS power but nothing at all for the gyros: the
+  # commands existed in the catalogue and worked in the raw TC builder, but from
+  # the command page it looked exactly like "there is no IMU power command".
+  # Powering one off costs the estimator that body axis (aocs.gyro_units_on
+  # 0x0294 / aocs.gyro_units_mask 0x02D1 show which).
+  - { group: "AOCS EQUIPMENT", label: "Gyro X On",  command: S2_AOCS_GYROSCOPE_0, name: GYRO0_ON,  args: { device_id: 518, state: 1 } }
+  - { group: "AOCS EQUIPMENT", label: "Gyro X Off", command: S2_AOCS_GYROSCOPE_0, name: GYRO0_OFF, args: { device_id: 518, state: 0 } }
+  - { group: "AOCS EQUIPMENT", label: "Gyro Y On",  command: S2_AOCS_GYROSCOPE_1, name: GYRO1_ON,  args: { device_id: 519, state: 1 } }
+  - { group: "AOCS EQUIPMENT", label: "Gyro Y Off", command: S2_AOCS_GYROSCOPE_1, name: GYRO1_OFF, args: { device_id: 519, state: 0 } }
+  - { group: "AOCS EQUIPMENT", label: "Gyro Z On",  command: S2_AOCS_GYROSCOPE_2, name: GYRO2_ON,  args: { device_id: 520, state: 1 } }
+  - { group: "AOCS EQUIPMENT", label: "Gyro Z Off", command: S2_AOCS_GYROSCOPE_2, name: GYRO2_OFF, args: { device_id: 520, state: 0 } }
+  - { group: "AOCS EQUIPMENT", label: "Gyro Cal Start", command: AOCS_GYRO_CALIBRATION, name: GYRO_CAL_START, args: { action: 0, duration_s: 0 } }
+  - { group: "AOCS EQUIPMENT", label: "Gyro Cal Abort", command: AOCS_GYRO_CALIBRATION, name: GYRO_CAL_ABORT, args: { action: 1, duration_s: 0 } }
+  # 2026-08c item 4 (LEOP/COM card audit): ST_SELECT and the FINE-readiness
+  # probe are flown by the commissioning cards but had no quick entry.
+  # Wire encoding 1=ST1, 2=ST2 (0 refused).
+  - { group: "AOCS EQUIPMENT", label: "ST Select 1", command: ST_SELECT, name: ST_SEL_1, args: { unit: 1 } }
+  - { group: "AOCS EQUIPMENT", label: "ST Select 2", command: ST_SELECT, name: ST_SEL_2, args: { unit: 2 } }
+  - { group: "AOCS MODES", label: "Fine-Ready Check", command: AOCS_FINE_READY_CHECK, name: AOCS_FINE_CHECK, args: {} }
   - { group: "AOCS EQUIPMENT", label: "GPS Rx On",  command: S2_AOCS_GPS_RECEIVER, args: { device_id: 527, state: 1 } }
   - { group: "AOCS EQUIPMENT", label: "GPS Rx Off", command: S2_AOCS_GPS_RECEIVER, args: { device_id: 527, state: 0 } }
   - { group: "AOCS EQUIPMENT", label: "GPS Cold", command: AOCS_GPS_SET_START_MODE, name: AOCS_GPS_COLD, args: { start_mode: 0 } }
@@ -2350,10 +2464,30 @@ quick_commands:
   - { group: "EPS POWER LINES", label: "OBC Htr Off",  command: EPS_POWER_OFF, name: EPS_LINE6_OFF, args: { line_index: 6 } }
   - { group: "EPS POWER LINES", label: "AOCS Whl On",  command: EPS_POWER_ON,  name: EPS_LINE7_ON,  args: { line_index: 7 } }
   - { group: "EPS POWER LINES", label: "AOCS Whl Off", command: EPS_POWER_OFF, name: EPS_LINE7_OFF, args: { line_index: 7 } }
+  # 2026-08c item 3: line 8 (propulsion — catbed heater + valve drivers) was
+  # absent, so the prop line could only be switched from the raw builder and
+  # looked unswitchable from the console. Status 0x014A, current 0x014B.
+  - { group: "EPS POWER LINES", label: "Prop On",      command: EPS_POWER_ON,  name: EPS_LINE8_ON,  args: { line_index: 8 } }
+  - { group: "EPS POWER LINES", label: "Prop Off",     command: EPS_POWER_OFF, name: EPS_LINE8_OFF, args: { line_index: 8 } }
   - { group: "EPS POWER LINES", label: "Reset OC 0",   command: EPS_RESET_OC_FLAG, name: EPS_RESET_OC0, args: { line_index: 0 } }
+  # 2026-08c item 4: the LEOP solar-array cards command EPS_DEPLOY_WING but
+  # the console offered no button; both are one-shot pyro-class actions so
+  # they arm-through (critical).
+  - { group: "EPS POWER LINES", label: "Deploy Wing +Y", command: EPS_DEPLOY_WING, name: EPS_WING_PY, args: { wing: 0 }, critical: true }
+  - { group: "EPS POWER LINES", label: "Deploy Wing -Y", command: EPS_DEPLOY_WING, name: EPS_WING_MY, args: { wing: 1 }, critical: true }
+  # 2026-08c item 8: commanded load-shed stages, observable from 0x0134 and
+  # the LOAD_SHED_STAGE_n events; stage 0 clears the latch (no re-power).
+  - { group: "EPS POWER LINES", label: "Shed Stage 1", command: EPS_EMERGENCY_LOAD_SHED, name: EPS_SHED_1, args: { stage: 1 }, critical: true }
+  - { group: "EPS POWER LINES", label: "Shed Stage 2", command: EPS_EMERGENCY_LOAD_SHED, name: EPS_SHED_2, args: { stage: 2 }, critical: true }
+  - { group: "EPS POWER LINES", label: "Shed Stage 3", command: EPS_EMERGENCY_LOAD_SHED, name: EPS_SHED_3, args: { stage: 3 }, critical: true }
+  - { group: "EPS POWER LINES", label: "Shed Clear",   command: EPS_EMERGENCY_LOAD_SHED, name: EPS_SHED_0, args: { stage: 0 } }
   # ── TCS ──
   - { group: "TCS", label: "Bat Htr ON",   command: HEATER_BATTERY, name: HTR_BAT_ON,   args: { "on": 1 } }
   - { group: "TCS", label: "Bat Htr OFF",  command: HEATER_BATTERY, name: HTR_BAT_OFF,  args: { "on": 0 } }
+  # 2026-08c item 4: the OBC heater is commanded by the LEOP/TCS cards
+  # (HEATER_OBC, func 41) but only the battery heater had buttons.
+  - { group: "TCS", label: "OBC Htr ON",   command: HEATER_OBC, name: HTR_OBC_ON,  args: { "on": 1 } }
+  - { group: "TCS", label: "OBC Htr OFF",  command: HEATER_OBC, name: HTR_OBC_OFF, args: { "on": 0 } }
   - { group: "TCS", label: "FPA Cool ON",  command: FPA_COOLER,     name: FPA_COOL_ON,  args: { "on": 1 } }
   - { group: "TCS", label: "FPA Cool OFF", command: FPA_COOLER,     name: FPA_COOL_OFF, args: { "on": 0 } }
   # ── TTC ──
@@ -2366,9 +2500,18 @@ quick_commands:
   - { group: "TTC", label: "TX Pwr LOW (1W)",  command: TTC_SET_TX_POWER, name: TTC_TX_PWR_LOW, args: { level: 0 } }
   - { group: "TTC", label: "TX Pwr NOM (2W)",  command: TTC_SET_TX_POWER, name: TTC_TX_PWR_NOM, args: { level: 1 } }
   - { group: "TTC", label: "TX Pwr HIGH (5W)", command: TTC_SET_TX_POWER, name: TTC_TX_PWR_HIGH, args: { level: 2 } }
-  # The UHF beacon transmitter — the second radio, not the BEACON rate rung.
+  # The UHF beacon transmitter — the second radio, not the SAFE rate rung.
   - { group: "TTC", label: "Beacon TX ON",  command: TTC_BEACON_TX_ON,  args: {} }
   - { group: "TTC", label: "Beacon TX OFF", command: TTC_BEACON_TX_OFF, args: {} }
+  # 2026-08c item 4: BEACON *MODE* (the S-band rate-ladder latch, func 70)
+  # is a mandatory LEOP step — the ladder is pinned to the SAFE (1 kbps)
+  # rung until MODE OFF is sent — yet had no quick entry, so first contact
+  # stalled at 1 kbps with no obvious way out. Distinct from the UHF beacon
+  # transmitter buttons above.
+  - { group: "TTC", label: "Beacon Mode OFF", command: TTC_SET_BEACON_MODE, name: TTC_BCN_MODE_OFF, args: { "on": 0 } }
+  - { group: "TTC", label: "Beacon Mode ON",  command: TTC_SET_BEACON_MODE, name: TTC_BCN_MODE_ON,  args: { "on": 1 } }
+  - { group: "TTC", label: "XPDR Primary",   command: TTC_SWITCH_PRIMARY,   args: {} }
+  - { group: "TTC", label: "XPDR Redundant", command: TTC_SWITCH_REDUNDANT, args: {} }
   # ── PAYLOAD (textbook section 6.7 / section 14 ops-card command set) ──
   - { group: "PAYLOAD", label: "Standby", command: PAYLOAD_SET_MODE, name: PLD_STANDBY, args: { mode: 1 } }
   - { group: "PAYLOAD", label: "Imaging", command: PAYLOAD_SET_MODE, name: PLD_IMAGING, args: { mode: 2 } }
@@ -2395,6 +2538,11 @@ quick_commands:
   - { group: "PAYLOAD", label: "Cal FLAT",  command: PAYLOAD_START_CALIBRATION, name: PLD_CAL_FLAT, args: { mode: 1 } }
   - { group: "PAYLOAD", label: "Filter CLEAR", command: PAYLOAD_SELECT_FILTER, name: PLD_FILTER_CLEAR, args: { position: 0 } }
   - { group: "PAYLOAD", label: "Catalog Req", command: PAYLOAD_GET_IMAGE_CATALOG, name: PLD_CATALOG, args: {} }
+  # 2026-08c item 4: commissioning first-light flies func 94 (bridge to the
+  # S13 ground workflow). scene_id 1 = the first auto-assigned product id
+  # (PAYLOAD_CAPTURE with scene_id 0 auto-assigns from 1); 0 is out of the
+  # field's declared range.
+  - { group: "PAYLOAD", label: "Xfer scene 1", command: PAYLOAD_INITIATE_TRANSFER, name: PLD_XFER_1, args: { scene_id: 1 } }
   # ── PROPULSION ──
   # The two-step arm sequence in the order NOM-004 flies it: load the burn,
   # arm within 300 s, execute. SET_BURN / ARM / EXECUTE / ABORT carry
@@ -2421,6 +2569,17 @@ quick_commands:
   - { group: "OBDH", label: "Boot App",   command: OBC_BOOT_APP,    args: {} }
   - { group: "OBDH", label: "Mem Scrub",  command: OBC_MEMORY_SCRUB, name: OBC_MEM_SCRUB, args: {} }
   - { group: "OBDH", label: "GPS Time Sync", command: OBC_GPS_TIME_SYNC, args: {} }
+  # 2026-08c item 4/7: OBC mode is commanded by the COM/contingency cards
+  # (OBC_SET_MODE, func 50: 0=nominal 1=safe 2=emergency — drives the
+  # contingency banner via obdh.mode 0x0300) but had no quick entry.
+  - { group: "OBDH", label: "OBC Mode SAFE",    command: OBC_SET_MODE, name: OBC_MODE_SAFE, args: { mode: 1 }, critical: true }
+  - { group: "OBDH", label: "OBC Mode NOMINAL", command: OBC_SET_MODE, name: OBC_MODE_NOM,  args: { mode: 0 } }
+  - { group: "OBDH", label: "Boot Inhibit SET", command: OBC_BOOT_INHIBIT, name: OBC_BI_SET, args: { inhibit: 1 } }
+  - { group: "OBDH", label: "Boot Inhibit CLR", command: OBC_BOOT_INHIBIT, name: OBC_BI_CLR, args: { inhibit: 0 } }
+  # 2026-08c item 4: the phase declarations LEOP/COM end on (S8 func 120).
+  # Backwards transitions need FORCE and stay in the raw builder only.
+  - { group: "OBDH", label: "Phase 5 COMMISSIONING", command: SYS_SET_MISSION_PHASE, name: SYS_PHASE_5, args: { phase: 5, flags: 0 }, critical: true }
+  - { group: "OBDH", label: "Phase 6 NOMINAL",       command: SYS_SET_MISSION_PHASE, name: SYS_PHASE_6, args: { phase: 6, flags: 0 }, critical: true }
   # ── GENERAL ──
   - { group: "GENERAL", label: "Conn Test",  command: CONNECTION_TEST, name: CONN_TEST, args: {} }
   - { group: "GENERAL", label: "Deploy Ant", command: TTC_DEPLOY_ANTENNA, name: TTC_DEPLOY_ANT, args: {} }

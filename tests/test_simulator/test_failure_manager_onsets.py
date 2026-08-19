@@ -53,7 +53,13 @@ def rec():
 
 @pytest.fixture
 def fm(rec):
-    return FailureManager(inject_fn=rec.inject, clear_fn=rec.clear)
+    # These tests are about ONSET TIMING and drive the manager with synthetic
+    # failure names and a recording stub instead of real models, so the
+    # parameter-spec validation (which needs a real subsystem/failure pair)
+    # is off here. Validation itself is covered by
+    # tests/test_simulator/test_failure_param_specs.py.
+    return FailureManager(inject_fn=rec.inject, clear_fn=rec.clear,
+                          validate_params=False)
 
 
 # ── Step onset ──────────────────────────────────────────────────────
@@ -210,7 +216,7 @@ class TestIntermittentOnset:
             # Plan A-2: reproducibility comes from the manager's own seeded
             # rng (the engine passes one derived from simulation.yaml `seed`),
             # not from the module-global random.seed().
-            manager = FailureManager(recorder.inject, recorder.clear,
+            manager = FailureManager(recorder.inject, recorder.clear, validate_params=False,
                                      rng=random.Random(1234))
             manager.inject("ttc", "tx_intermittent", magnitude=1.0,
                            onset=ONSET_INTERMITTENT)
@@ -234,7 +240,7 @@ class TestIntermittentOnset:
         """The configured on/off windows are the ones sampled."""
         sampled: list[tuple[float, float]] = []
 
-        manager = FailureManager(rec.inject, rec.clear, config={
+        manager = FailureManager(rec.inject, rec.clear, validate_params=False, config={
             "default_onset_duration_s": 30.0,
             "intermittent": {"first_flicker_s": [1.0, 1.0],
                              "on_s": [2.0, 2.0],
@@ -351,7 +357,8 @@ class TestFailureIdentity:
         def boom(cmd):
             raise RuntimeError("model exploded")
 
-        manager = FailureManager(inject_fn=boom, clear_fn=rec.clear)
+        manager = FailureManager(inject_fn=boom, clear_fn=rec.clear,
+                                 validate_params=False)
         manager.inject("aocs", "rw_bearing", magnitude=1.0,
                        onset=ONSET_GRADUAL, onset_duration_s=10.0)
         manager.tick(5.0)  # must not raise
@@ -369,7 +376,7 @@ class TestConfiguration:
         assert fm._flicker_off_s == tuple(DEFAULT_FLICKER_OFF_S)
 
     def test_config_dict_overrides_onset_duration(self, rec):
-        manager = FailureManager(rec.inject, rec.clear, config={
+        manager = FailureManager(rec.inject, rec.clear, validate_params=False, config={
             "default_onset_duration_s": 20.0,
         })
         manager.inject("aocs", "rw_bearing", magnitude=1.0,
@@ -383,11 +390,11 @@ class TestConfiguration:
             default_onset_duration_s = 40.0
             intermittent = None
 
-        manager = FailureManager(rec.inject, rec.clear, config=Cfg())
+        manager = FailureManager(rec.inject, rec.clear, validate_params=False, config=Cfg())
         assert manager._default_onset_s == 40.0
 
     def test_partial_config_keeps_the_remaining_defaults(self, rec):
-        manager = FailureManager(rec.inject, rec.clear, config={
+        manager = FailureManager(rec.inject, rec.clear, validate_params=False, config={
             "intermittent": {"on_s": [7.0, 7.0]},
         })
         assert manager._flicker_on_s == (7.0, 7.0)

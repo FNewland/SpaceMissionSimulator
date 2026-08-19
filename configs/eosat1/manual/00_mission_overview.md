@@ -153,6 +153,79 @@ The MCS supports 6 operator positions with role-based access control:
 | Extended Operations  | EOM+           | Reduced operations if mission is extended            |
 | Decommissioning      | Final phase    | Passivation and controlled deorbit                   |
 
+### 6.0 The On-Board Mission Phase — and What It Gates
+
+The spacecraft carries the mission phase as live state, in `eps.spacecraft_phase`
+(0x0129):
+
+| Value | Name | Meaning |
+|---|---|---|
+| 0 | PRE_SEPARATION   | Everything OFF, no subsystem ticks |
+| 1 | SEPARATION_TIMER | 30-minute regulatory hold running, everything still OFF |
+| 2 | INITIAL_POWER_ON | Timer expired, unswitchable lines (OBC + RX) enabled |
+| 3 | BOOTLOADER_OPS   | OBC running the bootloader, beacon HK only |
+| 4 | LEOP             | Application software booted, sequential checkout |
+| 5 | COMMISSIONING    | All subsystems being checked out |
+| 6 | NOMINAL          | Declared operational |
+
+The phase is **not a label**. It is an interlock on six mechanisms, and an
+operator who does not advance it will find the spacecraft quietly refusing to
+work:
+
+1. **Subsystem ticking** — nothing runs at phases 0–1.
+2. **Telecommand acceptance** — at phase ≤ 3 the OBC is in the bootloader and
+   only the bootloader command subset is accepted (S17.1, S9.1, S3 beacon HK,
+   S20.1/3, and S8.1 funcs 19/20, 52–57, 61, 66/67, 69, 120). Everything else
+   is refused at acceptance with failure code 0x0006.
+3. **The derived spacecraft mode** — `sc_mode`, and its telemetered copy
+   `sat.mode` (0x0001), is forced to SAFE at any phase below 6 regardless of
+   spacecraft health. The console header cannot read NOMINAL until NOMINAL has
+   been declared.
+4. **Advanced FDIR arming** — the fault-propagation and recovery model is
+   disarmed below phase 6, because during LEOP the reaction wheels are
+   legitimately unpowered and the cascade rules would declare a double wheel
+   failure on the first tick.
+5. **Phase-gated legacy FDIR rules** — the two rules in
+   `subsystems/fdir.yaml` that carry a `min_phase` (`aocs.wheels_enabled` and
+   `aocs.att_error`) arm only at phase 6. The rest, all hardware protection,
+   stay armed in every phase.
+6. **The propulsion interlock** — `subsystems/prop.yaml` declares
+   `min_phase: 6`, so **no burn can be armed** until NOMINAL is declared.
+
+The state machine advances **1 → 2 → 3 → 4 by itself** (separation timer, OBC
+power-up, application boot) and reverts to 3 on an OBC reboot. It never sets 5
+or 6: **COMMISSIONING and NOMINAL are ground declarations**, made with the
+telecommand `SYS_SET_MISSION_PHASE` (S8.1, func_id 120, criticality
+`critical`):
+
+```
+SYS_SET_MISSION_PHASE(phase = 3..6, flags)
+    flags bit 0 = FORCE (permit a backwards transition)
+```
+
+* Phase 5 is declared at the end of **LEOP-007** (Sequential Power-On), Step 8.
+* Phase 6 is declared at the end of **COM-013** (ADCS Full Commissioning),
+  Step 14, after the pre-transition checklist in `09_leop.md` §9.1.
+
+Guards, each with its own failure code so the console names the refusal:
+
+| Code | Refusal |
+|---|---|
+| 0x0C01 | Target phase outside 0–6 |
+| 0x0C02 | Phases 0–2 are pre-separation states and are never ground-commandable, forced or not — commanding phase 0 or 1 would stop the ticks that carry the uplink |
+| 0x0C03 | Cannot enter an application phase (≥ 4) while the OBC is in the bootloader; send `OBC_BOOT_APP` (func 55) and the state machine advances on its own |
+| 0x0C04 | Backwards transition without the FORCE flag |
+
+**Backwards transitions are permitted, but only deliberately.** A real mission
+does not casually return from NOMINAL to LEOP, so an unflagged attempt is
+rejected with a reason that names the flag; an operator unwinding a premature
+declaration re-sends with `flags = 1` and the event log records the transition
+as FORCED. Refusing outright would leave a premature declaration with no
+remedy.
+
+Every accepted change raises the S5 event `MISSION_PHASE_CHANGED` (0x0055)
+carrying the from-phase and the to-phase.
+
 ### 6.1 Separation Sequence
 
 The separation sequence from the launcher follows a 7-phase state machine:
@@ -164,7 +237,7 @@ The separation sequence from the launcher follows a 7-phase state machine:
 | POWER_STABILIZE   | ~30 s      | EPS initialises, unswitchable lines power OBC+RX  |
 | TIMER_WAIT        | ~30 min    | Regulatory hold: no transmissions for 30 minutes  |
 | ANTENNA_DEPLOY    | ~60 s      | Burn wire antenna deployment                      |
-| BEACON_START      | ~10 s      | Begin beacon transmissions (SID 11, low-rate)     |
+| BEACON_START      | ~10 s      | Begin beacon transmissions (SID 11, SAFE tier 1 kbps) |
 | NOMINAL           | —          | Transition to LEOP operations                     |
 
 During the 30-minute timer wait, only the OBC (via unswitchable PDM line) and receiver

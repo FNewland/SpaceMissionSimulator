@@ -184,11 +184,31 @@ class TestClientFallbacksMatchConfig:
                      "pol: STALENESS};", tmp_path)
         _, expected_sub = _config_join()
         served = {k: v["interval_s"] for k, v in out["sub"].items()}
-        assert served == expected_sub
+        # 2026-08 (design_2026-08 disposition M5-M7): the FDIR summary
+        # parameters 0x0700-0x0703 joined platform HK SID 4, so the config
+        # join now ALSO yields an "fdir" subsystem cadence (8 s). The classic
+        # page is frozen byte-for-byte during the UI reorganisation
+        # (tests/test_common/test_classic_untouched.py), so its shipped
+        # fallback table cannot learn the new subsystem — and does not need
+        # to: classic has no fdir-cadence chart, and the live values arrive
+        # via /api/client-config anyway. The fallback must still match the
+        # configuration exactly for every subsystem it carries.
+        assert set(expected_sub) - set(served) <= {"fdir"}, (
+            "config join gained a subsystem beyond the frozen-classic "
+            "allowance — extend the modern page and this allowance together")
+        assert served == {k: v for k, v in expected_sub.items() if k in served}
         hk = yaml.safe_load((CONFIG_DIR / "telemetry" / "hk_structures.yaml").read_text())
         expected_sids = {str(int(s["sid"])): float(s["interval_s"])
                          for s in hk["structures"]}
-        assert out["sid"] == expected_sids
+        # 2026-08c: SID 12 (GPS_NAV — the new GPS PVT block) joined the
+        # configuration. Same frozen-classic allowance as "fdir" above: the
+        # classic page's shipped fallback table is byte-frozen and cannot
+        # learn a new SID; the live intervals arrive via /api/client-config.
+        missing = set(expected_sids) - set(map(str, out["sid"]))
+        assert missing <= {"12"}, (
+            f"classic fallback is missing SIDs beyond the frozen allowance: "
+            f"{sorted(missing)}")
+        assert {k: v for k, v in expected_sids.items() if k not in missing}             == {str(k): float(v) for k, v in out["sid"].items()}
         cfg = yaml.safe_load(STALENESS_YAML.read_text())["staleness"]
         for key, value in cfg.items():
             assert out["pol"][key] == pytest.approx(float(value))

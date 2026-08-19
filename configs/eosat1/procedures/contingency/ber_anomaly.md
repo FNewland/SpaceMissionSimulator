@@ -31,8 +31,8 @@ rate reduction and transponder switchover if the primary unit is degraded.
 | ttc.carrier_lock | 0x0510 | 1 (locked) |
 | ttc.bit_sync | 0x0511 | 1 (synchronized) |
 | ttc.frame_sync | 0x0512 | 1 (synchronized) |
-| ttc.tm_data_rate | 0x0506 | Active information rate (BEACON 1000 / LOW 16000 / HIGH 128000 bps) |
-| ttc.tm_tier | 0x0539 | ACTIVE tier index (0=BEACON, 1=LOW, 2=HIGH) |
+| ttc.tm_data_rate | 0x0506 | Active information rate (SAFE 1000 / LOW 16000 / HIGH 128000 bps) |
+| ttc.tm_tier | 0x0539 | ACTIVE tier index (0=SAFE, 1=LOW, 2=HIGH) |
 | ttc.tm_tier_cmd | 0x053A | COMMANDED tier index |
 | ttc.downlink_mode | 0x053C | 1 while a dump is in progress |
 | ttc.contact_elevation | 0x050A | Current elevation (HIGH needs >= 10 deg) |
@@ -98,7 +98,7 @@ of the transponder zone.
 (128 kbps) to LOW (16 kbps) buys 9.03 dB of Eb/N0 — the `-10*log10(R)` term — and also
 changes the waveform from QPSK RS(255,223) to BPSK conv(7,1/2)+RS, worth a further
 1.5 dB of coding gain. If the link is already at LOW there is no operational rung below
-it: BEACON is the bootloader lifeline and is not commandable here, so skip to Step 5.
+it: SAFE (1 kbps, ex-BEACON) is the bootloader lifeline and is not commandable here, so skip to Step 5.
 **TC:** `TTC_SET_DATA_RATE(rate=0)` (Service 8, Subtype 1, func_id 65) — Step down to LOW
 **TC:** `TTC_SET_DATA_RATE(rate=0)` (Service 8, Subtype 1, func_id 65)
 **Verify:** `ttc.tm_data_rate` (0x0506) = 16000 bps within 10 s
@@ -153,7 +153,7 @@ configuration.
   60 s, attempt to switch back: `TTC_SWITCH_PRIMARY` (func_id 63). If still no link,
   follow CTG-003.
 - If both transponders show degraded BER: Suspect antenna or feed network issue. Hold
-  at LOW (16 kbps — the lowest commandable operational rung; BEACON is bootloader-only)
+  at LOW (16 kbps — the lowest commandable operational rung; the SAFE rung is bootloader-only)
   and increase TX power to high: `TTC_SET_TX_POWER(level=2)`.
   Escalate to engineering team.
 - If PA fails to re-enable after cooldown: PA may have permanent failure. Switch to

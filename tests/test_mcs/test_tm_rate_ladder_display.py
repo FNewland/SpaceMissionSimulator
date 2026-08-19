@@ -60,7 +60,7 @@ class TestLadderIsConfigDriven:
         labels = {t["name"]: t["label"] for t in server._tm_rate_ladder}
         assert labels["LOW"] == "LOW (16 kbps, BPSK, conv+RS)"
         assert labels["HIGH"] == "HIGH (128 kbps, QPSK, RS(255,223))"
-        assert labels["BEACON"] == "BEACON (1 kbps, BPSK, conv+RS)"
+        assert labels["SAFE"] == "SAFE (1 kbps, BPSK, conv+RS)"
         # No NOMINAL-style bare number survives anywhere in the ladder.
         for label in labels.values():
             assert "kbps" in label or "bps" in label
@@ -93,15 +93,16 @@ class TestActiveVersusCommanded:
 
     def test_a_demoted_link_is_visible_not_hidden(self, server):
         """HIGH commanded, LOW active — the console must say so, and say why."""
+        # 2026-08c item 5: elevation is a GROUND policy now, so an on-board
+        # demotion is explained by a real on-board gate — here, the antenna.
         view = server._build_link_tier_view({
             "tm_tier": 1, "tm_tier_cmd": 2,
-            "downlink_mode": True, "antenna_deployed": True,
-            "elevation_deg": 6.0})
+            "downlink_mode": True, "antenna_deployed": False,
+            "elevation_deg": 45.0})
         assert view["tm_tier_name"] == "LOW"
         assert view["tm_tier_cmd_name"] == "HIGH"
         assert view["tm_tier_demoted"] is True
-        assert "10 deg" in view["tm_tier_demotion_reason"]
-        assert "6.0" in view["tm_tier_demotion_reason"]
+        assert "antenna" in view["tm_tier_demotion_reason"]
 
     def test_demotion_reason_names_the_mode_gate(self, server):
         view = server._build_link_tier_view({

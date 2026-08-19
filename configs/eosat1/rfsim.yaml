@@ -24,7 +24,7 @@ ccsds:
   rs_enabled: true         # Reed-Solomon RS(255,223)
   convolutional_enabled: false  # Disabled: pure-Python Viterbi too slow (~5s/frame). RS-only provides adequate FEC. Enable when using GNU Radio C++ Viterbi.
   # Follow the spacecraft's active TM rate tier's FEC (subsystems/ttc.yaml
-  # tm_rate_tiers): BEACON/LOW code conv(7,1/2)+RS, HIGH codes RS only.
+  # tm_rate_tiers): SAFE/LOW code conv(7,1/2)+RS, HIGH codes RS only.
   # Left OFF by default for the same Viterbi-speed reason; the reported coding
   # still follows the tier in telemetry and in the radio UI. Turn this on
   # together with a C++ Viterbi and the low tiers gain their extra ~1.5 dB.
@@ -111,7 +111,7 @@ channel:
 # the same eirp_dbw / gs_g_t_db / atmospheric_loss_db / implementation_loss_db
 # / polarization_loss_db / coding_gain_db keys and computes the spacecraft-side
 # budget from them. coding_gain_db here is the RS(255,223)-only figure, i.e.
-# the HIGH tier; the BEACON and LOW tiers carry 7.5 dB per-tier in ttc.yaml
+# the HIGH tier; the SAFE and LOW tiers carry 7.5 dB per-tier in ttc.yaml
 # for conv(7,1/2)+RS.
 link_budget:
   enabled: true

@@ -1,103 +1,109 @@
 # LEOP-005: Sun Acquisition
 **Subsystem:** AOCS
 **Phase:** LEOP
-**Revision:** 1.0
+**Revision:** 2.0 --- 2026-08c flow redesign. The DETUMBLE -> COARSE_SUN
+transition is AUTOMATIC (rates < 0.5 deg/s sustained 30 s ---
+`docs/plan_2026-08c/AOCS_MODE_TRANSITIONS.md` 1.2): this card OBSERVES it and
+verifies the sun hold; it commands no mode change. Reaction-wheel checks are
+gone --- the wheels are disabled until COM-004 and COARSE_SUN flies on
+magnetorquers.
 **Approved:** Flight Operations Director
 
+**Entry state:** LEOP-007 exit state --- AOCS in DETUMBLE on magnetometer + MTQ,
+SID 2 downlinking, wheels DISABLED, GPS receiver acquiring, wings deployed.
+
 ## Purpose
-Verify that the AOCS detumble mode is actively reducing body rates following launcher
-separation. Monitor rate damping progress using gyroscope and magnetometer data.
-Once body rates are below threshold, transition to safe_point mode to achieve and
-maintain sun-pointing attitude for positive power balance and thermal stability.
+Monitor the automatic rate-damping and sun-acquisition sequence: watch B-dot
+detumble bring body rates below threshold, observe the AUTOMATIC handover to
+COARSE_SUN, and verify the spacecraft settles into a power-positive sun hold.
+COARSE_SUN is where LEOP legitimately parks: with no star tracker powered yet,
+the automatic promotion out of COARSE_SUN cannot trigger (it requires ST
+tracking), so the spacecraft holds the sun-safe attitude until commissioning
+brings the trackers up (COM-003).
 
 ## Prerequisites
-- [ ] LEOP-001 (First Acquisition) completed successfully
-- [ ] LEOP-002 (Initial Health Check) completed — AOCS subsystem nominal
-- [ ] LEOP-004 (Solar Array Verification) completed — arrays deployed
-- [ ] `aocs.mode` (0x020F) = 2 (DETUMBLE) confirmed
-- [ ] All four reaction wheels reporting telemetry
-- [ ] `eps.bat_soc` (0x0101) > 40% (sufficient power for AOCS operations)
-- [ ] Bidirectional S-band link active
+- [ ] LEOP-007 completed --- `aocs.mode` (0x020F) = 2 (DETUMBLE),
+      `aocs.mag_enabled` (0x025C) = 1, `aocs.mtq_enabled` (0x025E) = 1
+- [ ] LEOP-004 completed --- wings deployed (power for the hold)
+- [ ] `eps.bat_soc` (0x0101) > 40%
+- [ ] SID 2 periodic housekeeping on the downlink (contact scheduled; this
+      card spans more than one pass if tip-off rates are high --- the autonomy
+      does not need the ground watching to proceed)
 
 ## Procedure Steps
 
-### Step 1 — Confirm AOCS Detumble Mode Active
+### Step 1 --- Record Initial Body Rates
 **TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27)
 **Verify:** `aocs.mode` (0x020F) = 2 (DETUMBLE) within 10s
-**Action:** If AOCS not in detumble, command it explicitly.
-**TC:** `AOCS_SET_MODE(mode=2)` (Service 8, Subtype 1, func_id 0) — conditional, only if mode != 2
-**GO/NO-GO:** AOCS confirmed in DETUMBLE mode
-
-### Step 2 — Record Initial Body Rates
-**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27)
-**Verify:** `aocs.rate_roll` (0x0204) reported within 10s — record value
-**Verify:** `aocs.rate_pitch` (0x0205) reported within 10s — record value
-**Verify:** `aocs.rate_yaw` (0x0206) reported within 10s — record value
+**Verify:** `aocs.rate_roll` (0x0204) reported within 10s --- record value
+**Verify:** `aocs.rate_pitch` (0x0205) reported within 10s --- record value
+**Verify:** `aocs.rate_yaw` (0x0206) reported within 10s --- record value
 **Action:** Log initial rates as baseline. Expected post-separation rates: 0.5 to 5.0 deg/s per axis typical.
-**GO/NO-GO:** Rate telemetry valid and consistent with gyro/magnetometer cross-check
+**GO/NO-GO:** Rate telemetry valid, DETUMBLE confirmed active
 
-### Step 3 — Monitor Rate Damping Progress (5-minute interval)
-**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — repeat at T+5 min
-**Verify:** `aocs.rate_roll` (0x0204) < previous value within 10s
-**Verify:** `aocs.rate_pitch` (0x0205) < previous value within 10s
-**Verify:** `aocs.rate_yaw` (0x0206) < previous value within 10s
-**Action:** Confirm all three axes show decreasing rates. Rate damping via B-dot magnetorquer control should reduce rates by approximately 50% every 10-15 minutes.
+### Step 2 --- Monitor Rate Damping (observe --- command nothing)
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) --- repeat at T+5 min
+**Verify:** `aocs.rate_roll` (0x0204) decreasing within 10s
+**Verify:** `aocs.rate_pitch` (0x0205) decreasing within 10s
+**Verify:** `aocs.rate_yaw` (0x0206) decreasing within 10s
+**Action:** B-dot should halve the rates roughly every 10-15 minutes. Verify magnetorquer duty via `aocs.mag_field_total` (0x0277) --- a zeroed field means the magnetometer dropped out and B-dot is blind.
 **GO/NO-GO:** All body rates trending downward
 
-### Step 4 — Verify Rate Damping Convergence
-**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — repeat at T+15 min
+### Step 3 --- Observe the AUTOMATIC Transition to COARSE_SUN
+**Action:** When the body rates have been below 0.5 deg/s for 30 s sustained,
+the AOCS hands itself from DETUMBLE to COARSE_SUN.
+**Note:** This is an AUTOMATIC transition --- do NOT command mode 3 (S8.1
+func 0). The old revision of this card commanded the mode it was about to get
+for free, and then "verified" a transition the spacecraft had already made on
+its own.
+**Verify:** `aocs.mode` (0x020F) = 3 (COARSE_SUN) within 1800s of rates
+falling below 0.5 deg/s
+**Verify:** Event `AOCS mode change` in the event log carrying DETUMBLE -> COARSE_SUN
+**GO/NO-GO:** Automatic handover observed and logged
+
+### Step 4 --- Verify the Sun Hold
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) --- repeat every 60s for 5 minutes
+**Verify:** `aocs.att_error` (0x0217) < 15.0 deg within 600s --- converging on the sun vector
+**Verify:** `aocs.css_sun_confidence` (0x0215) > 0.5 within 60s --- CSS sees the sun
 **Verify:** `aocs.rate_roll` (0x0204) < 0.5 deg/s within 10s
 **Verify:** `aocs.rate_pitch` (0x0205) < 0.5 deg/s within 10s
 **Verify:** `aocs.rate_yaw` (0x0206) < 0.5 deg/s within 10s
-**GO/NO-GO:** Body rates below 0.5 deg/s threshold — ready for safe_point transition
+**Note:** COARSE_SUN without wheels flies on magnetorquers: expect a degree-
+class, slowly-hunting hold, not a wheel-tight one. Rates of a few hundredths
+to ~0.2 deg/s while it hunts are normal here.
+**GO/NO-GO:** Sun-pointing achieved within 15 degrees and holding
 
-### Step 5 — Check Reaction Wheel Readiness
-**Action:** Before transitioning to safe_point, confirm all reaction wheels are in standby and ready for three-axis control.
-**Verify:** `aocs.rw1_speed` (0x0207) = 0 RPM (idle) within 10s
-**Verify:** `aocs.rw2_speed` (0x0208) = 0 RPM (idle) within 10s
-**Verify:** `aocs.rw3_speed` (0x0209) = 0 RPM (idle) within 10s
-**Verify:** `aocs.rw4_speed` (0x020A) = 0 RPM (idle) within 10s
-**GO/NO-GO:** All reaction wheels ready for activation
-
-### Step 6 — Transition to Safe Point Mode
-**TC:** `AOCS_SET_MODE(mode=3)` (Service 8, Subtype 1, func_id 0)
-**Verify:** `aocs.mode` (0x020F) = 3 (COARSE_SUN) within 30s
-**Action:** Safe_point mode commands reaction wheels to orient +Z axis toward the sun using coarse sun sensor data. Monitor attitude convergence.
-**GO/NO-GO:** Mode transition accepted, AOCS reports COARSE_SUN
-
-### Step 7 — Monitor Sun Acquisition Convergence
-**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — repeat every 60s for 5 minutes
-**Verify:** `aocs.att_error` (0x0217) decreasing over successive samples within 60s
-**Verify:** `aocs.att_error` (0x0217) < 10.0 deg within 300s
-**Action:** Attitude error should converge to < 10 degrees within 5 minutes of safe_point entry. Monitor reaction wheel speeds for balanced momentum distribution.
-**GO/NO-GO:** Sun-pointing achieved within 10 degree accuracy
-
-### Step 8 — Verify Power Generation Improvement
+### Step 5 --- Verify Power Generation in the Hold
 **TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
 **Verify:** `eps.power_gen` (0x0107) > 40W within 60s (sun-pointed, wings deployed)
 **Verify:** `eps.bat_soc` (0x0101) stable or increasing within 120s
-**GO/NO-GO:** Positive power balance achieved in safe_point mode
+**GO/NO-GO:** Positive power balance in COARSE_SUN
 
-### Step 9 — Log Final AOCS State
-**Action:** Record final body rates, attitude error, reaction wheel speeds, and power generation. Confirm stable sun-pointing. Issue Sun Acquisition Report.
-**Verify:** `aocs.rate_roll` (0x0204) < 0.1 deg/s within 10s
-**Verify:** `aocs.rate_pitch` (0x0205) < 0.1 deg/s within 10s
-**Verify:** `aocs.rate_yaw` (0x0206) < 0.1 deg/s within 10s
-**GO/NO-GO:** Stable sun-pointing confirmed — LEOP-005 complete
+### Step 6 --- Log Final AOCS State
+**Action:** Record final body rates, attitude error, CSS confidence and power
+generation. Note explicitly that the spacecraft REMAINS in COARSE_SUN: with no
+star tracker powered, the automatic promotion out of the hold cannot fire, and
+that is the intended LEOP parking state. Issue Sun Acquisition Report.
+**GO/NO-GO:** Stable sun hold confirmed --- LEOP-005 complete
 
 ## Off-Nominal Handling
-- If body rates not decreasing after 15 min: Verify magnetorquer operation via `GET_PARAM(param_id=0x025E)` (`aocs.mtq_enabled`). Check magnetic field model validity for current orbit position. If magnetorquers non-responsive, attempt `AOCS_SET_MODE(mode=2)` reset (re-enter DETUMBLE). Escalate to AOCS engineer.
-- If rates below threshold but safe_point transition fails: Re-check reaction wheel telemetry. If any wheel faulted, attempt `AOCS_SET_MODE(mode=3)` again. If persistent failure, remain in detumble and assess three-wheel contingency.
-- If attitude error not converging in safe_point: Verify coarse sun sensor data via `GET_PARAM(param_id=0x0215)` (`aocs.css_sun_confidence`). If sun sensor readings invalid (spacecraft in eclipse), wait for next sunlit phase and retry.
-- If power generation < 50W after sun-pointing: Check array deployment status (LEOP-004). Verify attitude — may need star tracker commissioning for more precise pointing. Acceptable for LEOP phase if battery SOC maintained above 40%.
-- If single reaction wheel anomaly: AOCS can operate on three wheels. Log failure, continue sun acquisition. Schedule detailed wheel checkout during commissioning (COM-004).
+- If body rates not decreasing after 15 min: verify `aocs.mtq_enabled` (0x025E) = 1 and `aocs.mag_enabled` (0x025C) = 1. If either dropped, re-establish per LEOP-007 Step 4 and re-command DETUMBLE with S8.1 func 0 mode 2 --- re-commanding the mode you are already in is harmless. Escalate to AOCS engineer if rates still hold.
+- If the automatic COARSE_SUN handover does not occur within 30 min of rates < 0.5 deg/s: the sustain condition may be breaking (a rate axis oscillating around 0.5). Watch the per-axis rates; if one axis will not settle, suspect a magnetorquer polarity or magnetometer axis fault and escalate. Do not force the mode by command --- a COARSE_SUN entered above the rate threshold will not hold.
+- If attitude error not converging in COARSE_SUN: verify `aocs.css_sun_confidence` (0x0215). Low confidence in eclipse is expected --- the CSS cannot see the sun; wait for the sunlit arc and re-verify.
+- If power generation < 40W after sun-pointing: check array status (LEOP-004) and attitude. Acceptable for LEOP if SoC is maintained above 40%.
+
+## Exit state
+- AOCS in COARSE_SUN (automatic, mode 3) --- the LEOP parking hold; wheels
+  still DISABLED; star trackers and gyros still OFF
+- Power-positive: generation > 40W, SoC stable or rising
+- Nothing else changed by this card
 
 ## Post-Conditions
-- [ ] Body rates damped to < 0.1 deg/s on all axes
-- [ ] AOCS in COARSE_SUN mode (mode 3)
-- [ ] Sun-pointing achieved with attitude error < 10 degrees
-- [ ] Power generation > 40W confirming positive energy balance
-- [ ] Battery SOC stable or increasing
-- [ ] All four reaction wheels operational
+- [ ] Rate damping profile recorded (baseline to < 0.5 deg/s)
+- [ ] Automatic DETUMBLE -> COARSE_SUN handover observed (not commanded)
+- [ ] Sun hold verified: att_error < 15 deg, CSS confidence > 0.5
+- [ ] Positive power balance confirmed
 - [ ] Sun Acquisition Report distributed
-- [ ] GO decision for LEOP-006 (Time Synchronisation)
+
+**NEXT:** LEOP-006 (Time Synchronisation --- ground path immediately, GPS path
+once the receiver powered in LEOP-007 holds a fix)

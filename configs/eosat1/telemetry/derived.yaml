@@ -16,3 +16,21 @@ derived_parameters:
   - { id: 0x0800, name: contact.current_gs, source: ground, units: "", description: "Current ground station index (ground: orbit propagation vs ground_stations.yaml)" }
   - { id: 0x0801, name: contact.time_to_aos, source: ground, units: s, description: "Time to acquisition of signal (ground: next contact window)" }
   - { id: 0x0802, name: contact.in_contact, source: ground, units: "", description: "Currently in contact (ground: elevation above the station mask)" }
+
+  # ── Derived-parameter block v2 (POSITION_NEEDS G1 + G3) ────────────────
+  # Computed each state poll by smo_mcs.derived_params.DerivedParamEngine
+  # from received TM + the recent TM-archive slope + mcs/limits.yaml
+  # thresholds + the MCS orbit propagator. Published in the /api/state
+  # payload under `derived`, keyed by name. EVERY value carries an explicit
+  # {valid, reason} pair: no archive history, no telemetry, or no trend
+  # toward the threshold ⇒ valid:false and value:null — never a fabricated
+  # number. Identical behaviour in real mode (received TM + ground orbit
+  # knowledge only; nothing here reads simulator truth).
+  - { id: 0x0803, name: eps.soc_at_eclipse_exit_pred, source: ground, units: "%", description: "Predicted battery SoC at eclipse exit (ground: archive SoC slope projected over time_to_eclipse_exit; valid only in eclipse) — PT5" }
+  - { id: 0x0804, name: eps.time_to_soc_yellow, source: ground, units: s, description: "Time until eps.bat_soc crosses its limits.yaml yellow-low at the current archive slope (valid only while falling) — PT6" }
+  - { id: 0x0805, name: aocs.time_to_mom_70pct, source: ground, units: s, description: "Time until aocs.momentum_saturation_pct reaches 70% (the fine_ready bit-4 / desat-planning threshold) at the current archive slope — AO4" }
+  - { id: 0x0806, name: obdh.time_to_buf_full, source: ground, units: s, description: "Worst-case time until an OBDH store (HK/event/alarm buffer fill) reaches 100% at the current archive slope — FS8" }
+  - { id: 0x0807, name: ttc.pass_data_capacity_bytes, source: ground, units: bytes, description: "Downlink capacity of the current pass remainder (in contact) or the next predicted pass: active TM tier rate x pass seconds — TC5 input" }
+  - { id: 0x0808, name: prop.catbed_ready_eta, source: ground, units: s, description: "Time until catbed temperature reaches interlocks.catbed_min_c (subsystems/prop.yaml) at the current archive heat-up slope — PR3" }
+  - { id: 0x0809, name: ttc.pass_fit_ratio, source: ground, units: ratio, description: "G3 verdict, one number: downlink backlog bytes / pass_data_capacity_bytes. >1.0 = will NOT fit in the pass at the active tier — TC5/PL5/FS8" }
+  - { id: 0x080A, name: obdh.time_offset_ms, source: ground, units: ms, description: "Measured on-board minus ground clock offset (spacecraft CUC vs sim time), in milliseconds — FS3" }

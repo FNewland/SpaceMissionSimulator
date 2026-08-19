@@ -172,87 +172,75 @@ class TestEPS6PanelModel:
 
 
 # ====================================================================
-# AOCS Dual Magnetometer
+# AOCS Magnetometer — SINGLE-STRING (owner ruling 2026-08c)
 # ====================================================================
 
-class TestAOCSDualMag:
-    """Test AOCS dual magnetometer A/B selection."""
+class TestAOCSSingleMag:
+    """The ONE magnetometer — no A/B redundancy exists.
+
+    Replaces TestAOCSDualMag: the dual-unit model (mag_select, the
+    0x0223-0x0229 param block) is retired. Failure teaching is by
+    instructor injection (`mag_failure`), exactly like the gyros."""
 
     def _make_model(self):
         model = AOCSBasicModel()
         model.configure({})
-        # Magnetometer is power-gated on AOCS mode; force a powered mode
-        # so dual-mag fallback logic is exercised in these unit tests.
+        # Magnetometer is power-gated on AOCS mode; force a powered mode.
         model._state.mode = 4  # MODE_NOMINAL
         return model
 
-    def test_default_mag_select_is_A(self):
-        """Default magnetometer selection should be 'A'."""
+    def test_measured_field_published_when_healthy(self):
+        """mag_x/y/z (0x020B-0D) carry the measured field when healthy."""
         model = self._make_model()
-        assert model._state.mag_select == 'A'
-
-    def test_mag_select_command_to_B(self):
-        """mag_select command should switch to mag B."""
-        model = self._make_model()
-        result = model.handle_command({"command": "mag_select", "source": "B"})
-        assert result["success"] is True
-        assert model._state.mag_select == 'B'
-
-    def test_mag_select_command_to_A(self):
-        """mag_select command should switch back to mag A."""
-        model = self._make_model()
-        model._state.mag_select = 'B'
-        result = model.handle_command({"command": "mag_select", "source": "A"})
-        assert result["success"] is True
-        assert model._state.mag_select == 'A'
-
-    def test_mag_a_fail_switches_to_b(self):
-        """When mag A fails and is selected, system should fall back to B."""
-        model = self._make_model()
-        model._state.mag_select = 'A'
-        model.inject_failure("mag_a_fail")
-        assert model._state.mag_a_failed is True
         params = {}
         orbit = make_orbit_state()
         model.tick(1.0, orbit, params)
-        # mag_valid should still be True (fallback to B)
         assert model._state.mag_valid is True
+        assert 0x020B in params and 0x020C in params and 0x020D in params
+        mag = (params[0x020B] ** 2 + params[0x020C] ** 2
+               + params[0x020D] ** 2) ** 0.5
+        # LEO field magnitude: tens of thousands of nT, never zero.
+        assert 5_000.0 < mag < 70_000.0
 
-    def test_both_mags_fail_loses_validity(self):
-        """When both mags fail, mag_valid should be False."""
+    def test_mag_select_refused_single_string(self):
+        """MAG_SELECT is refused honestly — there is no redundant unit."""
         model = self._make_model()
-        model.inject_failure("mag_a_fail")
-        model.inject_failure("mag_b_fail")
+        for source in ("A", "B"):
+            result = model.handle_command(
+                {"command": "mag_select", "source": source})
+            assert result["success"] is False
+            assert "single magnetometer" in result["message"]
+
+    def test_mag_failure_zeroes_readings(self):
+        """mag_failure invalidates the ONE unit: readings zero, not frozen."""
+        model = self._make_model()
+        model.inject_failure("mag_failure")
         params = {}
         orbit = make_orbit_state()
         model.tick(1.0, orbit, params)
         assert model._state.mag_valid is False
+        assert params[0x020B] == 0.0
+        assert params[0x020C] == 0.0
+        assert params[0x020D] == 0.0
 
-    def test_mag_b_noisier_than_a(self):
-        """Mag B noise should be greater than mag A noise."""
+    def test_power_off_zeroes_readings(self):
+        """S2 device 0x0209 off invalidates the magnetometer."""
         model = self._make_model()
-        assert model._state.mag_b_noise > model._state.mag_a_noise
+        model._state.device_states[0x0209] = False
+        params = {}
+        orbit = make_orbit_state()
+        model.tick(1.0, orbit, params)
+        assert model._state.mag_valid is False
+        assert params[0x020B] == 0.0
 
-    def test_select_failed_mag_rejected(self):
-        """Selecting a failed mag should return failure."""
-        model = self._make_model()
-        model.inject_failure("mag_a_fail")
-        result = model.handle_command({"command": "mag_select", "source": "A"})
-        assert result["success"] is False
-
-    def test_dual_mag_params_in_shared(self):
-        """Dual mag readings should appear in shared params."""
+    def test_dual_mag_params_retired(self):
+        """The retired 0x0223-0x0229 dual-mag block must NOT be published."""
         model = self._make_model()
         params = {}
         orbit = make_orbit_state()
         model.tick(1.0, orbit, params)
-        assert 0x0223 in params  # mag_a_x
-        assert 0x0224 in params  # mag_a_y
-        assert 0x0225 in params  # mag_a_z
-        assert 0x0226 in params  # mag_b_x
-        assert 0x0227 in params  # mag_b_y
-        assert 0x0228 in params  # mag_b_z
-        assert 0x0229 in params  # mag_select (0=A, 1=B)
+        for pid in range(0x0223, 0x022A):
+            assert pid not in params, hex(pid)
 
 
 # ====================================================================

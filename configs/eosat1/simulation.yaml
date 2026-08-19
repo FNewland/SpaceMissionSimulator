@@ -66,7 +66,7 @@ ttc:
   # rate ladder in subsystems/ttc.yaml (defect #85), so a tier change moves
   # both. The arithmetic that makes the ladder necessary: the shipped
   # telemetry/hk_structures.yaml generates 1351.5 bps of PUS packets, which is
-  # 1557 bps of channel after RS(255,223) and TM-frame overhead. At the BEACON
+  # 1557 bps of channel after RS(255,223) and TM-frame overhead. At the SAFE
   # tier (1000 bps) that is 156 % of the link, so the backlog grows without
   # bound and rt_tm_backlog_max starts dropping packets — correct behaviour
   # for a bootloader beacon and the reason 1 kbps was never an operations

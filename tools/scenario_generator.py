@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import re
+import sys
 import textwrap
 from pathlib import Path
 from datetime import datetime
@@ -22,98 +23,43 @@ try:
 except ImportError:
     raise SystemExit("aiohttp not installed — run: pip install aiohttp")
 
-# ── Catalog data (mirrors inject_failure() in each subsystem model) ──────────
+# ── Failure catalogue ────────────────────────────────────────────────────────
+#
+# Derived from the simulator's declarative failure catalogue, which is built
+# from each subsystem model's own FAILURE_SPECS table (declared next to its
+# inject_failure() body). This file used to carry a hand-copied dict of
+# subsystems -> failure names -> {label, extras}; it drifted every time a model
+# changed, and its "extras" list understood only `wheel`, `face` and `axis`, so
+# every other typed parameter (star tracker unit, EPS power line, memory
+# segment, gyro axis, drift ppm, leak rate ...) was unreachable from this tool
+# and the scenarios it generated silently used the model defaults.
+#
+# The form is now generated from the same ParamSpec objects the instructor
+# console uses, so a new failure appears here automatically and with the right
+# controls, ranges and engineering units.
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+for _pkg in ("smo-common", "smo-simulator"):
+    _src = _REPO_ROOT / "packages" / _pkg / "src"
+    if _src.exists() and str(_src) not in sys.path:
+        sys.path.insert(0, str(_src))
+
+from smo_simulator import failure_catalog as _failure_catalog  # noqa: E402
+
+# {subsystem: {"label": str, "failures": {name: FailureSpec-as-dict}}}
 SUBSYSTEMS = {
-    "eps": {
-        "label": "EPS — Electrical Power",
-        "failures": {
-            "solar_panel_loss":     {"label": "Solar panel loss (partial)", "extras": ["face", "magnitude"]},
-            "solar_array_partial":  {"label": "Solar array partial degradation", "extras": ["magnitude"]},
-            "solar_array_total_loss": {"label": "Solar array total loss", "extras": ["face"]},
-            "sada_stuck":           {"label": "Solar array drive (SADA) stuck", "extras": []},
-            "bat_cell":             {"label": "Battery cell failure", "extras": []},
-            "bus_short":            {"label": "Bus short circuit", "extras": ["magnitude"]},
-            "overcurrent":          {"label": "Overcurrent trip", "extras": ["magnitude"]},
-            "undervoltage":         {"label": "Undervoltage trip", "extras": ["magnitude"]},
-            "overvoltage":          {"label": "Overvoltage trip", "extras": ["magnitude"]},
-        },
-    },
-    "aocs": {
-        "label": "AOCS — Attitude & Orbit Control",
-        "failures": {
-            "rw_bearing":        {"label": "Reaction wheel bearing degradation", "extras": ["wheel", "magnitude"]},
-            "rw_seizure":        {"label": "Reaction wheel seizure", "extras": ["wheel"]},
-            "gyro_bias":         {"label": "Gyroscope bias drift", "extras": ["magnitude"]},
-            "st_blind":          {"label": "Star tracker blinding", "extras": []},
-            "st_failure":        {"label": "Star tracker failure", "extras": []},
-            "css_failure":       {"label": "Coarse sun sensor failure", "extras": []},
-            "mag_failure":       {"label": "Magnetometer failure", "extras": []},
-            "mtq_failure":       {"label": "Magnetorquer failure", "extras": []},
-            "mag_a_fail":        {"label": "Magnetometer A failure", "extras": []},
-            "mag_b_fail":        {"label": "Magnetometer B failure", "extras": []},
-            "css_head_fail":     {"label": "CSS head failure", "extras": []},
-            "multi_wheel_failure": {"label": "Multiple wheel failure", "extras": []},
-            "gain_corruption":   {"label": "Control-torque gain corruption (S6 register)", "extras": ["axis"]},
-        },
-    },
-    "tcs": {
-        "label": "TCS — Thermal Control",
-        "failures": {
-            "heater_failure":    {"label": "Heater failure (open)", "extras": ["magnitude"]},
-            "cooler_failure":    {"label": "Cooler/FPA failure", "extras": []},
-            "obc_thermal":       {"label": "OBC thermal anomaly", "extras": ["magnitude"]},
-            "sensor_drift":      {"label": "Thermal sensor drift", "extras": ["magnitude"]},
-            "heater_stuck_on":   {"label": "Heater stuck ON", "extras": []},
-            "heater_open_circuit": {"label": "Heater open circuit", "extras": []},
-            "temp_anomaly":      {"label": "Temperature anomaly", "extras": ["magnitude"]},
-        },
-    },
-    "ttc": {
-        "label": "TTC — Telemetry, Tracking & Command",
-        "failures": {
-            "primary_failure":    {"label": "Primary transponder failure", "extras": []},
-            "redundant_failure":  {"label": "Redundant transponder failure", "extras": []},
-            "high_ber":           {"label": "High bit-error rate", "extras": ["magnitude"]},
-            "pa_overheat":        {"label": "Power amplifier overheat", "extras": []},
-            "uplink_loss":        {"label": "Uplink loss", "extras": []},
-            "receiver_degrade":   {"label": "Receiver degradation", "extras": ["magnitude"]},
-            "antenna_deploy_failed": {"label": "Antenna deployment failure", "extras": []},
-            "gs_lna_degradation": {"label": "Ground LNA degradation", "extras": ["magnitude"]},
-            "gs_antenna_mispoint": {"label": "Ground antenna mispoint", "extras": ["magnitude"]},
-            "gs_feed_loss":       {"label": "Ground feed loss", "extras": []},
-            "gs_rfi_interference": {"label": "Ground RFI interference", "extras": ["magnitude"]},
-            "gs_hpa_degradation": {"label": "Ground HPA degradation", "extras": ["magnitude"]},
-            "gs_ref_osc_drift":   {"label": "Ground reference-oscillator drift", "extras": ["magnitude"]},
-            "gs_tracking_loss":   {"label": "Ground station tracking loss", "extras": []},
-        },
-    },
-    "obdh": {
-        "label": "OBDH — Onboard Data Handling",
-        "failures": {
-            "watchdog_reset":       {"label": "Watchdog reset", "extras": []},
-            "memory_errors":        {"label": "Memory errors", "extras": ["magnitude"]},
-            "cpu_spike":            {"label": "CPU spike", "extras": ["magnitude"]},
-            "obc_crash":            {"label": "OBC crash", "extras": []},
-            "bus_failure":          {"label": "CAN bus failure", "extras": []},
-            "boot_image_corrupt":   {"label": "Boot image corruption", "extras": []},
-            "memory_corruption":    {"label": "Memory corruption", "extras": ["magnitude"]},
-            "memory_segment_fail":  {"label": "Memory segment failure", "extras": ["magnitude"]},
-            "stuck_in_bootloader":  {"label": "Stuck in bootloader", "extras": []},
-            "clock_drift":          {"label": "OBC clock drift (large ppm)", "extras": ["magnitude"]},
-        },
-    },
-    "payload": {
-        "label": "Payload — Imager",
-        "failures": {
-            "ccd_line_dropout":    {"label": "CCD line dropout", "extras": ["magnitude"]},
-            "cooler_failure":      {"label": "FPA cooler failure", "extras": []},
-            "fpa_degraded":        {"label": "Focal-plane array degradation", "extras": ["magnitude"]},
-            "image_corrupt":       {"label": "Image corruption", "extras": ["magnitude"]},
-            "memory_segment_fail": {"label": "Payload memory segment failure", "extras": ["magnitude"]},
-        },
-    },
+    entry["name"]: {
+        "label": entry["label"],
+        "failures": {f["name"]: f for f in entry["failures"]},
+    }
+    for entry in _failure_catalog.to_dict()["subsystems"]
 }
+
+# Meta keys of a generated inject event that belong to the failure MANAGER
+# (severity/timing) rather than to the failure's own parameter spec.
+_INJECT_META_KEYS = ("type", "subsystem", "failure", "magnitude", "onset",
+                     "onset_duration_s", "timing_type", "time_offset_s",
+                     "condition", "label", "params")
 
 # Key telemetry parameters available for set_parameter events
 PARAMS = [
@@ -331,9 +277,14 @@ def generate_yaml(data: dict) -> tuple[str, str]:
             magnitude = float(ev.get("magnitude", 1.0))
             onset = ev.get("onset", "step")
             onset_dur = ev.get("onset_duration_s", "")
-            wheel = ev.get("wheel", "")
-            face = ev.get("face", "")
-            axis = ev.get("axis", "")
+            # Typed parameters, whatever the failure's spec declares. This
+            # used to be a hard-coded (wheel, face, axis) triple, so every
+            # other unit selector silently fell back to the model default.
+            spec = (SUBSYSTEMS.get(subsys, {}).get("failures", {})
+                    .get(failure, {}))
+            typed = {p["name"]: ev.get(p["name"])
+                     for p in (spec.get("params") or [])
+                     if ev.get(p["name"]) not in (None, "", [])}
             timing_type = ev.get("timing_type", "time")
             time_offset = ev.get("time_offset_s", 0)
             condition = ev.get("condition", "").strip()
@@ -353,12 +304,12 @@ def generate_yaml(data: dict) -> tuple[str, str]:
             lines.append(f"      onset: {onset}")
             if onset == "gradual" and onset_dur:
                 lines.append(f"      onset_duration_s: {int(onset_dur)}")
-            if wheel != "":
-                lines.append(f"      wheel: {int(wheel)}")
-            if face:
-                lines.append(f"      face: {face}")
-            if axis:
-                lines.append(f"      axis: {axis}")
+            for pname, pvalue in typed.items():
+                if isinstance(pvalue, (list, tuple)):
+                    rendered = "[" + ", ".join(json.dumps(v) for v in pvalue) + "]"
+                else:
+                    rendered = json.dumps(pvalue)
+                lines.append(f"      {pname}: {rendered}")
             lines.append("")
 
         elif ev_type == "set_parameter":
@@ -762,37 +713,75 @@ function updateFailures(id) {
   updateExtras(id);
 }
 
+// Render the typed parameter controls for the selected failure, straight from
+// its ParamSpec list. Nothing about a failure's parameters is written here:
+// the enum values, the ranges, the engineering units and the labels all come
+// from the model's own FAILURE_SPECS via /api catalogue -> SUBSYSTEMS.
 function updateExtras(id) {
   const sub = document.getElementById(`ev-${id}-sub`).value;
   const fail = document.getElementById(`ev-${id}-fail`).value;
   const onset = document.getElementById(`ev-${id}-onset`).value;
-  const extras = SUBSYSTEMS[sub]?.failures[fail]?.extras || [];
+  const spec = SUBSYSTEMS[sub]?.failures?.[fail];
   const container = document.getElementById(`ev-${id}-extras`);
   let html = '';
 
-  if (extras.includes('wheel')) {
-    html += `<div class="field f-xs"><label>Wheel (0-indexed)</label>
-      <select id="ev-${id}-wheel">
-        <option value="0">RW-1 (0)</option><option value="1">RW-2 (1)</option>
-        <option value="2">RW-3 (2)</option><option value="3">RW-4 (3)</option>
-      </select></div>`;
-  }
-  if (extras.includes('face')) {
-    const faceOpts = FACES.map(f => `<option value="${f}">${f.toUpperCase()}</option>`).join('');
-    html += `<div class="field f-xs"><label>Face</label>
-      <select id="ev-${id}-face">${faceOpts}</select></div>`;
-  }
-  if (extras.includes('axis')) {
-    html += `<div class="field f-xs"><label>Body axis</label>
-      <select id="ev-${id}-axis">
-        <option value="x">X</option><option value="y" selected>Y</option><option value="z">Z</option>
-      </select></div>`;
+  for (const p of (spec?.params || [])) {
+    const cid = `ev-${id}-p-${p.name}`;
+    const unit = p.unit ? ` [${p.unit}]` : '';
+    const label = `<label>${p.label || p.name}${unit}</label>`;
+    if (p.type === 'bool') {
+      html += `<div class="field f-xs">${label}
+        <select id="${cid}" data-param="${p.name}">
+          <option value="true"${p.default ? ' selected' : ''}>Yes</option>
+          <option value="false"${p.default ? '' : ' selected'}>No</option>
+        </select></div>`;
+    } else if (p.type === 'enum') {
+      const values = p.values || [];
+      const labels = p.value_labels || values.map(String);
+      const defs = Array.isArray(p.default) ? p.default.map(String)
+                 : (p.default === null || p.default === undefined ? [] : [String(p.default)]);
+      const opts = values.map((v, i) =>
+        `<option value="${v}"${defs.includes(String(v)) ? ' selected' : ''}>${labels[i]}</option>`).join('');
+      const multi = p.multi ? ' multiple size="4"' : '';
+      html += `<div class="field f-xs">${label}
+        <select id="${cid}" data-param="${p.name}" data-multi="${p.multi ? '1' : ''}"${multi}>${opts}</select></div>`;
+    } else {
+      const step = p.type === 'int' ? 1 : (p.step || 'any');
+      const min = (p.min === null || p.min === undefined) ? '' : ` min="${p.min}"`;
+      const max = (p.max === null || p.max === undefined) ? '' : ` max="${p.max}"`;
+      const val = (p.default === null || p.default === undefined) ? '' : ` value="${p.default}"`;
+      html += `<div class="field f-xs">${label}
+        <input type="number" id="${cid}" data-param="${p.name}" data-ptype="${p.type}" step="${step}"${min}${max}${val}></div>`;
+    }
   }
   if (onset === 'gradual') {
     html += `<div class="field f-xs"><label>Onset duration (s)</label>
       <input type="number" id="ev-${id}-onset-dur" value="60" min="1"></div>`;
   }
   container.innerHTML = html;
+}
+
+// Read every generated parameter control back, typed.
+function collectExtras(id) {
+  const out = {};
+  document.querySelectorAll(`#ev-${id}-extras [data-param]`).forEach(el => {
+    const name = el.dataset.param;
+    if (el.dataset.multi) {
+      const vals = Array.from(el.selectedOptions).map(o => {
+        const n = Number(o.value);
+        return Number.isFinite(n) && o.value.trim() !== '' ? n : o.value;
+      });
+      if (vals.length) out[name] = vals;
+      return;
+    }
+    const raw = (el.value ?? '').toString().trim();
+    if (raw === '') return;
+    if (raw === 'true' || raw === 'false') { out[name] = (raw === 'true'); return; }
+    const num = Number(raw);
+    out[name] = (Number.isFinite(num) && el.tagName !== 'SELECT') ? num
+              : (Number.isFinite(num) ? num : raw);
+  });
+  return out;
 }
 
 function addResponse() {
@@ -833,9 +822,7 @@ function collectData() {
         magnitude: parseFloat(document.getElementById(`ev-${id}-mag`).value) || 1.0,
         onset: document.getElementById(`ev-${id}-onset`).value,
         onset_duration_s: document.getElementById(`ev-${id}-onset-dur`)?.value || '',
-        wheel: document.getElementById(`ev-${id}-wheel`)?.value ?? '',
-        face: document.getElementById(`ev-${id}-face`)?.value || '',
-        axis: document.getElementById(`ev-${id}-axis`)?.value || '',
+        ...collectExtras(id),
         label: document.getElementById(`ev-${id}-label`)?.value?.trim() || '',
       };
       events.push(ev);

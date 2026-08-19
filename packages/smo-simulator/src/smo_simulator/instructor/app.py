@@ -6,6 +6,7 @@ scenario management, failure injection, breakpoint control, time controls.
 import asyncio
 import json
 import logging
+import os
 from pathlib import Path
 
 from aiohttp import web
@@ -13,13 +14,32 @@ from aiohttp import web
 logger = logging.getLogger(__name__)
 
 
-def create_instructor_app(engine) -> web.Application:
-    """Create the instructor aiohttp application."""
+def create_instructor_app(engine, ui_mode: str | None = None) -> web.Application:
+    """Create the instructor aiohttp application.
+
+    ``ui_mode`` selects which console ``/`` serves (design_2026-08 plan
+    §1.2): explicit arg (from the simulator's --ui CLI) > SMO_UI env >
+    default "classic" (flips to modern only after the Agent-5 verification
+    gate). Per-request ``?ui=`` and the /classic and /modern routes override
+    it for a single response, and ``?ui=`` COMPOSES with the existing
+    ``?sub=`` deep-dive parameter — the query string is passed through to
+    whichever page is served, never consumed here.
+    """
     app = web.Application()
     app["engine"] = engine
     app["ws_clients"] = []
+    # default flipped to modern (Agent-5 gate passed)
+    resolved_ui = (ui_mode or os.environ.get("SMO_UI") or "modern").strip().lower()
+    if resolved_ui not in ("classic", "modern"):
+        logger.warning("Unknown ui mode %r — falling back to classic",
+                       resolved_ui)
+        resolved_ui = "classic"
+    app["ui_mode"] = resolved_ui
 
     app.router.add_get("/", handle_index)
+    # Explicit generation routes (plan §1.2): live A/B comparison in two tabs.
+    app.router.add_get("/classic", handle_index_classic)
+    app.router.add_get("/modern", handle_index_modern)
     app.router.add_get("/ws", handle_ws)
     app.router.add_get("/api/state", handle_state)
     app.router.add_get("/api/instructor/snapshot", handle_instructor_snapshot)
@@ -27,6 +47,10 @@ def create_instructor_app(engine) -> web.Application:
     app.router.add_get("/api/scenarios", handle_scenarios)
     app.router.add_get("/api/scenario/debrief", handle_scenario_debrief)
     app.router.add_get("/api/failures", handle_failures)
+    # Declarative failure-injection parameter specs. The UI GENERATES its
+    # injection form from this (typed unit selectors, real engineering units,
+    # real ranges) instead of hard-coding a single 0..1 severity slider.
+    app.router.add_get("/api/failure-catalog", handle_failure_catalog)
     app.router.add_get("/api/breakpoints", handle_breakpoint_list)
     app.router.add_post("/api/breakpoint/save", handle_breakpoint_save)
     app.router.add_post("/api/breakpoint/load", handle_breakpoint_load)
@@ -85,6 +109,21 @@ def create_instructor_app(engine) -> web.Application:
     except Exception as e:  # noqa: BLE001
         logger.warning("Config editor not mounted: %s", e)
 
+    # Shared design system (design_2026-08 plan §1.1): one canonical runtime
+    # copy served from smo_common package data at the SAME URL on all three
+    # servers. Mounted BEFORE /static/ so the broader mount cannot shadow it
+    # (aiohttp resolves routes in registration order).
+    try:
+        import smo_common as _smo_common
+        _shared_ui = Path(_smo_common.__file__).parent / "ui"
+        if _shared_ui.is_dir():
+            app.router.add_static("/static/shared/", _shared_ui)
+        else:  # pragma: no cover — packaging error, say so loudly
+            logger.warning("smo_common ui/ package data missing (%s) — "
+                           "modern pages will render unstyled", _shared_ui)
+    except Exception as e:  # noqa: BLE001 — never block the sim UI
+        logger.warning("Shared UI assets not mounted: %s", e)
+
     static_dir = Path(__file__).parent / "static"
     if static_dir.exists():
         app.router.add_static("/static/", static_dir)
@@ -99,6 +138,41 @@ TC_BACK_CHANNEL_DENIED = (
 )
 
 
+# Keys of a `failure_inject` payload that belong to the failure MANAGER
+# (severity/timing), not to the failure's own declarative parameter spec.
+_INJECT_META_KEYS = ("type", "subsystem", "failure", "mode", "magnitude",
+                     "onset", "duration_s", "onset_duration_s")
+
+
+def _validate_failure_inject(cmd) -> tuple[bool, str]:
+    """Validate a `failure_inject` payload against the failure catalogue.
+
+    The engine's own allowlist only range-checks magnitude/durations; it has
+    no idea that `wheel` must be 0-3 or that `line_index` must name one of the
+    nine EPS power lines. Checking here means the operator gets the REASON in
+    the HTTP/WS response instead of the injection being rejected later, inside
+    the tick thread, where only the log sees it. FailureManager.inject
+    re-validates — this is the client-facing half of the same check, and both
+    reject rather than clamp.
+    """
+    if not isinstance(cmd, dict) or cmd.get("type") != "failure_inject":
+        return True, ""
+    try:
+        from smo_simulator.failure_catalog import validate
+        from smo_simulator.failure_spec import FailureParamError
+    except Exception as e:  # noqa: BLE001 — never block the UI on this
+        logger.warning("Failure catalogue unavailable, skipping check: %s", e)
+        return True, ""
+    params = {k: v for k, v in cmd.items() if k not in _INJECT_META_KEYS}
+    try:
+        validate(cmd.get("subsystem", ""),
+                 cmd.get("failure") or cmd.get("mode", ""),
+                 cmd.get("magnitude"), params)
+    except FailureParamError as e:
+        return False, str(e)
+    return True, ""
+
+
 def _is_spacecraft_telecommand(cmd) -> bool:
     """True if `cmd` looks like a PUS TC smuggled onto the instructor channel."""
     if not isinstance(cmd, dict):
@@ -108,12 +182,52 @@ def _is_spacecraft_telecommand(cmd) -> bool:
             or (isinstance(cmd_type, str) and cmd_type.startswith(("S", "TC"))))
 
 
-async def handle_index(request):
-    index_file = Path(__file__).parent / "static" / "index.html"
+def _resolve_ui(request) -> str:
+    """Per-request UI mode: ?ui= wins over the app's resolved mode.
+
+    ?ui= composes with ?sub= (and any other query param): resolution reads
+    only `ui`; the full query string still reaches the served page, whose
+    JS handles `sub` exactly as before.
+    """
+    q = (request.query.get("ui") or "").strip().lower()
+    if q in ("classic", "modern"):
+        return q
+    return request.app.get("ui_mode", "classic")
+
+
+def _serve_index(mode: str):
+    static_dir = Path(__file__).parent / "static"
+    index_file = (static_dir / "modern" / "index.html" if mode == "modern"
+                  else static_dir / "index.html")
     if index_file.exists():
-        return web.FileResponse(index_file)
-    return web.Response(text="<h1>SMO Instructor — static/index.html not found</h1>",
-                        content_type="text/html")
+        # no-cache: a UI-mode flip must never be masked by a cached index (R9)
+        return web.FileResponse(
+            index_file, headers={"Cache-Control": "no-cache"})
+    if mode == "modern":
+        return web.Response(
+            text="<h1>SMO Instructor — modern UI assets not installed</h1>"
+                 "<p>The classic console is at <a href=\"/classic\">"
+                 "/classic</a>.</p>",
+            content_type="text/html",
+            headers={"Cache-Control": "no-cache"})
+    return web.Response(
+        text="<h1>SMO Instructor — static/index.html not found</h1>",
+        content_type="text/html",
+        headers={"Cache-Control": "no-cache"})
+
+
+async def handle_index(request):
+    return _serve_index(_resolve_ui(request))
+
+
+async def handle_index_classic(request):
+    """GET /classic — always the classic page (live A/B comparison)."""
+    return _serve_index("classic")
+
+
+async def handle_index_modern(request):
+    """GET /modern — always the modern page (live A/B comparison)."""
+    return _serve_index("modern")
 
 
 async def handle_ws(request):
@@ -142,7 +256,9 @@ async def handle_ws(request):
                         {"status": "denied",
                          "message": TC_BACK_CHANNEL_DENIED}))
                     continue
-                ok, reason = engine.submit_instructor_cmd(cmd)
+                ok, reason = _validate_failure_inject(cmd)
+                if ok:
+                    ok, reason = engine.submit_instructor_cmd(cmd)
                 await ws.send_str(json.dumps(
                     {"status": "ok"} if ok
                     else {"status": "denied", "message": reason}))
@@ -180,6 +296,13 @@ async def handle_command(request):
                 {"status": "denied", "message": TC_BACK_CHANNEL_DENIED},
                 status=403,
             )
+
+        # Typed failure-injection parameters, checked against the model-declared
+        # specs so the caller gets the reason rather than a silent no-op.
+        ok, reason = _validate_failure_inject(cmd)
+        if not ok:
+            return web.json_response(
+                {"status": "denied", "message": reason}, status=400)
 
         # One allowlist + type/range validator for every channel (roadmap N-1);
         # SimulationEngine.INSTRUCTOR_CMD_TYPES is its single definition.
@@ -239,6 +362,18 @@ async def handle_scenario_debrief(request):
 async def handle_failures(request):
     engine = request.app["engine"]
     return web.json_response(engine._failure_manager.active_failures())
+
+
+async def handle_failure_catalog(request):
+    """Serve the declarative failure-injection parameter specs.
+
+    Built from each subsystem model's own ``FAILURE_SPECS`` table (see
+    ``smo_simulator/failure_spec.py``), so the instructor form is generated
+    from the implementation and cannot drift from it. Adding a failure to a
+    model puts it in this response — and therefore in the UI — with no UI edit.
+    """
+    from smo_simulator import failure_catalog
+    return web.json_response(failure_catalog.to_dict())
 
 
 async def handle_breakpoint_list(request):

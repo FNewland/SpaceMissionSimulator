@@ -9,7 +9,18 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from smo_simulator.failure_spec import FailureParamError
+
 logger = logging.getLogger(__name__)
+
+
+def _fmt(value: Any) -> str:
+    """Compact, stable rendering of a parameter value for a failure id."""
+    if isinstance(value, (list, tuple)):
+        return "+".join(_fmt(v) for v in value)
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
 
 ONSET_STEP = "step"
 ONSET_GRADUAL = "gradual"
@@ -43,9 +54,13 @@ DEFAULT_FLICKER_OFF_S = (5.0, 20.0)
 
 class FailureManager:
     def __init__(self, inject_fn: Callable, clear_fn: Callable, config: Any = None,
-                 rng: random.Random | None = None):
+                 rng: random.Random | None = None, validate_params: bool = True):
         self._inject = inject_fn
         self._clear = clear_fn
+        # Validate every injection against the model-declared FAILURE_SPECS.
+        # Only turned off by onset-timing unit tests that drive the manager
+        # with synthetic failure names and no models behind it.
+        self.validate_params = validate_params
         # Flicker-timing RNG (plan A-2). The engine passes a Random derived
         # from simulation.yaml `seed`; standalone construction stays random.
         self.rng = rng if rng is not None else random.Random(20260731)  # deterministic standalone fallback
@@ -82,9 +97,25 @@ class FailureManager:
     def inject(self, subsystem: str, failure: str, magnitude: float = 1.0,
                onset: str = ONSET_STEP, duration_s: float = 0.0,
                onset_duration_s: float | None = None, **extra) -> str:
+        """Inject a failure. Raises FailureParamError if it does not validate.
+
+        Validation is against the model-declared ``FAILURE_SPECS`` (see
+        ``failure_catalog``): an unknown failure name, an unknown parameter or
+        an out-of-range value is REJECTED with a reason. It is never clamped —
+        a silently clamped injection is indistinguishable from one that worked,
+        which is how several dead injections shipped.
+        """
         if onset_duration_s is None:
             onset_duration_s = self._default_onset_s
-        fid = f"{subsystem}.{failure}.{extra.get('array', extra.get('wheel', extra.get('circuit', '0')))}"
+
+        subsystem, magnitude, extra = self._validate(subsystem, failure,
+                                                     magnitude, extra)
+        if onset not in (ONSET_STEP, ONSET_GRADUAL, ONSET_INTERMITTENT):
+            raise FailureParamError(
+                f"{subsystem}.{failure}: unknown onset {onset!r} — must be one "
+                f"of {[ONSET_STEP, ONSET_GRADUAL, ONSET_INTERMITTENT]}")
+
+        fid = self._failure_id(subsystem, failure, extra)
         if onset == ONSET_STEP:
             onset_duration_s = 0.0
             current_mag = magnitude
@@ -104,6 +135,30 @@ class FailureManager:
             af._flicker_next = self._sim_elapsed + self.rng.uniform(*self._first_flicker_s)
         self._failures[fid] = af
         return fid
+
+    # ─── Validation against the model-declared parameter specs ───────
+
+    @staticmethod
+    def _failure_id(subsystem: str, failure: str, params: dict) -> str:
+        """Stable id that includes the UNIT the failure was aimed at.
+
+        The old id only looked at ``array``/``wheel``/``circuit``, so two
+        injections that differed only in e.g. ``unit`` (star tracker 1 vs 2),
+        ``line_index``, ``axis``, ``zone``, ``face`` or ``segment`` collided on
+        one id: the second overwrote the first in the registry and clearing it
+        left the other one applied and untracked.
+        """
+        parts = [f"{k}={_fmt(v)}" for k, v in sorted(params.items())
+                 if v is not None]
+        suffix = ",".join(parts) if parts else "0"
+        return f"{subsystem}.{failure}.{suffix}"
+
+    def _validate(self, subsystem: str, failure: str, magnitude: Any,
+                  extra: dict) -> tuple[str, float, dict]:
+        if not self.validate_params:
+            return subsystem, float(magnitude), dict(extra)
+        from smo_simulator.failure_catalog import validate as _validate_spec
+        return _validate_spec(subsystem, failure, magnitude, extra)
 
     def clear(self, failure_id: str) -> bool:
         af = self._failures.pop(failure_id, None)

@@ -645,6 +645,50 @@ body::before {
 }
 .form-select option { background: var(--bg-raise); }
 
+/* Spec-driven injection form: effect blurb, per-parameter unit/range hint,
+   and the server's rejection reason. */
+.fail-effect {
+  font-size: 9.5px;
+  line-height: 1.4;
+  color: var(--text-dim);
+  margin: -2px 0 9px;
+  padding: 5px 7px;
+  background: var(--bg-void);
+  border-left: 2px solid var(--border-mid);
+  border-radius: 2px;
+}
+.form-hint {
+  display: block;
+  font-size: 9px;
+  color: var(--text-dim);
+  margin-top: 3px;
+}
+.form-unit {
+  color: var(--accent);
+  font-weight: 700;
+}
+.fail-error {
+  display: none;
+  font-size: 9.5px;
+  line-height: 1.4;
+  color: #ff6b6b;
+  margin-bottom: 8px;
+  padding: 5px 7px;
+  background: rgba(196,0,0,0.12);
+  border-left: 2px solid var(--red, #c40000);
+  border-radius: 2px;
+  white-space: pre-wrap;
+}
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10.5px;
+  color: var(--text-hi);
+  cursor: pointer;
+}
+.form-multi { min-height: 68px; }
+
 .radio-group {
   display: flex;
   gap: 12px;
@@ -1306,22 +1350,24 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
     <div class="panel-header">
       <h2>Failure Injection</h2>
     </div>
+    <!-- The controls below are GENERATED from GET /api/failure-catalog. Every
+         failure declares its own typed parameters (name, type, range,
+         engineering unit, default, human label) next to its inject_failure()
+         body in the subsystem model. Do NOT hand-write a control for a new
+         failure — add a ParamSpec to that model's FAILURE_SPECS and it
+         appears here automatically, validated on both sides. -->
     <div class="inject-form">
       <div class="form-group">
         <label class="form-label">Subsystem</label>
-        <select class="form-select" id="fail-subsystem">
-          <option value="eps">EPS</option>
-          <option value="adcs">ADCS</option>
-          <option value="tcs">TCS</option>
-          <option value="obdh">OBDH</option>
-          <option value="ttc">TT&C</option>
-          <option value="payload">Payload</option>
-        </select>
+        <select class="form-select" id="fail-subsystem"></select>
       </div>
       <div class="form-group">
         <label class="form-label">Failure Type</label>
         <select class="form-select" id="fail-type"></select>
       </div>
+      <div class="fail-effect" id="fail-effect"></div>
+      <!-- Typed parameter widgets, rendered from the spec -->
+      <div id="fail-params"></div>
       <div class="form-group">
         <label class="form-label">Onset</label>
         <div class="radio-group">
@@ -1330,18 +1376,35 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
           <label class="radio-label"><input type="radio" name="fail-onset" value="intermittent"> Intermittent</label>
         </div>
       </div>
-      <div class="form-group">
-        <label class="form-label">Magnitude</label>
-        <div class="slider-group">
-          <input type="range" class="form-range" id="fail-magnitude" min="0" max="1" step="0.01" value="0.5">
-          <span class="slider-value" id="fail-mag-value">0.50</span>
-        </div>
-      </div>
       <div class="form-group" id="onset-duration-group">
         <label class="form-label">Onset Duration (s)</label>
         <input type="number" class="form-input" id="fail-onset-dur" value="30" min="1" max="3600">
       </div>
+      <div class="fail-error" id="fail-error"></div>
       <button class="btn-inject" id="btn-inject">INJECT FAILURE</button>
+    </div>
+
+    <div class="section-divider">Mission Phase &amp; Separation</div>
+    <!-- The engine has handled `set_phase` (0-6) and `start_separation` on the
+         instructor channel for some time — both allowlisted in
+         INSTRUCTOR_CMD_TYPES and range-validated — but the console had no
+         widget for either, so they were only reachable by hand-crafting a
+         POST /api/command. -->
+    <div class="inject-form">
+      <div class="form-group">
+        <label class="form-label">Spacecraft Phase</label>
+        <select class="form-select" id="phase-select">
+          <option value="0">0 — PRE_SEPARATION</option>
+          <option value="1">1 — SEPARATION_TIMER</option>
+          <option value="2">2 — INITIAL_POWER_ON</option>
+          <option value="3">3 — BOOTLOADER_OPS</option>
+          <option value="4">4 — LEOP</option>
+          <option value="5">5 — COMMISSIONING</option>
+          <option value="6" selected>6 — NOMINAL</option>
+        </select>
+      </div>
+      <button class="btn" id="btn-set-phase" style="width:100%; padding:8px; margin-bottom:8px;">SET PHASE</button>
+      <button class="btn-inject" id="btn-start-separation" style="background: linear-gradient(180deg,#b26a00 0%,#8a5200 100%); border-color: rgba(255,180,80,0.5);">START SEPARATION</button>
     </div>
 
     <div class="section-divider">Active Failures</div>
@@ -1399,51 +1462,17 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
   const SC_MODES   = { 0: 'SAFE', 1: 'NOMINAL', 2: 'SCIENCE', 3: 'EMERGENCY' };
   const SC_MODE_CLASS = { 0: 'safe', 1: 'nominal', 2: 'science', 3: 'emergency' };
 
-  // EOSAT-1 has NO thrusters: ADCS uses 4 reaction wheels + 3 magnetorquers,
-  // sun sensors, magnetometers, star trackers and a GPS receiver. The list below
-  // mirrors the failure modes actually implemented in AOCSModelBasic.inject_failure
-  // and the contingency procedures under configs/eosat1/procedures/contingency/.
-  // EOSAT-1 has NO thrusters: ADCS uses 4 reaction wheels + 3 magnetorquers,
-  // sun sensors, magnetometers, star trackers and a GPS receiver. The lists
-  // below mirror the failure modes implemented in the *_basic.py models'
-  // inject_failure() and the contingency procedures under
-  // configs/eosat1/procedures/contingency/.
-  const FAILURE_TYPES = {
-    eps:     ['solar_array_partial', 'solar_panel_loss', 'solar_array_total_loss',
-              'bat_cell', 'bus_short', 'overcurrent',
-              'undervoltage', 'overvoltage'],
-    adcs:    ['rw_bearing', 'rw_seizure', 'multi_wheel_failure',
-              'gyro_bias', 'st_blind', 'st_failure',
-              'css_failure', 'css_head_fail',
-              'mag_failure', 'mag_a_fail', 'mag_b_fail',
-              'mtq_failure'],
-    tcs:     ['heater_failure', 'heater_stuck_on', 'heater_open_circuit',
-              'cooler_failure', 'sensor_drift', 'obc_thermal',
-              'temp_anomaly'],
-    obdh:    ['cpu_spike', 'watchdog_reset', 'memory_errors',
-              'memory_corruption', 'memory_segment_fail',
-              'bus_failure', 'obc_crash',
-              'boot_image_corrupt', 'stuck_in_bootloader',
-              // Onboard clock: forces a large oscillator drift (order 500 ppm)
-              // so the OBC clock error is visible inside a session.
-              'clock_drift'],
-    ttc:     ['primary_failure', 'redundant_failure',
-              'high_ber', 'pa_overheat',
-              'uplink_loss', 'receiver_degrade',
-              'antenna_deploy_failed',
-              // Ground-segment RF failures — implemented and tested in
-              // ttc_basic.py but previously injectable only from a
-              // scenario file or the raw API (RF audit Q6/N1).
-              'gs_lna_degradation', 'gs_antenna_mispoint',
-              'gs_feed_loss', 'gs_rfi_interference',
-              'gs_hpa_degradation', 'gs_ref_osc_drift',
-              'gs_tracking_loss'],
-    payload: ['cooler_failure', 'fpa_degraded',
-              'image_corrupt', 'memory_segment_fail',
-              'ccd_line_dropout']
-  };
-  // Backwards-compat shim: any old code paths that look up "aocs" still work.
-  FAILURE_TYPES.aocs = FAILURE_TYPES.adcs;
+  // Failure catalogue. This used to be a hand-maintained list of failure NAMES
+  // per subsystem, with a single 0..1 magnitude slider for all of them — there
+  // was nowhere to say WHICH wheel, WHICH panel, WHICH star tracker, WHICH
+  // power line or WHICH gyro axis, and nowhere to give a magnitude a real
+  // engineering unit. It is now fetched from GET /api/failure-catalog, which
+  // serves the declarative FAILURE_SPECS each subsystem model declares next to
+  // its own inject_failure(). Nothing about a failure is duplicated here.
+  //   failureCatalog = { aliases: {...},
+  //                      subsystems: [ {name, label, failures: [FailureSpec]} ] }
+  let failureCatalog = null;
+  let currentFailureSpec = null;
 
   // ===== STATE =====
   let state = null;
@@ -1532,8 +1561,16 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return await r.json();
+      // A 400/403 carries the REASON the server refused. Throwing it away
+      // (as this used to) is what made a rejected failure injection look
+      // exactly like one that worked, so return the body either way and let
+      // the caller decide.
+      let payload = null;
+      try { payload = await r.json(); } catch (e) { payload = null; }
+      if (!r.ok) {
+        return payload || { status: 'error', message: `HTTP ${r.status}` };
+      }
+      return payload;
     } catch (e) {
       return null;
     }
@@ -2039,11 +2076,154 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
     renderScenarios();
   }
 
-  // ===== FAILURE INJECTION =====
+  // ===== FAILURE INJECTION (form generated from the spec) =====
+
+  // Fetch the declarative catalogue once. Every control below is built from
+  // it, so a failure added to a model shows up here — with its typed unit
+  // selector, its real engineering unit and its real range — with no UI edit.
+  async function loadFailureCatalog() {
+    const data = await apiGet('/api/failure-catalog');
+    if (!data || !Array.isArray(data.subsystems)) {
+      addLogEntry('high', 'FAIL', 'Failure catalogue unavailable — injection form disabled');
+      $('fail-subsystem').innerHTML = '<option value="">(catalogue unavailable)</option>';
+      return;
+    }
+    failureCatalog = data;
+    $('fail-subsystem').innerHTML = data.subsystems
+      .map(s => `<option value="${escapeHtml(s.name)}">${escapeHtml(s.label || s.name.toUpperCase())}</option>`)
+      .join('');
+    updateFailureTypes();
+  }
+
+  function currentSubsystemEntry() {
+    if (!failureCatalog) return null;
+    const name = $('fail-subsystem').value;
+    return failureCatalog.subsystems.find(s => s.name === name) || null;
+  }
+
   function updateFailureTypes() {
-    const sub = $('fail-subsystem').value;
-    const types = FAILURE_TYPES[sub] || [];
-    $('fail-type').innerHTML = types.map(t => `<option value="${t}">${t.replace(/_/g, ' ')}</option>`).join('');
+    const entry = currentSubsystemEntry();
+    const failures = entry ? entry.failures : [];
+    $('fail-type').innerHTML = failures
+      .map(f => `<option value="${escapeHtml(f.name)}">${escapeHtml(f.label || f.name)}</option>`)
+      .join('');
+    updateFailureParams();
+  }
+
+  // Build one form control from a ParamSpec.
+  //   enum  -> <select> (multi -> multi-select) with the human value labels
+  //   int   -> <input type=number step=1>       with min/max from the spec
+  //   float -> <input type=number>              with min/max/step from the spec
+  //   bool  -> checkbox
+  // The engineering unit and the permitted range are always shown.
+  function renderParamControl(p, idPrefix) {
+    const id = `${idPrefix}-${p.name}`;
+    const unit = p.unit ? ` <span class="form-unit">[${escapeHtml(p.unit)}]</span>` : '';
+    const bits = [];
+    if (p.min !== undefined && p.min !== null) bits.push(`min ${p.min}`);
+    if (p.max !== undefined && p.max !== null) bits.push(`max ${p.max}`);
+    if (p.description) bits.push(escapeHtml(p.description));
+    const hint = bits.length ? `<span class="form-hint">${bits.join(' · ')}</span>` : '';
+    const label = `<label class="form-label" for="${id}">${escapeHtml(p.label || p.name)}${unit}${p.required ? ' *' : ''}</label>`;
+
+    if (p.type === 'bool') {
+      const checked = p.default ? ' checked' : '';
+      return `<div class="form-group">
+        <label class="checkbox-label"><input type="checkbox" id="${id}" data-param="${escapeHtml(p.name)}" data-ptype="bool"${checked}> ${escapeHtml(p.label || p.name)}</label>${hint}
+      </div>`;
+    }
+    if (p.type === 'enum') {
+      const values = p.values || [];
+      const labels = p.value_labels || values.map(String);
+      const defaults = Array.isArray(p.default) ? p.default.map(String)
+                     : (p.default === null || p.default === undefined ? [] : [String(p.default)]);
+      const opts = values.map((v, i) => {
+        const sel = defaults.includes(String(v)) ? ' selected' : '';
+        return `<option value="${escapeHtml(String(v))}"${sel}>${escapeHtml(String(labels[i]))}</option>`;
+      }).join('');
+      const multi = p.multi ? ' multiple size="4" class="form-select form-multi"' : ' class="form-select"';
+      return `<div class="form-group">${label}
+        <select id="${id}" data-param="${escapeHtml(p.name)}" data-ptype="enum" data-multi="${p.multi ? '1' : ''}"${multi}>${opts}</select>${hint}
+      </div>`;
+    }
+    // int / float / string -> a real number (or text) field with the real range
+    const isNum = (p.type === 'int' || p.type === 'float');
+    const step = p.type === 'int' ? 1 : (p.step || 'any');
+    const attrs = [
+      isNum ? 'type="number"' : 'type="text"',
+      isNum ? `step="${step}"` : '',
+      (isNum && p.min !== undefined && p.min !== null) ? `min="${p.min}"` : '',
+      (isNum && p.max !== undefined && p.max !== null) ? `max="${p.max}"` : '',
+      (p.default !== null && p.default !== undefined) ? `value="${escapeHtml(String(p.default))}"` : '',
+    ].filter(Boolean).join(' ');
+    return `<div class="form-group">${label}
+      <input class="form-input" id="${id}" data-param="${escapeHtml(p.name)}" data-ptype="${escapeHtml(p.type)}" ${attrs}>${hint}
+    </div>`;
+  }
+
+  function updateFailureParams() {
+    const entry = currentSubsystemEntry();
+    const name = $('fail-type').value;
+    const spec = entry ? entry.failures.find(f => f.name === name) : null;
+    currentFailureSpec = spec;
+    setInjectError('');
+    $('fail-effect').textContent = spec ? (spec.effect || '') : '';
+    if (!spec) { $('fail-params').innerHTML = ''; return; }
+
+    const html = [];
+    // Magnitude is only rendered when the failure actually uses one, and it
+    // is rendered with ITS OWN unit and range — not a universal 0..1 slider.
+    if (spec.magnitude) html.push(renderParamControl(spec.magnitude, 'fail-mag'));
+    (spec.params || []).forEach(p => html.push(renderParamControl(p, 'fail-p')));
+    if (!spec.reversible && spec.notes) {
+      html.push(`<div class="fail-effect">NOT FULLY REVERSIBLE — ${escapeHtml(spec.notes)}</div>`);
+    }
+    $('fail-params').innerHTML = html.join('');
+  }
+
+  function setInjectError(msg) {
+    const el = $('fail-error');
+    el.textContent = msg || '';
+    el.style.display = msg ? 'block' : 'none';
+  }
+
+  // Read one control back, validating against the SAME spec the server uses.
+  // Out of range is a rejection with a reason, never a silent clamp.
+  function readParamControl(p, idPrefix) {
+    const el = $(`${idPrefix}-${p.name}`);
+    if (!el) return { ok: true, skip: true };
+    const where = `${p.label || p.name}`;
+    if (p.type === 'bool') return { ok: true, value: el.checked };
+    if (p.type === 'enum') {
+      if (p.multi) {
+        const vals = Array.from(el.selectedOptions).map(o => o.value);
+        if (!vals.length) return { ok: false, reason: `${where}: select at least one` };
+        return { ok: true, value: vals };
+      }
+      if (el.value === '') return { ok: true, skip: true };
+      return { ok: true, value: el.value };
+    }
+    const raw = (el.value || '').trim();
+    if (raw === '') {
+      if (p.required) return { ok: false, reason: `${where} is required` };
+      return { ok: true, skip: true };   // optional: let the model default
+    }
+    if (p.type === 'int' || p.type === 'float') {
+      const num = Number(raw);
+      if (!Number.isFinite(num)) return { ok: false, reason: `${where} must be a number (got "${raw}")` };
+      if (p.type === 'int' && !Number.isInteger(num)) {
+        return { ok: false, reason: `${where} must be a whole number (got ${num})` };
+      }
+      const u = p.unit ? ` ${p.unit}` : '';
+      if (p.min !== undefined && p.min !== null && num < p.min) {
+        return { ok: false, reason: `${where} must be >= ${p.min}${u} (got ${num}${u})` };
+      }
+      if (p.max !== undefined && p.max !== null && num > p.max) {
+        return { ok: false, reason: `${where} must be <= ${p.max}${u} (got ${num}${u})` };
+      }
+      return { ok: true, value: num };
+    }
+    return { ok: true, value: raw };
   }
 
   function updateOnsetDurationVisibility() {
@@ -2052,34 +2232,83 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
   }
 
   function injectFailure() {
+    const spec = currentFailureSpec;
+    if (!spec) { setInjectError('No failure selected (catalogue not loaded).'); return; }
     let subsystem = $('fail-subsystem').value;
-    // The engine still keys this subsystem by its legacy "aocs" name even
-    // though the spacecraft has no thrusters and we now expose it as "ADCS"
-    // in the UI. Translate before sending so the backend resolves the model.
+    // The engine keys the attitude subsystem by its legacy "aocs" name even
+    // though the console shows it as ADCS. The catalogue serves the engine
+    // name directly, but keep the translation for older saved selections.
     if (subsystem === 'adcs') subsystem = 'aocs';
-    const failure = $('fail-type').value;
     const onset = document.querySelector('input[name="fail-onset"]:checked').value;
-    const magnitude = parseFloat($('fail-magnitude').value);
     const onset_duration_s = parseInt($('fail-onset-dur').value) || 30;
 
     const payload = {
       type: 'failure_inject',
       subsystem,
-      failure,
-      magnitude,
+      failure: spec.name,
       onset,
       onset_duration_s
     };
 
-    wsSend(payload);
-    apiPost('/api/command', payload);
+    if (spec.magnitude) {
+      const r = readParamControl(spec.magnitude, 'fail-mag');
+      if (!r.ok) { setInjectError(r.reason); return; }
+      if (!r.skip) payload.magnitude = r.value;
+    }
+    for (const p of (spec.params || [])) {
+      const r = readParamControl(p, 'fail-p');
+      if (!r.ok) { setInjectError(r.reason); return; }
+      if (!r.skip) payload[p.name] = r.value;
+    }
+    setInjectError('');
 
-    addLogEntry('high', 'INJECT', `${subsystem}/${failure} mag=${magnitude.toFixed(2)} onset=${onset}`);
-    showToast(`Failure injected: ${subsystem}/${failure}`, 'error');
+    const describe = Object.keys(payload)
+      .filter(k => !['type', 'subsystem', 'failure', 'onset', 'onset_duration_s'].includes(k))
+      .map(k => `${k}=${JSON.stringify(payload[k])}`).join(' ');
+
+    wsSend(payload);
+    // The server re-validates against the same spec; surface its reason
+    // instead of letting a rejected injection look like it worked.
+    apiPost('/api/command', payload).then(res => {
+      if (res && res.status && res.status !== 'ok') {
+        setInjectError(`REJECTED: ${res.message || 'unknown reason'}`);
+        showToast('Injection rejected — see the reason above', 'error');
+      }
+    }).catch(() => {});
+
+    addLogEntry('high', 'INJECT', `${subsystem}/${spec.name} ${describe} onset=${onset}`);
+    showToast(`Failure injected: ${subsystem}/${spec.name}`, 'error');
     // Re-poll the failure list now (don't wait up to 5 s for the next interval).
     // Without this, a re-injected failure after a CLEAR can look like "nothing
     // happened" until the next poll.
     setTimeout(pollFailures, 400);
+  }
+
+  // ===== MISSION PHASE / SEPARATION =====
+  // Both commands are engine-side allowlisted (INSTRUCTOR_CMD_TYPES) and
+  // range-validated; they simply had no widget until now.
+  const PHASE_NAMES = ['PRE_SEPARATION', 'SEPARATION_TIMER', 'INITIAL_POWER_ON',
+                       'BOOTLOADER_OPS', 'LEOP', 'COMMISSIONING', 'NOMINAL'];
+
+  function setSpacecraftPhase() {
+    const phase = parseInt($('phase-select').value, 10);
+    if (!Number.isInteger(phase) || phase < 0 || phase > 6) {
+      showToast('Phase must be 0-6', 'error');
+      return;
+    }
+    const payload = { type: 'set_phase', phase };
+    wsSend(payload);
+    apiPost('/api/command', payload);
+    addLogEntry('high', 'PHASE', `set_phase ${phase} (${PHASE_NAMES[phase]})`);
+    showToast(`Phase set: ${phase} ${PHASE_NAMES[phase]}`, 'success');
+  }
+
+  function startSeparation() {
+    const payload = { type: 'start_separation' };
+    wsSend(payload);
+    apiPost('/api/command', payload);
+    addLogEntry('high', 'PHASE', 'start_separation');
+    showToast('Separation sequence started', 'success');
   }
 
   function renderFailures(failures) {
@@ -2516,13 +2745,10 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
     $('btn-start-scenario').addEventListener('click', startScenario);
     $('btn-stop-scenario').addEventListener('click', stopScenario);
 
-    // Failure form
+    // Failure form — every control in it is generated from the catalogue.
     $('fail-subsystem').addEventListener('change', updateFailureTypes);
-    updateFailureTypes();
-
-    $('fail-magnitude').addEventListener('input', () => {
-      $('fail-mag-value').textContent = parseFloat($('fail-magnitude').value).toFixed(2);
-    });
+    $('fail-type').addEventListener('change', updateFailureParams);
+    loadFailureCatalog();
 
     document.querySelectorAll('input[name="fail-onset"]').forEach(r => {
       r.addEventListener('change', updateOnsetDurationVisibility);
@@ -2531,6 +2757,10 @@ body.subpage #full-snapshot-tabs { display: none; }   /* single-tab subpages hid
 
     $('btn-inject').addEventListener('click', injectFailure);
     $('btn-clear-all').addEventListener('click', clearAllFailures);
+
+    // Mission phase + separation (engine handlers existed; widgets did not)
+    $('btn-set-phase').addEventListener('click', setSpacecraftPhase);
+    $('btn-start-separation').addEventListener('click', startSeparation);
 
     // Breakpoints
     $('btn-save-bp').addEventListener('click', saveBreakpoint);

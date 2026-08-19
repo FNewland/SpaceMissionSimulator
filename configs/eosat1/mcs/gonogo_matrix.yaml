@@ -1,0 +1,72 @@
+# GO/NO-GO call matrix (POSITION_NEEDS G7).
+#
+# CANONICAL SOURCE for the call matrix. The table in
+# manual/10_desk_procedures.md §"GO/NO-GO Call Matrix" is a mirror of this
+# file kept for the printed/browsable manual; edit HERE and update the
+# manual table to match (tests/test_content/test_gonogo_matrix_mirror.py
+# holds the two in step).
+#
+# Served additively at GET /api/gonogo-matrix so the GO/NO-GO panel can
+# show, when a poll opens, who calls, who must respond, and the FD
+# criticality note (FD3).
+#
+# `who_responds` values are position ids from mcs/positions.yaml, or the
+# literal strings "ALL" (every desk) / "affected" (the desks the calling
+# desk names on the loop).
+
+gonogo_matrix:
+  - situation: "Load shed level increase"
+    who_calls: eps_tcs
+    who_responds: [affected]
+    fd_decision: "FD authorises each level"
+    critical: false
+  - situation: "Subsystem mode change"
+    who_calls: lead_desk
+    who_responds: [flight_director]
+    fd_decision: "FD authorises"
+    critical: false
+  - situation: "Blind command send"
+    who_calls: ttc
+    who_responds: [flight_director]
+    fd_decision: "FD authorises each blind TC"
+    critical: false
+  - situation: "OBC switchover"
+    who_calls: fdir_systems
+    who_responds: [ALL]
+    fd_decision: "FD authorises (CRITICAL)"
+    critical: true
+  - situation: "AOCS fallback mode"
+    who_calls: aocs
+    who_responds: [payload_ops, flight_director]
+    fd_decision: "FD authorises mode change"
+    critical: false
+  - situation: "Payload suspend/resume"
+    who_calls: payload_ops_or_eps_tcs
+    who_responds: [flight_director]
+    fd_decision: "FD authorises"
+    critical: false
+  - situation: "Transponder switch"
+    who_calls: ttc
+    who_responds: [flight_director]
+    fd_decision: "FD authorises (TM interruption)"
+    critical: true
+  - situation: "FDIR threshold change"
+    who_calls: fdir_systems
+    who_responds: [ALL]
+    fd_decision: "FD authorises (test only)"
+    critical: false
+  - situation: "Antenna deployment"
+    who_calls: ttc
+    who_responds: [flight_director]
+    fd_decision: "FD authorises (IRREVERSIBLE)"
+    critical: true
+  - situation: "Recovery from safe mode"
+    who_calls: fdir_systems
+    who_responds: [ALL]
+    fd_decision: "FD authorises each restore step"
+    critical: true
+  - situation: "Commissioning phase gate"
+    who_calls: lead_desk
+    who_responds: [flight_director]
+    fd_decision: "FD declares GO for next phase"
+    critical: false

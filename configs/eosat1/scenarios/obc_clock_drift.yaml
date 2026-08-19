@@ -1,0 +1,36 @@
+name: "Onboard Clock Drift — GPS Discipline Lost"
+difficulty: INTERMEDIATE
+duration_s: 2400
+briefing: |
+  The onboard oscillator starts drifting hard at T+120s — roughly 500 ppm,
+  about 43 seconds per day, against a nominal of ~12 ppm (1 s/day). With GPS
+  discipline unavailable the OBC clock walks away from UTC, so onboard CUC
+  timestamps, the S11 time-tagged command schedule and the delayed-TM archive
+  all start disagreeing with ground time.
+
+  The operator must notice the growing onboard/ground time difference in
+  telemetry, decide whether the fault is in the clock or in the ground
+  correlation, and re-sync the clock with an S9 time update once the pass
+  gives them the uplink to do it.
+
+events:
+  - time_offset_s: 120
+    action: inject
+    params:
+      subsystem: obdh
+      failure: clock_drift
+      ppm: 500.0
+    note: "Oscillator drift ~500 ppm — about 43 s/day"
+
+  - time_offset_s: 900
+    action: message
+    params:
+      text: >-
+        FD note: the delayed-TM dump from the last pass will not time-correlate
+        against the ground log. Check the onboard clock before replanning.
+
+expected_responses:
+  - { category: detect, description: "Detect the growing onboard/ground time difference" }
+  - { category: isolate, description: "Confirm the drift rate is the oscillator, not a ground correlation error" }
+  - { category: recover, description: "Re-sync the onboard clock with an S9 time update" }
+  - { category: plan, description: "Reassess the S11 time-tagged schedule after the clock jump" }

@@ -79,6 +79,12 @@ def _tick(engine, n=3):
             except Exception:
                 pass
         engine._tick_s12_monitoring()
+        # The FDIR summary params (0x0700-0x0703, HK SID 4 as of the modern-UI
+        # batch) are engine-published, not model-published — the real tick
+        # writes them in _tick_fdir_advanced(). This hand-rolled partial tick
+        # bypasses that path, so publish them explicitly or the SID 4
+        # completeness check reports them missing.
+        engine._publish_fdir_parameters()
         engine._check_subsystem_events()
         engine._emit_hk_packets(1.0)
         engine._drain_tc_queue()

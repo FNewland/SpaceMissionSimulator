@@ -723,6 +723,148 @@ class ServiceDispatcher:
             # block; 96 is AOCS_SET_DESAT_INHIBIT and 97/98 are the UHF beacon,
             # so the payload takes the next clean allocation upward.
             return self._route_payload_cmd(func_id, data[1:])
+        elif func_id == 120:
+            # SYS_SET_MISSION_PHASE — system/mission-level block 120-127.
+            # The mission phase is engine state, not a subsystem's, so it
+            # routes to its own handler rather than being smuggled into the
+            # OBDH or EPS range.
+            return self._route_system_cmd(func_id, data[1:])
+        return []
+
+    # ─── System / mission-level commands (S8 funcs 120-127) ───────────
+
+    #: S8.1 func 120 flag bits.
+    PHASE_FLAG_FORCE = 0x01
+
+    #: Lowest phase a ground telecommand may declare. 0 PRE_SEPARATION,
+    #: 1 SEPARATION_TIMER and 2 INITIAL_POWER_ON are states of the launch
+    #: vehicle stack, not of an operated spacecraft; phases 0-1 also stop the
+    #: subsystem ticks that carry the uplink, so commanding one would lock the
+    #: operator out of their own spacecraft with no way back. They stay
+    #: instructor-console territory.
+    MIN_COMMANDABLE_PHASE = 3
+    MAX_PHASE = 6
+
+    #: Mission phase names, matching Engine._tick_spacecraft_phase.
+    _PHASE_NAMES = {
+        0: "PRE_SEPARATION", 1: "SEPARATION_TIMER", 2: "INITIAL_POWER_ON",
+        3: "BOOTLOADER_OPS", 4: "LEOP", 5: "COMMISSIONING", 6: "NOMINAL",
+    }
+
+    #: S5 event raised on every accepted mission-phase declaration.
+    EV_MISSION_PHASE_CHANGED = 0x0055
+
+    def _phase_name(self, phase: int) -> str:
+        return self._PHASE_NAMES.get(int(phase), f"PHASE_{int(phase)}")
+
+    def _obc_in_bootloader(self) -> bool:
+        """True when the OBC is running the bootloader image (sw_image 0)."""
+        obdh = self._engine.subsystems.get("obdh")
+        sw = getattr(getattr(obdh, "_state", None), "sw_image", None)
+        if sw is None:
+            try:
+                sw = int(self._engine.params.get(0x0311, 1))
+            except (TypeError, ValueError):
+                return False
+        try:
+            return int(sw) == 0
+        except (TypeError, ValueError):
+            return False
+
+    def _route_system_cmd(self, func_id: int, data: bytes) -> list[bytes]:
+        """System/mission-level S8 functions.
+
+        ``120 SYS_SET_MISSION_PHASE(phase u8, flags u8)``
+
+        The mission phase gates which subsystems tick, telecommand acceptance
+        (phase <= 3 restricts the uplink to the bootloader subset), the
+        derived sc_mode / sat.mode, arming of the advanced fault-propagation
+        model and of the phase-gated legacy FDIR rules, the separation timer,
+        and the propulsion arm interlock (``prop.yaml min_phase: 6``).
+        ``Engine._tick_spacecraft_phase`` only implements the automatic
+        power-up chain 1->2->3->4 and the reboot revert, so without this
+        command the phase sticks at LEOP forever: no burn can ever be armed
+        and the console can never read anything but SAFE.
+        """
+        if func_id != 120:
+            return []
+        eng = self._engine
+        if len(data) < 1:
+            return self.generate_s1_exec_fail(
+                self._request_id, ERR_BAD_ARGUMENT,
+                "SYS_SET_MISSION_PHASE: no target phase supplied")
+        target = int(data[0])
+        flags = int(data[1]) if len(data) >= 2 else 0
+        force = bool(flags & self.PHASE_FLAG_FORCE)
+        current = int(getattr(eng, "_spacecraft_phase", 6))
+
+        if target > self.MAX_PHASE:
+            return self.generate_s1_exec_fail(
+                self._request_id, 0x0C01,
+                f"SYS_SET_MISSION_PHASE: phase {target} is outside the valid "
+                f"range 0-{self.MAX_PHASE}")
+        if target < self.MIN_COMMANDABLE_PHASE:
+            return self.generate_s1_exec_fail(
+                self._request_id, 0x0C02,
+                f"SYS_SET_MISSION_PHASE: phase {target} is a pre-separation "
+                f"state and is not ground-commandable (lowest commandable "
+                f"phase is {self.MIN_COMMANDABLE_PHASE}, BOOTLOADER_OPS)")
+
+        # An application phase asserts that the application software is
+        # running. If the OBC is in the bootloader that assertion is false,
+        # and honouring it would open the full telecommand set against
+        # software that cannot execute it. OBC_BOOT_APP (func 55) is the way
+        # in; the phase state machine then advances 3 -> 4 on the next tick.
+        if target >= 4 and self._obc_in_bootloader():
+            return self.generate_s1_exec_fail(
+                self._request_id, 0x0C03,
+                f"SYS_SET_MISSION_PHASE: cannot declare phase {target} while "
+                f"the OBC is running the bootloader — send OBC_BOOT_APP "
+                f"(S8.1 func 55) and the phase advances to LEOP on its own")
+
+        # Backwards transitions. Refused by default — a real mission does not
+        # go NOMINAL -> LEOP by accident — but reachable behind an explicit
+        # FORCE flag, because refusing outright would leave an operator who
+        # declared a phase prematurely (or who is rehearsing a regression)
+        # with no way to unwind it, and the phase has no other command.
+        if target < current and not force:
+            return self.generate_s1_exec_fail(
+                self._request_id, 0x0C04,
+                f"SYS_SET_MISSION_PHASE: {current} -> {target} is a "
+                f"backwards transition; re-send with the FORCE flag "
+                f"(flags bit 0 = 1) if that is intended")
+
+        if target == current:
+            logger.info("SYS_SET_MISSION_PHASE: already in phase %d — no-op",
+                        target)
+            eng._emit_event({
+                'event_id': self.EV_MISSION_PHASE_CHANGED,
+                'severity': 1,
+                'description': (
+                    f"Mission phase re-declared: {current} -> {target} "
+                    f"({self._phase_name(target)}) — no change"),
+                'from_phase': current, 'to_phase': target, 'forced': force,
+            })
+            return []
+
+        # Apply through the engine's shared phase-change path so HK SID
+        # gating, the TM APID, the stores and the OBDH software image all
+        # follow — the same mechanics the instructor console's set_phase uses.
+        eng.apply_phase_change(target)
+
+        logger.info("SYS_SET_MISSION_PHASE: phase %d -> %d%s",
+                    current, target, " (FORCED)" if force else "")
+        eng._emit_event({
+            'event_id': self.EV_MISSION_PHASE_CHANGED,
+            'severity': 2,
+            'description': (
+                f"Mission phase declared by ground: {current} "
+                f"({self._phase_name(current)}) -> {target} "
+                f"({self._phase_name(target)})"
+                + (" [FORCED backwards transition]" if target < current
+                   else "")),
+            'from_phase': current, 'to_phase': target, 'forced': force,
+        })
         return []
 
     def _route_prop_cmd(self, func_id: int, data: bytes) -> list[bytes]:
@@ -848,11 +990,12 @@ class ServiceDispatcher:
         elif func_id == 6:  # ST select
             unit = data[0] if data else 1
             self._cmd(aocs, {"command": "st_select", "unit": unit})
-        elif func_id == 7:  # Magnetometer select (defect #26)
-            # unit byte: 0 = primary (Mag A), 1 = redundant (Mag B). Send a
-            # concrete 'A'/'B' source string so the handler's A/B selection
-            # branch runs instead of the legacy bool path (which only set
-            # mag_valid and never actually switched the active magnetometer).
+        elif func_id == 7:  # Magnetometer select — RETIRED (2026-08c)
+            # EO-Sat-1 flies ONE magnetometer (owner ruling): MAG_SELECT was
+            # removed from the catalogue, and the model's `mag_select`
+            # handler now refuses with an explanatory 0x0007. The branch is
+            # kept (allowlisted in test_catalogue_dispatch_bijection) so a
+            # stale procedure gets an honest failure, never a silent no-op.
             unit = int(data[0]) if data else 0
             self._cmd(aocs, {"command": "mag_select", "source": "B" if unit else "A"})
         elif func_id == 8:  # RW set speed bias
@@ -892,7 +1035,29 @@ class ServiceDispatcher:
         elif func_id == 12:  # AOCS_BEGIN_ACQUISITION
             self._cmd(aocs, {"command": "begin_acquisition"})
         elif func_id == 13:  # AOCS_GYRO_CALIBRATION
-            self._cmd(aocs, {"command": "gyro_calibration"})
+            # action u8 (0=START, 1=ABORT) + duration_s u16 (0 = the aocs.yaml
+            # default arc). Both optional: an empty data field is the legacy
+            # "start with the default arc" form, so every stored stack and
+            # shipped procedure that sends func 13 with no arguments still
+            # works.
+            action = int(data[0]) if len(data) >= 1 else 0
+            duration = (struct.unpack('>H', data[1:3])[0]
+                        if len(data) >= 3 else 0)
+            result = self._cmd(aocs, {"command": "gyro_calibration",
+                                      "action": action,
+                                      "duration_s": float(duration)})
+            if result.get("success"):
+                # TM(8,130): state u8 + progress u8 + accepted duration u16.
+                # The operator learns the arc the spacecraft actually took
+                # (clamped to the configured limits) without waiting a HK
+                # cycle.
+                st = self._cmd(aocs, {"command": "gyro_cal_status"})
+                return [self._engine.tm_builder._pack_tm(
+                    service=8, subtype=130,
+                    data=struct.pack(
+                        '>BBH', int(st.get("state", 0)) & 0xFF,
+                        int(st.get("progress_pct", 0)) & 0xFF,
+                        int(result.get("duration_s", 0)) & 0xFFFF))]
         elif func_id == 14:  # AOCS_RW_RAMP_DOWN: wheel_idx (1) + target_rpm (4)
             wheel = data[0] if data else 255  # 255 means all wheels
             target_rpm = struct.unpack('>f', data[1:5])[0] if len(data) >= 5 else 0.0
@@ -1524,7 +1689,7 @@ class ServiceDispatcher:
             # Catalogued form (tc_catalog TTC_SET_DATA_RATE): a single uint8
             # `rate` field carrying a TIER CODE over ttc.yaml's tm_rate_tiers
             # ladder — 0=LOW(16 kbps, routine ops), 1=HIGH(128 kbps, dumps),
-            # 0xFF=BEACON(1 kbps, bootloader only). The catalogue declares one
+            # 0xFF=SAFE(1 kbps, bootloader only). The catalogue declares one
             # uint8 and this handler reads exactly one byte, so the byte count
             # the MCS derives (1 func_id + 1 field = 2) matches the wire
             # (defect #80 was precisely this class of mismatch).
@@ -2061,6 +2226,27 @@ class ServiceDispatcher:
             logger.info("S13 create transfer %d for scene %d (%d MB, %d blocks)",
                        transfer_id, scene_id, size_mb, total_blocks)
 
+            # ── 2026-08c item 10: the S13 session IS the payload transfer ──
+            # NOM-003 verifies `payload.transfer_active` (0x062D) after
+            # S13.1 and watches `payload.transfer_progress` (0x062E) drain at
+            # the active TM rate — but the session bookkeeping lived only in
+            # this dispatcher and never told the payload model, so both
+            # parameters sat at 0 for the whole pass and the card's verifies
+            # could never pass. Opening a session against a REAL catalogued
+            # product now starts the model's transfer engine (which drains at
+            # 0x0506 while 0x0501 is LOCKED and stalls otherwise — the
+            # documented pass-planning behaviour).
+            if img is not None:
+                pl2 = self._payload_model()
+                if pl2 is not None:
+                    started = self._cmd(pl2, {"command": "initiate_transfer",
+                                              "scene_id": scene_id})
+                    if not (started or {}).get("success", False):
+                        logger.info("S13.1: payload transfer engine not "
+                                    "started (%s) — session bookkeeping "
+                                    "continues regardless",
+                                    (started or {}).get("message"))
+
             # Response: transfer_id(2) [+ total_blocks(4) + crc32(4) when the
             # session is bound to a real product]. The two extra fields are
             # APPENDED, so a ground decoder that only reads the first two
@@ -2148,6 +2334,16 @@ class ServiceDispatcher:
                         and xfer['blocks_sent'] >= xfer['total_blocks']:
                     self._cmd(pl, {"command": "release_image",
                                    "scene_id": xfer['scene_id']})
+                # 2026-08c item 10: closing the session also stops the payload
+                # transfer engine S13.1 started, so 0x062D returns to 0 as
+                # NOM-003 Step 6 verifies. A partial session leaves the
+                # product on board (release above is gated on completeness);
+                # only the ACTIVE flag is cleared.
+                if pl is not None and hasattr(pl, '_state'):
+                    ps = pl._state
+                    if getattr(ps, 'transfer_active', False) and \
+                            getattr(ps, 'transfer_scene_id', None) == xfer['scene_id']:
+                        ps.transfer_active = False
 
             return []
 
@@ -2201,7 +2397,14 @@ class ServiceDispatcher:
             # override-on forces delivery. Store is auto-cleared on completion.
             count = self._engine.queue_dump(store_id)
             if count > 0:
-                return self.generate_s1_progress(0, count)
+                # S1.5 carries a one-octet STEP number, not a packet count.
+                # Passing the queued count raised `ubyte format requires
+                # 0 <= number <= 255` for any real dump — the HK store holds
+                # thousands of packets — so every S15,9 of a non-trivial store
+                # came back to the operator as a dispatch error even though the
+                # dump had already been queued and ran to completion.
+                return self.generate_s1_progress(self._request_id,
+                                                 min(int(count), 0xFF))
             return []
         elif subtype == 11 and len(data) >= 1:
             store_id = data[0]

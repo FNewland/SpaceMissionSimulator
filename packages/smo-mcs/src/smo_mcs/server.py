@@ -10,6 +10,7 @@ import json
 import logging
 import math
 import os
+import sqlite3
 import struct
 import argparse
 import time as _time_mod
@@ -125,7 +126,7 @@ class MCSServer:
                  connect_port: int = 8002, http_port: int = 9090,
                  tc_port: int = 8001, sim_epoch: str | None = None,
                  time_source: str | None = None, sim_state_url: str | None = None,
-                 bind_host: str | None = None):
+                 bind_host: str | None = None, ui_mode: str | None = None):
         self.config_dir = Path(config_dir)
         self.connect_host = connect_host
         self.connect_port = connect_port
@@ -171,6 +172,27 @@ class MCSServer:
             or _cfg_time_source
             or "sim"
         ).strip().lower()
+        # ── UI mode resolution (design_2026-08 plan §1.2) ────────────
+        # Same house precedence as time_source: CLI --ui > SMO_UI env >
+        # mission-config `ui:` > built-in default. Default is "classic"
+        # until the modern console passes the Agent-5 verification gate
+        # (the flip is a one-line change here + start.sh).
+        # Per-request `?ui=` and the /classic and /modern routes override
+        # this for a single response (see _handle_index).
+        try:
+            _cfg_ui = _mc.ui  # mission config loaded above; None if absent
+        except Exception:
+            _cfg_ui = None    # config never loaded — env/CLI/default decide
+        self._ui_mode = (
+            ui_mode
+            or _os.environ.get("SMO_UI")
+            or _cfg_ui
+            or "modern"   # default flipped to modern (Agent-5 gate passed)
+        ).strip().lower()
+        if self._ui_mode not in ("classic", "modern"):
+            logger.warning("Unknown ui mode %r — falling back to classic",
+                           self._ui_mode)
+            self._ui_mode = "classic"
         # Default sim-state port comes from the shared NetworkConfig schema
         # (or SMO_SIM_HTTP_PORT env) rather than a hard-coded literal, so the
         # MCS source carries no simulator-HTTP back-channel constant (HA-006).
@@ -450,10 +472,24 @@ class MCSServer:
         self._procedure_meta: dict[str, dict] = {}
         self._load_alarm_procedures()
 
-        # Persistent TM archive (SQLite)
-        archive_dir = self.config_dir / ".." / "data"
-        archive_dir.mkdir(parents=True, exist_ok=True)
-        self._archive = TMArchive(archive_dir / "tm_archive.db")
+        # Persistent TM archive (SQLite).
+        #
+        # SMO_TM_ARCHIVE relocates the file. It defaults to `configs/../data`,
+        # which sits inside the checkout — and a checkout in a Dropbox /
+        # iCloud / OneDrive folder or on a network mount is a filesystem whose
+        # locking SQLite cannot rely on, which is a first-class way to get
+        # "database disk image is malformed". TMArchive.open() detects that
+        # (it checks the journal mode it ACTUALLY got) and says so loudly;
+        # this is the knob for acting on it without editing the tree.
+        env_path = os.environ.get("SMO_TM_ARCHIVE", "").strip()
+        if env_path:
+            archive_path = Path(env_path).expanduser()
+            archive_path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            archive_dir = self.config_dir / ".." / "data"
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            archive_path = archive_dir / "tm_archive.db"
+        self._archive = TMArchive(archive_path)
         self._archive.open()
         # Prune on start (D-5). `prune()` had zero callers, so a term's worth
         # of parameter rows plus the WAL accumulated inside the config tree
@@ -462,7 +498,17 @@ class MCSServer:
             self._archive.prune(now_epoch=self.sim_now_ts())
         except Exception as e:
             logger.debug("Archive prune failed: %s", e)
-        if getattr(self._archive, "legacy_time_base", False):
+        # Four archive conditions, four different things to tell the operator.
+        # They are deliberately distinguishable: "there is no history because
+        # this is a new file" is not the same problem as "the history is
+        # unreadable", and both used to look like an empty trend page.
+        _status = getattr(self._archive, "status", "ok")
+        if not getattr(self._archive, "available", True):
+            logger.error("MCS starting with a DEGRADED TM archive (%s): %s",
+                         _status, self._archive.message())
+        elif _status == "new":
+            logger.info("TM archive: %s", self._archive.message())
+        elif getattr(self._archive, "legacy_time_base", False):
             logger.warning(
                 "TM archive on disk predates the sim-time migration; its rows "
                 "are on the host wall clock and will not line up with the "
@@ -473,6 +519,30 @@ class MCSServer:
         # Interval and cutoff are both SIM seconds — same clock as the rows.
         self._archive_prune_interval_s = 3600.0
         self._archive_last_prune = self.sim_now_ts()
+
+        # ── Ground-derived parameter block v2 (POSITION_NEEDS G1+G3) ────
+        # One projection helper: archive slope + limits.yaml thresholds +
+        # the orbit propagator. Values carry explicit valid/reason — an
+        # empty archive yields INVALID entries, never fabricated numbers.
+        from smo_mcs.derived_params import DerivedParamEngine
+        self._derived_engine = DerivedParamEngine(
+            self._archive, self._limit_defs, self._orbit_prop,
+            self.sim_now_ts)
+        try:
+            import yaml as _yaml
+            with open(self.config_dir / "subsystems" / "prop.yaml") as f:
+                _prop_cfg = _yaml.safe_load(f) or {}
+            self._derived_engine.set_catbed_threshold(
+                (_prop_cfg.get("interlocks") or {}).get("catbed_min_c"))
+        except Exception as e:  # noqa: BLE001 — absent config ⇒ honest invalid
+            logger.debug("prop.yaml catbed threshold unavailable: %s", e)
+
+        # ── Predicted link chain (POSITION_NEEDS G5) ────────────────────
+        # Ground prediction only: RF constants from config + the same orbit
+        # propagator; served at /api/displays/link-prediction.
+        from smo_mcs.link_prediction import LinkPredictor
+        self._link_predictor = LinkPredictor(self.config_dir,
+                                             self._orbit_prop)
 
         # Delayed-TM (S15) dump store. These archive files are the ground
         # segment's copy of everything the spacecraft played back, so the MCS
@@ -1220,7 +1290,7 @@ class MCSServer:
             "offset_warn_s": warn_s,
             "offset_alarm_s": alarm_s,
             "epoch": get_time_epoch().replace(tzinfo=timezone.utc).isoformat(),
-            "speed": self._sim_speed,
+            "speed": self._published_speed(),
         }
 
         return {
@@ -1236,14 +1306,32 @@ class MCSServer:
             "sc_time_since_sync_s": since_sync_s,
             "time_correlation": correlation,
             "met_s": met_s,
-            "speed": self._sim_speed,
+            "speed": self._published_speed(),
             "sc_uptime_s": sc_uptime,
         }
+
+    def _published_speed(self) -> float:
+        """Time-rate multiplier as PUBLISHED to displays (disposition M11).
+
+        In real mode wall-clock UTC advances at exactly 1.0 by definition, so
+        that is what gets published regardless of any residual _sim_speed
+        state (e.g. a stray POST /api/ground-time {"speed": ...}). Publishing
+        the raw multiplier there would let a training control leak into a
+        real-mission console. Sim mode publishes the true multiplier; the
+        modern UI shows it only inside the TRAINING chip (M1), which is
+        absent in real mode.
+        """
+        return 1.0 if self._time_source == "real" else self._sim_speed
 
     async def start(self) -> None:
         self._running = True
         app = web.Application()
         app.router.add_get("/", self._handle_index)
+        # Explicit generation routes: /classic and /modern always serve their
+        # page regardless of the resolved mode, so the two consoles can be
+        # compared live in two tabs (plan §1.2).
+        app.router.add_get("/classic", self._handle_index_classic)
+        app.router.add_get("/modern", self._handle_index_modern)
         app.router.add_get("/ws", self._handle_ws)
         app.router.add_get("/api/displays", self._handle_displays)
         app.router.add_get("/api/state", self._handle_state)
@@ -1299,6 +1387,8 @@ class MCSServer:
         app.router.add_post("/api/handover", self._handle_handover_post)
         # Alarm journal (Feature 2)
         app.router.add_get("/api/limits", self._handle_limits)
+        app.router.add_get("/api/annotations", self._handle_annotations)
+        app.router.add_get("/api/display-config", self._handle_display_config)
         app.router.add_get("/api/alarms", self._handle_alarms_get)
         app.router.add_post("/api/alarms/{alarm_id}/ack", self._handle_alarm_ack)
         # Client config endpoint (planner URL for distributed deployments)
@@ -1322,6 +1412,18 @@ class MCSServer:
         app.router.add_get("/api/displays/system-overview", self._handle_system_overview)
         app.router.add_post("/api/displays/alarms/{alarm_id}/ack", self._handle_alarm_ack_display)
         app.router.add_post("/api/displays/alarm-trends", self._handle_alarm_trends)
+
+        # ── design_2026-08 POSITION_NEEDS additions (additive only) ────
+        # G5: predicted link chain for the TT&C overlay.
+        app.router.add_get("/api/displays/link-prediction",
+                           self._handle_link_prediction)
+        # G6: fault-propagation graph for first-out alarm grouping.
+        app.router.add_get("/api/fault-graph", self._handle_fault_graph)
+        # G7: the GO/NO-GO call matrix, config-mirrored from the manual.
+        app.router.add_get("/api/gonogo-matrix", self._handle_gonogo_matrix)
+        # G8: append-only console/mission log.
+        app.router.add_get("/api/console-log", self._handle_console_log_get)
+        app.router.add_post("/api/console-log", self._handle_console_log_post)
 
         # Delayed-TM (S15) dump store: JSON listing, raw download, decoded
         # summary and a self-contained browser page at /dumps. Served from the
@@ -1369,6 +1471,19 @@ class MCSServer:
                 break
         if vendor_dir and vendor_dir.exists():
             app.router.add_static("/static/vendor/", vendor_dir)
+        # Shared design system (design_2026-08 plan §1.1): one canonical
+        # runtime copy served from smo_common package data, mounted at the
+        # SAME URL by all three servers so pages and split deployments agree.
+        # NOTE: /static/shared/ must be mounted BEFORE /static/ — aiohttp
+        # resolves routes in registration order and the broader /static/
+        # mount would otherwise shadow it.
+        import smo_common as _smo_common
+        _shared_ui = Path(_smo_common.__file__).parent / "ui"
+        if _shared_ui.is_dir():
+            app.router.add_static("/static/shared/", _shared_ui)
+        else:  # pragma: no cover — packaging error, say so loudly
+            logger.warning("smo_common ui/ package data missing (%s) — "
+                           "modern pages will render unstyled", _shared_ui)
         if static_dir.exists():
             app.router.add_static("/static/", static_dir)
 
@@ -1584,6 +1699,15 @@ class MCSServer:
             if new_state:
                 self._archive_command_state(tc_seq, new_state)
                 verif["state"] = new_state
+                # Console/mission log (G8): the S1 verdict completes the TC
+                # entry appended at send time. Terminal states only —
+                # ACCEPTED is progress, not a verdict.
+                if new_state in ("COMPLETED", "REJECTED", "FAILED"):
+                    detail = f" — {reason}" if reason else ""
+                    self._console_log(
+                        "tc",
+                        f"TC seq {tc_seq} S1 verdict: {new_state}{detail}",
+                        ref=f"seq:{tc_seq}")
 
             for entry in self._verification_log:
                 if entry.get("seq") == tc_seq:
@@ -1857,7 +1981,17 @@ class MCSServer:
         the display would show the pre-burn orbit forever. Rebuild the
         propagator from the served TLE when the version changes; version 0
         (or an absent elset) means the un-manoeuvred config orbit.
+
+        SIM-ONLY (disposition L3): the element set comes from the simulator's
+        state endpoint, which only exists in training. In real mode the MCS
+        keeps the configured TLE — honest behaviour, since no ground process
+        exists yet to hand it a post-manoeuvre elset. Operator TLE upload is
+        future work; when it lands it gets its own (real-mode) path, not this
+        one. Today this is defence in depth — the only caller is
+        _sim_state_poll_loop, which never runs in real mode.
         """
+        if self._time_source != "sim":
+            return
         try:
             ev = payload.get("orbit_epoch_version")
             if ev is None or int(ev) == getattr(self, "_orbit_epoch_version", 0):
@@ -2072,21 +2206,22 @@ class MCSServer:
                 ttc_group.get("downlink_mode") or sim.get("downlink_mode")):
             return (f"{commanded['name']} needs DOWNLINK mode "
                     f"(TTC_SET_DOWNLINK_MODE, S8 func 79)")
-        gate = commanded.get("min_elevation_deg") or 0.0
-        el = ttc_group.get("elevation_deg")
-        if gate > 0.0 and el is not None and float(el) < gate:
-            return (f"{commanded['name']} needs elevation >= {gate:.0f} deg "
-                    f"(now {float(el):.1f} deg)")
-        if gate > 0.0:
-            return f"{commanded['name']} gate not satisfied (needs >= {gate:.0f} deg)"
-        return f"{commanded['name']} refused by a permission gate"
+        # 2026-08c item 5: min_elevation_deg is a GROUND policy now — the
+        # spacecraft no longer demotes on elevation, so an active/commanded
+        # mismatch is never explained by it. The remaining on-board gates
+        # are antenna, DOWNLINK mode and the beacon-mode latch.
+        return (f"{commanded['name']} refused by an on-board permission gate "
+                f"(antenna / DOWNLINK mode / beacon-mode latch)")
 
     def _ingest_sim_health(self, payload: dict) -> None:
         """Absorb the simulator-reported health fields the MCS can display.
 
-        ``sc_mode`` is NOT downlinked as telemetry (parameters 0x0700-0x0703
-        are declared in parameters.yaml but appear in no HK SID), so the FDIR
-        window would have nothing to show for spacecraft mode. The MCS already
+        ``sc_mode`` is NOT downlinked as telemetry, so the FDIR
+        window would have nothing to show for spacecraft mode. (The FDIR
+        summary parameters 0x0700-0x0703 now ride platform HK SID 4 —
+        disposition M5 — so the modern console derives its FDIR story from
+        TM; this sim-state path remains for the classic page and carries its
+        source tag.) The MCS already
         polls this endpoint for its clock anchor and for `hk_enabled`; taking
         `sc_mode` from the same place is the same trade. It is tagged with its
         source so the display can say "SIM" rather than implying telemetry.
@@ -2252,6 +2387,16 @@ class MCSServer:
                     for pid, status in self._tm_processor.limit_statuses().items()
                 }
                 data["unacked_alarms"] = self.unacknowledged_alarm_count()
+                # Ground-derived parameter block v2 (G1+G3): projections
+                # from received TM + archive slope + orbit state. Each entry
+                # carries {id, value, valid, reason}; invalid entries are
+                # published AS invalid — displays must show the state, not
+                # substitute a number.
+                try:
+                    data["derived"] = self._derived_engine.compute(data)
+                except Exception as e:  # noqa: BLE001
+                    logger.debug("derived-param compute failed: %s", e)
+                    data["derived"] = {}
                 data["sa"] = self._build_sa_block(data, age_s, stale)
                 # Per-SID observation for the HK Manager: how long since each
                 # configured SID last arrived, and any enable bit the
@@ -2282,11 +2427,16 @@ class MCSServer:
                 # Sim-clock discontinuity (defect #79). Non-zero jump_count
                 # means the ground clock was re-anchored across a break in sim
                 # time and anything cached at the old epoch was dropped.
-                data["sim_time_jump"] = {
-                    "count": self._jump_count,
-                    "last_utc": self._last_jump_utc,
-                    "last_delta_s": round(self._last_jump_delta_s, 2),
-                }
+                # OMITTED in real mode (disposition M10): wall-clock UTC
+                # cannot jump, so publishing the field there would present a
+                # training concept as a mission one. Modern pages never read
+                # it; classic tolerates its absence (renders nothing).
+                if self._time_source == "sim":
+                    data["sim_time_jump"] = {
+                        "count": self._jump_count,
+                        "last_utc": self._last_jump_utc,
+                        "last_delta_s": round(self._last_jump_delta_s, 2),
+                    }
                 # Latest on-board schedule, so the S11 display survives a tab
                 # switch without re-issuing TC(11,17).
                 if self._schedule_report:
@@ -2403,7 +2553,8 @@ class MCSServer:
         return {
             "link": link,
             "last_frame_age_s": age_s,
-            "speed": self._sim_speed,
+            # M11: real mode publishes exactly 1.0 (see _published_speed).
+            "speed": self._published_speed(),
             "unacked_alarms": self.unacknowledged_alarm_count(),
             "tm_tier": ttc.get("tm_tier"),
             "tm_tier_name": ttc.get("tm_tier_name"),
@@ -2468,6 +2619,13 @@ class MCSServer:
                 params[key] = 1.0 if val else 0.0
         if isinstance(data.get("alt_km"), (int, float)):
             params["orbit.alt_km"] = float(data["alt_km"])
+        # Ground-derived v2 projections (G1): archive only the VALID values —
+        # an invalid projection has no number to store, and storing a
+        # placeholder would fabricate history.
+        for name, ent in (data.get("derived") or {}).items():
+            if isinstance(ent, dict) and ent.get("valid") \
+                    and isinstance(ent.get("value"), (int, float)):
+                params[name] = float(ent["value"])
         if params:
             try:
                 self._archive.store_parameters(
@@ -2489,10 +2647,45 @@ class MCSServer:
         assume one (spec Part D.4).
         """
         try:
-            return self._archive.meta()
+            meta = self._archive.meta()
+            if isinstance(meta, dict):
+                meta.setdefault("available", True)
+                meta.setdefault("status", "ok")
+                meta.setdefault("message", meta.get("note", ""))
+                return meta
         except Exception:  # noqa: BLE001 — a MagicMock archive in tests
-            return {"schema_version": None, "time_base": "unknown",
-                    "sim_time": False, "note": ""}
+            pass
+        return {"schema_version": None, "time_base": "unknown",
+                "sim_time": False, "note": "", "status": "unknown",
+                "available": False,
+                "message": "Telemetry archive state is unknown."}
+
+    def _archive_available(self) -> bool:
+        """False when the archive is corrupt/unopenable (degraded mode)."""
+        try:
+            return bool(self._archive.available)
+        except Exception:  # noqa: BLE001 — a MagicMock archive in tests
+            return True
+
+    def _archive_query(self, what: str, fn, *args, **kwargs):
+        """Call one archive accessor and NEVER let a driver error escape.
+
+        `database disk image is malformed` is a SQLite string. It must not
+        appear in an operator panel — the panel gets an explicit
+        "archive unavailable" state and the driver text goes to the log.
+        Returns ``(rows, degraded)``.
+        """
+        if not self._archive_available():
+            return [], True
+        try:
+            return fn(*args, **kwargs), False
+        except sqlite3.Error as e:
+            logger.error("TM archive %s failed, degrading to "
+                         "read-unavailable: %s", what, e)
+            return [], True
+        except Exception as e:  # noqa: BLE001
+            logger.error("TM archive %s failed: %s", what, e)
+            return [], True
 
     async def _handle_archive_params(self, request):
         """GET /api/archive/parameters?name=eps.bat_soc&start=<epoch>&end=<epoch>&limit=3600"""
@@ -2502,8 +2695,11 @@ class MCSServer:
         start = float(request.query["start"]) if "start" in request.query else None
         end = float(request.query["end"]) if "end" in request.query else None
         limit = int(request.query.get("limit", 3600))
-        data = self._archive.query_parameters(name, start, end, limit)
+        data, degraded = self._archive_query(
+            "query_parameters", self._archive.query_parameters,
+            name, start, end, limit)
         return web.json_response({"param_name": name, "data": data,
+                                  "archive_unavailable": degraded,
                                   "archive": self._archive_meta()})
 
     async def _handle_archive_param_names(self, request):
@@ -2515,11 +2711,8 @@ class MCSServer:
         name carries its ground limit band where one exists, so the limit-band
         overlay costs no second round trip.
         """
-        try:
-            names = self._archive.parameter_names()
-        except Exception as e:  # noqa: BLE001
-            logger.debug("parameter_names failed: %s", e)
-            names = []
+        names, degraded = self._archive_query(
+            "parameter_names", self._archive.parameter_names)
         band_by_name: dict[str, dict] = {}
         for pid, band in self._tm_processor.limit_bands().items():
             meta = self._param_meta.get(pid)
@@ -2537,6 +2730,8 @@ class MCSServer:
         return web.json_response({
             "names": names,
             "bands": {n: band_by_name[n] for n in names if n in band_by_name},
+            "archive_unavailable": degraded,
+            "archive": self._archive_meta(),
         })
 
     async def _handle_archive_events(self, request):
@@ -2545,8 +2740,10 @@ class MCSServer:
         end = float(request.query["end"]) if "end" in request.query else None
         sev = int(request.query.get("severity", 0))
         limit = int(request.query.get("limit", 500))
-        data = self._archive.query_events(start, end, sev, limit)
+        data, degraded = self._archive_query(
+            "query_events", self._archive.query_events, start, end, sev, limit)
         return web.json_response({"events": data,
+                                  "archive_unavailable": degraded,
                                   "archive": self._archive_meta()})
 
     async def _handle_archive_alarms(self, request):
@@ -2554,8 +2751,10 @@ class MCSServer:
         start = float(request.query["start"]) if "start" in request.query else None
         end = float(request.query["end"]) if "end" in request.query else None
         limit = int(request.query.get("limit", 500))
-        data = self._archive.query_alarms(start, end, limit)
+        data, degraded = self._archive_query(
+            "query_alarms", self._archive.query_alarms, start, end, limit)
         return web.json_response({"alarms": data,
+                                  "archive_unavailable": degraded,
                                   "archive": self._archive_meta()})
 
     async def _handle_archive_playback(self, request):
@@ -2565,9 +2764,11 @@ class MCSServer:
             return web.json_response({"error": "subsystem parameter required"}, status=400)
         start = float(request.query["start"]) if "start" in request.query else None
         end = float(request.query["end"]) if "end" in request.query else None
-        data = self._archive.get_playback_data(subsystem, start, end,
-                                              now_epoch=self.sim_now_ts())
+        data, degraded = self._archive_query(
+            "get_playback_data", self._archive.get_playback_data,
+            subsystem, start, end, now_epoch=self.sim_now_ts())
         return web.json_response({"subsystem": subsystem, "data": data,
+                                  "archive_unavailable": degraded,
                                   "archive": self._archive_meta()})
 
     async def _handle_pus_command(self, request):
@@ -2678,6 +2879,15 @@ class MCSServer:
             )
         except Exception as e:  # noqa: BLE001 — archiving must never block a TC
             logger.debug("store_command failed: %s", e)
+        # Console/mission log (G8): every TC send is a decision-record line.
+        # The S1 verdict is appended by _process_tm when it arrives.
+        self._console_log(
+            "tc",
+            f"TC sent: {entry.get('name', '')} "
+            f"(S{entry.get('service', 0)}.{entry.get('subtype', 0)}, "
+            f"seq {entry.get('seq', 0)})",
+            position=str(entry.get("position", "")),
+            ref=f"seq:{entry.get('seq', 0)}")
 
     def _archive_command_state(self, seq: int, state: str) -> None:
         """Transition the archived command row on an S1 verification report."""
@@ -2705,22 +2915,63 @@ class MCSServer:
         start = float(request.query["start"]) if "start" in request.query else None
         end = float(request.query["end"]) if "end" in request.query else None
         limit = int(request.query.get("limit", 500))
-        try:
-            rows = self._archive.query_commands(start, end, limit)
-        except Exception as e:  # noqa: BLE001
-            logger.debug("query_commands failed: %s", e)
-            rows = []
+        rows, degraded = self._archive_query(
+            "query_commands", self._archive.query_commands, start, end, limit)
         return web.json_response({"commands": rows,
+                                  "archive_unavailable": degraded,
                                   "archive": self._archive_meta()})
 
-    async def _handle_index(self, request):
-        index_file = Path(__file__).parent / "static" / "index.html"
+    # ── UI switch (design_2026-08 plan §1.2) ──────────────────────────
+    # Both UIs hit the same API; these handlers only decide WHICH page is
+    # served. Index responses carry Cache-Control: no-cache so flipping the
+    # mode (or the final classic->modern default flip) is never masked by a
+    # cached index (risk R9).
+
+    def _resolve_ui(self, request) -> str:
+        """Per-request UI mode: ?ui= wins over the resolved server mode."""
+        q = (request.query.get("ui") or "").strip().lower()
+        if q in ("classic", "modern"):
+            return q
+        # getattr: house tests build servers via __new__ without __init__.
+        return getattr(self, "_ui_mode", "classic")
+
+    def _index_file_for(self, mode: str) -> Path:
+        static_dir = Path(__file__).parent / "static"
+        if mode == "modern":
+            return static_dir / "modern" / "index.html"
+        return static_dir / "index.html"
+
+    def _serve_index(self, mode: str):
+        index_file = self._index_file_for(mode)
         if index_file.exists():
-            return web.FileResponse(index_file)
+            return web.FileResponse(
+                index_file, headers={"Cache-Control": "no-cache"})
+        if mode == "modern":
+            # Modern assets not shipped (or not yet built) — say so rather
+            # than serving a blank page; /classic is the escape hatch (R5).
+            return web.Response(
+                text="<h1>SMO MCS — modern UI assets not installed</h1>"
+                     "<p>The classic console is at <a href=\"/classic\">"
+                     "/classic</a>.</p>",
+                content_type="text/html",
+                headers={"Cache-Control": "no-cache"},
+            )
         return web.Response(
             text="<h1>SMO MCS — static/index.html not found</h1>",
             content_type="text/html",
+            headers={"Cache-Control": "no-cache"},
         )
+
+    async def _handle_index(self, request):
+        return self._serve_index(self._resolve_ui(request))
+
+    async def _handle_index_classic(self, request):
+        """GET /classic — always the classic page (live A/B comparison)."""
+        return self._serve_index("classic")
+
+    async def _handle_index_modern(self, request):
+        """GET /modern — always the modern page (live A/B comparison)."""
+        return self._serve_index("modern")
 
     async def _handle_ws(self, request):
         ws = web.WebSocketResponse()
@@ -3940,6 +4191,176 @@ class MCSServer:
             "unacknowledged": self.unacknowledged_alarm_count(),
         })
 
+    async def _handle_annotations(self, request):
+        """GET /api/annotations — RETIRED teaching layer; always serves ``{}``.
+
+        The guided-mode annotation content was deleted 2026-08-19 (owner
+        ruling: the operator UI must be intuitive without a training mode).
+        The route is kept for URL stability (route-snapshot contract) and
+        now always returns an empty mapping. The two operational tables that
+        used to ride in annotations.yaml (capture gates, health baselines)
+        moved to display_config.yaml — see /api/display-config.
+        """
+        return web.json_response({})
+
+    async def _handle_display_config(self, request):
+        """GET /api/display-config — operational display configuration.
+
+        Serves ``configs/<mission>/mcs/display_config.yaml`` verbatim as
+        JSON: the NOM-002 ``capture_gates`` table (G4) and the commissioning
+        ``health_baselines`` snapshot (G15). An absent or unreadable file is
+        not an error — the console renders its "no gate table / no baseline"
+        affordances — so this degrades to ``{}``.
+        """
+        path = self.config_dir / "mcs" / "display_config.yaml"
+        if not path.exists():
+            return web.json_response({})
+        try:
+            import yaml as _yaml
+            with open(path) as f:
+                data = _yaml.safe_load(f) or {}
+            if not isinstance(data, dict):
+                logger.warning("display_config.yaml is not a mapping — serving {}")
+                data = {}
+            return web.json_response(data)
+        except Exception as e:  # noqa: BLE001 — display config must not 500
+            logger.warning("display_config.yaml unreadable (%s) — serving {}", e)
+            return web.json_response({})
+
+    # ── POSITION_NEEDS G5/G6/G7/G8 handlers (additive) ───────────────
+
+    async def _handle_link_prediction(self, request):
+        """GET /api/displays/link-prediction — predicted range/FSPL/Eb-N0.
+
+        Ground prediction for the current-or-next pass, shaped for overlay
+        drawing (arrays of [t, value], t = sim-time Unix epoch seconds).
+        ``available: false`` with a reason when the prediction cannot be
+        computed — never a fabricated curve.
+        """
+        try:
+            payload = self._link_predictor.predict(self.sim_now())
+        except Exception as e:  # noqa: BLE001
+            payload = {"available": False, "reason": str(e), "tiers": []}
+        payload["time_base"] = "sim"
+        return web.json_response(payload)
+
+    async def _handle_fault_graph(self, request):
+        """GET /api/fault-graph — the parsed fault-propagation graph (G6)."""
+        from smo_mcs.fault_graph import load_fault_graph
+        names_to_ids = {m.get("name", ""): pid
+                        for pid, m in self._param_meta.items()}
+        return web.json_response(
+            load_fault_graph(self.config_dir, names_to_ids))
+
+    async def _handle_gonogo_matrix(self, request):
+        """GET /api/gonogo-matrix — the GO/NO-GO call matrix (G7).
+
+        Serves ``configs/<mission>/mcs/gonogo_matrix.yaml`` (the config
+        mirror of the manual §"GO/NO-GO Call Matrix"). Each row carries
+        ``situation``, ``who_calls``, ``who_responds`` (position ids or the
+        literals ALL/affected), ``fd_decision`` and ``critical`` — the
+        GO/NO-GO panel renders the matching row when a poll opens (FD3).
+        Absent file ⇒ ``{"available": false}`` — the panel says so instead
+        of inventing rows.
+        """
+        path = self.config_dir / "mcs" / "gonogo_matrix.yaml"
+        if not path.exists():
+            return web.json_response(
+                {"available": False,
+                 "reason": "mcs/gonogo_matrix.yaml not found", "matrix": []})
+        try:
+            import yaml as _yaml
+            data = _yaml.safe_load(path.read_text()) or {}
+            rows = data.get("gonogo_matrix", [])
+            if not isinstance(rows, list):
+                rows = []
+            return web.json_response({
+                "available": True,
+                "source": "mcs/gonogo_matrix.yaml (mirrored in "
+                          "manual/10_desk_procedures.md)",
+                "matrix": rows,
+            })
+        except Exception as e:  # noqa: BLE001
+            return web.json_response(
+                {"available": False, "reason": str(e), "matrix": []})
+
+    # ── Console / mission log (G8) ───────────────────────────────────
+
+    def _console_log(self, kind: str, text: str, *, position: str = "",
+                     ref: str = "", source: str = "server") -> None:
+        """Append a server-generated console-log entry, never raising."""
+        try:
+            self._archive.store_console_entry(
+                utc_epoch=self.sim_now_ts(), kind=kind, text=text,
+                position=position, ref=ref, source=source)
+        except Exception as e:  # noqa: BLE001 — logging must not block ops
+            logger.debug("console-log append failed: %s", e)
+
+    async def _handle_console_log_post(self, request):
+        """POST /api/console-log — append one operator entry.
+
+        Body: ``{ts?, position, kind, text, ref?}``. ``kind`` is one of
+        tc|ack|shelve|procedure|gonogo|mark|note. ``ts`` (sim-time Unix
+        epoch) defaults to the MCS clock. The store is append-only.
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON"}, status=400)
+        kind = str(body.get("kind", "")).strip().lower()
+        text = str(body.get("text", "")).strip()
+        if kind not in TMArchive.CONSOLE_LOG_KINDS:
+            return web.json_response(
+                {"error": f"kind must be one of "
+                          f"{list(TMArchive.CONSOLE_LOG_KINDS)}"},
+                status=400)
+        if not text:
+            return web.json_response({"error": "text is required"},
+                                     status=400)
+        try:
+            ts = float(body["ts"]) if "ts" in body else self.sim_now_ts()
+        except (TypeError, ValueError):
+            return web.json_response({"error": "ts must be a number"},
+                                     status=400)
+        position = str(body.get("position", ""))
+        ref = str(body.get("ref", ""))
+        try:
+            row_id = self._archive.store_console_entry(
+                utc_epoch=ts, kind=kind, text=text, position=position,
+                ref=ref, source="operator")
+        except Exception as e:  # noqa: BLE001
+            return web.json_response(
+                {"error": f"console-log store unavailable: {e}"}, status=503)
+        return web.json_response({
+            "status": "logged",
+            "entry": {"id": row_id, "utc_epoch": ts, "position": position,
+                      "kind": kind, "text": text, "ref": ref,
+                      "source": "operator"},
+            "time_base": "sim",
+        })
+
+    async def _handle_console_log_get(self, request):
+        """GET /api/console-log?since=&until=&limit= — entries, oldest first."""
+        def _qf(key):
+            v = request.query.get(key)
+            return None if v in (None, "") else float(v)
+        try:
+            since = _qf("since")
+            until = _qf("until")
+            limit = int(request.query.get("limit", 1000))
+        except (TypeError, ValueError):
+            return web.json_response(
+                {"error": "since/until/limit must be numeric"}, status=400)
+        entries, degraded = self._archive_query(
+            "query_console_log", self._archive.query_console_log,
+            since, until, limit)
+        return web.json_response({
+            "entries": entries or [],
+            "archive_unavailable": degraded,
+            "archive": self._archive_meta(),
+            "time_base": "sim",
+        })
+
     def _persist_alarm_ack(self, alarm: dict) -> None:
         db_id = alarm.get("db_id")
         if not db_id:
@@ -3986,6 +4407,13 @@ class MCSServer:
                         self._fdir_alarm_panel.acknowledge_alarm(alarm_id)
                     except Exception:
                         pass
+                    # Console/mission log (G8): alarm handling is part of
+                    # the decision record.
+                    self._console_log(
+                        "ack",
+                        f"Alarm {alarm_id} acknowledged"
+                        f" ({alarm.get('parameter') or alarm.get('subsystem', '')})",
+                        ref=f"alarm:{alarm_id}")
                     return web.json_response({
                         "status": "acknowledged", "id": alarm_id,
                         "unacknowledged": self.unacknowledged_alarm_count(),
@@ -4059,6 +4487,9 @@ class MCSServer:
         """
         return web.json_response({
             "planner_url": self._planner_api_base,
+            # Resolved time source ("sim" | "real") so the modern page can
+            # decide TRAINING-chip visibility locally (additive; Agent 5).
+            "time_source": self._time_source,
             "staleness": dict(self._staleness_policy),
             "param_cadence": {
                 f"0x{pid:04X}": [ent["interval_s"], *ent["sids"]]
@@ -4165,6 +4596,7 @@ class MCSServer:
 
     async def _handle_tm_dump(self, request):
         """Send S15.9 dump command and return acknowledgment."""
+        store_id, subsystem, seq = 1, "unknown", None
         try:
             body = await request.json()
             store_id = int(body.get("store_id", 1))
@@ -4203,7 +4635,12 @@ class MCSServer:
             # tag the fallback explicitly (DI-03) so trainees can never
             # mistake fabricated points for spacecraft telemetry.
             dump_key = f"{subsystem}_{store_id}"
-            archived = self._archive.get_playback_data(
+            # A damaged archive must NOT take out the S15 dump view. The
+            # command went to the spacecraft either way; the ground-side
+            # playback simply falls back to (clearly flagged) synthetic data
+            # and the response says the archive is unavailable.
+            archived, archive_degraded = self._archive_query(
+                "get_playback_data", self._archive.get_playback_data,
                 subsystem, now_epoch=self.sim_now_ts())
             if archived:
                 self._tm_dump_data[dump_key] = archived
@@ -4219,6 +4656,23 @@ class MCSServer:
                 "seq": seq,
                 "dump_key": dump_key,
                 "synthetic": dump_key in self._tm_dump_synthetic,
+                "archive_unavailable": archive_degraded,
+                "archive": self._archive_meta(),
+            })
+        except sqlite3.Error as e:
+            # The archive is ground-side storage; its failure is not a
+            # command failure. Log the driver text, show the operator a
+            # sentence about the archive, and keep a 200 so the dump view
+            # renders its degraded state instead of an error toast reading
+            # "database disk image is malformed".
+            logger.error("TM dump: archive error, degrading: %s", e)
+            return web.json_response({
+                "status": "sent",
+                "seq": seq,
+                "dump_key": f"{subsystem}_{store_id}",
+                "synthetic": False,
+                "archive_unavailable": True,
+                "archive": self._archive_meta(),
             })
         except Exception as e:
             logger.warning("TM dump error: %s", e)
@@ -4316,6 +4770,10 @@ class MCSServer:
                     "flight_director": "GO",
                 }
 
+            # Console/mission log (G8): poll opened.
+            self._console_log("gonogo", f"GO/NO-GO poll opened: {label}",
+                              position=position)
+
             # Broadcast poll to all WebSocket clients
             msg = json.dumps({
                 "type": "go_nogo_poll",
@@ -4387,6 +4845,15 @@ class MCSServer:
                     })
 
                 all_responses = dict(self._go_nogo_responses)
+
+            # Console/mission log (G8): poll resolved (outside the lock).
+            if result_msg is not None:
+                votes = ", ".join(f"{p}:{v}"
+                                  for p, v in sorted(all_responses.items()))
+                self._console_log(
+                    "gonogo",
+                    f"GO/NO-GO result: {result} — {self._go_nogo_label} "
+                    f"({votes})")
 
             # Broadcast updated status to all clients (outside lock)
             async with self._ws_lock:
@@ -4517,6 +4984,11 @@ class MCSServer:
                 if alarm.get("id") == alarm_id:
                     alarm["acknowledged"] = True
                     self._persist_alarm_ack(alarm)
+                    self._console_log(
+                        "ack",
+                        f"Alarm {alarm_id} acknowledged"
+                        f" ({alarm.get('parameter') or alarm.get('subsystem', '')})",
+                        ref=f"alarm:{alarm_id}")
                     break
             return web.json_response({"status": "acknowledged", "alarm_id": alarm_id})
         except Exception as e:
@@ -4602,6 +5074,10 @@ def main():
                              "Overrides SMO_SIM_STATE_URL env and mission-config sim_state_url. "
                              "Default http://<connect_host>:<sim-http-port>/api/state "
                              "(port from smo_common NetworkConfig or SMO_SIM_HTTP_PORT).")
+    parser.add_argument("--ui", default=None, choices=["classic", "modern"],
+                        help="Console generation served at '/': 'classic' or 'modern'. "
+                             "Overrides SMO_UI env and mission-config ui. Per-request "
+                             "?ui= and the /classic and /modern routes win over all.")
     args = parser.parse_args()
 
     host, port = args.connect.rsplit(":", 1)
@@ -4611,7 +5087,7 @@ def main():
                        tc_port=tc_port, sim_epoch=args.sim_epoch,
                        time_source=args.time_source,
                        sim_state_url=args.sim_state_url,
-                       bind_host=args.host)
+                       bind_host=args.host, ui_mode=args.ui)
     asyncio.run(server.start())
 
 

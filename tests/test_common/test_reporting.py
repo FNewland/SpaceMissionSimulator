@@ -312,3 +312,189 @@ def test_sections_never_silently_empty(catalogs, tmp_path):
     html = Path(meta["path"]).read_text()
     assert ("No data" in html or "no data" in html
             or "No housekeeping packets" in html)
+
+
+# ── The reporting extra's diagnostic (owner defect) ───────────────────────
+#
+# Owner report: "the MCS says matplotlib is not installed — but matplotlib IS
+# installed and I have run that command". Two real causes, and the message
+# could distinguish neither:
+#
+#  * the server runs under a DIFFERENT interpreter than the one pip installed
+#    into, and nothing on screen named either of them;
+#  * the guard was `except ImportError` around a `matplotlib.use("Agg",
+#    force=False)`. `force=False` means "silently ignore a failed backend
+#    switch" AND it sets `rcParams['backend_fallback'] = False`, disabling
+#    matplotlib's own headless fallback — so a backend failure on a machine
+#    where matplotlib IS installed surfaced as "matplotlib is not installed".
+
+from smo_common.reporting import plotting as _plotting  # noqa: E402
+from smo_common.reporting.plotting import (  # noqa: E402
+    PlottingStatus,
+    PlottingUnavailable,
+    plotting_status,
+    require_plotting,
+    unavailable_html,
+    unavailable_message,
+)
+
+
+@pytest.fixture()
+def fresh_probe(monkeypatch):
+    """Force the cached probe to re-run for each test."""
+    monkeypatch.setattr(_plotting, "_cached", None)
+    yield
+    _plotting._cached = None
+
+
+def _block_matplotlib(monkeypatch, exc: BaseException):
+    import builtins
+    real = builtins.__import__
+
+    def fake(name, *a, **k):
+        if name == "matplotlib" or name.startswith("matplotlib."):
+            raise exc
+        return real(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", fake)
+
+
+def test_the_backend_is_pinned_to_a_non_interactive_one(fresh_probe):
+    """Agg, on a Mac, a PC and a headless server alike.
+
+    Never `force=False`: a switch that cannot happen must raise so it can be
+    reported, not be ignored into a later crash at figure creation.
+    """
+    st = plotting_status(refresh=True)
+    assert st.available, st.summary()
+    assert st.backend.lower() == "agg"
+    import matplotlib
+    assert matplotlib.get_backend().lower() == "agg"
+    # And the probe actually drew something, so a backend that imports but
+    # cannot create a figure is caught here rather than mid-report.
+    plt, mdates = require_plotting()
+    fig = plt.figure()
+    plt.close(fig)
+
+
+def test_missing_matplotlib_names_the_interpreter_not_just_the_extra(
+        fresh_probe, monkeypatch):
+    _block_matplotlib(monkeypatch, ModuleNotFoundError(
+        "No module named 'matplotlib'", name="matplotlib"))
+    st = plotting_status(refresh=True)
+    assert not st.available and st.state == "not-installed"
+
+    msg = unavailable_message(st)
+    # The whole point: the mismatch has to be visible at a glance.
+    assert sys.executable in msg
+    assert "interpreter" in msg
+    assert "No module named 'matplotlib'" in msg
+    # And the fix is pinned to THIS interpreter, not an ambiguous bare `pip`.
+    assert f"{sys.executable}" in st.pip_command()
+    assert "-m pip install" in st.pip_command()
+    # When smo-common is an editable/local install (the normal case for this
+    # suite, and always true in this test environment), the extra form
+    # `pip install "smo-common[reports]"` CANNOT work -- pip resolves the bare
+    # name against PyPI, where it does not exist. The command must prescribe
+    # matplotlib directly. (Field defect: the owner ran the suggested extra
+    # command, it failed against the index, and the plots stayed dead.)
+    if st._smo_common_is_editable():
+        assert st.pip_command().endswith("-m pip install matplotlib")
+    else:
+        assert 'smo-common[reports]' in st.pip_command()
+
+
+def test_a_broken_install_is_not_reported_as_a_missing_one(
+        fresh_probe, monkeypatch):
+    """An ImportError from INSIDE matplotlib is not 'not installed'."""
+    _block_matplotlib(monkeypatch, ImportError(
+        "numpy.core.multiarray failed to import"))
+    st = plotting_status(refresh=True)
+    assert not st.available
+    assert st.state == "import-failed"
+    msg = unavailable_message(st)
+    assert "not installed" not in st.headline()
+    assert "failed to import" in msg
+    assert "numpy.core.multiarray failed to import" in msg
+    # Telling this operator to pip install the extra would be wrong advice.
+    assert "not a missing package" in msg
+
+
+def test_a_backend_failure_is_reported_as_a_backend_failure(
+        fresh_probe, monkeypatch):
+    """matplotlib imports; the backend cannot draw. The classic headless bug."""
+    import matplotlib
+
+    def boom(*a, **k):
+        raise ImportError("Cannot load backend 'TkAgg' which requires the "
+                          "'tk' interactive framework")
+
+    monkeypatch.setattr(matplotlib, "use", boom)
+    st = plotting_status(refresh=True)
+    assert not st.available and st.state == "backend-failed"
+    assert st.version and st.version != "?"      # it IS installed, and we say so
+    msg = unavailable_message(st)
+    assert "not installed" not in st.headline()
+    assert "TkAgg" in msg
+    assert sys.executable in msg
+
+
+def test_require_plotting_raises_a_typed_error_carrying_the_status(
+        fresh_probe, monkeypatch):
+    _block_matplotlib(monkeypatch, ModuleNotFoundError(
+        "No module named 'matplotlib'", name="matplotlib"))
+    with pytest.raises(PlottingUnavailable) as ei:
+        require_plotting()
+    assert isinstance(ei.value.status, PlottingStatus)
+    assert sys.executable in str(ei.value)
+
+
+def test_the_report_plot_notice_carries_the_diagnostic(
+        fresh_probe, monkeypatch, dump_dir, tmp_path):
+    """The rendered report — not just a log line — names the interpreter."""
+    _block_matplotlib(monkeypatch, ModuleNotFoundError(
+        "No module named 'matplotlib'", name="matplotlib"))
+    plotting_status(refresh=True)
+    meta = generate_report(
+        "pass_report", config_dir=CONFIG_DIR, dump_dir=dump_dir,
+        period_override={"kind": "absolute",
+                         "start": "2026-03-10T04:00:00Z",
+                         "end": "2026-03-10T04:02:00Z"},
+        out_dir=tmp_path / "reports")
+    html = Path(meta["path"]).read_text()
+    assert "Plot not rendered" in html
+    assert sys.executable in html            # WHICH python is missing it
+    assert "-m pip install" in html          # pinned to that python
+    assert "No module named &#x27;matplotlib&#x27;" in html or \
+           "No module named 'matplotlib'" in html
+    # The rest of the report still renders — the degrade contract is kept.
+    assert "SAFE MODE ENTRY" in html
+    assert "REJECTED" in html
+
+
+def test_a_plot_that_blows_up_mid_render_does_not_take_the_report_out(
+        fresh_probe, monkeypatch, dump_dir, tmp_path):
+    """A backend can import and still fail on the first real figure."""
+    import matplotlib.pyplot as plt
+
+    def boom(*a, **k):
+        raise RuntimeError("Could not connect to any X display")
+
+    monkeypatch.setattr(plt, "subplots", boom)
+    meta = generate_report(
+        "pass_report", config_dir=CONFIG_DIR, dump_dir=dump_dir,
+        period_override={"kind": "absolute",
+                         "start": "2026-03-10T04:00:00Z",
+                         "end": "2026-03-10T04:02:00Z"},
+        out_dir=tmp_path / "reports")
+    html = Path(meta["path"]).read_text()
+    assert "Could not connect to any X display" in html
+    assert "Plot not rendered" in html
+    assert "SAFE MODE ENTRY" in html         # report survived
+
+
+def test_unavailable_html_is_escaped(fresh_probe, monkeypatch):
+    _block_matplotlib(monkeypatch, ImportError("<script>boom</script>"))
+    out = unavailable_html(plotting_status(refresh=True))
+    assert "<script>" not in out
+    assert "&lt;script&gt;" in out

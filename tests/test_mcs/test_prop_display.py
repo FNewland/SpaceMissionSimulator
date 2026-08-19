@@ -279,8 +279,19 @@ class TestPropCommands:
         assert arm["args"]["arm_code"] == 0xA5C3
 
     def test_the_console_renders_the_propulsion_group(self):
-        assert "id=\"prop-quick-cmds\"" in PAGE
+        """The PROPULSION group renders on the COMMAND page.
+
+        It used to be mirrored into a second console on the PROP display tab.
+        Telecommands belong on the command page, so the copy is gone; what
+        must not be lost is the group itself.
+        """
+        assert "id=\"prop-quick-cmds\"" not in PAGE, (
+            "the PROP display tab has grown a command console again")
         assert "'PROPULSION'" in PAGE
+        assert "id=\"quick-cmds-body\"" in PAGE
+        # And the PROP tab still tells the operator where the commands went.
+        assert "PROPULSION COMMANDING" in PAGE
+        assert "COMMANDING</b> tab" in PAGE
 
     def test_a_position_without_the_funcs_is_told_why_it_cannot_command(self):
         assert "allowed_func_ids excludes 108-118" in PAGE
@@ -290,7 +301,17 @@ class TestPropCommands:
         hk = [q for q in cat["quick_commands"]
               if q.get("command") == "HK_REQUEST" and q["args"].get("sid") == 9]
         assert hk, "no one-shot HK request for the propulsion structure"
-        assert "hkEnableSid(9)" in PAGE
+        # TC(3,5)/TC(3,27) are telecommands, so the buttons that used to sit
+        # on the PROP banner are gone. The capability is on the COMMAND page:
+        # a SID field defaulted to 9 with ENABLE / DISABLE / ONE-SHOT REQUEST.
+        assert 'onclick="hkEnableSid(9)"' not in PAGE
+        assert 'id="cmd-hk-sid"' in PAGE
+        assert 'value="9"' in PAGE
+        for btn in ("cmd-hk-enable-btn", "cmd-hk-disable-btn",
+                    "cmd-hk-request-btn"):
+            assert f'id="{btn}"' in PAGE, f"{btn} missing from the command page"
+        # ...and the PROP banner still says where to go.
+        assert "S3 HK Manager" in PAGE
 
 
 # ── ground limits ────────────────────────────────────────────────────

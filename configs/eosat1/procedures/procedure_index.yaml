@@ -42,11 +42,26 @@
 # ---------------------------------------------------------------------------
 procedures:
   # === LEOP Procedures ===
-  # Cold-boot ordering note: under the new initial state where ttc_tx,
-  # aocs_wheels, payload, fpa_cooler, htr_bat and htr_obc all default OFF
-  # and the OBDH is in bootloader, LEOP-001 establishes the link and exits
-  # the bootloader, then LEOP-007 is run BEFORE -004 / -005 / -006 because
-  # those need wheels powered and the OBC in application mode.
+  # DEFINITIVE EXECUTION ORDER (2026-08c flow redesign; the entries below are
+  # listed in it). Each card declares its "Entry state" and "Exit state" in
+  # the document (this index schema is strict, so the chain is carried by the
+  # cards and mirrored here in comments) and ends with an explicit NEXT:
+  #
+  #   LEOP-001  first acquisition, OBC boot, beacon-mode clear, LOW rung
+  #   LEOP-002  initial health check (powered subsystems only; AOCS/payload
+  #             positively confirmed dark)
+  #   LEOP-004  solar wing deployment & verification
+  #   LEOP-007  sequential power-on — LEOP loads ONLY: heaters as needed,
+  #             AOCS suite line, MAG + MTQ + GPS devices, DETUMBLE commanded.
+  #             Payload line -> COM-009, FPA cooler -> COM-010, wheel enable
+  #             -> COM-004, prop line -> NOM-004/-013.
+  #   LEOP-005  sun acquisition — OBSERVES the automatic DETUMBLE->COARSE_SUN
+  #             handover; commands nothing
+  #   LEOP-006  time sync, BOTH paths: ground S9.1 first, then
+  #             OBC_GPS_TIME_SYNC once the GPS fix is in; enables HK SID 12
+  #   LEOP-003  initial orbit determination on the SID-12 PVT — the LAST LEOP
+  #             card; it alone declares SYS_SET_MISSION_PHASE(5) and hands to
+  #             commissioning (COM-001)
 
   - id: LEOP-001
     name: "First Acquisition of Signal & OBC Boot"
@@ -57,7 +72,9 @@ procedures:
       flight_director: "Authorize pass start, GO/NO-GO decisions"
       ttc: "Configure ground station, monitor RF acquisition"
       fdir_systems: "Issue OBC_BOOT_APP, verify sw_image transition"
-    command_services: [3, 8, 9, 17]
+    # Entry: cold boot (bootloader, only obc/ttc_rx hot). Exit: app image,
+    # LOW rung, SIDs 1/3/4/6/11, clock still unset. NEXT: LEOP-002.
+    command_services: [3, 8, 17]
 
   - id: LEOP-002
     name: "Initial Health Check"
@@ -68,18 +85,9 @@ procedures:
       flight_director: "Coordinate checkout sequence"
       eps_tcs: "Verify power and thermal status"
       fdir_systems: "Verify OBDH and HK configuration"
-    command_services: [3, 8]
-
-  - id: LEOP-003
-    name: "Initial Orbit Determination"
-    file: "leop/initial_orbit_determination.md"
-    category: leop
-    required_positions: [flight_director, aocs, ttc]
-    position_roles:
-      flight_director: "Approve orbit solution"
-      aocs: "Process orbit data, update onboard ephemeris"
-      ttc: "Provide range/Doppler data"
-    command_services: [20]
+    # Observation-only: HK requests, no state change. Exit == entry.
+    # NEXT: LEOP-004.
+    command_services: [3]
 
   - id: LEOP-004
     name: "Solar Array Verification"
@@ -89,26 +97,8 @@ procedures:
     position_roles:
       flight_director: "Authorize deployment verification"
       eps_tcs: "Monitor solar array currents and voltages"
+    # Exit: wings deployed & generating; nothing else changed. NEXT: LEOP-007.
     command_services: [3, 8, 20]
-
-  - id: LEOP-005
-    name: "Sun Acquisition"
-    file: "leop/sun_acquisition.md"
-    category: leop
-    required_positions: [flight_director, aocs]
-    position_roles:
-      flight_director: "Authorize attitude maneuver"
-      aocs: "Command AOCS mode transition, monitor rates"
-    command_services: [3, 8]
-
-  - id: LEOP-006
-    name: "Time Synchronisation"
-    file: "leop/time_sync.md"
-    category: leop
-    required_positions: [flight_director]
-    position_roles:
-      flight_director: "Execute time sync, verify accuracy"
-    command_services: [3, 9]
 
   - id: LEOP-007
     name: "Sequential Power-On"
@@ -118,12 +108,60 @@ procedures:
     position_roles:
       flight_director: "Coordinate power-on sequence, GO/NO-GO decisions"
       eps_tcs: "Command power lines, monitor power budget"
-      aocs: "Commission AOCS sensors and actuators"
+      aocs: "Enable MAG/MTQ/GPS, command DETUMBLE"
       ttc: "Monitor link quality throughout"
       fdir_systems: "Monitor OBDH health, configure alarms"
-    command_services: [3, 8]
+    # Runs BEFORE -005/-006/-003 (they need the AOCS suite + GPS powered).
+    # Exit: DETUMBLE on mag+MTQ, wheels DISABLED, payload/cooler/prop OFF.
+    # NEXT: LEOP-005.
+    command_services: [2, 3, 8]
+
+  - id: LEOP-005
+    name: "Sun Acquisition"
+    file: "leop/sun_acquisition.md"
+    category: leop
+    required_positions: [flight_director, aocs]
+    position_roles:
+      flight_director: "Authorize continued autonomy observation"
+      aocs: "Observe automatic detumble->sun-hold handover, monitor rates"
+    # Observation-only: the DETUMBLE->COARSE_SUN transition is AUTOMATIC.
+    # Exit: COARSE_SUN sun hold (LEOP parking state). NEXT: LEOP-006.
+    command_services: [3]
+
+  - id: LEOP-006
+    name: "Time Synchronisation"
+    file: "leop/time_sync.md"
+    category: leop
+    required_positions: [flight_director]
+    position_roles:
+      flight_director: "Execute time sync (ground then GPS), verify accuracy"
+    # Both paths in one card: S9.1 ground set, then S8.1 func 80 GPS
+    # discipline once fix >= 2; enables HK SID 12. Exit: clock referenced,
+    # SID 12 emitting. NEXT: LEOP-003.
+    command_services: [3, 8, 9]
+
+  - id: LEOP-003
+    name: "Initial Orbit Determination"
+    file: "leop/initial_orbit_determination.md"
+    category: leop
+    required_positions: [flight_director, aocs, ttc]
+    position_roles:
+      flight_director: "Approve orbit solution, declare phase 5"
+      aocs: "Process GPS PVT, update onboard ephemeris"
+      ttc: "Provide range/Doppler data"
+    # THE LAST LEOP CARD: verifies the SID-12 PVT, then declares
+    # SYS_SET_MISSION_PHASE(5). Exit: phase 5. NEXT: commissioning COM-001.
+    command_services: [3, 8, 20]
 
   # === Commissioning Procedures ===
+  # DEFINITIVE EXECUTION ORDER (2026-08c): COM-001 EPS -> COM-002 TCS ->
+  # COM-003 sensor calibration (gyro cal is startable in the COARSE_SUN hold
+  # — deliberately BEFORE COM-004) -> COM-004 wheel enable + actuator checkout
+  # -> COM-005 mode transitions (truth-table card) -> COM-006 TTC ladder ->
+  # COM-007 OBDH -> COM-008 FDIR/protection -> COM-009 payload power (line
+  # moved here from LEOP) -> COM-010 FPA cooler (moved here from LEOP) ->
+  # COM-012 FIRST LIGHT -> COM-011 calibration -> COM-013 closure + phase 6.
+  # Entry/exit states are declared in each card; every card ends with NEXT:.
   - id: COM-001
     name: "EPS Checkout"
     file: "commissioning/eps_checkout.md"
@@ -152,7 +190,11 @@ procedures:
     position_roles:
       flight_director: "Authorize calibration sequence"
       aocs: "Execute sensor calibration, validate output"
-    command_services: [3, 20]
+    # Rev 2.0 of the card commands the three S2 gyro device lines (service 2)
+    # and AOCS_GYRO_CALIBRATION / ST power (service 8) as well as the HK and
+    # GET_PARAM traffic it always claimed. Derived from the document, not hand
+    # written — see test_procedure_gates.py gate 7.
+    command_services: [2, 3, 8, 20]
 
   - id: COM-004
     name: "AOCS Actuator Checkout"
@@ -172,7 +214,7 @@ procedures:
     position_roles:
       flight_director: "Authorize mode changes"
       aocs: "Execute mode transitions, verify stability"
-    command_services: [3, 8]
+    command_services: [8]
 
   - id: COM-006
     name: "TTC Link Verification"
@@ -195,14 +237,14 @@ procedures:
     command_services: [3, 8, 20]
 
   - id: COM-008
-    name: "FDIR Configuration"
+    name: "FDIR Configuration & Protection Functions"
     file: "commissioning/fdir_configuration.md"
     category: commissioning
     required_positions: [flight_director, fdir_systems]
     position_roles:
       flight_director: "Approve FDIR configuration"
-      fdir_systems: "Configure monitoring limits and event-actions"
-    command_services: [3, 8, 20]
+      fdir_systems: "Inventory S12/S19 tables, run the load-shed latch test"
+    command_services: [3, 8, 12, 19, 20]
 
   - id: COM-009
     name: "Payload Power On"
@@ -243,19 +285,24 @@ procedures:
     required_positions: [flight_director, payload_ops, aocs]
     position_roles:
       flight_director: "Authorize first imaging"
-      payload_ops: "Capture first image, assess quality"
+      payload_ops: "Capture first image, downlink it over S13, assess quality"
       aocs: "Ensure pointing accuracy for imaging"
-    command_services: [3, 8, 20]
+    # Runs BEFORE COM-011 in the definitive order (first light IS the first
+    # image; radiometric calibration follows on a proven chain).
+    command_services: [3, 8, 13, 20]
 
   - id: COM-013
-    name: "ADCS Full Commissioning"
+    name: "ADCS Commissioning Closure & NOMINAL Declaration"
     file: "commissioning/adcs_commissioning.md"
     category: commissioning
     required_positions: [flight_director, aocs, eps_tcs]
     position_roles:
-      flight_director: "Authorize mode transitions"
-      aocs: "Execute sensor checks, actuator verification, mode transitions"
-      eps_tcs: "Monitor power during actuator testing"
+      flight_director: "Run the closure poll, declare mission phase 6"
+      aocs: "Consolidated AOCS end-state readback"
+      eps_tcs: "Consolidated platform end-state readback"
+    # The LAST commissioning card: consolidated readback only (no re-tests),
+    # then SYS_SET_MISSION_PHASE(6). 2026-08c dedupe of the old "full
+    # commissioning" card that re-ran COM-003/004/005 work.
     command_services: [3, 8]
 
   # === Nominal Operations Procedures ===
@@ -691,7 +738,7 @@ procedures:
     position_roles:
       flight_director: "Authorize sensor switchover"
       aocs: "Switch to backup sensor, reconfigure ADCS"
-    command_services: [3, 8]
+    command_services: [2, 3, 8]
 
   - id: CTG-026
     name: "AOCS Actuator Stuck Recovery"

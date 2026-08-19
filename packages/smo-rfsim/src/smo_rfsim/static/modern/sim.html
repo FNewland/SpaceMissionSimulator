@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SMO Radio — Channel Model (Instructor)</title>
+<!--
+  SMO RADIO — SIM-SIDE CHANNEL-MODEL VIEW (design_2026-08, MOVE-I)
+
+  This page is SIMULATION TRUTH: the injected channel model — Eb/N0 and
+  Doppler knobs, AWGN / phase-noise / fading toggles, interferers, ground-
+  station penalty injection. It is instructor-only, carries the INSTRUCTOR
+  accent strip (house convention, plan §2.4), and is never linked from the
+  operator radio console. It drives the SAME rfsim endpoints as before
+  (POST /api/channel, /api/pipeline, /api/link) — the impairment workflow
+  is unchanged, only its home moved off the operator page.
+-->
+<link rel="stylesheet" href="/static/shared/design-system.css">
+<style>
+  header{ display:flex; align-items:center; gap:14px; padding:10px 18px;
+    border-bottom:1px solid var(--line); background:var(--s1); }
+  header .mark b{ font-size:14px; letter-spacing:1.5px; }
+  header .mark span{ display:block; font-size:12px; color:var(--tx3); }
+  header .grow{ flex:1; }
+  .grid{ display:grid; grid-template-columns:repeat(2, minmax(0,1fr));
+    gap:12px; padding:14px 18px; max-width:1100px; margin:0 auto; }
+  .full{ grid-column:1 / -1; }
+  @media (max-width:900px){ .grid{ grid-template-columns:1fr; } }
+  .rows .row{ display:flex; justify-content:space-between; gap:12px;
+    padding:5px 0; border-bottom:1px solid var(--line); }
+  .rows .row:last-child{ border-bottom:none; }
+  .rows .k{ color:var(--tx3); font-size:13px; }
+  .rows .v{ font-family:var(--mono); font-size:14px; font-weight:600; }
+  .ctl-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+    gap:10px 16px; }
+  .ctl-grid label{ display:flex; flex-direction:column; gap:4px;
+    font-size:12.5px; color:var(--tx2); }
+  .ctl-grid label.inline{ flex-direction:row; align-items:center; gap:8px; }
+  .ctl-grid input, .ctl-grid select{ background:var(--s2); color:var(--tx);
+    border:1px solid var(--line-2); border-radius:var(--r); padding:4px 6px;
+    font-family:var(--mono); font-size:12.5px; }
+  .ctl-grid input[type=range]{ padding:0; accent-color:var(--shelf); }
+  .ctl-grid input[type=checkbox]{ accent-color:var(--shelf); }
+  .msg{ font-size:12.5px; margin-left:10px; }
+  .msg.ok{ color:var(--tx2); }
+  .msg.err{ color:var(--alarm); font-weight:600; }
+</style>
+</head>
+<body>
+
+<!-- INSTRUCTOR accent strip: this screen is simulation ground truth and
+     must never be mistaken for an operator display (house convention). -->
+<div class="ds-instructor-strip">Instructor — RF channel model · simulation ground truth · not an operator display</div>
+
+<header>
+  <div class="mark"><b>SMO RADIO / CHANNEL MODEL</b><span>Injected link impairments — instructor only</span></div>
+  <span class="ds-badge" id="ctl-badge" title="Control plane state">CONTROL —</span>
+  <div class="grow"></div>
+  <span class="num" id="last-update" style="font-size:12px;color:var(--tx3)">—</span>
+</header>
+
+<div class="ds-banner warn" id="ctl-banner" hidden>
+  Control plane disabled — start the bridge with <code>--radio-control</code>
+  to inject impairments. The channel-model status below stays read-only.
+</div>
+
+<div class="grid">
+
+  <div class="ds-card">
+    <h2>Channel model status <span class="r">injected truth</span></h2>
+    <div class="bd rows">
+      <div class="row"><span class="k">AWGN</span><span class="v" id="ch-awgn">—</span></div>
+      <div class="row"><span class="k">Phase noise</span><span class="v" id="ch-phasenoise">—</span></div>
+      <div class="row"><span class="k">Fading</span><span class="v" id="ch-fading">—</span></div>
+      <div class="row"><span class="k">Fading K</span><span class="v" id="ch-fading-k">—</span></div>
+      <div class="row"><span class="k">Interferers</span><span class="v" id="ch-interferers">—</span></div>
+      <div class="row"><span class="k">GS Eb/N0 penalty (injected)</span><span class="v" id="gs-penalty">—</span></div>
+      <div class="row"><span class="k">Manual overrides</span><span class="v" id="ch-overrides">—</span></div>
+    </div>
+  </div>
+
+  <div class="ds-card">
+    <h2>Observed effect <span class="r">what the operator sees</span></h2>
+    <div class="bd rows">
+      <div class="row"><span class="k">Eb/N0 at receiver</span><span class="v" id="fx-ebn0">—</span></div>
+      <div class="row"><span class="k">BER</span><span class="v" id="fx-ber">—</span></div>
+      <div class="row"><span class="k">Carrier lock</span><span class="v" id="fx-carrier">—</span></div>
+      <div class="row"><span class="k">Frame sync</span><span class="v" id="fx-frame">—</span></div>
+      <div class="row"><span class="k">Bad frames</span><span class="v" id="fx-bad">—</span></div>
+    </div>
+  </div>
+
+  <div class="ds-card full" id="config-panel">
+    <h2>Impairment injection <span class="r" id="cfg-state">control disabled</span></h2>
+    <div class="bd">
+      <div class="ctl-grid">
+        <label>Eb/N0 <span><b class="num" id="cfg-ebn0-val">10.0</b> dB</span>
+          <input id="cfg-ebn0" type="range" min="-5" max="25" step="0.5" value="10"></label>
+        <label>Doppler ramp <span><b class="num" id="cfg-dopp-val">0</b> Hz</span>
+          <input id="cfg-dopp" type="range" min="-60000" max="60000" step="500" value="0"></label>
+        <label>Modulation
+          <select id="cfg-mod">
+            <option value="0">BPSK</option><option value="1">QPSK</option>
+            <option value="2">8PSK</option><option value="3">OQPSK</option>
+            <option value="4">16-APSK</option><option value="5">&pi;/4-DQPSK</option>
+            <option value="6">GMSK</option><option value="7">GFSK</option>
+          </select></label>
+        <label>Symbol rate (Bd)
+          <input id="cfg-symrate" type="number" min="250" max="200000" step="250" value="32000"></label>
+        <label class="inline"><input id="cfg-awgn" type="checkbox" checked> AWGN</label>
+        <label class="inline"><input id="cfg-pn" type="checkbox"> Phase noise</label>
+        <label>PN linewidth (Hz)
+          <input id="cfg-pn-lw" type="number" min="0" max="10000" step="1" value="10"></label>
+        <label class="inline"><input id="cfg-fade" type="checkbox"> Rician fading</label>
+        <label>Fading K (dB)
+          <input id="cfg-fade-k" type="number" min="-30" max="40" step="1" value="10"></label>
+        <label>Fade rate (Hz)
+          <input id="cfg-fade-fd" type="number" min="0" max="1000" step="1" value="50"></label>
+      </div>
+      <div style="margin-top:14px;">
+        <div class="k" style="color:var(--tx3);font-size:12px;text-transform:uppercase;letter-spacing:1px;">Interferers</div>
+        <div class="ctl-grid" style="margin-top:6px;">
+          <label>Type
+            <select id="cfg-int-type"><option value="cw">CW</option><option value="wideband">Wideband</option></select></label>
+          <label>Offset (Hz)
+            <input id="cfg-int-off" type="number" step="500" value="20000"></label>
+          <label>Power (dBm)
+            <input id="cfg-int-pwr" type="number" step="1" value="-35"></label>
+          <label>Bandwidth (Hz)
+            <input id="cfg-int-bw" type="number" step="1000" value="50000"></label>
+        </div>
+        <div id="cfg-int-list" style="margin-top:6px;font-size:12.5px;color:var(--tx2);">none</div>
+        <div style="margin-top:6px;">
+          <button id="cfg-int-add" class="ds-btn">Add interferer</button>
+          <button id="cfg-int-clear" class="ds-btn">Clear all</button>
+        </div>
+      </div>
+      <div style="margin-top:14px;">
+        <button id="cfg-apply" class="ds-btn primary">Apply</button>
+        <button id="cfg-release" class="ds-btn">Release to sim</button>
+        <span id="cfg-msg" class="msg"></span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let cfgInterferers = [];
+let cfgInitialised = false;
+
+let ws;
+function connect() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  ws = new WebSocket(proto + "//" + location.host + "/ws");
+  ws.onmessage = (e) => render(JSON.parse(e.data));
+  ws.onclose = () => setTimeout(connect, 2000);
+  ws.onerror = () => ws.close();
+}
+connect();
+
+function render(d) {
+  // Channel-model truth
+  const cfg = d.config || {};
+  const ch = cfg.channel || {};
+  $("ch-awgn").textContent = ch.awgn_enabled === false ? "OFF" : "ON";
+  $("ch-phasenoise").textContent = d.phase_noise_enabled ? "ON" : "OFF";
+  $("ch-fading").textContent = d.fading_enabled
+      ? "ON (K=" + (d.fading_k_db || 10).toFixed(0) + " dB)" : "OFF";
+  $("ch-fading-k").textContent = (d.fading_k_db || 10).toFixed(1) + " dB";
+  $("ch-interferers").textContent = "" + (d.n_interferers || 0);
+  const gsPen = d.gs_penalty_db || 0;
+  const gsEl = $("gs-penalty");
+  gsEl.textContent = (gsPen > 0 ? "-" : "") + gsPen.toFixed(1) + " dB";
+  gsEl.style.color = gsPen > 3 ? "var(--alarm)" : gsPen > 0 ? "var(--warn)" : "";
+  $("ch-overrides").textContent =
+      (cfg.manual_overrides && cfg.manual_overrides.length)
+        ? cfg.manual_overrides.join(", ") : "none";
+
+  // Observed effect (feedback so the instructor sees what landed)
+  $("fx-ebn0").textContent = d.eb_n0_db.toFixed(1) + " dB";
+  $("fx-ber").textContent = "10^" + d.ber_log10.toFixed(1);
+  $("fx-carrier").textContent = d.carrier_lock;
+  $("fx-frame").textContent = d.frame_sync;
+  $("fx-bad").textContent = d.bad_frames;
+
+  // Control plane state
+  const badge = $("ctl-badge");
+  badge.textContent = d.control_enabled ? "CONTROL ENABLED" : "CONTROL DISABLED";
+  badge.className = "ds-badge" + (d.control_enabled ? " warn" : "");
+  $("ctl-banner").hidden = !!d.control_enabled;
+  syncConfigPanel(d);
+
+  $("last-update").textContent =
+      new Date(d.timestamp * 1000).toLocaleTimeString();
+}
+
+function syncConfigPanel(d) {
+  const controls = document.querySelectorAll(
+      "#config-panel input, #config-panel select, #config-panel button");
+  controls.forEach((el) => { el.disabled = !d.control_enabled; });
+  $("cfg-state").textContent =
+      d.control_enabled ? "control enabled" : "control disabled";
+  if (!d.control_enabled || cfgInitialised) return;
+  cfgInitialised = true;
+  const cfg = d.config || {};
+  const ch = cfg.channel || {}, pl = cfg.pipeline || {};
+  const set = (id, v) => { const e = $(id); if (e !== null && v !== undefined && v !== null) e.value = v; };
+  const chk = (id, v) => { const e = $(id); if (e) e.checked = !!v; };
+  set("cfg-ebn0", ch.eb_n0_db); set("cfg-dopp", ch.doppler_hz);
+  set("cfg-mod", pl.modulation); set("cfg-symrate", pl.symbol_rate);
+  chk("cfg-awgn", ch.awgn_enabled); chk("cfg-pn", ch.phase_noise_enabled);
+  set("cfg-pn-lw", ch.phase_noise_linewidth_hz);
+  chk("cfg-fade", ch.fading_enabled); set("cfg-fade-k", ch.fading_k_factor_db);
+  set("cfg-fade-fd", ch.fading_max_doppler_hz);
+  cfgInterferers = (ch.interferers || []).slice();
+  renderInterferers();
+  $("cfg-ebn0-val").textContent = Number(ch.eb_n0_db || 10).toFixed(1);
+  $("cfg-dopp-val").textContent = Math.round(ch.doppler_hz || 0);
+}
+
+function renderInterferers() {
+  const el = $("cfg-int-list");
+  if (!el) return;
+  el.textContent = cfgInterferers.length === 0 ? "none"
+    : cfgInterferers.map((i) => i.type + " @ " +
+        (i.freq_offset_hz ?? i.center_offset_hz ?? 0) + " Hz, " +
+        i.power_dbm + " dBm").join(" | ");
+}
+
+async function postCfg(path, body) {
+  const msg = $("cfg-msg");
+  try {
+    const r = await fetch(path, { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body) });
+    const j = await r.json();
+    msg.textContent = r.ok ? "applied" : ("error: " + (j.error || r.status));
+    msg.className = "msg " + (r.ok ? "ok" : "err");
+  } catch (e) {
+    msg.textContent = "error: " + e;
+    msg.className = "msg err";
+  }
+}
+
+document.addEventListener("DOMContentLoaded", function () {
+  const ebn0 = $("cfg-ebn0"), dopp = $("cfg-dopp");
+  if (ebn0) ebn0.oninput = () => $("cfg-ebn0-val").textContent = Number(ebn0.value).toFixed(1);
+  if (dopp) dopp.oninput = () => $("cfg-dopp-val").textContent = dopp.value;
+  $("cfg-int-add").onclick = () => {
+    const type = $("cfg-int-type").value;
+    const spec = { type: type, power_dbm: Number($("cfg-int-pwr").value) };
+    if (type === "cw") spec.freq_offset_hz = Number($("cfg-int-off").value);
+    else { spec.center_offset_hz = Number($("cfg-int-off").value);
+           spec.bandwidth_hz = Number($("cfg-int-bw").value); }
+    cfgInterferers.push(spec);
+    renderInterferers();
+  };
+  $("cfg-int-clear").onclick = () => { cfgInterferers = []; renderInterferers(); };
+  $("cfg-apply").onclick = async () => {
+    await postCfg("/api/channel", {
+      eb_n0_db: Number($("cfg-ebn0").value),
+      doppler_hz: Number($("cfg-dopp").value),
+      awgn_enabled: $("cfg-awgn").checked,
+      phase_noise_enabled: $("cfg-pn").checked,
+      phase_noise_linewidth_hz: Number($("cfg-pn-lw").value),
+      fading_enabled: $("cfg-fade").checked,
+      fading_k_factor_db: Number($("cfg-fade-k").value),
+      fading_max_doppler_hz: Number($("cfg-fade-fd").value),
+      interferers: cfgInterferers
+    });
+    await postCfg("/api/pipeline", {
+      modulation: Number($("cfg-mod").value),
+      symbol_rate: Number($("cfg-symrate").value)
+    });
+  };
+  $("cfg-release").onclick = () => postCfg("/api/channel", { release: "all" });
+});
+</script>
+</body>
+</html>

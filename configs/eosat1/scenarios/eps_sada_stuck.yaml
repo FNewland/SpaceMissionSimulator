@@ -1,0 +1,36 @@
+name: "Solar Array Drive Seized"
+difficulty: INTERMEDIATE
+duration_s: 3000
+briefing: |
+  The solar array drive assembly seizes at T+180s. The shaft stops where it
+  is, so the wing normal no longer tracks the sun: the drive angle telemetry
+  (0x0133) goes flat while the two wing currents (0x0146 / 0x0147) develop a
+  |sin(phase)| ripple as the sun walks past the frozen normal. Orbit-average
+  wing yield falls by roughly a third and the battery no longer fully recharges
+  each sunlit pass.
+
+  The operator must distinguish a seized drive from an array degradation (the
+  drive angle is the discriminator — degradation does not freeze it), take the
+  power budget down to fit the reduced generation, and confirm the SoC trend
+  stabilises.
+
+events:
+  - time_offset_s: 180
+    action: inject
+    params:
+      subsystem: eps
+      failure: sada_stuck
+    note: "Shaft seizes at whatever angle it is at — no commanded angle"
+
+  - time_offset_s: 1500
+    action: message
+    params:
+      text: >-
+        FD note: confirm the orbit-average generation figure before committing
+        to the next imaging block — the power budget may no longer close.
+
+expected_responses:
+  - { category: detect, description: "Detect flat drive angle (0x0133) and the wing-current ripple" }
+  - { category: isolate, description: "Distinguish a seized drive from array degradation" }
+  - { category: recover, description: "Attempt a SADA re-command / tracking re-enable" }
+  - { category: plan, description: "Reduce the load plan to fit the reduced orbit-average generation" }

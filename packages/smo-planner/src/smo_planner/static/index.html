@@ -1039,7 +1039,9 @@ if (new URLSearchParams(location.search).get('layout') === 'wide') {
       </div>
       <div class="form-group">
         <label class="form-label">Start Time (UTC)</label>
-        <input type="datetime-local" class="form-control" id="actStartTime">
+        <input type="datetime-local" class="form-control" id="actStartTime"
+               oninput="updateStartTimeHint()" onchange="updateStartTimeHint()">
+        <div id="actStartTimeHint" style="font-size:10px;color:var(--text-dim);margin-top:4px;"></div>
       </div>
       <div class="form-group">
         <label class="form-label">Duration (minutes)</label>
@@ -2001,16 +2003,73 @@ function onActivityTypeChange() {
 }
 
 // ==================== Modal ====================
+//
+// The "Start Time (UTC)" field is genuinely UTC. It is a `datetime-local`
+// input, which carries NO time zone, and both halves of the round trip used to
+// get that wrong in a way that cancelled out and so hid the bug:
+//
+//   * the prefill wrote `new Date(now - getTimezoneOffset()*60000)
+//     .toISOString()`, i.e. the operator's LOCAL wall digits, into a field
+//     labelled UTC;
+//   * submitActivity() read it back with `new Date("2026-03-10T12:00")`, which
+//     the ECMAScript spec defines as browser-LOCAL for a date-time string with
+//     no offset.
+//
+// Prefilled values therefore survived, but anything an operator TYPED was
+// shifted by their UTC offset — in EST, four hours out. Everything in this
+// platform is sim UTC end to end (docs/plan_2026-08c/TIME_ARCHITECTURE.md), so
+// the label is right and the parsing was wrong.
+//
+// Both directions now go through Date.UTC / getUTC*, and a hint under the
+// field shows the operator's local equivalent so they can sanity-check without
+// doing the arithmetic. That hint is the ONLY use of the browser's zone in the
+// planner, it is display-only, and it never feeds back into a planned time.
+
+/** Format a Date as the `YYYY-MM-DDTHH:MM` a datetime-local wants, in UTC. */
+function dateToUtcInputValue(d) {
+  const p = (n) => String(n).padStart(2, '0');
+  return d.getUTCFullYear() + '-' + p(d.getUTCMonth() + 1) + '-' + p(d.getUTCDate())
+    + 'T' + p(d.getUTCHours()) + ':' + p(d.getUTCMinutes());
+}
+
+/** Parse a zone-less datetime-local value AS UTC. Returns null if unparseable. */
+function utcInputValueToDate(v) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(v || '');
+  if (!m) return null;
+  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)));
+}
+
+/** Show the local-time equivalent of whatever UTC instant was typed. */
+function updateStartTimeHint() {
+  const hintEl = document.getElementById('actStartTimeHint');
+  if (!hintEl) return;
+  const d = utcInputValueToDate(document.getElementById('actStartTime').value);
+  if (!d || isNaN(d.getTime())) {
+    hintEl.textContent = 'Enter a UTC start time.';
+    return;
+  }
+  let zone = '';
+  try {
+    zone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  } catch (e) { /* older browser — offset alone is enough */ }
+  const offMin = -d.getTimezoneOffset();          // minutes east of UTC
+  const sign = offMin < 0 ? '-' : '+';
+  const abs = Math.abs(offMin);
+  const offset = 'UTC' + sign + String(Math.floor(abs / 60)).padStart(2, '0')
+    + ':' + String(abs % 60).padStart(2, '0');
+  hintEl.textContent = d.toISOString().slice(0, 16).replace('T', ' ') +
+    ' UTC = ' + d.toLocaleString() +
+    ' local (' + (zone ? zone + ', ' : '') + offset + ')';
+}
+
 function openModal() {
   document.getElementById('modalOverlay').classList.add('active');
   // Prefill with the PLANNER's current time (sim time in sim mode), not the
   // operator's wall clock: with sim time at T-0 and wall clock months later,
   // the old default scheduled activities that could never execute (defect #58).
-  // datetime-local has no timezone, and submitActivity() re-reads it as local
-  // time, so compensate for the browser offset both ways.
-  const now = simNowDate();
-  const shifted = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
-  document.getElementById('actStartTime').value = shifted.toISOString().slice(0, 16);
+  document.getElementById('actStartTime').value =
+    dateToUtcInputValue(simNowDate());
+  updateStartTimeHint();
 }
 
 function closeModal() {
@@ -2026,13 +2085,21 @@ async function submitActivity() {
 
   if (!name || !startTime) return;
 
+  // The field is UTC (see the block above openModal): parse it as UTC, never
+  // with `new Date(<zone-less string>)`, which means browser-local.
+  const startDate = utcInputValueToDate(startTime);
+  if (!startDate || isNaN(startDate.getTime())) {
+    alert('Could not read the start time — expected UTC YYYY-MM-DD HH:MM.');
+    return;
+  }
+
   try {
     const res = await fetch('/api/schedule', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name: name,
-        start_time: new Date(startTime).toISOString(),
+        start_time: startDate.toISOString(),
         duration_s: duration * 60,
         priority: priority,
         station: station
@@ -2208,13 +2275,38 @@ async function loadPowerBudget() {
 
 function updatePowerBudgetPanel() {
   const panel = document.getElementById('powerBudgetPanel');
-  if (!panel || !powerBudgetData.initial_soc) return;
+  if (!panel) return;
+
+  // "Cannot compute" is a RESULT, not a zero. `final_soc || 0` used to render
+  // a null as a confident "0.0%" — the display half of the defect where the
+  // same plan showed 0 % on one machine and 100 % on another. Both were
+  // battery rails reached after integrating fabricated illumination data;
+  // neither was a prediction. If the server could not compute the budget, say
+  // so and say why. Never draw a number.
+  const warnings = powerBudgetData.warnings || [];
+  if (powerBudgetData.computable === false
+      || powerBudgetData.final_soc === null
+      || powerBudgetData.final_soc === undefined) {
+    const reason = powerBudgetData.reason || warnings[0]
+      || 'the planner returned no state-of-charge prediction';
+    panel.innerHTML = `<div style="padding: 8px; font-size: 10px;">
+      <div style="color: #eab308; font-weight: 600; margin-bottom: 4px;">Power budget cannot be computed</div>
+      <div style="color: var(--text-dim); font-size: 9px; line-height: 1.4;">${reason}</div>
+    </div>`;
+    return;
+  }
 
   const initialSoC = powerBudgetData.initial_soc || 0;
-  const finalSoC = powerBudgetData.final_soc || 0;
-  const warnings = powerBudgetData.warnings || [];
+  const finalSoC = powerBudgetData.final_soc;
 
   let html = '<div style="font-size: 10px;">';
+
+  // A saturated result is a LIMIT, not a prediction — label it as such.
+  if (powerBudgetData.soc_saturated) {
+    html += `<div style="background: rgba(234,179,8,0.12); border-left: 2px solid #eab308; padding: 6px; margin-bottom: 8px; font-size: 9px; color: #eab308;">
+      SoC saturated against a battery rail (${powerBudgetData.soc_floor_hits || 0} at 0 %, ${powerBudgetData.soc_ceiling_hits || 0} at 100 %) — the figure below is a limit, not a prediction.
+    </div>`;
+  }
 
   // SoC indicators
   html += `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">

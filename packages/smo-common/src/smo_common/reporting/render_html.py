@@ -12,6 +12,7 @@ import base64
 import html as _html
 import io
 import json
+import logging
 import re
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -27,15 +28,23 @@ from .analysis import (
 from .catalogs import Catalogs
 from .dataset import TelemetryDataset
 from .periods import Period, cuc_to_utc_str, passes_in
+from .plotting import (
+    PlottingUnavailable,
+    plotting_status,
+    require_plotting,
+    unavailable_html,
+)
 from .spec import (
     AlarmsSection,
     AppendixSection,
     BreakdownSection,
     CommandsSection,
     CompletenessSection,
+    ConsoleLogSection,
     EventsSection,
     HeaderSection,
     NarrativeSection,
+    PassRollupSection,
     PlotSection,
     ReportSpec,
     StatsSection,
@@ -43,6 +52,8 @@ from .spec import (
 )
 
 __all__ = ["render_report_html"]
+
+_log = logging.getLogger(__name__)
 
 _SEV_NAMES = {1: "INFO", 2: "LOW", 3: "MEDIUM", 4: "HIGH"}
 
@@ -128,6 +139,20 @@ def _substitute(text: str, ctx: dict) -> str:
 
 # ── plotting ─────────────────────────────────────────────────────────────
 
+def _plot_failure_html(sec, exc: BaseException) -> str:
+    """A plot that blew up says so, with the interpreter it blew up in."""
+    st = plotting_status()
+    return (
+        f"<h2 id='{_esc(getattr(sec, 'id', 'plot'))}'>"
+        f"{_esc(getattr(sec, 'title', None) or getattr(sec, 'id', 'Plot'))}</h2>"
+        f"<div class='nodata'>Plot not rendered — plotting failed in this "
+        f"server. <code>{_esc(type(exc).__name__)}: {_esc(str(exc))}</code>"
+        f"<br>interpreter: <code>{_esc(st.executable)}</code> · "
+        f"matplotlib: <code>{_esc(st.version or 'not importable')}</code> · "
+        f"backend: <code>{_esc(st.backend or 'unknown')}</code></div>"
+    )
+
+
 def _plot_png(fig) -> str:
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=100, bbox_inches="tight")
@@ -184,21 +209,23 @@ def _limit_bands(ax, catalogs: Catalogs, pid: int) -> None:
 def _render_plot_section(sec: PlotSection, spec: ReportSpec,
                          dataset: TelemetryDataset, period: Period,
                          catalogs: Catalogs) -> str:
+    # Optional dependency (smo-common[reports]). Degrade to a stated notice
+    # rather than failing the whole report — the statistics, event, alarm and
+    # command sections do not need it.
+    #
+    # The notice must be ACTIONABLE. The old one said "matplotlib is not
+    # installed, install it with pip install smo-common[reports]" for every
+    # failure, including the two that dominate in the field: the server running
+    # under a different interpreter than the one the operator installed into,
+    # and a matplotlib that imports but whose backend cannot draw on a headless
+    # machine. `plotting` names the interpreter and quotes the real error; see
+    # its module docstring.
     try:
-        import matplotlib
-        matplotlib.use("Agg", force=False)
-        import matplotlib.dates as mdates
-        import matplotlib.pyplot as plt
-    except ImportError:
-        # Optional dependency (smo-common[reports]). Degrade to a stated
-        # notice rather than failing the whole report — the statistics,
-        # event, alarm and command sections do not need it.
+        plt, mdates = require_plotting()
+    except PlottingUnavailable as e:
         return (
-            '<section class="plot missing-dep"><h3>%s</h3>'
-            '<p class="note">Plot not rendered: matplotlib is not installed. '
-            'Install it with <code>pip install "smo-common[reports]"</code> '
-            'to enable plot sections.</p></section>'
-            % _esc(getattr(sec, "title", "Plot"))
+            '<section class="plot missing-dep"><h3>%s</h3>%s</section>'
+            % (_esc(getattr(sec, "title", "Plot")), unavailable_html(e.status))
         )
 
     # Collect axis definitions
@@ -582,6 +609,166 @@ def _render_table(sec: TableSection, dataset, period) -> str:
             + body + "</table>")
 
 
+# ── live-store sections (G8 console log, G14 pass rollups) ──────────────
+#
+# These two sections consume ANOTHER SERVER's store over HTTP, so unlike
+# every other section they can be unreachable. The contract is honest
+# degradation: unreachable ⇒ a stated notice, never fabricated rows.
+
+def _fetch_json(url: str, timeout_s: float = 3.0) -> Optional[dict]:
+    """GET a JSON document; None on any failure (module-level so tests can
+    monkeypatch it)."""
+    try:
+        import urllib.request
+        with urllib.request.urlopen(url, timeout=timeout_s) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception as e:  # noqa: BLE001 — unreachable is a normal state
+        _log.debug("report fetch %s failed: %s", url, e)
+        return None
+
+
+def _cuc_to_epoch(cuc: float) -> Optional[float]:
+    """On-board CUC seconds -> sim-time Unix epoch (the console-log clock)."""
+    try:
+        from ..protocol.ecss_packet import cuc_seconds_to_datetime
+        return (cuc_seconds_to_datetime(float(cuc))
+                .replace(tzinfo=timezone.utc).timestamp())
+    except (ValueError, OverflowError):
+        return None
+
+
+def _render_console_log(sec: ConsoleLogSection, period: Period) -> str:
+    import os
+    base = sec.source_url or (os.environ.get("SMO_MCS_URL",
+                                             "http://localhost:9090")
+                              + "/api/console-log")
+    start = _cuc_to_epoch(period.start_cuc)
+    end = _cuc_to_epoch(period.end_cuc)
+    url = base
+    sep = "&" if "?" in base else "?"
+    if start is not None:
+        url += f"{sep}since={start:.0f}"
+        sep = "&"
+    if end is not None:
+        url += f"{sep}until={end:.0f}"
+        sep = "&"
+    url += f"{sep}limit={int(sec.limit)}"
+    doc = _fetch_json(url)
+    head = f"<h2>{_esc(sec.title)}</h2>"
+    # The self-contained-output contract bans http(s):// strings in the
+    # HTML, so sources are named scheme-less.
+    src_label = base.split("://", 1)[-1]
+    if doc is None:
+        return (head + "<div class='nodata'>Console-log store unreachable "
+                f"({_esc(src_label)}) — no decision record available for "
+                "this report. Entries are NOT reconstructed.</div>")
+    entries = doc.get("entries") or []
+    if sec.kinds:
+        want = {k.lower() for k in sec.kinds}
+        entries = [e for e in entries
+                   if str(e.get("kind", "")).lower() in want]
+    if doc.get("archive_unavailable"):
+        return (head + "<div class='nodata'>Console-log store reports its "
+                "archive UNAVAILABLE — entries for this period cannot be "
+                "read.</div>")
+    if not entries:
+        return (head + "<div class='nodata'>No console-log entries in this "
+                "period.</div>")
+    rows = []
+    for e in entries:
+        try:
+            when = datetime.fromtimestamp(
+                float(e.get("utc_epoch", 0)),
+                tz=timezone.utc).isoformat(timespec="seconds")
+        except (ValueError, OverflowError, OSError):
+            when = "--"
+        rows.append(
+            "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td>"
+            "<td>%s</td><td>%s</td></tr>" % (
+                _esc(when), _esc(e.get("position", "")),
+                _esc(e.get("kind", "")), _esc(e.get("text", "")),
+                _esc(e.get("ref", "")), _esc(e.get("source", ""))))
+    return (head
+            + "<table><caption>Append-only console/mission log "
+              "(sim-time stamps rendered as UTC); source: "
+            + _esc(src_label) + "</caption>"
+              "<tr><th>UTC (sim)</th><th>Position</th><th>Kind</th>"
+              "<th>Entry</th><th>Ref</th><th>Source</th></tr>"
+            + "".join(rows) + "</table>")
+
+
+def _fmt_or_dash(v: Any, suffix: str = "", nd: int = 1) -> str:
+    if v is None:
+        return "—"
+    try:
+        return f"{float(v):.{nd}f}{suffix}"
+    except (TypeError, ValueError):
+        return _esc(v)
+
+
+def _render_pass_rollups(sec: PassRollupSection, period: Period) -> str:
+    import os
+    base = sec.source_url or (os.environ.get("SMO_RFSIM_URL",
+                                             "http://localhost:8094")
+                              + "/api/pass-rollups")
+    sep = "&" if "?" in base else "?"
+    doc = _fetch_json(f"{base}{sep}limit={int(sec.limit)}")
+    head = f"<h2>{_esc(sec.title)}</h2>"
+    src_label = base.split("://", 1)[-1]
+    if doc is None:
+        return (head + "<div class='nodata'>rfsim pass-rollup store "
+                f"unreachable ({_esc(src_label)}) — plan-vs-achieved RF "
+                "line items unavailable for this report.</div>")
+    rollups = doc.get("rollups") or []
+    # Keep the report period honest: only passes whose LOS falls inside it
+    # (when both clocks are sim time; wall-clock records are shown with a
+    # flag rather than silently filtered against a different clock).
+    start = _cuc_to_epoch(period.start_cuc)
+    end = _cuc_to_epoch(period.end_cuc)
+    in_period = []
+    for r in rollups:
+        los = r.get("los_ts")
+        if (r.get("time_base") == "sim" and los is not None
+                and start is not None and end is not None):
+            if start <= float(los) <= end:
+                in_period.append(r)
+        else:
+            in_period.append({**r, "_clock_flag": True})
+    if not in_period:
+        return (head + "<div class='nodata'>No completed passes recorded in "
+                "this period.</div>")
+    rows = []
+    for r in in_period:
+        try:
+            aos = datetime.fromtimestamp(
+                float(r.get("aos_pred_ts", 0)),
+                tz=timezone.utc).isoformat(timespec="seconds")
+        except (ValueError, OverflowError, OSError):
+            aos = "--"
+        lock = ("no lock" if not r.get("locked")
+                else _fmt_or_dash(r.get("lock_delay_s"), " s"))
+        vol = r.get("data_volume_bytes")
+        vol_s = "—" if vol is None else f"{float(vol)/1024.0:.1f} kB"
+        flag = " <span class='flag'>(wall clock)</span>" \
+            if r.get("_clock_flag") else ""
+        rows.append(
+            "<tr><td>%s</td><td>%s%s</td><td class='num'>%s</td>"
+            "<td class='num'>%s</td><td class='num'>%s</td>"
+            "<td class='num'>%s</td><td class='num'>%s</td></tr>" % (
+                _esc(r.get("gs_name", "")), _esc(aos), flag,
+                _fmt_or_dash(r.get("duration_s"), " s", 0), _esc(lock),
+                _fmt_or_dash(r.get("mean_eb_n0_db"), " dB"),
+                _fmt_or_dash(r.get("fer"), "", 4), vol_s))
+    return (head
+            + "<table><caption>Per-pass RF rollups (predicted AOS vs "
+              "achieved lock, mean Eb/N0, frame-error ratio, data volume); "
+              "source: " + _esc(src_label) + "</caption>"
+              "<tr><th>Station</th><th>AOS (pred)</th>"
+              "<th>Duration</th><th>Lock delay</th><th>Mean Eb/N0</th>"
+              "<th>FER</th><th>Volume</th></tr>"
+            + "".join(rows) + "</table>")
+
+
 def _render_appendix(sec: AppendixSection, spec, dataset,
                      spec_yaml: str) -> str:
     title = f"<h2 id='{_esc(sec.id)}'>{_esc(sec.title)}</h2>"
@@ -687,8 +874,16 @@ def render_report_html(spec: ReportSpec, dataset: TelemetryDataset,
             elif isinstance(sec, CompletenessSection):
                 parts.append(_render_completeness(sec, dataset, period, catalogs))
             elif isinstance(sec, PlotSection):
-                parts.append(_render_plot_section(sec, spec, dataset, period,
-                                                  catalogs))
+                # A backend that imports but cannot draw (no display, an
+                # unwritable MPLCONFIGDIR, a font-cache failure) used to take
+                # the whole report out with a 500 from somewhere inside
+                # matplotlib. One bad plot degrades to one stated notice.
+                try:
+                    parts.append(_render_plot_section(sec, spec, dataset,
+                                                      period, catalogs))
+                except Exception as e:  # noqa: BLE001
+                    _log.exception("plot section %r failed to render", sec.id)
+                    parts.append(_plot_failure_html(sec, e))
             elif isinstance(sec, StatsSection):
                 parts.append(_render_stats(sec, spec, dataset, period, catalogs))
             elif isinstance(sec, EventsSection):
@@ -701,6 +896,10 @@ def render_report_html(spec: ReportSpec, dataset: TelemetryDataset,
                 parts.append(_render_breakdown(sec, dataset, period, catalogs))
             elif isinstance(sec, TableSection):
                 parts.append(_render_table(sec, dataset, period))
+            elif isinstance(sec, ConsoleLogSection):
+                parts.append(_render_console_log(sec, period))
+            elif isinstance(sec, PassRollupSection):
+                parts.append(_render_pass_rollups(sec, period))
             elif isinstance(sec, AppendixSection):
                 parts.append(_render_appendix(sec, spec, dataset, spec_yaml))
         except Exception as e:  # noqa: BLE001 — a bad section must not kill the report

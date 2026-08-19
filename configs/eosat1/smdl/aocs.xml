@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="AOCS" Creator="EOSAT-1 SMDL Generator" Version="1.0+2fdbeaed7708">
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="AOCS" Creator="EOSAT-1 SMDL Generator" Version="1.0+f46653e0637e">
   <Description>SMP2 model catalogue for AOCS subsystem</Description>
   <Type Name="UInt8" Uuid="5f89f604-a171-5501-aa33-4d555fe61f64" xsi:type="Integer" Size="1" Signed="false"/>
   <Type Name="UInt16" Uuid="6ba6c296-ed3b-5fbe-8a66-31fe90cbfb0d" xsi:type="Integer" Size="2" Signed="false"/>
   <Type Name="UInt32" Uuid="fc7b136b-8597-5a35-8e88-5680f3e11a23" xsi:type="Integer" Size="4" Signed="false"/>
   <Type Name="Float32" Uuid="f11668b0-82c3-52a1-b94b-372961ad51ca" xsi:type="Float" Size="4"/>
   <Type Name="Int16" Uuid="0a04bae5-e341-5d1e-b462-99ddee2e7f1b" xsi:type="Integer" Size="2" Signed="true"/>
+  <Type Name="Int32" Uuid="f354acde-9626-5f47-b838-e88400b6548d" xsi:type="Integer" Size="4" Signed="true"/>
   <Type xsi:type="Bool" Name="Bool" Uuid="5bddca20-f6c8-5270-a70e-002782e51b62"/>
   <Model Name="AOCS_Model" Uuid="2dabb08c-03f8-5e03-bb9d-4ee4a937237d">
     <Description>AOCS subsystem simulation model</Description>
@@ -42,24 +43,24 @@
     <Field Name="aocs_rw4_speed" Uuid="6a1e1f89-8dc7-5acb-905e-8abbe235ca72" Type="Int16" Kind="Output" View="true">
       <Description>[RPM]</Description>
     </Field>
-    <Field Name="aocs_mag_x" Uuid="21329003-649a-53c8-a679-4247311b8d38" Type="Float32" Kind="Output" View="true">
-      <Description>[nT]</Description>
+    <Field Name="aocs_mag_x" Uuid="21329003-649a-53c8-a679-4247311b8d38" Type="Int32" Kind="Output" View="true">
+      <Description>Measured body-frame field Bx (noisy, failure-affected; 0 when invalid — see 0x025C) [nT]</Description>
     </Field>
-    <Field Name="aocs_mag_y" Uuid="448b6383-adc4-5618-bc08-258b6bf9a88f" Type="Float32" Kind="Output" View="true">
-      <Description>[nT]</Description>
+    <Field Name="aocs_mag_y" Uuid="448b6383-adc4-5618-bc08-258b6bf9a88f" Type="Int32" Kind="Output" View="true">
+      <Description>Measured body-frame field By [nT]</Description>
     </Field>
-    <Field Name="aocs_mag_z" Uuid="4f780af8-ddce-53e7-8a2b-43832630c134" Type="Float32" Kind="Output" View="true">
-      <Description>[nT]</Description>
+    <Field Name="aocs_mag_z" Uuid="4f780af8-ddce-53e7-8a2b-43832630c134" Type="Int32" Kind="Output" View="true">
+      <Description>Measured body-frame field Bz [nT]</Description>
     </Field>
     <Field Name="aocs_mode" Uuid="f43da8c0-025f-5361-aaf6-25ceb77c7c49" Type="UInt8" Kind="Output" View="true"/>
-    <Field Name="aocs_gps_lat" Uuid="2a476d76-fe22-5e15-8162-6758e2014903" Type="Float32" Kind="Output" View="true">
-      <Description>[deg]</Description>
+    <Field Name="aocs_gps_lat" Uuid="2a476d76-fe22-5e15-8162-6758e2014903" Type="Int32" Kind="Output" View="true">
+      <Description>GPS geodetic latitude (measured; valid when gps_fix &gt;= 2) [deg]</Description>
     </Field>
-    <Field Name="aocs_gps_lon" Uuid="d489a2a9-82fe-5e0d-98f5-7560e269aa48" Type="Float32" Kind="Output" View="true">
-      <Description>[deg]</Description>
+    <Field Name="aocs_gps_lon" Uuid="d489a2a9-82fe-5e0d-98f5-7560e269aa48" Type="Int32" Kind="Output" View="true">
+      <Description>GPS geodetic longitude (measured; valid when gps_fix &gt;= 2) [deg]</Description>
     </Field>
-    <Field Name="aocs_gps_alt" Uuid="ca7a6e10-b5de-53dd-ab4a-44bc60cbcd89" Type="Float32" Kind="Output" View="true">
-      <Description>[km]</Description>
+    <Field Name="aocs_gps_alt" Uuid="ca7a6e10-b5de-53dd-ab4a-44bc60cbcd89" Type="UInt32" Kind="Output" View="true">
+      <Description>GPS geodetic altitude (measured; valid when gps_fix &gt;= 2) [km]</Description>
     </Field>
     <Field Name="aocs_solar_beta" Uuid="91bac3ae-f663-55f7-8b91-b625d335d4d8" Type="Float32" Kind="Output" View="true">
       <Description>Solar beta angle [deg]</Description>
@@ -189,27 +190,6 @@
     </Field>
     <Field Name="aocs_sun_body_z" Uuid="75cc53dd-1b37-54c2-959b-22b89a9d7521" Type="Float32" Kind="Output" View="true">
       <Description>Sun vector body Z (from CSS composite)</Description>
-    </Field>
-    <Field Name="aocs_mag_a_x" Uuid="af35b05b-dc68-5de3-9ff3-08d705837f29" Type="Float32" Kind="Output" View="true">
-      <Description>Magnetometer A X-axis [nT]</Description>
-    </Field>
-    <Field Name="aocs_mag_a_y" Uuid="06088187-4a50-525e-9acc-7af6c86e96f4" Type="Float32" Kind="Output" View="true">
-      <Description>Magnetometer A Y-axis [nT]</Description>
-    </Field>
-    <Field Name="aocs_mag_a_z" Uuid="4a2813cd-861f-587d-9765-e9e6439fc977" Type="Float32" Kind="Output" View="true">
-      <Description>Magnetometer A Z-axis [nT]</Description>
-    </Field>
-    <Field Name="aocs_mag_b_x" Uuid="93f67343-9f50-5c9d-92be-594d4a0743ee" Type="Float32" Kind="Output" View="true">
-      <Description>Magnetometer B X-axis [nT]</Description>
-    </Field>
-    <Field Name="aocs_mag_b_y" Uuid="c0493c3e-8122-5304-a15c-d2cd59f33dd4" Type="Float32" Kind="Output" View="true">
-      <Description>Magnetometer B Y-axis [nT]</Description>
-    </Field>
-    <Field Name="aocs_mag_b_z" Uuid="912b7c05-02fa-5ccc-ac78-1acfaeceeaee" Type="Float32" Kind="Output" View="true">
-      <Description>Magnetometer B Z-axis [nT]</Description>
-    </Field>
-    <Field Name="aocs_mag_select" Uuid="3791ff2f-a553-50c7-a58c-fff91f8541d4" Type="Float32" Kind="Output" View="true">
-      <Description>Active magnetometer (0=A, 1=B)</Description>
     </Field>
     <Field Name="aocs_css_px" Uuid="c92ec193-9fb2-5228-9e09-3185da4c7a72" Type="UInt16" Kind="Output" View="true">
       <Description>CSS +X face illumination</Description>
@@ -427,6 +407,36 @@
     <Field Name="aocs_wheels_commissioned" Uuid="3eea4bfc-a472-5b96-8d3f-43ebcd1d4e00" Type="UInt8" Kind="Output" View="true">
       <Description>Latched 1 once &gt;=3 wheels have been simultaneously enabled; cleared by an AOCS power-down. Lets FDIR tell a double wheel failure apart from an uncommissioned bus</Description>
     </Field>
+    <Field Name="aocs_gyro_cal_state" Uuid="6623bb96-3132-5767-81fe-8a4a485fbd09" Type="UInt8" Kind="Output" View="true">
+      <Description>Gyro bias calibration state: 0=IDLE, 1=RUNNING, 2=COMPLETE, 3=ABORTED</Description>
+    </Field>
+    <Field Name="aocs_gyro_cal_progress" Uuid="bd1e583e-4fe2-52e5-9948-966731747298" Type="UInt8" Kind="Output" View="true">
+      <Description>Gyro bias calibration progress through the averaging arc (0-100) [%]</Description>
+    </Field>
+    <Field Name="aocs_gyro_cal_bias_x" Uuid="ecab46ad-c838-5c88-8233-5b680eb16ee8" Type="Int16" Kind="Output" View="true">
+      <Description>Bias estimated by the LAST completed gyro calibration, X body axis. Compare against aocs.gyro_bias_injected (0x0296) when an instructor has injected a gyro_bias fault [deg/s]</Description>
+    </Field>
+    <Field Name="aocs_gyro_cal_bias_y" Uuid="25e5af1f-ffd3-5bd7-a446-f1bd4348be0c" Type="Int16" Kind="Output" View="true">
+      <Description>Bias estimated by the last completed gyro calibration, Y body axis [deg/s]</Description>
+    </Field>
+    <Field Name="aocs_gyro_cal_bias_z" Uuid="807916c3-e98d-53df-b2c8-a535a617475d" Type="Int16" Kind="Output" View="true">
+      <Description>Bias estimated by the last completed gyro calibration, Z body axis [deg/s]</Description>
+    </Field>
+    <Field Name="aocs_gyro_cal_comp_mag" Uuid="2eedf1d2-5233-5185-806f-f59014b22719" Type="UInt16" Kind="Output" View="true">
+      <Description>Magnitude of the gyro bias compensation currently applied on board. Non-zero after a successful calibration; the HARDWARE bias (0x0296) is unchanged — calibration compensates the fault, it does not repair it [deg/s]</Description>
+    </Field>
+    <Field Name="aocs_gyro_cal_result" Uuid="d62ec6b3-80d1-5d66-ac62-59ec49662eab" Type="UInt8" Kind="Output" View="true">
+      <Description>Outcome of the last gyro calibration attempt: 0=never run, 1=SUCCESS, 2=FAILED/ABORTED</Description>
+    </Field>
+    <Field Name="aocs_gyro_cal_reject" Uuid="0fd87e8d-1ac2-5df1-8d75-fb2e4c761165" Type="UInt16" Kind="Output" View="true">
+      <Description>Failure code of the last gyro-calibration refusal or abort (0 = none). 0x0A01 unpowered, 0x0A02 a gyro unit off, 0x0A03 no star-tracker reference, 0x0A04 rate too high, 0x0A05 already running, 0x0A06 preconditions lost mid-run, 0x0A07 abort with nothing running</Description>
+    </Field>
+    <Field Name="aocs_gyro_units_mask" Uuid="a6aec013-fd3c-512e-b98a-6cea6abd0fb8" Type="UInt8" Kind="Output" View="true">
+      <Description>Per-unit gyro power state as a bitmask: bit0 = X unit (S2 device 0x0206), bit1 = Y (0x0207), bit2 = Z (0x0208). 0x07 = all three on. Tells the operator WHICH unit is off, which the 0x0294 count cannot</Description>
+    </Field>
+    <Field Name="aocs_gyro_bias_resid" Uuid="c0bcba94-79d9-579d-8749-cbfd3fcf583f" Type="UInt16" Kind="Output" View="true">
+      <Description>Magnitude of the bias still present at the gyro output after on-board compensation. This is what drives GYRO_BIAS_HIGH (0x020B); a successful calibration drives it to zero even while the injected hardware fault persists [deg/s]</Description>
+    </Field>
     <Field Name="aocs_wheels_enabled" Uuid="63b4d534-375b-5ebd-a05e-384938daa7cc" Type="Float32" Kind="Output" View="true">
       <Description>Number of enabled reaction wheels</Description>
     </Field>
@@ -436,23 +446,23 @@
     <Field Name="aocs_wheel_torque_cmd" Uuid="1a059b3c-b71f-57f2-992f-fa4634a9080e" Type="Float32" Kind="Output" View="true">
       <Description>Commanded total RW torque [Nm]</Description>
     </Field>
-    <Field Name="aocs_gps_ecef_x" Uuid="33b5e393-4aa0-54f8-bf33-8bbde5e88a20" Type="Float32" Kind="Output" View="true">
-      <Description>GPS ECEF position X [m]</Description>
+    <Field Name="aocs_gps_ecef_x" Uuid="33b5e393-4aa0-54f8-bf33-8bbde5e88a20" Type="Int32" Kind="Output" View="true">
+      <Description>GPS ECEF position X (measured; valid when gps_fix &gt;= 2) [m]</Description>
     </Field>
-    <Field Name="aocs_gps_ecef_y" Uuid="4aecb768-7dc0-5306-8563-860c959b399b" Type="Float32" Kind="Output" View="true">
-      <Description>GPS ECEF position Y [m]</Description>
+    <Field Name="aocs_gps_ecef_y" Uuid="4aecb768-7dc0-5306-8563-860c959b399b" Type="Int32" Kind="Output" View="true">
+      <Description>GPS ECEF position Y (measured; valid when gps_fix &gt;= 2) [m]</Description>
     </Field>
-    <Field Name="aocs_gps_ecef_z" Uuid="b9916bae-8bac-564d-9c88-e03ac485a61c" Type="Float32" Kind="Output" View="true">
-      <Description>GPS ECEF position Z [m]</Description>
+    <Field Name="aocs_gps_ecef_z" Uuid="b9916bae-8bac-564d-9c88-e03ac485a61c" Type="Int32" Kind="Output" View="true">
+      <Description>GPS ECEF position Z (measured; valid when gps_fix &gt;= 2) [m]</Description>
     </Field>
-    <Field Name="aocs_gps_vel_x" Uuid="8b6ca781-2180-5671-9662-a029717dd623" Type="Float32" Kind="Output" View="true">
-      <Description>GPS ECEF velocity X [m/s]</Description>
+    <Field Name="aocs_gps_vel_x" Uuid="8b6ca781-2180-5671-9662-a029717dd623" Type="Int32" Kind="Output" View="true">
+      <Description>GPS ECEF velocity X (measured; valid when gps_fix = 3) [m/s]</Description>
     </Field>
-    <Field Name="aocs_gps_vel_y" Uuid="fe4fbd26-09a1-5a62-83ad-ec7f53e2c1bc" Type="Float32" Kind="Output" View="true">
-      <Description>GPS ECEF velocity Y [m/s]</Description>
+    <Field Name="aocs_gps_vel_y" Uuid="fe4fbd26-09a1-5a62-83ad-ec7f53e2c1bc" Type="Int32" Kind="Output" View="true">
+      <Description>GPS ECEF velocity Y (measured; valid when gps_fix = 3) [m/s]</Description>
     </Field>
-    <Field Name="aocs_gps_vel_z" Uuid="6ce7dfc3-2c83-5b2c-b0ee-b6a24cb1e1ce" Type="Float32" Kind="Output" View="true">
-      <Description>GPS ECEF velocity Z [m/s]</Description>
+    <Field Name="aocs_gps_vel_z" Uuid="6ce7dfc3-2c83-5b2c-b0ee-b6a24cb1e1ce" Type="Int32" Kind="Output" View="true">
+      <Description>GPS ECEF velocity Z (measured; valid when gps_fix = 3) [m/s]</Description>
     </Field>
     <Field Name="aocs_mtq_dipole_total" Uuid="9ae64e0b-559c-586e-bc38-c88dc3dec3da" Type="Float32" Kind="Output" View="true">
       <Description>Commanded total MTQ dipole [Am^2]</Description>
@@ -476,10 +486,7 @@
       <Description>0=off, 1=on</Description>
     </Field>
     <Field Name="tc_ST_SELECT_unit" Uuid="02feb4d6-dc45-5466-8eb4-bc475bda401f" Type="UInt8" Kind="Input">
-      <Description>0=ST1, 1=ST2</Description>
-    </Field>
-    <Field Name="tc_MAG_SELECT_unit" Uuid="8ea53f32-9c62-5f72-8cb9-05902a37ab19" Type="UInt8" Kind="Input">
-      <Description>0=primary, 1=redundant</Description>
+      <Description>1=ST1, 2=ST2 (0 is refused)</Description>
     </Field>
     <Field Name="tc_RW_SET_SPEED_BIAS_wheel_idx" Uuid="9b1fc67d-69d2-505a-a04d-ad29313291c4" Type="UInt8" Kind="Input">
       <Description>Wheel index 0-3</Description>
@@ -504,6 +511,12 @@
     </Field>
     <Field Name="tc_AOCS_SLEW_TO_rate_dps" Uuid="6893f18f-5af7-5da2-b7f0-af2e9875b4af" Type="Float32" Kind="Input">
       <Description>Slew rate in deg/s (0.1-10.0)</Description>
+    </Field>
+    <Field Name="tc_AOCS_GYRO_CALIBRATION_action" Uuid="340f1a41-3b3a-5455-9640-e09d21f4634b" Type="UInt8" Kind="Input">
+      <Description>0=START a calibration, 1=ABORT the one in progress | default 0 | 0=START | 1=ABORT</Description>
+    </Field>
+    <Field Name="tc_AOCS_GYRO_CALIBRATION_duration_s" Uuid="0dde741f-17ba-5ebb-95a0-6b3e31e4b528" Type="UInt16" Kind="Input">
+      <Description>Averaging arc length. 0 = the configured default (sensors.gyro.calibration.duration_s, 300 s); other values are clamped to [30, 1800] s | [s] | range [0, 1800] | default 0</Description>
     </Field>
     <Field Name="tc_AOCS_RW_RAMP_DOWN_wheel_idx" Uuid="31cd904e-4303-5199-b000-acd6d3085202" Type="UInt8" Kind="Input">
       <Description>Wheel index (0-3) or 255 for all</Description>

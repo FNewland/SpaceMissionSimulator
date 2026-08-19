@@ -172,13 +172,37 @@ corresponding Event ID. This event is:
 
 ### 6.2 Monitoring Commands
 
-| Command               | Subtype | Description                              |
-|-----------------------|---------|------------------------------------------|
-| Enable monitoring      | S12.1   | Enable a specific monitoring definition  |
-| Disable monitoring     | S12.2   | Disable a specific monitoring definition |
-| Report monitoring      | S12.12  | Report all active monitoring definitions |
-| Enable all monitoring  | S12.15  | Enable all monitoring definitions        |
-| Disable all monitoring | S12.16  | Disable all monitoring definitions       |
+| Command           | Mnemonic          | Subtype | Description                                                |
+|-------------------|-------------------|---------|------------------------------------------------------------|
+| Enable service    | `MON_ENABLE`      | S12.1   | Enable on-board limit checking globally                     |
+| Disable service   | `MON_DISABLE`     | S12.2   | Disable on-board limit checking globally                    |
+| Enable one        | `MON_ENABLE_DEF`  | S12.3   | Enable ONE definition, addressed by `mon_id`                |
+| Disable one       | `MON_DISABLE_DEF` | S12.4   | Disable ONE definition, addressed by `mon_id`               |
+| Add definition    | `MON_ADD_DEF`     | S12.6   | `mon_id`, `param_id`, `check_type`, low and high limits     |
+| Delete definition | `MON_DEL_DEF`     | S12.7   | Delete ONE definition, addressed by `mon_id`                |
+| Report defs       | `MON_REPORT_DEFS` | S12.12  | Report the whole on-board definition table → **TM(12,13)**  |
+
+There is no S12.15/S12.16: 12.1 and 12.2 are the whole-service switches and
+12.3/12.4 are the per-definition ones. `mon_id` addresses the *definition*, not
+the parameter — a parameter may carry several monitors (a WARNING tier and an
+ALARM tier), which is why the id is separate.
+
+**TC(12,12) → TM(12,13)** is how the ground reads back what the spacecraft
+actually holds, rather than what the ground database believes it uploaded. It
+is what the MCS FDIR panel's "Refresh from Spacecraft" button sends. The report
+is `count(u16)` followed by `count` fixed 14-octet records:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `mon_id`     | uint16  | Definition id |
+| `param_id`   | uint16  | Monitored parameter |
+| `check_type` | uint8   | 0 = absolute (value in band), 1 = delta (change since the last check) |
+| `enabled`    | uint8   | Per-definition enable state (S12.3 / S12.4) |
+| `low_limit`  | float32 | Low limit |
+| `high_limit` | float32 | High limit |
+
+Limit *transitions* are reported separately, as TM(12,9) (limit entered) and
+TM(12,10) (returned to nominal).
 
 ## 7. PUS Service 19 — Event-Action Triggering
 
@@ -269,6 +293,52 @@ FDIR rules requires explicit ground authorisation and should be time-limited.
 | Load shed level 2 threshold  | 35%     | Yes        |
 | Load shed level 3 threshold  | 25%     | Yes        |
 | Load shed level 4 threshold  | 15%     | Yes        |
+
+### 10.1 Phase Gating of FDIR Rules
+
+Two mechanisms are gated on the mission phase (`eps.spacecraft_phase`, 0x0129):
+
+* the **advanced fault-propagation model** (`fdir/fault_propagation.yaml`) is
+  armed only at phase 6 (NOMINAL), as a whole;
+* individual **legacy threshold rules** (`subsystems/fdir.yaml`) may carry an
+  optional `min_phase:` field. Without it — the default — a rule is armed in
+  every phase.
+
+`min_phase` exists for rules whose trigger condition *is* the expected state of
+an uncommissioned spacecraft. Two rules carry it, both at `min_phase: 6`:
+
+| Rule | Why it is gated |
+|---|---|
+| `aocs.wheels_enabled < 2` | The bootloader powers up with all four reaction wheels disabled and they stay disabled until COM-004 commands `AOCS_ENABLE_WHEEL`. Ungated, this level-2 rule latched on the first tick of every run, pinned the spacecraft mode to SAFE and demoted `aocs.mode` out of NOMINAL. |
+| `aocs.att_error > 5 deg` (420 s persistence) | A large attitude error is expected while the spacecraft detumbles in LEOP and is slewed around during AOCS checkout (COM-004/005/013). Pointing performance is a requirement only once the spacecraft is declared operational. |
+
+**Everything else stays armed in every phase, deliberately.** Battery SoC and
+bus voltage, battery/OBC/wheel/PA temperature, reboot count and CAN bus status
+are hardware protection: LEOP is precisely when a mishandled spacecraft
+flattens its battery, and a blanket `phase >= 6` on the whole rule set would
+switch those protections off for the entire early mission.
+
+A rule below its `min_phase` is **disarmed, not suppressed**: any latch it
+holds is dropped and its persistence accumulator is reset, so falling back
+below the threshold (an OBC reboot to bootloader, an instructor rewind) cannot
+leave a stale contingency behind.
+
+### 10.2 One Spacecraft Mode
+
+`sat.mode` (0x0001) is the telemetered copy of the derived `sc_mode` — the same
+value, on the same scale, as the MCS console header and the instructor UI show:
+
+| Value | Mode | Meaning |
+|---|---|---|
+| 0 | SAFE      | An FDIR safe-level contingency is latched, **or** the phase is below 6 |
+| 1 | NOMINAL   | Commissioned, no contingency, not imaging |
+| 2 | SCIENCE   | Commissioned, no contingency, payload actively imaging |
+| 3 | EMERGENCY | An FDIR emergency-level contingency is latched |
+
+It previously had a second, independent derivation that read only the FDIR
+latches and ignored the phase gate, so a `GET_PARAM(0x0001)` reported NOMINAL
+while the console header reported SAFE throughout LEOP. There is now one
+derivation (`Engine._update_sc_mode`) and 0x0001 is written from it.
 
 ## 11. Operational Notes
 

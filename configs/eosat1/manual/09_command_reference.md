@@ -2,7 +2,7 @@
 
 **Document ID:** EOSAT1-UM-REF-010  
 **Issue:** 2.0  
-**Source revision:** `tc_catalog.yaml@d817c9a0a3c9`  
+**Source revision:** `tc_catalog.yaml@5e601aa0fa5a`  
 **Classification:** UNCLASSIFIED — For Simulation Use Only
 
 > **GENERATED FILE — DO NOT EDIT BY HAND.**  
@@ -28,8 +28,7 @@
 | `S2_AOCS_GYROSCOPE_0` | S2.1 | — | 3 | device_id, state | nominal |
 | `S2_AOCS_GYROSCOPE_1` | S2.1 | — | 3 | device_id, state | nominal |
 | `S2_AOCS_GYROSCOPE_2` | S2.1 | — | 3 | device_id, state | nominal |
-| `S2_AOCS_MAGNETOMETER_A` | S2.1 | — | 3 | device_id, state | nominal |
-| `S2_AOCS_MAGNETOMETER_B` | S2.1 | — | 3 | device_id, state | nominal |
+| `S2_AOCS_MAGNETOMETER` | S2.1 | — | 3 | device_id, state | nominal |
 | `S2_AOCS_MAGNETORQUER_X` | S2.1 | — | 3 | device_id, state | nominal |
 | `S2_AOCS_MAGNETORQUER_Y` | S2.1 | — | 3 | device_id, state | nominal |
 | `S2_AOCS_MAGNETORQUER_Z` | S2.1 | — | 3 | device_id, state | nominal |
@@ -95,13 +94,12 @@
 | `ST1_POWER` | S8.1 | 4 (0x04) | 2 | on | nominal |
 | `ST2_POWER` | S8.1 | 5 (0x05) | 2 | on | nominal |
 | `ST_SELECT` | S8.1 | 6 (0x06) | 2 | unit | nominal |
-| `MAG_SELECT` | S8.1 | 7 (0x07) | 2 | unit | nominal |
 | `RW_SET_SPEED_BIAS` | S8.1 | 8 (0x08) | 6 | wheel_idx, bias_rpm | nominal |
 | `MTQ_ENABLE` | S8.1 | 9 (0x09) | 2 | enable | nominal |
 | `AOCS_SLEW_TO` | S8.1 | 10 (0x0A) | 21 | q_x, q_y, q_z, q_w, rate_dps | nominal |
 | `AOCS_CHECK_MOMENTUM` | S8.1 | 11 (0x0B) | 1 | — | nominal |
 | `AOCS_BEGIN_ACQUISITION` | S8.1 | 12 (0x0C) | 1 | — | nominal |
-| `AOCS_GYRO_CALIBRATION` | S8.1 | 13 (0x0D) | 1 | — | nominal |
+| `AOCS_GYRO_CALIBRATION` | S8.1 | 13 (0x0D) | 4 | action, duration_s | nominal |
 | `AOCS_RW_RAMP_DOWN` | S8.1 | 14 (0x0E) | 6 | wheel_idx, target_rpm | nominal |
 | `AOCS_SET_DEADBAND` | S8.1 | 15 (0x0F) | 5 | deadband_deg | nominal |
 | `EPS_PAYLOAD_MODE` | S8.1 | 16 (0x10) | 2 | mode | nominal |
@@ -207,6 +205,7 @@
 | `PROP_INHIBIT_CLR` | S8.1 | 117 (0x75) | 3 | key | nominal |
 | `PROP_GET_STATUS` | S8.1 | 118 (0x76) | 1 | — | nominal |
 | `PAYLOAD_SET_SHUTTER` | S8.1 | 119 (0x77) | 2 | position | caution |
+| `SYS_SET_MISSION_PHASE` | S8.1 | 120 (0x78) | 3 | phase, flags | critical |
 | `SET_TIME` | S9.1 | — | 4 | cuc_seconds | nominal |
 | `REQUEST_TIME` | S9.2 | — | 0 | — | nominal |
 | `SCHEDULE_TC` | S11.4 | — | var | exec_time_cuc, tc_data | nominal |
@@ -356,25 +355,9 @@ Select primary star tracker
 |---|---|---|---|---|---|---|
 | `unit` | uint8 | 1 | — | raw = eng | — | — |
 
-- `unit` — 0=ST1, 1=ST2
+- `unit` — 1=ST1, 2=ST2 (0 is refused)
 
 Example: `06 00`  (unit=0)
-
-#### MAG_SELECT
-
-**S8.1** · func_id **7** (0x07) · 2 data byte(s)
-
-Select magnetometer source
-
-*Aliases:* SET_MAG_SELECT
-
-| Argument | Type | Offset | Unit | Raw ↔ engineering | Range | Default |
-|---|---|---|---|---|---|---|
-| `unit` | uint8 | 1 | — | raw = eng | — | — |
-
-- `unit` — 0=primary, 1=redundant
-
-Example: `07 00`  (unit=0)
 
 #### RW_SET_SPEED_BIAS
 
@@ -450,13 +433,26 @@ Example: `0C`
 
 #### AOCS_GYRO_CALIBRATION
 
-**S8.1** · func_id **13** (0x0D) · 1 data byte(s)
+**S8.1** · func_id **13** (0x0D) · 4 data byte(s) · position `aocs`
 
-Reset gyro bias estimate
+Start (or abort) an on-board gyro bias calibration. The spacecraft averages the attitude filter's observed gyro bias over a quiet arc with the star tracker in the determination loop, then applies the result as a compensation on the gyro measurement path. Refused with a specific code if the preconditions do not hold (0x0A01 AOCS unpowered, 0x0A02 a gyro unit off, 0x0A03 no star-tracker reference, 0x0A04 body rate too high, 0x0A05 already running). Progress is aocs.gyro_cal_progress (0x02CA) and the estimate lands in aocs.gyro_cal_bias_x/y/z (0x02CB-0x02CD). NOTE the description used to read "Reset gyro bias estimate", and that is exactly what the on-board handler did — it zeroed a truth state and returned success without estimating anything.
 
-*No arguments.*
+| Argument | Type | Offset | Unit | Raw ↔ engineering | Range | Default |
+|---|---|---|---|---|---|---|
+| `action` | uint8 | 1 | — | enumerated | — | 0 |
+| `duration_s` | uint16 | 2 | s | raw = eng | 0 … 1800 | 0 |
 
-Example: `0D`
+*`action` values:*
+
+| Value | Label | Meaning |
+|---|---|---|
+| 0 | `START` |  |
+| 1 | `ABORT` |  |
+
+- `action` — 0=START a calibration, 1=ABORT the one in progress
+- `duration_s` — Averaging arc length. 0 = the configured default (sensors.gyro.calibration.duration_s, 300 s); other values are clamped to [30, 1800] s
+
+Example: `0D 00 00 00`  (action=0, duration_s=0)
 
 #### AOCS_RW_RAMP_DOWN
 
@@ -1469,7 +1465,7 @@ Example: `40`
 
 **S8.1** · func_id **65** (0x41) · 2 data byte(s) · readback ttc.tm_data_rate (0x0510)
 
-Select a rung of the TM data-rate ladder defined in subsystems/ttc.yaml tm_rate_tiers. Sets data_rate_mode (the COMMANDED tier), which the TTC tick resolves the active tier from, so the commanded tier survives the tick and is authoritative. Three tiers: LOW 16 kbps BPSK conv(7,1/2)+RS — ROUTINE OPERATIONS, and the safe-mode / FDIR fallback; HIGH 128 kbps QPSK RS(255,223) — delayed-telemetry playback and image dumps only; BEACON 1 kbps BPSK conv(7,1/2)+RS — bootloader/beacon lifeline, entered with TTC_SET_BEACON_MODE, not selectable here. LEGACY ENCODING PRESERVED VERBATIM: rate=0 still means "the low rate" and rate=1 still means "the high rate" — they now select LOW (16 kbps) and HIGH (128 kbps) instead of 1 kbps and 64 kbps, so existing procedures, OBCPs and the FDIR ttc_reduce_power action keep their meaning. Permission rules are enforced by REJECTION with an S1.8 execution failure (error 0x0007), never by silent clamping: HIGH requires a deployed antenna, DOWNLINK/dump mode (TTC_SET_DOWNLINK_MODE) and elevation >= 10 deg, and every tier except BEACON is refused while beacon mode is latched. An unknown tier code gives error 0x0003.
+Select a rung of the TM data-rate ladder defined in subsystems/ttc.yaml tm_rate_tiers. Sets data_rate_mode (the COMMANDED tier), which the TTC tick resolves the active tier from, so the commanded tier survives the tick and is authoritative. Three tiers: LOW 16 kbps BPSK conv(7,1/2)+RS — ROUTINE OPERATIONS, and the safe-mode / FDIR fallback; HIGH 128 kbps QPSK RS(255,223) — delayed-telemetry playback and image dumps only; SAFE 1 kbps BPSK conv(7,1/2)+RS — bootloader/contingency lifeline rate (renamed from BEACON, 2026-08c — "beacon" always means the UHF whip transmitter now), entered with TTC_SET_BEACON_MODE, not selectable here. LEGACY ENCODING PRESERVED VERBATIM: rate=0 still means "the low rate" and rate=1 still means "the high rate" — they now select LOW (16 kbps) and HIGH (128 kbps) instead of 1 kbps and 64 kbps, so existing procedures, OBCPs and the FDIR ttc_reduce_power action keep their meaning. Permission rules are enforced by REJECTION with an S1.8 execution failure (error 0x0007), never by silent clamping: HIGH requires a deployed antenna and DOWNLINK/dump mode (TTC_SET_DOWNLINK_MODE), and every tier except SAFE is refused while beacon mode is latched. An unknown tier code gives error 0x0003. There is NO on-board elevation gate (2026-08c): the 10 deg HIGH policy is a GROUND rule — the MCS warns when HIGH is commanded below 10 deg from its own contact geometry, and the planner schedules HIGH dumps above it.
 
 | Argument | Type | Offset | Unit | Raw ↔ engineering | Range | Default |
 |---|---|---|---|---|---|---|
@@ -1481,9 +1477,9 @@ Select a rung of the TM data-rate ladder defined in subsystems/ttc.yaml tm_rate_
 |---|---|---|
 | 0 | `LOW` | 16 kbps BPSK conv(7,1/2)+RS - routine operations |
 | 1 | `HIGH` | 128 kbps QPSK RS(255,223) - dumps only (gated) |
-| 255 | `BEACON` | 1 kbps bootloader beacon - not selectable here |
+| 255 | `SAFE` | 1 kbps bootloader lifeline rate (ex-BEACON) - not selectable here |
 
-- `rate` — Tier code: 0=LOW(16 kbps, routine operations), 1=HIGH(128 kbps, dumps only), 255=BEACON(1 kbps, bootloader only). Codes come from tm_rate_tiers[].command_code in subsystems/ttc.yaml.
+- `rate` — Tier code: 0=LOW(16 kbps, routine operations), 1=HIGH(128 kbps, dumps only), 255=SAFE(1 kbps, bootloader only). Codes come from tm_rate_tiers[].command_code in subsystems/ttc.yaml.
 
 Example: `41 00`  (rate=0)
 
@@ -1543,7 +1539,7 @@ Example: `45`
 
 **S8.1** · func_id **70** (0x46) · 2 data byte(s)
 
-Enable/disable beacon mode (low-rate telemetry)
+Enable/disable beacon MODE — pins the S-band ladder to the SAFE (1 kbps) rung. NOT the UHF beacon transmitter (TTC_BEACON_TX_ON/OFF).
 
 | Argument | Type | Offset | Unit | Raw ↔ engineering | Range | Default |
 |---|---|---|---|---|---|---|
@@ -1739,6 +1735,31 @@ Drive the shutter to an ABSOLUTE position. 2026-08b PL-d: there was no absolute 
 - `position` — 0=closed, 1=open
 
 Example: `77 01`  (position=1)
+
+#### SYS_SET_MISSION_PHASE
+
+**S8.1** · func_id **120** (0x78) · 3 data byte(s) · CRITICAL · readback eps.spacecraft_phase — the achieved mission phase (0x0129)
+
+Declare the mission phase. Nothing else advances the phase past 4 (LEOP): the on-board state machine only implements the automatic power-up chain 1->2->3->4 and the reboot revert to 3, so COMMISSIONING (5) and NOMINAL (6) are ground declarations and this is the telecommand that makes them. WHAT THE PHASE ACTUALLY GATES — the phase is not a label, it is a live interlock on six mechanisms:   * which subsystems tick at all (phases 0-1 tick nothing);   * telecommand acceptance — at phase <= 3 the OBC is running the     bootloader and only the bootloader command subset is accepted     (S17.1, S9.1, S3 beacon HK, S20.1/3, S8.1 funcs 19/20/52-57/61/     66/67/69, and this command);   * the derived spacecraft mode — sc_mode (and its telemetered copy     sat.mode 0x0001) is forced to SAFE at any phase < 6, so the console     header cannot read NOMINAL until this command has been sent;   * arming of the advanced fault-propagation model, which is disarmed     below phase 6 because during LEOP the wheels are legitimately     unpowered;   * the phase-gated legacy FDIR rules (fdir.yaml `min_phase`);   * the propulsion interlock — prop.yaml declares `min_phase: 6`, so     with the phase stuck at 4 no burn can ever be armed.  GUARDS. Out-of-range (> 6) is refused with 0x0C01. Phases 0-2 are pre-separation states owned by the launch vehicle and are never ground-commandable, forced or not (0x0C02) — commanding phase 0 would stop the subsystem ticks that carry the uplink and lock the operator out. Entering an application phase (>= 4) while the OBC is running the bootloader is refused with 0x0C03; boot the application first with OBC_BOOT_APP (func 55) and the state machine advances 3->4 by itself. A BACKWARDS transition is refused with 0x0C04 unless the FORCE flag is set: a real mission does not casually go NOMINAL -> LEOP, but an operator rehearsing a regression or unwinding a premature declaration must be able to, so the answer is reject-with-reason plus an explicit opt-in, not a blanket refusal. Every accepted change raises the S5 event MISSION_PHASE_CHANGED (0x0055) carrying the from and to phases.
+
+| Argument | Type | Offset | Unit | Raw ↔ engineering | Range | Default |
+|---|---|---|---|---|---|---|
+| `phase` | uint8 | 1 | — | enumerated | — | 6 |
+| `flags` | uint8 | 2 | — | raw = eng | — | 0 |
+
+*`phase` values:*
+
+| Value | Label | Meaning |
+|---|---|---|
+| 3 | `BOOTLOADER_OPS` | OBC in bootloader, beacon HK only (backwards only, requires FORCE) |
+| 4 | `LEOP` | Application software booted, sequential checkout |
+| 5 | `COMMISSIONING` | All subsystems being checked out |
+| 6 | `NOMINAL` | Declared operational — unlocks sc_mode NOMINAL and the propulsion interlock |
+
+- `phase` — Target mission phase. 3-6 only; 0-2 are pre-separation states and are always refused.
+- `flags` — Bit 0 = FORCE (permit a backwards transition). Bits 1-7 reserved, must be 0.
+
+Example: `78 06 00`  (phase=6, flags=0)
 
 ### 3.8 EPS (legacy quick actions)
 
@@ -2079,11 +2100,13 @@ Control gyroscope 2 (device 0x0208)
 
 Example: `00 00 00`  (device_id=0, state=0)
 
-#### S2_AOCS_MAGNETOMETER_A
+#### S2_AOCS_MAGNETOMETER
 
 **S2.1** · 3 data byte(s)
 
-Control magnetometer A (device 0x0209)
+Control the magnetometer (single 3-axis unit, device 0x0209 — no redundant unit is fitted)
+
+*Aliases:* S2_AOCS_MAGNETOMETER_A
 
 | Argument | Type | Offset | Unit | Raw ↔ engineering | Range | Default |
 |---|---|---|---|---|---|---|
@@ -2091,22 +2114,6 @@ Control magnetometer A (device 0x0209)
 | `state` | uint8 | 2 | — | raw = eng | — | — |
 
 - `device_id` — Device ID (0x0209)
-- `state` — 0=OFF, 1=ON
-
-Example: `00 00 00`  (device_id=0, state=0)
-
-#### S2_AOCS_MAGNETOMETER_B
-
-**S2.1** · 3 data byte(s)
-
-Control magnetometer B (device 0x020A)
-
-| Argument | Type | Offset | Unit | Raw ↔ engineering | Range | Default |
-|---|---|---|---|---|---|---|
-| `device_id` | uint16 | 0 | — | raw = eng | — | — |
-| `state` | uint8 | 2 | — | raw = eng | — | — |
-
-- `device_id` — Device ID (0x020A)
 - `state` — 0=OFF, 1=ON
 
 Example: `00 00 00`  (device_id=0, state=0)
@@ -3568,6 +3575,17 @@ The console's QUICK COMMANDS panel is generated from the same catalogue: each bu
 | AOCS EQUIPMENT | ST1 Off | `ST1_POWER` | on=0 | `04 00` |
 | AOCS EQUIPMENT | ST2 On | `ST2_POWER` | on=1 | `05 01` |
 | AOCS EQUIPMENT | ST2 Off | `ST2_POWER` | on=0 | `05 00` |
+| AOCS EQUIPMENT | Gyro X On | `S2_AOCS_GYROSCOPE_0` | device_id=518, state=1 | `02 06 01` |
+| AOCS EQUIPMENT | Gyro X Off | `S2_AOCS_GYROSCOPE_0` | device_id=518, state=0 | `02 06 00` |
+| AOCS EQUIPMENT | Gyro Y On | `S2_AOCS_GYROSCOPE_1` | device_id=519, state=1 | `02 07 01` |
+| AOCS EQUIPMENT | Gyro Y Off | `S2_AOCS_GYROSCOPE_1` | device_id=519, state=0 | `02 07 00` |
+| AOCS EQUIPMENT | Gyro Z On | `S2_AOCS_GYROSCOPE_2` | device_id=520, state=1 | `02 08 01` |
+| AOCS EQUIPMENT | Gyro Z Off | `S2_AOCS_GYROSCOPE_2` | device_id=520, state=0 | `02 08 00` |
+| AOCS EQUIPMENT | Gyro Cal Start | `AOCS_GYRO_CALIBRATION` | action=0, duration_s=0 | `0D 00 00 00` |
+| AOCS EQUIPMENT | Gyro Cal Abort | `AOCS_GYRO_CALIBRATION` | action=1, duration_s=0 | `0D 01 00 00` |
+| AOCS EQUIPMENT | ST Select 1 | `ST_SELECT` | unit=1 | `06 01` |
+| AOCS EQUIPMENT | ST Select 2 | `ST_SELECT` | unit=2 | `06 02` |
+| AOCS MODES | Fine-Ready Check | `AOCS_FINE_READY_CHECK` | — | `59` |
 | AOCS EQUIPMENT | GPS Rx On | `S2_AOCS_GPS_RECEIVER` | device_id=527, state=1 | `02 0F 01` |
 | AOCS EQUIPMENT | GPS Rx Off | `S2_AOCS_GPS_RECEIVER` | device_id=527, state=0 | `02 0F 00` |
 | AOCS EQUIPMENT | GPS Cold | `AOCS_GPS_SET_START_MODE` | start_mode=0 | `54 00` |
@@ -3585,9 +3603,19 @@ The console's QUICK COMMANDS panel is generated from the same catalogue: each bu
 | EPS POWER LINES | OBC Htr Off | `EPS_POWER_OFF` | line_index=6 | `14 06` |
 | EPS POWER LINES | AOCS Whl On | `EPS_POWER_ON` | line_index=7 | `13 07` |
 | EPS POWER LINES | AOCS Whl Off | `EPS_POWER_OFF` | line_index=7 | `14 07` |
+| EPS POWER LINES | Prop On | `EPS_POWER_ON` | line_index=8 | `13 08` |
+| EPS POWER LINES | Prop Off | `EPS_POWER_OFF` | line_index=8 | `14 08` |
 | EPS POWER LINES | Reset OC 0 | `EPS_RESET_OC_FLAG` | line_index=0 | `15 00` |
+| EPS POWER LINES | Deploy Wing +Y | `EPS_DEPLOY_WING` | wing=0 | `51 00` |
+| EPS POWER LINES | Deploy Wing -Y | `EPS_DEPLOY_WING` | wing=1 | `51 01` |
+| EPS POWER LINES | Shed Stage 1 | `EPS_EMERGENCY_LOAD_SHED` | stage=1 | `19 01` |
+| EPS POWER LINES | Shed Stage 2 | `EPS_EMERGENCY_LOAD_SHED` | stage=2 | `19 02` |
+| EPS POWER LINES | Shed Stage 3 | `EPS_EMERGENCY_LOAD_SHED` | stage=3 | `19 03` |
+| EPS POWER LINES | Shed Clear | `EPS_EMERGENCY_LOAD_SHED` | stage=0 | `19 00` |
 | TCS | Bat Htr ON | `HEATER_BATTERY` | on=1 | `28 01` |
 | TCS | Bat Htr OFF | `HEATER_BATTERY` | on=0 | `28 00` |
+| TCS | OBC Htr ON | `HEATER_OBC` | on=1 | `29 01` |
+| TCS | OBC Htr OFF | `HEATER_OBC` | on=0 | `29 00` |
 | TCS | FPA Cool ON | `FPA_COOLER` | on=1 | `2B 01` |
 | TCS | FPA Cool OFF | `FPA_COOLER` | on=0 | `2B 00` |
 | TTC | PA ON | `TTC_PA_ON` | — | `42` |
@@ -3601,6 +3629,10 @@ The console's QUICK COMMANDS panel is generated from the same catalogue: each bu
 | TTC | TX Pwr HIGH (5W) | `TTC_SET_TX_POWER` | level=2 | `44 02` |
 | TTC | Beacon TX ON | `TTC_BEACON_TX_ON` | — | `61` |
 | TTC | Beacon TX OFF | `TTC_BEACON_TX_OFF` | — | `62` |
+| TTC | Beacon Mode OFF | `TTC_SET_BEACON_MODE` | on=0 | `46 00` |
+| TTC | Beacon Mode ON | `TTC_SET_BEACON_MODE` | on=1 | `46 01` |
+| TTC | XPDR Primary | `TTC_SWITCH_PRIMARY` | — | `3F` |
+| TTC | XPDR Redundant | `TTC_SWITCH_REDUNDANT` | — | `40` |
 | PAYLOAD | Standby | `PAYLOAD_SET_MODE` | mode=1 | `1A 01` |
 | PAYLOAD | Imaging | `PAYLOAD_SET_MODE` | mode=2 | `1A 02` |
 | PAYLOAD | Off | `PAYLOAD_SET_MODE` | mode=0 | `1A 00` |
@@ -3623,6 +3655,7 @@ The console's QUICK COMMANDS panel is generated from the same catalogue: each bu
 | PAYLOAD | Cal FLAT | `PAYLOAD_START_CALIBRATION` | mode=1 | `25 01` |
 | PAYLOAD | Filter CLEAR | `PAYLOAD_SELECT_FILTER` | position=0 | `5C 00` |
 | PAYLOAD | Catalog Req | `PAYLOAD_GET_IMAGE_CATALOG` | — | `20` |
+| PAYLOAD | Xfer scene 1 | `PAYLOAD_INITIATE_TRANSFER` | scene_id=1 | `5E 00 01` |
 | PROPULSION | Catbed Preheat ON | `HEATER_THRUSTER` | on=1 | `2A 01` |
 | PROPULSION | Catbed Preheat OFF | `HEATER_THRUSTER` | on=0 | `2A 00` |
 | PROPULSION | Iso Valves OPEN | `PROP_ISO_OPEN` | branch=2 | `71 02` |
@@ -3640,6 +3673,12 @@ The console's QUICK COMMANDS panel is generated from the same catalogue: each bu
 | OBDH | Boot App | `OBC_BOOT_APP` | — | `37` |
 | OBDH | Mem Scrub | `OBC_MEMORY_SCRUB` | — | `33` |
 | OBDH | GPS Time Sync | `OBC_GPS_TIME_SYNC` | — | `50` |
+| OBDH | OBC Mode SAFE | `OBC_SET_MODE` | mode=1 | `32 01` |
+| OBDH | OBC Mode NOMINAL | `OBC_SET_MODE` | mode=0 | `32 00` |
+| OBDH | Boot Inhibit SET | `OBC_BOOT_INHIBIT` | inhibit=1 | `38 01` |
+| OBDH | Boot Inhibit CLR | `OBC_BOOT_INHIBIT` | inhibit=0 | `38 00` |
+| OBDH | Phase 5 COMMISSIONING | `SYS_SET_MISSION_PHASE` | phase=5, flags=0 | `78 05 00` |
+| OBDH | Phase 6 NOMINAL | `SYS_SET_MISSION_PHASE` | phase=6, flags=0 | `78 06 00` |
 | GENERAL | Conn Test | `CONNECTION_TEST` | — | `` |
 | GENERAL | Deploy Ant | `TTC_DEPLOY_ANTENNA` | — | `45` |
 | GENERAL | WD Enable | `OBC_WATCHDOG_ENABLE` | — | `3B` |
@@ -3654,4 +3693,4 @@ The console's QUICK COMMANDS panel is generated from the same catalogue: each bu
 
 ---
 
-*Generated from `commands/tc_catalog.yaml` — 220 commands, 270 arguments.*
+*Generated from `commands/tc_catalog.yaml` — 219 commands, 271 arguments.*

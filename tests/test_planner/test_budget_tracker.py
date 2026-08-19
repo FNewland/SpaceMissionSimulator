@@ -16,7 +16,7 @@ Covers:
   - GET /api/budget/data endpoint
 """
 import pytest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from aiohttp import web
 from aiohttp.test_utils import TestServer, TestClient
@@ -54,12 +54,40 @@ SAMPLE_CONTACTS = [
 
 SAMPLE_GROUND_TRACK = [
     {"utc": "2026-03-11T10:00:00+00:00", "lat": 60.0, "lon": -65.0,
-     "alt_km": 450.0, "in_eclipse": False},
+     "alt_km": 450.0, "in_eclipse": False, "solar_beta_deg": 30.0},
     {"utc": "2026-03-11T10:05:00+00:00", "lat": 55.0, "lon": -60.0,
-     "alt_km": 450.0, "in_eclipse": False},
+     "alt_km": 450.0, "in_eclipse": False, "solar_beta_deg": 30.0},
     {"utc": "2026-03-11T10:10:00+00:00", "lat": 50.0, "lon": -55.0,
-     "alt_km": 450.0, "in_eclipse": True},
+     "alt_km": 450.0, "in_eclipse": True, "solar_beta_deg": 30.0},
 ]
+
+
+def _illumination_track(start_utc="2026-03-11T09:55:00+00:00",
+                        hours=4.5, step_s=60.0,
+                        eclipse_period_s=5580.0, eclipse_fraction=0.35,
+                        beta_deg=30.0):
+    """A synthetic eclipse/beta series COVERING the sample contact horizon.
+
+    The power budget refuses to integrate without one — see
+    ``BudgetTracker.compute_power_budget``. Fabricating a nominal eclipse
+    fraction inside the tracker when the series was missing is precisely the
+    defect these tests now guard, so the fixture has to supply real coverage.
+    """
+    t0 = datetime.fromisoformat(start_utc)
+    n = int(hours * 3600 / step_s)
+    out = []
+    for i in range(n + 1):
+        phase = (i * step_s) % eclipse_period_s / eclipse_period_s
+        out.append({
+            "utc": (t0 + timedelta(seconds=i * step_s)).isoformat(),
+            "lat": 0.0, "lon": 0.0, "alt_km": 450.0,
+            "in_eclipse": phase < eclipse_fraction,
+            "solar_beta_deg": beta_deg,
+        })
+    return out
+
+
+SAMPLE_ILLUMINATION = _illumination_track()
 
 
 # ── Power budget computation ──────────────────────────────────────
@@ -68,8 +96,10 @@ class TestPowerBudget:
     """Test power budget computation."""
 
     def test_power_budget_returns_required_fields(self):
-        tracker = BudgetTracker(contacts=SAMPLE_CONTACTS)
+        tracker = BudgetTracker(contacts=SAMPLE_CONTACTS,
+                                ground_track=SAMPLE_ILLUMINATION)
         budget = tracker.compute_power_budget()
+        assert budget["computable"] is True
         assert "initial_soc" in budget
         assert "pass_predictions" in budget
         assert "final_soc" in budget
@@ -78,7 +108,8 @@ class TestPowerBudget:
         assert "total_drain_wh" in budget
 
     def test_power_budget_with_contacts(self):
-        tracker = BudgetTracker(contacts=SAMPLE_CONTACTS)
+        tracker = BudgetTracker(contacts=SAMPLE_CONTACTS,
+                                ground_track=SAMPLE_ILLUMINATION)
         budget = tracker.compute_power_budget()
         assert len(budget["pass_predictions"]) == 2
         for pred in budget["pass_predictions"]:
@@ -90,12 +121,15 @@ class TestPowerBudget:
     def test_power_budget_no_contacts(self):
         tracker = BudgetTracker(contacts=[])
         budget = tracker.compute_power_budget()
+        assert budget["computable"] is False
+        assert budget["final_soc"] is None
         assert len(budget["pass_predictions"]) == 0
         assert len(budget["warnings"]) > 0
         assert "No contact windows" in budget["warnings"][0]
 
     def test_initial_soc_custom(self):
-        tracker = BudgetTracker(contacts=SAMPLE_CONTACTS, initial_soc=90.0)
+        tracker = BudgetTracker(contacts=SAMPLE_CONTACTS, initial_soc=90.0,
+                                ground_track=SAMPLE_ILLUMINATION)
         budget = tracker.compute_power_budget()
         assert budget["initial_soc"] == 90.0
 
@@ -112,40 +146,49 @@ class TestPowerBudget:
                 "state_name": "PLANNED",
             },
         ]
-        t1 = BudgetTracker(contacts=SAMPLE_CONTACTS, schedule=schedule_no_act)
-        t2 = BudgetTracker(contacts=SAMPLE_CONTACTS, schedule=schedule_with_act)
+        t1 = BudgetTracker(contacts=SAMPLE_CONTACTS, schedule=schedule_no_act,
+                           ground_track=SAMPLE_ILLUMINATION)
+        t2 = BudgetTracker(contacts=SAMPLE_CONTACTS, schedule=schedule_with_act,
+                           ground_track=SAMPLE_ILLUMINATION)
         b1 = t1.compute_power_budget()
         b2 = t2.compute_power_budget()
         # With activity, total drain should be higher
         assert b2["total_drain_wh"] >= b1["total_drain_wh"]
 
     def test_pass_predictions_ordered(self):
-        tracker = BudgetTracker(contacts=SAMPLE_CONTACTS)
+        tracker = BudgetTracker(contacts=SAMPLE_CONTACTS,
+                                ground_track=SAMPLE_ILLUMINATION)
         budget = tracker.compute_power_budget()
         preds = budget["pass_predictions"]
         assert preds[0]["pass_id"] == 1
         assert preds[1]["pass_id"] == 2
 
     def test_eclipse_fraction_from_ground_track(self):
-        """Eclipse fraction should use ground track data if available."""
+        """Eclipse fraction and beta come from the propagated track."""
         tracker = BudgetTracker(
             contacts=SAMPLE_CONTACTS,
             ground_track=SAMPLE_GROUND_TRACK,
         )
-        # Calling private method for unit test
         start = datetime(2026, 3, 11, 10, 0, 0, tzinfo=timezone.utc)
         end = datetime(2026, 3, 11, 10, 10, 0, tzinfo=timezone.utc)
-        frac = tracker._estimate_eclipse_fraction(start, end)
+        frac, beta = tracker._illumination(start, end)
         # 1 of 3 points is in eclipse
         assert abs(frac - 1.0 / 3.0) < 0.01
+        assert beta == pytest.approx(30.0)
 
-    def test_eclipse_fraction_default_no_track(self):
-        """Without ground track, default eclipse fraction should be used."""
+    def test_illumination_is_unknown_without_a_track(self):
+        """No track means NO ANSWER — not a fabricated 35 % eclipse.
+
+        The old ``_estimate_eclipse_fraction`` returned 0.35 (and the beta
+        lookup returned 30 deg) whenever the ground track was missing. Those
+        constants put the orbit-average energy balance on the opposite side of
+        zero from the real one, so the budget then saturated at 100 % instead
+        of 0 % — the same plan, a different machine, a 100-point difference.
+        """
         tracker = BudgetTracker(contacts=SAMPLE_CONTACTS, ground_track=[])
         start = datetime(2026, 3, 11, 10, 0, 0, tzinfo=timezone.utc)
         end = datetime(2026, 3, 11, 10, 10, 0, tzinfo=timezone.utc)
-        frac = tracker._estimate_eclipse_fraction(start, end)
-        assert abs(frac - 0.35) < 0.01
+        assert tracker._illumination(start, end) is None
 
 
 # ── Data budget computation ───────────────────────────────────────

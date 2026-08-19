@@ -1,8 +1,13 @@
 # COM-011: Payload Calibration
 **Subsystem:** Payload
 **Phase:** COMMISSIONING
-**Revision:** 1.0
+**Revision:** 1.1 --- 2026-08c: entry/exit states declared; runs AFTER COM-012
+(first light) per the definitive commissioning order.
 **Approved:** Flight Operations Director
+
+**Entry state:** COM-012 exit state --- imaging chain verified end to end,
+payload STANDBY with the cooler regulating (`payload.fpa_ready` 0x0610 = 1),
+AOCS commanded NOMINAL, downlink LOW.
 
 ## Purpose
 Perform initial radiometric calibration of the multispectral imager. Capture dark
@@ -209,4 +214,11 @@ nadir-pointing operational mode is 4. The card called mode 3 "NOMINAL".
 - [ ] Payload returned to STANDBY, cooler running
 - [ ] AOCS returned to NOMINAL (mode 4)
 - [ ] Radiometric Calibration Report to be generated after data analysis
-- [ ] Payload commissioning complete — GO for nominal operations phase
+
+## Exit state
+- Payload STANDBY, cooler running, shutter OPEN, integration times restored to
+  nominal (2.00 ms), cal lamp OFF
+- AOCS returned to commanded NOMINAL (mode 4)
+- Calibration products stored on board awaiting the scheduled dump pass
+
+**NEXT:** COM-013 (ADCS Commissioning Closure & NOMINAL Declaration)

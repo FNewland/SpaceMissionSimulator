@@ -1,8 +1,16 @@
 # COM-006: TTC Link Verification
 **Subsystem:** TT&C
 **Phase:** COMMISSIONING
-**Revision:** 1.0
+**Revision:** 2.0 --- 2026-08c: rate-tier naming (the 1 kbps rung is SAFE,
+ex-BEACON --- "beacon" always means the UHF whip now); the HIGH-tier elevation
+check rewritten --- there is NO on-board elevation gate any more, the 10-deg
+rule is GROUND arm-through policy; entry/exit states declared.
 **Approved:** Flight Operations Director
+
+**Entry state:** COM-005 exit state --- AOCS in commanded NOMINAL, phase 5,
+downlink at LOW, antenna STOWED (this card deploys it), `ttc_tx` possibly
+dropped by the auto-TX hold-down during COM-005's quiet observation windows
+(Step 0 re-establishes it --- assume nothing).
 
 ## Purpose
 Verify the S-band TT&C link performance using both primary and redundant transponders.
@@ -22,7 +30,7 @@ the tier's coding gain).
 
 **Link margin (dB) by tier, station and elevation:**
 
-| Station | G/T | BEACON @5 deg | LOW @5 deg | HIGH @5 deg | BEACON @30 deg | LOW @30 deg | HIGH @30 deg | BEACON @90 deg | LOW @90 deg | HIGH @90 deg |
+| Station | G/T | SAFE @5 deg | LOW @5 deg | HIGH @5 deg | SAFE @30 deg | LOW @30 deg | HIGH @30 deg | SAFE @90 deg | LOW @90 deg | HIGH @90 deg |
 |---|---|---|---|---|---|---|---|---|---|---|
 | Svalbard | 21.5 | 59.3 | 47.2 | 36.7 | 70.6 | 58.5 | 48.0 | 75.8 | 63.8 | 53.3 |
 | Inuvik | 22.0 | 59.8 | 47.7 | 37.2 | 71.1 | 59.0 | 48.5 | 76.3 | 64.3 | 53.8 |
@@ -42,7 +50,7 @@ Two consequences for this card:
   earned activity, and because tracking, Doppler rate and multipath at low elevation make
   a 64 kBd QPSK dump a poor bet — not because the link fails.
 
-The rungs are separated by exactly what the budget says: BEACON to LOW is -12.04 dB
+The rungs are separated by exactly what the budget says: SAFE to LOW is -12.04 dB
 (16x rate), LOW to HIGH is -10.53 dB (8x rate = -9.03 dB, plus conv+RS 7.5 dB -> RS
 6.0 dB = -1.5 dB of coding). Any measured set that does not show those two steps
 indicates a modelling error, not a link problem.
@@ -69,7 +77,7 @@ indicates a modelling error, not a link problem.
 **Note:** This step did not exist, and without it Step 2a could not succeed.
 `TTCBasicModel._tier_refusal` gates the rate ladder on four things this card
 never established: the `ttc_tx` EPS power line, the PA, a DEPLOYED antenna
-(`requires_antenna` is true for both LOW and HIGH), and `beacon_mode` being
+(`requires_antenna` is true for HIGH; LOW closes on the stowed patch), and `beacon_mode` being
 clear — while beacon mode is latched, BOTH operational tiers are refused with
 S1.8 error `0x0007`, "TM rate is forced to the beacon tier in beacon mode".
 Beacon mode survives an application boot, so a spacecraft can arrive at this
@@ -137,20 +145,29 @@ annotation, so the extractor produced one command where two are needed — while
 this card's Post-Conditions demand `downlink_mode` = 0. A card that leaves
 DOWNLINK mode latched hands the next shift a spacecraft that will accept a HIGH
 tier it did not ask for.
-**Note:** The BEACON rung cannot be measured here — it is not selectable by func 65 in
-nominal software. Its baseline comes from the LEOP first-acquisition pass (LEOP-001).
+**Note:** The SAFE rung (1 kbps, ex-BEACON) cannot be measured here — it is not
+selectable by func 65 in nominal software. Its baseline comes from the LEOP
+first-acquisition pass (LEOP-001).
 **GO/NO-GO:** Both operational rungs measured, and the step between them is 10.5 +/- 0.5 dB
 
-### Step 2b — Confirm the HIGH-Tier Elevation Gate
-**Action:** As the pass descends, wait until `ttc.contact_elevation` (0x050A) is below
-10 deg, then attempt to raise the tier.
-**TC:** `TTC_SET_DATA_RATE(rate=1)` (Service 8, Subtype 1, func_id 65)
-**Verify:** The command is REJECTED with an S1.8 execution failure, error 0x0007, whose
-text names the elevation gate. `ttc.tm_data_rate` (0x0506) remains 16000 bps.
-**Note:** This is the intended behaviour and is not an anomaly. A rejected tier is how
-the spacecraft tells the ground that a rule was not satisfied; a silent clamp would hide
-it. Record the rejection in the Link Budget Report as evidence the gate works.
-**GO/NO-GO:** The gate rejects HIGH below 10 deg and the link stays at LOW
+### Step 2b — Exercise the GROUND Arm-Through Policy on HIGH (no on-board gate)
+**Action:** There is NO on-board elevation gate any more (2026-08c): a real
+spacecraft does not know its elevation as seen from a station, so the flight
+software neither refuses nor demotes HIGH on elevation. The 10-deg rule is
+GROUND policy — the MCS warns from its own contact geometry when HIGH is
+commanded below 10 deg (an arm-through: the operator must explicitly confirm
+past the warning), and the planner only schedules HIGH dumps above it.
+**Action:** As the pass descends below 10 deg, attempt to arm HIGH in the MCS
+command panel WITHOUT confirming the arm-through.
+**Verify:** The MCS raises its low-elevation warning and the command is NOT
+released without the explicit confirm; no telecommand reaches the spacecraft.
+**Note:** The ON-BOARD gates on HIGH are exactly: antenna deployed + DOWNLINK
+mode on + beacon-mode latch clear. If all three hold, the spacecraft will
+ACCEPT a low-elevation HIGH — and physics will bite honestly through
+cosec-scaled atmospheric loss, the G/T de-rate and the BER the ground sees.
+Record the policy exercise (warning text, operator decision) in the Link
+Budget Report.
+**GO/NO-GO:** Ground arm-through policy demonstrated; link still at LOW
 
 ### Step 3 — Switch to Redundant Transponder
 **TC:** `TTC_SWITCH_REDUNDANT` (Service 8, Subtype 1, func_id 64)
@@ -245,4 +262,12 @@ beacon only.
 - [ ] Multi-station verification completed (or scheduled)
 - [ ] Link Budget Report generated
 - [ ] Primary transponder active for nominal operations
-- [ ] GO decision for COM-007 (OBDH Checkout)
+
+## Exit state
+- Primary transponder active; downlink at LOW (`ttc.tm_tier` 0x0539 = 1);
+  DOWNLINK mode released (`ttc.downlink_mode` 0x053C = 0)
+- Antenna DEPLOYED (irreversible) — from here HIGH is available to any card
+  that takes DOWNLINK mode; `ttc_tx` line on with the auto-TX hold-down active
+- No AOCS, OBC, payload or heater state touched
+
+**NEXT:** COM-007 (OBDH Checkout)

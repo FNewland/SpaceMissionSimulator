@@ -1,8 +1,12 @@
 # LEOP-004: Solar Array Verification
 **Subsystem:** EPS / Structure
 **Phase:** LEOP
-**Revision:** 2.0
+**Revision:** 2.1 --- 2026-08c flow redesign (entry/exit states, NEXT chain)
 **Approved:** Flight Operations Director
+
+**Entry state:** LEOP-002 exit state --- platform healthy on baseline telemetry,
+wings STOWED (`eps.wing_status` 0x0144 = 0), AOCS/payload/heater/prop lines
+OFF, spacecraft tumbling slowly at separation tip-off rates.
 
 ## Purpose
 Deploy the +Y and -Y solar wings and verify that the body-mounted solar arrays (SA-A
@@ -19,7 +23,10 @@ against predictions for the current sun angle and orbit phase. The spacecraft ha
 - [ ] Spacecraft in sunlit portion of orbit (preferred) or approaching eclipse exit
 - [ ] EPS telemetry confirmed available (SID 1 responsive)
 - [ ] Flight Dynamics have provided current beta angle and sun vector
-- [ ] Body rates < 0.5 deg/s (detumble sufficient for wing deployment)
+- [ ] Body rates within launcher tip-off spec per the separation report.
+      NOTE: AOCS is NOT powered yet in this flow --- there is no rate telemetry
+      to read. Deployment is qualified against tip-off rates; active detumble
+      follows in LEOP-007/LEOP-005.
 - [ ] Battery SoC > 50% (wing deployment draws ~2 A for 30 s per wing)
 
 ## Procedure Steps
@@ -89,13 +96,18 @@ wing deployment.
 - If wing currents asymmetric > 30%: Log anomaly. One wing may have partial deployment or string failure. Continue LEOP with reduced power budget. Schedule detailed EPS investigation during commissioning.
 - If `eps.bat_soc` dropping rapidly (> 2% per minute): Reduce spacecraft load — disable non-essential heaters via `HEATER_THRUSTER(on=0)`. Ensure AOCS detumble is using magnetorquers only (lower power). Prioritize sun acquisition.
 
+## Exit state
+- Both wings DEPLOYED (`eps.wing_status` 0x0144 = 0x03) and generating; full
+  0.78 m2 array area available
+- No other state changed: AOCS/payload/heater/prop lines still OFF
+
 ## Post-Conditions
-- [ ] +Y solar wing deployed (wing_status bit 0 set, event 0x0112 received)
-- [ ] -Y solar wing deployed (wing_status bit 1 set, event 0x0113 received)
 - [ ] +Y wing deployment confirmed via `eps.wing_status` (0x0144) bit 0 and `eps.sa_wing_py_current` (0x0146)
 - [ ] -Y wing deployment confirmed via `eps.wing_status` (0x0144) bit 1 and `eps.sa_wing_my_current` (0x0147)
 - [ ] Total power generation measured and recorded (expected increase with wings)
 - [ ] Wing symmetry verified within 15% tolerance
 - [ ] Power budget assessment completed (0.78 m2 deployed area)
 - [ ] Solar Array and Wing Deployment Verification Report distributed
-- [ ] GO decision for LEOP-005 (Sun Acquisition)
+
+**NEXT:** LEOP-007 (Sequential Power-On) --- the AOCS suite is energised there,
+then LEOP-005 observes the sun acquisition.

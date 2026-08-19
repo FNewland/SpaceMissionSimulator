@@ -21,3 +21,11 @@ test = "pytest tests/ -v"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    # Boots a full simulation engine per case (the failure-injection audit
+    # gate runs ~120 engine boots). Deselect with `-m "not slow"`.
+    "slow: boots a full simulation engine per test case",
+    # Browser E2E against a live stack (tests/test_e2e_browser). Excluded
+    # from the default run: every test self-skips unless SMO_E2E=1 is set.
+    "e2e: Playwright browser tests against a live stack (needs SMO_E2E=1)",
+]

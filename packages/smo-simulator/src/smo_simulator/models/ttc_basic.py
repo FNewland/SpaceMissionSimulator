@@ -11,8 +11,45 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from smo_common.models.subsystem import SubsystemModel
+from smo_simulator.failure_spec import (
+    FailureSpec, ParamSpec, T_FLOAT, T_BOOL, number,
+)
 
 logger = logging.getLogger(__name__)
+
+# Ground-segment RF impairments: failure name -> (state field, full-scale dB).
+# The full-scale figure is what `magnitude = 1.0` means, kept so the legacy
+# 0..1 severity slider and every existing scenario file behave unchanged; the
+# `db` parameter injects an absolute value instead.
+_GS_FAILURE_FIELDS = {
+    "gs_lna_degradation":  ("gs_lna_degrade_db", 6.0),
+    "gs_antenna_mispoint": ("gs_antenna_mispoint_db", 10.0),
+    "gs_feed_loss":        ("gs_feed_loss_db", 4.0),
+    "gs_rfi_interference": ("gs_rfi_db", 8.0),
+    "gs_hpa_degradation":  ("gs_hpa_degrade_db", 5.0),
+    "gs_ref_osc_drift":    ("gs_ref_osc_drift_db", 3.0),
+    "gs_tracking_loss":    ("gs_tracking_loss_db", 15.0),
+}
+
+_GS_LABELS = {
+    "gs_lna_degradation":  ("Ground station LNA degradation",
+                            "Station receive G/T falls: downlink Eb/N0 and "
+                            "margin drop, BER rises."),
+    "gs_antenna_mispoint": ("Ground antenna mispointing",
+                            "Pointing loss on both directions of the link."),
+    "gs_feed_loss":        ("Ground antenna feed loss",
+                            "Extra loss between feed and LNA/HPA."),
+    "gs_rfi_interference": ("Ground RFI / interference",
+                            "Raises the effective noise floor at the station."),
+    "gs_hpa_degradation":  ("Ground station HPA degradation",
+                            "Station EIRP falls: the UPLINK closes late or "
+                            "not at all."),
+    "gs_ref_osc_drift":    ("Ground reference oscillator drift",
+                            "Frequency error degrades carrier/bit lock."),
+    "gs_tracking_loss":    ("Ground antenna tracking loss",
+                            "Antenna stops following the pass — large, "
+                            "sudden link loss."),
+}
 
 
 @dataclass
@@ -67,7 +104,7 @@ class TTCState:
 
     # ── UHF bootloader beacon TRANSMITTER (Franz's ruling R2) ───────────
     # A SECOND RADIO. Not `beacon_mode` (which is a rung of the S-band rate
-    # ladder, further down this dataclass) and not the BEACON tier. Its own
+    # ladder, further down this dataclass) and not the SAFE tier. Its own
     # PA, band, antenna, budget and power draw; carries HK SID 11 and nothing
     # else; survives the S-band PA being switched off, which is the whole
     # reason a real spacecraft carries one.
@@ -122,11 +159,11 @@ class TTCState:
 
     # ── TM data-rate ladder (defect #85) ──
     # `data_rate_mode` is the COMMANDED tier index over ttc.yaml's
-    # tm_rate_tiers ladder (0=BEACON, 1=LOW, 2=HIGH by default).
+    # tm_rate_tiers ladder (0=SAFE, 1=LOW, 2=HIGH by default).
     # It stays authoritative across ticks — that is what defect #74 fixed and
     # what must not regress. What tick() may change is `tm_tier`, the tier
     # actually ACTIVE once the permission gates (beacon mode, antenna stowed,
-    # DOWNLINK mode, elevation) have been applied; the commanded value is
+    # DOWNLINK mode) have been applied; the commanded value is
     # remembered so the tier resumes when the gate clears.
     data_rate_mode: int = 1              # commanded tier index (LOW)
     tm_tier: int = 1                     # active tier index
@@ -200,7 +237,7 @@ class TTCBasicModel(SubsystemModel):
             dict(t) for t in self.DEFAULT_TM_RATE_TIERS
         ]
         self._default_tier = 1   # LOW — routine operations
-        self._beacon_tier = 0    # BEACON — bootloader only
+        self._beacon_tier = 0    # SAFE — bootloader only
         self._safe_tier = 1      # LOW — safe mode / FDIR / antenna stowed
         # The carrier->bit->frame sequence is an UPLINK lock paced by the
         # uplink command rate, NOT the downlink TM rate. It must NOT default
@@ -265,16 +302,18 @@ class TTCBasicModel(SubsystemModel):
     # `configs/eosat1/subsystems/ttc.yaml` is the source of truth; these
     # defaults exist so a bare TTCBasicModel() still has a sane ladder.
     DEFAULT_TM_RATE_TIERS: list[dict[str, Any]] = [
-        {"name": "BEACON", "bps": 1000, "command_code": 0xFF,
+        {"name": "SAFE", "bps": 1000, "command_code": 0xFF,
          "modulation": "BPSK", "coding": "CONV_RS", "coding_gain_db": 7.5,
-         "beacon_only": True, "requires_antenna": False},
+         "bootloader_only": True, "requires_antenna": False},
         {"name": "LOW", "bps": 16000, "command_code": 0x00,
          "modulation": "BPSK", "coding": "CONV_RS", "coding_gain_db": 7.5,
          "requires_antenna": False},
+        # min_elevation_deg is deliberately ABSENT here (2026-08c item 4):
+        # it is a GROUND policy (planner scheduling + MCS command warning),
+        # not something a spacecraft can know about itself.
         {"name": "HIGH", "bps": 128000, "command_code": 0x01,
          "modulation": "QPSK", "coding": "RS", "coding_gain_db": 6.0,
-         "requires_antenna": True, "requires_downlink_mode": True,
-         "min_elevation_deg": 10.0},
+         "requires_antenna": True, "requires_downlink_mode": True},
     ]
 
     # ── UHF bootloader beacon transmitter (Franz's ruling R2) ───────────
@@ -513,7 +552,7 @@ class TTCBasicModel(SubsystemModel):
         LOW `command_code: 0x00` and HIGH `command_code: 0x01`. Every
         procedure, OBCP and FDIR action that already sends 0 ("low") or 1
         ("high") therefore keeps its meaning, and now lands on 16 kbps /
-        128 kbps instead of the unusable 1 kbps beacon and 64 kbps. BEACON's
+        128 kbps instead of the unusable 1 kbps and 64 kbps. SAFE's
         code is 0xFF: it is not selectable by telecommand in nominal software.
         """
         if isinstance(raw, str):
@@ -537,6 +576,12 @@ class TTCBasicModel(SubsystemModel):
                 return i
         return None
 
+    @staticmethod
+    def _tier_bootloader_only(t: dict) -> bool:
+        """Tier flag, accepting the legacy `beacon_only` spelling (renamed
+        2026-08c — "beacon" always means the UHF whip transmitter now)."""
+        return bool(t.get("bootloader_only", t.get("beacon_only", False)))
+
     def _tier_permission_error(self, index: int,
                                s: "TTCState | None" = None) -> str | None:
         """Return a human-readable reason the tier may NOT be selected in the
@@ -550,21 +595,25 @@ class TTCBasicModel(SubsystemModel):
             return f"Invalid TM rate tier {index}"
         t = self._tiers[index]
         name = t.get("name", index)
-        if t.get("beacon_only") and not s.beacon_mode:
-            return (f"{name} is a bootloader/beacon-only tier "
+        if self._tier_bootloader_only(t) and not s.beacon_mode:
+            return (f"{name} is a bootloader-only tier "
                     f"({t['bps']} bps); not selectable in nominal operations")
-        if s.beacon_mode and not t.get("beacon_only"):
-            return (f"TM rate is forced to the beacon tier in beacon mode "
-                    f"({name} refused)")
+        if s.beacon_mode and not self._tier_bootloader_only(t):
+            return (f"TM rate is forced to the {self.tier_name(self._beacon_tier)} "
+                    f"tier in beacon mode ({name} refused)")
         if t.get("requires_antenna", True) and not s.antenna_deployed:
             return f"{name} ({t['bps']} bps) requires a deployed antenna"
         if t.get("requires_downlink_mode") and not s.downlink_mode:
             return (f"{name} ({t['bps']} bps) requires DOWNLINK/dump mode "
                     f"(TTC_SET_DOWNLINK_MODE)")
-        min_el = float(t.get("min_elevation_deg", 0.0) or 0.0)
-        if min_el > 0.0 and s.link_active and s.elevation_deg < min_el:
-            return (f"{name} ({t['bps']} bps) requires elevation >= "
-                    f"{min_el:.0f} deg (now {s.elevation_deg:.1f} deg)")
+        # NO elevation gate (2026-08c item 4): the spacecraft does not know
+        # its elevation as seen from a station. The remaining gates above are
+        # all things it CAN know — its own antenna, its own mode, its own
+        # bootloader state. The 10 deg HIGH-tier policy lives on the GROUND
+        # (ttc.yaml min_elevation_deg, read by the planner and by the MCS
+        # command-path warning); at low elevation the physics still degrades
+        # the link honestly through the cosec atmospheric loss and G/T
+        # de-rate.
         return None
 
     def _effective_tier(self, s: "TTCState") -> int:
@@ -578,10 +627,10 @@ class TTCBasicModel(SubsystemModel):
         if s.beacon_mode:
             return self._beacon_tier
         idx = max(0, min(len(self._tiers) - 1, int(s.data_rate_mode)))
-        # Never leave a non-beacon spacecraft sitting on a beacon-only tier.
-        while idx > 0 and self._tiers[idx].get("beacon_only"):
+        # Never leave a non-bootloader spacecraft on a bootloader-only tier.
+        while idx > 0 and self._tier_bootloader_only(self._tiers[idx]):
             idx -= 1
-        if self._tiers[idx].get("beacon_only"):
+        if self._tier_bootloader_only(self._tiers[idx]):
             idx = self._safe_tier
         # Walk down the ladder until every gate is satisfied.
         while idx > 0 and self._tier_permission_error(idx, s) is not None:
@@ -1095,14 +1144,16 @@ class TTCBasicModel(SubsystemModel):
         self._apply_safe_mode_tier(s)
 
         # ── TM data-rate ladder: resolve the ACTIVE tier (defect #85) ──
-        # Runs AFTER link_active/elevation are updated so the HIGH tier's
-        # elevation gate sees this tick's geometry.
+        # Runs AFTER link_active is updated so the gates see this tick's
+        # state.
         # `data_rate_mode` holds the COMMANDED tier and is left untouched
         # (defect #74 — the commanded rate is authoritative). The gates
-        # (beacon mode, antenna stowed, DOWNLINK mode, elevation) can demote
-        # the ACTIVE tier; the commanded tier resumes when the gate clears —
-        # so HIGH auto-reverts to NOMINAL at LOS or below 10 deg and comes
-        # back on the next pass without being re-commanded.
+        # (beacon mode, antenna stowed, DOWNLINK mode) can demote the ACTIVE
+        # tier; the commanded tier resumes when the gate clears. There is NO
+        # on-board elevation gate (2026-08c item 4) — elevation is a ground
+        # concept; the 10 deg HIGH policy lives in the planner and the MCS
+        # command-path warning, and low elevation costs real margin through
+        # the physics instead.
         # tm_data_rate is the tier's information rate exactly: modulation
         # moves the symbol rate and the occupied bandwidth, not the bit rate.
         self._apply_tier(s, self._effective_tier(s))
@@ -1681,7 +1732,7 @@ class TTCBasicModel(SubsystemModel):
             # (roadmap N-8 / defect #74).
             #
             # Accepts a tier `command_code` (the uint8 the catalogue
-            # advertises: 0=LOW, 1=HIGH, 0xFF=BEACON), a tier NAME, or a raw
+            # advertises: 0=LOW, 1=HIGH, 0xFF=SAFE), a tier NAME, or a raw
             # bps value equal to one of the configured tier rates. The legacy
             # 0/1 binary encoding decodes verbatim as "the low rate" / "the
             # high rate" (defect #85).
@@ -1945,6 +1996,78 @@ class TTCBasicModel(SubsystemModel):
         if not self._state.uplink_lost:
             self._state.cmd_rx_count += 1
 
+    # ─── Failure injection ───────────────────────────────────────────
+    # Declarative parameter specs — single source for the instructor form,
+    # FailureManager validation and the scenario content gate.
+    FAILURE_SPECS = {
+        "primary_failure": FailureSpec(
+            name="primary_failure", label="Primary transponder failure",
+            effect="Primary transponder dead; on the primary side the link "
+                   "drops until the operator switches to the redundant unit.",
+            magnitude=ParamSpec(name="magnitude", type=T_BOOL,
+                                label="Failed", default=True),
+        ),
+        "redundant_failure": FailureSpec(
+            name="redundant_failure", label="Redundant transponder failure",
+            effect="Redundant transponder dead — removes the fallback.",
+            magnitude=ParamSpec(name="magnitude", type=T_BOOL,
+                                label="Failed", default=True),
+        ),
+        "high_ber": FailureSpec(
+            name="high_ber", label="Degraded link (BER offset)",
+            effect="Subtracts the offset from the effective Eb/N0, so BER "
+                   "rises and frame lock becomes marginal.",
+            magnitude=None,
+            params=(number("offset", "Eb/N0 penalty", unit="dB", lo=0.0,
+                           hi=40.0, default=10.0, step=0.1),),
+        ),
+        "pa_overheat": FailureSpec(
+            name="pa_overheat", label="Power amplifier overheating",
+            effect="Extra dissipation in the PA: temperature climbs toward "
+                   "the auto-shutdown limit and the TX trips off.",
+            magnitude=None,
+            params=(number("heat_w", "Extra PA dissipation", unit="W", lo=0.0,
+                           hi=200.0, default=20.0, step=0.5),),
+        ),
+        "uplink_loss": FailureSpec(
+            name="uplink_loss", label="Uplink loss (no carrier lock)",
+            effect="Receiver loses carrier lock: no telecommands are accepted "
+                   "even though the downlink keeps running.",
+            magnitude=None,
+        ),
+        "receiver_degrade": FailureSpec(
+            name="receiver_degrade", label="Receiver noise-figure degradation",
+            effect="Raises the receiver noise figure; uplink margin falls and "
+                   "the command threshold moves up.",
+            magnitude=None,
+            params=(number("nf_db", "Noise figure penalty", unit="dB", lo=0.0,
+                           hi=30.0, default=5.0, step=0.1),),
+        ),
+        "antenna_deploy_failed": FailureSpec(
+            name="antenna_deploy_failed", label="UHF antenna deployment failure",
+            effect="Burn-wire fails: the antenna stays stowed/jammed (sensor "
+                   "reads 3) and the deployment command cannot succeed.",
+            magnitude=None, reversible=False,
+            notes="Clear re-arms deployment; the operator must redeploy.",
+        ),
+    }
+    # Ground-segment impairments: same shape, generated from the single
+    # _GS_FAILURE_FIELDS table so the dB full scale cannot drift from the code.
+    for _gs_name, (_gs_attr, _gs_full) in _GS_FAILURE_FIELDS.items():
+        _gs_label, _gs_effect = _GS_LABELS[_gs_name]
+        FAILURE_SPECS[_gs_name] = FailureSpec(
+            name=_gs_name, label=_gs_label, effect=_gs_effect,
+            magnitude=ParamSpec(
+                name="magnitude", type=T_FLOAT,
+                label=f"Severity (1.0 = {_gs_full:g} dB)", unit="fraction",
+                min=0.0, max=1.0, default=1.0, step=0.01,
+                description="Ignored when an explicit dB value is given."),
+            params=(number("db", f"{_gs_label} penalty", unit="dB", lo=0.0,
+                           hi=60.0, step=0.1,
+                           description="Absolute value; overrides magnitude."),),
+        )
+    del _gs_name, _gs_attr, _gs_full, _gs_label, _gs_effect
+
     def inject_failure(self, failure: str, magnitude: float = 1.0,
                        **kw) -> None:
         s = self._state
@@ -1977,20 +2100,14 @@ class TTCBasicModel(SubsystemModel):
             s.antenna_deployment_sensor = 3  # partial/jammed
 
         # ── Ground segment failures ──
-        elif failure == "gs_lna_degradation":
-            s.gs_lna_degrade_db = magnitude * 6.0
-        elif failure == "gs_antenna_mispoint":
-            s.gs_antenna_mispoint_db = magnitude * 10.0
-        elif failure == "gs_feed_loss":
-            s.gs_feed_loss_db = magnitude * 4.0
-        elif failure == "gs_rfi_interference":
-            s.gs_rfi_db = magnitude * 8.0
-        elif failure == "gs_hpa_degradation":
-            s.gs_hpa_degrade_db = magnitude * 5.0
-        elif failure == "gs_ref_osc_drift":
-            s.gs_ref_osc_drift_db = magnitude * 3.0
-        elif failure == "gs_tracking_loss":
-            s.gs_tracking_loss_db = magnitude * 15.0
+        # Each takes an explicit `db` in real decibels; when it is omitted the
+        # legacy `magnitude * full_scale` mapping is kept so old scenario
+        # files and the 0..1 severity slider still behave exactly as before.
+        elif failure in _GS_FAILURE_FIELDS:
+            attr, full_scale = _GS_FAILURE_FIELDS[failure]
+            db = kw.get("db")
+            setattr(s, attr,
+                    float(db) if db is not None else magnitude * full_scale)
 
     def clear_failure(self, failure: str, **kw) -> None:
         s = self._state
@@ -2018,20 +2135,8 @@ class TTCBasicModel(SubsystemModel):
             s.antenna_deployment_sensor = 1  # back to stowed (operator must redeploy)
 
         # ── Ground segment failures ──
-        elif failure == "gs_lna_degradation":
-            s.gs_lna_degrade_db = 0.0
-        elif failure == "gs_antenna_mispoint":
-            s.gs_antenna_mispoint_db = 0.0
-        elif failure == "gs_feed_loss":
-            s.gs_feed_loss_db = 0.0
-        elif failure == "gs_rfi_interference":
-            s.gs_rfi_db = 0.0
-        elif failure == "gs_hpa_degradation":
-            s.gs_hpa_degrade_db = 0.0
-        elif failure == "gs_ref_osc_drift":
-            s.gs_ref_osc_drift_db = 0.0
-        elif failure == "gs_tracking_loss":
-            s.gs_tracking_loss_db = 0.0
+        elif failure in _GS_FAILURE_FIELDS:
+            setattr(s, _GS_FAILURE_FIELDS[failure][0], 0.0)
 
     def get_state(self) -> dict[str, Any]:
         import dataclasses

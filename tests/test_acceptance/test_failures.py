@@ -162,15 +162,21 @@ class TestAOCSFailures:
         assert s.mag_failed
         assert not s.mag_valid
 
-    def test_flt_aocs_009_mag_a_fail(self, engine):
-        """Magnetometer A hardware failure."""
-        _inject(engine, "aocs", "mag_a_fail")
-        assert _s(engine, "aocs").mag_a_failed
-
-    def test_flt_aocs_010_mag_b_fail(self, engine):
-        """Magnetometer B hardware failure."""
-        _inject(engine, "aocs", "mag_b_fail")
-        assert _s(engine, "aocs").mag_b_failed
+    def test_flt_aocs_009_dual_mag_injections_are_retired(self, engine):
+        """2026-08c item 8: ONE magnetometer is fitted — the old per-unit
+        `mag_a_fail` / `mag_b_fail` injections are retired. Injecting them
+        must be a no-op on the single-unit state (no `mag_a_failed` /
+        `mag_b_failed` attributes exist to set), and `mag_failure` remains
+        the one honest magnetometer fault."""
+        s = _s(engine, "aocs")
+        assert not hasattr(s, "mag_a_failed")
+        assert not hasattr(s, "mag_b_failed")
+        before = s.mag_failed
+        _inject(engine, "aocs", "mag_a_fail")   # unknown -> ignored
+        _inject(engine, "aocs", "mag_b_fail")   # unknown -> ignored
+        assert s.mag_failed == before
+        assert not hasattr(s, "mag_a_failed")
+        assert not hasattr(s, "mag_b_failed")
 
     def test_flt_aocs_011_css_head_fail(self, engine):
         """CSS head failure on +X face."""

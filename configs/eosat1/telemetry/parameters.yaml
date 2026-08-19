@@ -80,8 +80,11 @@ parameters:
   - { id: 0x0149, name: eps.fpa_cooler_cmd, subsystem: eps, description: "EPS-side FPA cooler command flag (S8 func 17)", on_demand: true }
   # Phase D: propulsion power line (line index 8). Status/current ids are
   # explicit — 0x0110+8/0x0118+8 would collide with line_current_0/0x0120.
-  - { id: 0x014A, name: eps.pl_prop, subsystem: eps, description: "Power line Propulsion (catbed heater + valve drivers; LAST in the shed order)", on_demand: true }
-  - { id: 0x014B, name: eps.line_current_8, subsystem: eps, units: A, description: "Power line 8 (Propulsion) current", on_demand: true }
+  # 2026-08c item 3: the prop line rides routine HK SID 1 like lines 0-7 —
+  # it was on_demand-only, so the EPS console showed no power telemetry for
+  # line 8 at all.
+  - { id: 0x014A, name: eps.pl_prop, subsystem: eps, description: "Power line Propulsion (catbed heater + valve drivers; LAST in the shed order)" }
+  - { id: 0x014B, name: eps.line_current_8, subsystem: eps, units: A, description: "Power line 8 (Propulsion) current" }
 
   # ===== AOCS =====
   - { id: 0x0200, name: aocs.att_q1, subsystem: aocs, description: Attitude quaternion q1 }
@@ -95,13 +98,23 @@ parameters:
   - { id: 0x0208, name: aocs.rw2_speed, subsystem: aocs, units: RPM }
   - { id: 0x0209, name: aocs.rw3_speed, subsystem: aocs, units: RPM }
   - { id: 0x020A, name: aocs.rw4_speed, subsystem: aocs, units: RPM }
-  - { id: 0x020B, name: aocs.mag_x, subsystem: aocs, units: nT , on_demand: true }
-  - { id: 0x020C, name: aocs.mag_y, subsystem: aocs, units: nT , on_demand: true }
-  - { id: 0x020D, name: aocs.mag_z, subsystem: aocs, units: nT , on_demand: true }
+# Measured body-frame magnetic field from THE magnetometer (EO-Sat-1 flies a
+  # single 3-axis unit — no redundant B unit; see the gyro precedent). These
+  # are the MEASURED values the B-dot law consumes: IGRF truth rotated into
+  # the body frame plus sensor bias and noise, zeroed when the unit is
+  # unpowered or failed. Carried in HK SID 2 with aocs.mag_enabled (0x025C)
+  # as the validity flag, so MTQ behaviour is checkable from the console.
+  - { id: 0x020B, name: aocs.mag_x, subsystem: aocs, units: nT, description: "Measured body-frame field Bx (noisy, failure-affected; 0 when invalid — see 0x025C)" }
+  - { id: 0x020C, name: aocs.mag_y, subsystem: aocs, units: nT, description: "Measured body-frame field By" }
+  - { id: 0x020D, name: aocs.mag_z, subsystem: aocs, units: nT, description: "Measured body-frame field Bz" }
   - { id: 0x020F, name: aocs.mode, subsystem: aocs }
-  - { id: 0x0210, name: aocs.gps_lat, subsystem: aocs, units: deg , on_demand: true }
-  - { id: 0x0211, name: aocs.gps_lon, subsystem: aocs, units: deg , on_demand: true }
-  - { id: 0x0212, name: aocs.gps_alt, subsystem: aocs, units: km , on_demand: true }
+# GPS receiver PVT solution (2026-08c field-report item 2). MEASURED, not
+  # truth: position/velocity carry receiver noise scaled by PDOP and are only
+  # published while gps_fix (0x0274) >= 2 — honest zeros otherwise. Carried
+  # in HK SID 12 (GPS_NAV) together with the ECEF block 0x0231-0x0236.
+  - { id: 0x0210, name: aocs.gps_lat, subsystem: aocs, units: deg, description: "GPS geodetic latitude (measured; valid when gps_fix >= 2)" }
+  - { id: 0x0211, name: aocs.gps_lon, subsystem: aocs, units: deg, description: "GPS geodetic longitude (measured; valid when gps_fix >= 2)" }
+  - { id: 0x0212, name: aocs.gps_alt, subsystem: aocs, units: km, description: "GPS geodetic altitude (measured; valid when gps_fix >= 2)" }
   - { id: 0x0216, name: aocs.solar_beta, subsystem: aocs, units: deg, description: Solar beta angle, on_demand: true }
   - { id: 0x0217, name: aocs.att_error, subsystem: aocs, units: deg }
   - { id: 0x0218, name: aocs.rw1_temp, subsystem: aocs, units: C , on_demand: true }
@@ -156,14 +169,12 @@ parameters:
   - { id: 0x0221, name: aocs.sun_body_y, subsystem: aocs, description: Sun vector body Y (from CSS composite) , on_demand: true }
   - { id: 0x0222, name: aocs.sun_body_z, subsystem: aocs, description: Sun vector body Z (from CSS composite) , on_demand: true }
 
-  # AOCS Wave 5-B: Dual magnetometer
-  - { id: 0x0223, name: aocs.mag_a_x, subsystem: aocs, units: nT, description: Magnetometer A X-axis , on_demand: true }
-  - { id: 0x0224, name: aocs.mag_a_y, subsystem: aocs, units: nT, description: Magnetometer A Y-axis , on_demand: true }
-  - { id: 0x0225, name: aocs.mag_a_z, subsystem: aocs, units: nT, description: Magnetometer A Z-axis , on_demand: true }
-  - { id: 0x0226, name: aocs.mag_b_x, subsystem: aocs, units: nT, description: Magnetometer B X-axis , on_demand: true }
-  - { id: 0x0227, name: aocs.mag_b_y, subsystem: aocs, units: nT, description: Magnetometer B Y-axis , on_demand: true }
-  - { id: 0x0228, name: aocs.mag_b_z, subsystem: aocs, units: nT, description: Magnetometer B Z-axis , on_demand: true }
-  - { id: 0x0229, name: aocs.mag_select, subsystem: aocs, description: "Active magnetometer (0=A, 1=B)" , on_demand: true }
+  # 0x0223-0x0229 (the "Wave 5-B dual magnetometer" block: mag_a_x..z,
+  # mag_b_x..z, mag_select) are RETIRED (owner ruling, 2026-08c): EO-Sat-1
+  # carries ONE 3-axis magnetometer, like it carries one gyro set — there is
+  # no spare and no prime/backup switch. The measured field is 0x020B-0x020D;
+  # magnetometer failure teaching is by instructor injection (mag_failure),
+  # not by a fabricated redundant unit. The ids are reserved (do not reuse).
 
   # AOCS Wave 5-B: Individual CSS heads
   - { id: 0x027A, name: aocs.css_px, subsystem: aocs, description: CSS +X face illumination , on_demand: true }
@@ -248,6 +259,23 @@ parameters:
   - { id: 0x029C, name: aocs.desat_ineffective, subsystem: aocs, description: "1 = the last desaturation timed out without converging (see event AOCS_DESAT_INEFFECTIVE 0x020E)" }
   - { id: 0x029D, name: aocs.wheels_commissioned, subsystem: aocs, description: "Latched 1 once >=3 wheels have been simultaneously enabled; cleared by an AOCS power-down. Lets FDIR tell a double wheel failure apart from an uncommissioned bus" }
 
+  # ----- Gyro bias calibration (S8.1 func 13 AOCS_GYRO_CALIBRATION) -----
+  # The calibration averages the filter's observed bias over a real arc and then
+  # applies the result as an on-board compensation on the measurement path. All
+  # of it has to be visible from the ground: whether it is running, how far
+  # through it is, what it estimated, what is currently being compensated, and
+  # why it refused or aborted.
+  - { id: 0x02C9, name: aocs.gyro_cal_state, subsystem: aocs, description: "Gyro bias calibration state: 0=IDLE, 1=RUNNING, 2=COMPLETE, 3=ABORTED" }
+  - { id: 0x02CA, name: aocs.gyro_cal_progress, subsystem: aocs, units: "%", description: "Gyro bias calibration progress through the averaging arc (0-100)" }
+  - { id: 0x02CB, name: aocs.gyro_cal_bias_x, subsystem: aocs, units: 'deg/s', description: "Bias estimated by the LAST completed gyro calibration, X body axis. Compare against aocs.gyro_bias_injected (0x0296) when an instructor has injected a gyro_bias fault" }
+  - { id: 0x02CC, name: aocs.gyro_cal_bias_y, subsystem: aocs, units: 'deg/s', description: "Bias estimated by the last completed gyro calibration, Y body axis" }
+  - { id: 0x02CD, name: aocs.gyro_cal_bias_z, subsystem: aocs, units: 'deg/s', description: "Bias estimated by the last completed gyro calibration, Z body axis" }
+  - { id: 0x02CE, name: aocs.gyro_cal_comp_mag, subsystem: aocs, units: 'deg/s', description: "Magnitude of the gyro bias compensation currently applied on board. Non-zero after a successful calibration; the HARDWARE bias (0x0296) is unchanged — calibration compensates the fault, it does not repair it" }
+  - { id: 0x02CF, name: aocs.gyro_cal_result, subsystem: aocs, description: "Outcome of the last gyro calibration attempt: 0=never run, 1=SUCCESS, 2=FAILED/ABORTED" }
+  - { id: 0x02D0, name: aocs.gyro_cal_reject, subsystem: aocs, description: "Failure code of the last gyro-calibration refusal or abort (0 = none). 0x0A01 unpowered, 0x0A02 a gyro unit off, 0x0A03 no star-tracker reference, 0x0A04 rate too high, 0x0A05 already running, 0x0A06 preconditions lost mid-run, 0x0A07 abort with nothing running" }
+  - { id: 0x02D1, name: aocs.gyro_units_mask, subsystem: aocs, description: "Per-unit gyro power state as a bitmask: bit0 = X unit (S2 device 0x0206), bit1 = Y (0x0207), bit2 = Z (0x0208). 0x07 = all three on. Tells the operator WHICH unit is off, which the 0x0294 count cannot" }
+  - { id: 0x02D2, name: aocs.gyro_bias_resid, subsystem: aocs, units: 'deg/s', description: "Magnitude of the bias still present at the gyro output after on-board compensation. This is what drives GYRO_BIAS_HIGH (0x020B); a successful calibration drives it to zero even while the injected hardware fault persists" }
+
   # ===== OBDH =====
   - { id: 0x0300, name: obdh.mode, subsystem: obdh }
   - { id: 0x0301, name: obdh.temp, subsystem: obdh, units: C , on_demand: true }
@@ -272,9 +300,15 @@ parameters:
   - { id: 0x030F, name: obdh.bus_a_status, subsystem: obdh, description: "Bus A status (0=OK, 1=ERROR)" }
   - { id: 0x0310, name: obdh.bus_b_status, subsystem: obdh, description: "Bus B status (0=OK, 1=ERROR)" }
   - { id: 0x0311, name: obdh.sw_image, subsystem: obdh, description: "Running image (0=bootloader, 1=application)" }
-  - { id: 0x0312, name: obdh.hktm_buf_fill, subsystem: obdh, units: "%", description: HK/TM buffer fill level }
-  - { id: 0x0313, name: obdh.event_buf_fill, subsystem: obdh, units: "%", description: Event buffer fill level }
-  - { id: 0x0314, name: obdh.alarm_buf_fill, subsystem: obdh, units: "%", description: Alarm buffer fill level }
+  # Buffer fills = the S15 on-board store fills, reported in routine HK so an
+  # operator does not have to poll TC(15,13) to see how full the stores are.
+  # These are the SAME stores TM(15,14) reports (packets/capacity x 100), not a
+  # second set of buffers: 0x0312 is S15 store 1, 0x0313 store 2, 0x0314
+  # store 4. Do not confuse them with obdh.storage_fill (0x0A10), which is the
+  # mass-memory unit.
+  - { id: 0x0312, name: obdh.hktm_buf_fill, subsystem: obdh, units: "%", description: "S15 store 1 (HK_Store) fill — same value as TM(15,14) for store 1" }
+  - { id: 0x0313, name: obdh.event_buf_fill, subsystem: obdh, units: "%", description: "S15 store 2 (Event_Store) fill — same value as TM(15,14) for store 2" }
+  - { id: 0x0314, name: obdh.alarm_buf_fill, subsystem: obdh, units: "%", description: "S15 store 4 (Alarm_Store) fill — same value as TM(15,14) for store 4" }
   - { id: 0x0316, name: obdh.last_reboot_cause, subsystem: obdh, description: "Last reboot cause (0=none,1=watchdog,2=memory,3=switchover,4=commanded)" , on_demand: true }
   - { id: 0x0317, name: obdh.boot_count_a, subsystem: obdh, description: Total boot count for OBC-A , on_demand: true }
   - { id: 0x0318, name: obdh.boot_count_b, subsystem: obdh, description: Total boot count for OBC-B , on_demand: true }
@@ -371,7 +405,7 @@ parameters:
   # ACTIVE information bit rate of the tier now on air. Under the three-rung
   # ladder (subsystems/ttc.yaml tm_rate_tiers) this is 1000 / 16000 / 128000
   # and nothing else; anything in between means a corrupt decode.
-  - { id: 0x0506, name: ttc.tm_data_rate, subsystem: ttc, units: bps, description: "Active TM information rate (BEACON 1000 / LOW 16000 / HIGH 128000)" }
+  - { id: 0x0506, name: ttc.tm_data_rate, subsystem: ttc, units: bps, description: "Active TM information rate (SAFE 1000 / LOW 16000 / HIGH 128000)" }
   - { id: 0x0507, name: ttc.xpdr_temp, subsystem: ttc, units: C }
   - { id: 0x0508, name: ttc.ranging_status, subsystem: ttc, description: "Ranging active (0=no, 1=yes)" }
   - { id: 0x0509, name: ttc.range_km, subsystem: ttc, units: km }
@@ -409,8 +443,8 @@ parameters:
   # link — antenna stowed, DOWNLINK mode not entered, or elevation below the
   # HIGH tier's 10 deg. The console must show both, never just one.
   # Tier indices are positions in subsystems/ttc.yaml tm_rate_tiers:
-  #   0 = BEACON (1 kbps)   1 = LOW (16 kbps)   2 = HIGH (128 kbps)
-  - { id: 0x0539, name: ttc.tm_tier, subsystem: ttc, description: "ACTIVE TM rate tier index (0=BEACON 1 kbps, 1=LOW 16 kbps, 2=HIGH 128 kbps) — what is on air now, after the permission gates", on_demand: true }
+  #   0 = SAFE (1 kbps)   1 = LOW (16 kbps)   2 = HIGH (128 kbps)
+  - { id: 0x0539, name: ttc.tm_tier, subsystem: ttc, description: "ACTIVE TM rate tier index (0=SAFE 1 kbps, 1=LOW 16 kbps, 2=HIGH 128 kbps) — what is on air now, after the permission gates", on_demand: true }
   - { id: 0x053A, name: ttc.tm_tier_cmd, subsystem: ttc, description: "COMMANDED TM rate tier index (TTC_SET_DATA_RATE, S8 func 65). Differs from 0x0539 whenever a gate demotes the active tier", on_demand: true }
   - { id: 0x053B, name: ttc.tm_symbol_rate, subsystem: ttc, units: Bd, description: "Symbol rate now on air = active bit rate / bits-per-symbol. 16 kBd at LOW (BPSK), 64 kBd at HIGH (QPSK) — the tier step is visible on the radio", on_demand: true }
   - { id: 0x053C, name: ttc.downlink_mode, subsystem: ttc, description: "DOWNLINK / payload-dump mode (TTC_SET_DOWNLINK_MODE, S8 func 79). 0=off, 1=on. This is the mode gate on the HIGH tier", on_demand: true }
@@ -432,8 +466,9 @@ parameters:
   - { id: 0x052C, name: ttc.eirp_dbw, subsystem: ttc, units: dBW, description: "Live S-band EIRP at the COMMANDED PA power = ttc.yaml eirp_dbw + 10*log10(P/pa_ref_power_w). Moves 3.01 dB down at LOW and 3.98 dB up at HIGH — the proof that TTC_SET_TX_POWER (S8 func 68) reaches the link and not just telemetry 0x050D", on_demand: true }
 
   # ── UHF bootloader beacon TRANSMITTER (Franz's ruling R2, 2026-08b) ──
-  # A SECOND RADIO, not a mode of the S-band transponder and not the BEACON
-  # rung of the TM rate ladder (that is ttc.beacon_mode, 0x0521 — see
+  # A SECOND RADIO, not a mode of the S-band transponder and not the SAFE
+  # rung of the TM rate ladder (formerly named BEACON; the rung's mode flag
+  # is ttc.beacon_mode, 0x0521 — see
   # docs/LINK_BUDGET_AND_RATES.md §9 for why the two are constantly confused).
   # It carries HK SID 11 and nothing else, and it survives the S-band PA, the
   # ttc_tx line, the transponder and the deployable patch all being dead.
@@ -495,10 +530,18 @@ parameters:
   - { id: 0x063E, name: payload.compression_algo, subsystem: payload, description: "Compression algorithm (0=none, 1=CCSDS-121, 2=CCSDS-122, 3=CCSDS-123)", on_demand: true }
 
   # ===== Satellite Level (new parameters for displays) =====
-  - { id: 0x0001, name: sat.mode, subsystem: spacecraft, description: "Spacecraft mode (0=safe, 1=nominal, 2=emergency)" , on_demand: true }
+  # The telemetered copy of the DERIVED spacecraft mode (sc_mode), written by
+  # Engine._update_sc_mode() — the same value, on the same scale, as the one
+  # the MCS console header and the instructor UI show. It used to carry its
+  # own FDIR-latch-only derivation on a 3-value scale that ignored the mission
+  # phase, so 0x0001 reported "nominal" while the console reported SAFE for
+  # the whole of LEOP: two things called "spacecraft mode" that disagreed.
+  - { id: 0x0001, name: sat.mode, subsystem: spacecraft, description: "Derived spacecraft mode — identical to sc_mode (0=SAFE, 1=NOMINAL, 2=SCIENCE, 3=EMERGENCY)" , on_demand: true }
 
   # ===== OBDH Additional Parameters =====
-  - { id: 0x0A10, name: obdh.storage_fill, subsystem: obdh, units: "%", description: "Onboard storage fill percentage", on_demand: true }
+  # Mass-memory unit usage — NOT an S15 store. Distinct quantity from the
+  # obdh.*_buf_fill parameters above (0x0312-0x0314), which report S15 stores.
+  - { id: 0x0A10, name: obdh.storage_fill, subsystem: obdh, units: "%", description: "Mass-memory unit usage (mirror of obdh.mmm_used, 0x0303) — NOT an S15 store fill", on_demand: true }
 
   # ===== EPS Additional Parameters for Display =====
   - { id: 0x013A, name: eps.eclipse_active, subsystem: eps, description: "Eclipse active flag (0=sun, 1=eclipse)" }
@@ -543,12 +586,15 @@ parameters:
   - { id: 0x0002, name: sys.mission_flag, subsystem: sys, description: "Reserved mission status bit", on_demand: true, stub: true }
   - { id: 0x0215, name: aocs.css_sun_confidence, subsystem: aocs, description: "CSS sun-pointing confidence (0..1)", on_demand: true }
   - { id: 0x0230, name: aocs.wheel_torque_cmd, subsystem: aocs, units: 'Nm', description: "Commanded total RW torque", on_demand: true, stub: true }
-  - { id: 0x0231, name: aocs.gps_ecef_x, subsystem: aocs, units: 'm', description: "GPS ECEF position X", on_demand: true, stub: true }
-  - { id: 0x0232, name: aocs.gps_ecef_y, subsystem: aocs, units: 'm', description: "GPS ECEF position Y", on_demand: true, stub: true }
-  - { id: 0x0233, name: aocs.gps_ecef_z, subsystem: aocs, units: 'm', description: "GPS ECEF position Z", on_demand: true, stub: true }
-  - { id: 0x0234, name: aocs.gps_vel_x, subsystem: aocs, units: 'm/s', description: "GPS ECEF velocity X", on_demand: true, stub: true }
-  - { id: 0x0235, name: aocs.gps_vel_y, subsystem: aocs, units: 'm/s', description: "GPS ECEF velocity Y", on_demand: true, stub: true }
-  - { id: 0x0236, name: aocs.gps_vel_z, subsystem: aocs, units: 'm/s', description: "GPS ECEF velocity Z", on_demand: true, stub: true }
+  # GPS ECEF PVT (2026-08c item 2): live measured values from the receiver
+  # model — noise scales with PDOP, zeroed while gps_fix < 2 (position) or
+  # < 3 (velocity). In HK SID 12 (GPS_NAV).
+  - { id: 0x0231, name: aocs.gps_ecef_x, subsystem: aocs, units: 'm', description: "GPS ECEF position X (measured; valid when gps_fix >= 2)" }
+  - { id: 0x0232, name: aocs.gps_ecef_y, subsystem: aocs, units: 'm', description: "GPS ECEF position Y (measured; valid when gps_fix >= 2)" }
+  - { id: 0x0233, name: aocs.gps_ecef_z, subsystem: aocs, units: 'm', description: "GPS ECEF position Z (measured; valid when gps_fix >= 2)" }
+  - { id: 0x0234, name: aocs.gps_vel_x, subsystem: aocs, units: 'm/s', description: "GPS ECEF velocity X (measured; valid when gps_fix = 3)" }
+  - { id: 0x0235, name: aocs.gps_vel_y, subsystem: aocs, units: 'm/s', description: "GPS ECEF velocity Y (measured; valid when gps_fix = 3)" }
+  - { id: 0x0236, name: aocs.gps_vel_z, subsystem: aocs, units: 'm/s', description: "GPS ECEF velocity Z (measured; valid when gps_fix = 3)" }
   - { id: 0x0261, name: aocs.mtq_dipole_total, subsystem: aocs, units: 'Am^2', description: "Commanded total MTQ dipole", on_demand: true, stub: true }
   - { id: 0x028E, name: aocs.rw_cmd_sum, subsystem: aocs, units: 'Nm', description: "RW command sum diagnostic", on_demand: true }
   - { id: 0x0320, name: tcs.htr_duty_z1, subsystem: tcs, units: '%', description: "Heater zone 1 duty cycle", on_demand: true, stub: true }

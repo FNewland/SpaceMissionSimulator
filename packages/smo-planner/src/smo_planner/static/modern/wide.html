@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<!-- ==========================================================================
+  SMO MISSION PLANNER — /wide wall display (design_2026-08 plan §2.3)
+
+  A DISTINCT non-interactive page for classroom video walls. Hard rules:
+    - ZERO button / form / input / select elements; no hover-dependent
+      content; nothing is clickable.
+    - Readable from metres: primary numerals >= 28 px, nothing below 18 px.
+    - Two layout tiers: 16:9 -> 2x3 grid; ultrawide (>= ~21:9) -> one row.
+    - Freshness is life-or-death on a wall (risk R7): a stale block gets the
+      hatch + em-dash treatment; a full-page STALE banner appears after
+      120 s without a single successful poll (watchdog in wide.js).
+    - JS polling refresh only; no meta-refresh.
+
+  Cadences (plan §2.3): 1 s clock + now-marker · 10 s contacts/link ·
+  30 s schedule/budgets · 120 s ground track.
+========================================================================== -->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SMO Planner — Wall Display</title>
+<link rel="stylesheet" href="/static/shared/design-system.css?v=1">
+<style>
+/* Wall-display type floor: NOTHING below 18 px on this page. */
+html{ font-size:18px; }
+body{ font-size:18px; overflow:hidden; height:100vh;
+  display:flex; flex-direction:column; }
+
+/* Full-page stale banner (watchdog, wide.js). Hidden until triggered. */
+#staleBanner{ display:none; padding:12px 24px; font-size:30px; font-weight:800;
+  letter-spacing:3px; color:var(--alarm); background:var(--alarm-wash);
+  border-bottom:3px solid var(--alarm); text-align:center; }
+#staleBanner.on{ display:block; }
+#staleBanner .num{ font-size:30px; }
+
+/* ── Layout tiers ──────────────────────────────────────────────────── */
+main{ flex:1; display:grid; gap:12px; padding:12px; min-height:0;
+  /* Tier 1 (default, 16:9): 2 rows x 3 columns. */
+  grid-template-columns:repeat(3, minmax(0,1fr));
+  grid-template-rows:repeat(2, minmax(0,1fr)); }
+@media (min-aspect-ratio: 21/9){
+  /* Tier 2 (ultrawide classroom wall, e.g. 5760x1080): one row of six. */
+  main{ grid-template-columns:repeat(6, minmax(0,1fr));
+    grid-template-rows:minmax(0,1fr); }
+}
+
+section.blk{ background:var(--s1); border:1px solid var(--line);
+  border-radius:var(--r); display:flex; flex-direction:column;
+  min-height:0; min-width:0; overflow:hidden; }
+section.blk>h2{ font-size:19px; font-weight:700; letter-spacing:2.5px;
+  color:var(--tx3); padding:10px 16px; border-bottom:1px solid var(--line);
+  display:flex; align-items:center; gap:12px; }
+section.blk .bd{ flex:1; padding:12px 16px; min-height:0; display:flex;
+  flex-direction:column; gap:8px; }
+
+/* Per-block stale treatment: hatch fill + the block's numerals are
+   replaced with em-dashes by wide.js at render time. */
+section.blk.stale{ background:var(--hatch), var(--s1); }
+section.blk.stale>h2::after{ content:"STALE"; color:var(--tx2);
+  font-size:18px; letter-spacing:2px; margin-left:auto;
+  border:1px solid var(--line-2); border-radius:var(--r); padding:2px 10px; }
+
+/* ── 1. Clock block ────────────────────────────────────────────────── */
+#block-clock .date{ font-family:var(--mono); font-size:30px; color:var(--tx2); }
+/* cqw not vw (Agent 5 screenshot fix): on the 2880x540 ultrawide tier the
+   viewport is huge but the clock COLUMN is narrow, so 9vw clipped the last
+   digits. Size against the block's own width instead (>=28px floor kept). */
+#block-clock{ container-type:inline-size; }
+#block-clock .utc{ font-family:var(--mono); font-size:max(28px,min(17cqw,9vw,108px));
+  font-weight:700; line-height:1.05; letter-spacing:2px; }
+#block-clock .met{ font-family:var(--mono); font-size:32px; color:var(--tx2); }
+#block-clock .row{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+.wbadge{ display:inline-block; font-size:20px; font-weight:700;
+  letter-spacing:2px; padding:5px 14px; border:1px solid var(--line-2);
+  border-radius:var(--r); color:var(--tx2); font-family:var(--mono); }
+.wbadge.wall{ color:var(--alarm); border-color:var(--alarm);
+  background:var(--alarm-wash); }
+#trainingChip{ display:none; font-size:20px; font-weight:800; letter-spacing:2px;
+  padding:5px 14px; border-radius:var(--r); border:1px solid var(--warn);
+  color:var(--warn); background:var(--warn-wash); font-family:var(--mono); }
+#trainingChip.on{ display:inline-block; }
+
+/* ── 2. Passes block ───────────────────────────────────────────────── */
+#block-passes .next-label{ font-size:20px; letter-spacing:2px; color:var(--tx3); }
+#block-passes .next-station{ font-size:30px; font-weight:700; }
+#block-passes .countdown{ font-family:var(--mono); font-size:min(5.2vw,64px);
+  font-weight:700; line-height:1.05; }
+#block-passes .countdown.los{ color:var(--info); }
+.passlist{ flex:1; overflow:hidden; }
+.pass{ display:grid; grid-template-columns:1.3fr 1fr 1fr .8fr; gap:10px;
+  padding:6px 0; border-bottom:1px solid var(--line);
+  font-family:var(--mono); font-size:21px; }
+.pass .st{ font-family:var(--sans); font-weight:600; }
+.pass.head{ font-size:18px; color:var(--tx3); font-family:var(--sans);
+  letter-spacing:1px; }
+
+/* ── 3 + 4. Canvas blocks ──────────────────────────────────────────── */
+#block-timeline canvas, #block-track canvas, #block-track #wideMap{
+  width:100%; height:100%; display:block; }
+#block-track .cv{ position:relative; flex:1; min-height:0; }
+#wideMapFallbackNote{ display:none; position:absolute; left:12px; bottom:10px;
+  font-size:18px; color:var(--tx3); font-family:var(--mono); }
+#wideMapFallbackNote.on{ display:block; }
+
+/* ── 5. Budget block ───────────────────────────────────────────────── */
+.bud{ display:flex; flex-direction:column; gap:6px; }
+.bud .k{ font-size:20px; letter-spacing:2px; color:var(--tx3); }
+.bud .v{ font-family:var(--mono); font-size:min(4.5vw,54px); font-weight:700;
+  line-height:1.05; }
+.bud .v.warn{ color:var(--warn); } .bud .v.alarm{ color:var(--alarm); }
+.bud .sub{ font-size:19px; color:var(--tx2); font-family:var(--mono); }
+.bud .reason{ font-size:19px; color:var(--warn); line-height:1.4; }
+.wbar{ position:relative; height:26px; background:var(--s3); border-radius:5px;
+  overflow:hidden; }
+.wbar .fl{ position:absolute; top:0; bottom:0; left:0; background:var(--tx3); }
+.wbar.w .fl{ background:var(--warn); } .wbar.a .fl{ background:var(--alarm); }
+.wbar .tick{ position:absolute; top:-3px; bottom:-3px; width:3px;
+  background:var(--warn); }
+/* Mission-level derived readouts (G1): pass fit + SoC at eclipse exit.
+   Invalid / unreachable renders a hatched em-dash — never a number. */
+.mrow{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.mrow .k2{ font-size:18px; letter-spacing:1.5px; color:var(--tx3); }
+.mrow .v2{ font-family:var(--mono); font-size:34px; font-weight:700;
+  line-height:1.1; }
+.mrow .v2.warn{ color:var(--warn); } .mrow .v2.alarm{ color:var(--alarm); }
+.mrow .v2.absent{ background:var(--hatch); border-radius:var(--r);
+  padding:0 10px; display:inline-block; color:var(--tx3); }
+
+/* ── 6. Link block ─────────────────────────────────────────────────── */
+#block-link .state{ font-size:min(4.2vw,52px); font-weight:800;
+  letter-spacing:3px; line-height:1.1; }
+#block-link .state.yes{ color:var(--info); }
+#block-link .kv{ display:grid; grid-template-columns:auto 1fr; gap:6px 18px;
+  font-size:23px; }
+#block-link .kv b{ color:var(--tx3); font-weight:400; letter-spacing:1px; }
+#block-link .kv span{ font-family:var(--mono); }
+.api-dot{ display:inline-block; width:16px; height:16px; border-radius:50%;
+  background:var(--stale); vertical-align:middle; margin-right:10px; }
+.api-dot.connected{ background:var(--ok); }
+.api-dot.error{ background:var(--alarm); }
+</style>
+</head>
+<body>
+
+<div id="staleBanner" role="alert">
+  DISPLAY STALE — NO DATA FOR <span class="num" id="staleFor">—</span>
+</div>
+
+<main>
+  <!-- 1. Clock -->
+  <section class="blk" id="block-clock">
+    <h2>TIME</h2>
+    <div class="bd">
+      <div class="date num" id="wDate">—</div>
+      <div class="utc num" id="wUtc">--:--:--</div>
+      <div class="met num" id="wMet">MET —</div>
+      <div class="row">
+        <span class="wbadge" id="wClockBadge">—</span>
+        <span id="trainingChip">TRAINING — SIM TIME</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. Next passes -->
+  <section class="blk" id="block-passes">
+    <h2>NEXT PASSES</h2>
+    <div class="bd">
+      <div class="next-label" id="wNextLabel">NEXT AOS</div>
+      <div class="next-station" id="wNextStation">—</div>
+      <div class="countdown num" id="wCountdown">—</div>
+      <div class="passlist" id="wPassList"></div>
+    </div>
+  </section>
+
+  <!-- 3. 24 h plan timeline -->
+  <section class="blk" id="block-timeline">
+    <h2>PLAN — NEXT 24 H</h2>
+    <div class="bd" style="padding:8px;">
+      <canvas id="wTimeline"></canvas>
+    </div>
+  </section>
+
+  <!-- 4. Ground track (non-interactive) -->
+  <section class="blk" id="block-track">
+    <h2>GROUND TRACK</h2>
+    <div class="bd" style="padding:0;">
+      <div class="cv">
+        <div id="wideMap" style="display:none"></div>
+        <canvas id="wTrackCanvas"></canvas>
+        <div id="wideMapFallbackNote">VECTOR BASEMAP UNAVAILABLE — TRACK ONLY</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. Budget state -->
+  <section class="blk" id="block-budgets">
+    <h2>BUDGETS</h2>
+    <div class="bd" style="justify-content:space-evenly;">
+      <div class="bud" id="wPower">
+        <div class="k">POWER — FINAL SoC</div>
+        <div class="v num" id="wPowerVal">—</div>
+        <div class="wbar" id="wPowerBar"><div class="fl" style="width:0%"></div></div>
+        <div class="sub" id="wPowerSub">—</div>
+      </div>
+      <div class="bud" id="wData">
+        <div class="k">DATA — PEAK FILL</div>
+        <div class="v num" id="wDataVal">—</div>
+        <div class="wbar" id="wDataBar"><div class="fl" style="width:0%"></div></div>
+        <div class="sub" id="wDataSub">—</div>
+      </div>
+      <!-- G1: mission-level derived readouts. MCS state when services.mcs_url
+           is configured; pass fit falls back to the planner's own budget
+           machinery. Invalid / unreachable = hatched em-dash, never a number. -->
+      <div class="bud" id="wMission">
+        <div class="mrow">
+          <div><div class="k2">PASS FIT</div>
+            <div class="v2 num absent" id="wPassFit">—</div></div>
+          <div><div class="k2">SoC @ ECLIPSE EXIT</div>
+            <div class="v2 num absent" id="wSocExit">—</div></div>
+        </div>
+        <div class="sub" id="wMissionSub">—</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6. Link status -->
+  <section class="blk" id="block-link">
+    <h2>LINK</h2>
+    <div class="bd" style="justify-content:space-evenly;">
+      <div class="state" id="wLinkState">—</div>
+      <div class="kv">
+        <b>STATION</b><span id="wLinkStation">—</span>
+        <b>ELEVATION</b><span id="wLinkElev">—</span>
+        <b>RANGE</b><span id="wLinkRange">—</span>
+        <!-- G14: achieved rollup of the last completed pass (rfsim store at
+             the configured services.rfsim_url; unset = absent state). -->
+        <b>LAST PASS</b><span id="wLastPass">—</span>
+        <b>API</b><span><span class="api-dot" id="wApiDot"></span><span id="wApiText">checking</span></span>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script type="module" src="/static/modern/wide.js?v=1"></script>
+</body>
+</html>

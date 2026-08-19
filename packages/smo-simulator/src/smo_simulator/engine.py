@@ -664,7 +664,7 @@ class SimulationEngine:
             t.pa_on = False
             t.beacon_mode = True
             t.antenna_deployed = False
-            # BEACON tier (1 kbps) — the bootloader's only rate (defect #85).
+            # SAFE tier (1 kbps, ex-BEACON) — the bootloader's only rate (defect #85).
             t.data_rate_mode = getattr(ttc, '_beacon_tier', 0)
             t.downlink_mode = False
             if hasattr(ttc, '_apply_tier'):
@@ -707,14 +707,14 @@ class SimulationEngine:
                 self._tm_storage.enable_store(sid)
 
         # ── TM data-rate ladder (defect #85) ──
-        # Leaving the bootloader leaves the BEACON tier behind. The
+        # Leaving the bootloader leaves the SAFE (1 kbps) tier behind. The
         # application comes up on the configured SAFE tier (LOW, 16 kbps) —
         # enough for real-time HK plus stored-HK playback with the antenna
         # still stowed — and the operator commands NOMINAL once the antenna
         # is deployed. Nominal operations never default to the top tier.
-        # While beacon mode is still latched the tick pins the tier to BEACON
-        # anyway; once TTC_SET_BEACON_MODE(off) is sent the beacon-only tier
-        # is no longer permitted and the model steps down to this one.
+        # While beacon mode is still latched the tick pins the tier to SAFE
+        # anyway; once TTC_SET_BEACON_MODE(off) is sent the bootloader-only
+        # tier is no longer permitted and the model steps down to this one.
         ttc = self.subsystems.get("ttc")
         if ttc is not None and hasattr(ttc, '_state') \
                 and not ttc._state.beacon_mode:
@@ -1435,18 +1435,13 @@ class SimulationEngine:
             self.params[0x0902] = 0
             self.params[0x0903] = 0
 
-        # sat.mode (0x0001) — the top-level "is this spacecraft healthy"
-        # summary the manual and three procedures quote. It was catalogued and
-        # written by nothing, so an S20 read returned 0.0, which reads as
-        # SAFE: the single most alarming value a student can be handed, at
-        # every moment of a nominal pass (brief 08 finding 12).
-        #   0 = safe, 1 = nominal, 2 = emergency
-        if self._fdir_emergency_active:
-            self.params[0x0001] = 2
-        elif self._fdir_safe_active:
-            self.params[0x0001] = 0
-        else:
-            self.params[0x0001] = 1
+        # sat.mode (0x0001) is NOT written here any more — see
+        # _update_sc_mode(). It used to be derived from the FDIR latches
+        # alone, ignoring the phase gate that _update_sc_mode() applies, so
+        # the spacecraft telemetered sat.mode = NOMINAL while the console
+        # header (fed by sc_mode) said SAFE, all the way through LEOP. Two
+        # things called "spacecraft mode", disagreeing. There is now one
+        # derivation and 0x0001 is its telemetered copy.
 
         # ttc.active_gs (0x0523) — 1-based index into orbit.yaml's station
         # list, 0 when out of contact. Same defect: catalogued, unwritten,
@@ -1464,6 +1459,51 @@ class SimulationEngine:
     # ------------------------------------------------------------------
     # Spacecraft phase state machine
     # ------------------------------------------------------------------
+
+    def apply_phase_change(self, new_phase: int) -> int:
+        """Move the spacecraft to ``new_phase`` and bring the world with it.
+
+        Returns the phase we came from. This is the single place a phase is
+        set out-of-band — by the instructor console (``set_phase``), by a
+        scenario, and by the ground telecommand SYS_SET_MISSION_PHASE (S8.1
+        func 120). Each caller raises its own S5 event; the mechanics of HK
+        SID gating, TM APID, on-board stores, the OBDH software image and the
+        separation timer live here so they cannot diverge.
+
+        Guards belong to the CALLER: the telecommand refuses pre-separation
+        phases, bootloader-to-application jumps and unforced backwards
+        transitions (see ``ServiceDispatcher._route_system_cmd``), while the
+        instructor console is deliberately allowed to set anything — it is
+        the training environment, not the spacecraft.
+        """
+        new_phase = int(new_phase)
+        old_phase = int(self._spacecraft_phase)
+        self._spacecraft_phase = new_phase
+        if new_phase <= 3:
+            # Bootloader/beacon mode: only SID 11 active, bootloader APID.
+            self._enter_bootloader_mode()
+            self._spacecraft_phase = new_phase
+            # Arm the separation timer AFTER _enter_bootloader_mode(), which
+            # zeroes it — otherwise commanding phase 1 left the timer at 0 and
+            # it expired on the very next tick.
+            if new_phase == 1:
+                self._sep_timer = self._sep_timer_duration
+        else:
+            # Application mode: HK per the configured defaults, application
+            # APID, stores online. Force OBDH sw_image to APPLICATION so the
+            # reboot-detection logic in _tick_spacecraft_phase does not
+            # immediately revert us to bootloader on the next tick.
+            obdh = self.subsystems.get("obdh")
+            if obdh and hasattr(obdh, '_state'):
+                obdh._state.sw_image = 1
+                if hasattr(obdh._state, 'boot_app_pending'):
+                    obdh._state.boot_app_pending = False
+            if old_phase <= 3:
+                self._exit_bootloader_mode()
+            else:
+                self._apply_default_hk_enable()
+        self.params[0x0129] = self._spacecraft_phase
+        return old_phase
 
     def _tick_spacecraft_phase(self, dt: float) -> None:
         """Manage spacecraft phase state machine.
@@ -2194,11 +2234,48 @@ class SimulationEngine:
     # FDIR
     # ------------------------------------------------------------------
 
+    def _fdir_rule_armed(self, rule) -> bool:
+        """Is this legacy FDIR rule armed in the current spacecraft phase?
+
+        Per-rule ``min_phase`` (``subsystems/fdir.yaml``), defaulting to "no
+        gate". The advanced fault-propagation model is already disarmed below
+        ``SC_PHASE_NOMINAL`` wholesale (see ``_tick_fdir_advanced``), for the
+        reason spelled out there: during LEOP the reaction wheels are
+        legitimately unpowered, so a rule reading ``aocs.wheels_enabled`` fires
+        on the first tick and latches a contingency the operator cannot
+        command their way out of.
+
+        The same blanket gate is WRONG for the legacy rule set, because most
+        of it is hardware protection — battery SoC and bus voltage, battery
+        and OBC temperature, wheel and PA temperature, reboot count, CAN bus.
+        Those must stay armed through LEOP; that is exactly when a mishandled
+        spacecraft flattens its battery. So the gate is per rule, declared in
+        configuration, and carried only by the rules whose trigger condition
+        is the EXPECTED state of an uncommissioned spacecraft.
+        """
+        min_phase = getattr(rule, 'min_phase', None)
+        if min_phase is None:
+            return True
+        return int(getattr(self, '_spacecraft_phase',
+                           SC_PHASE_NOMINAL)) >= int(min_phase)
+
     def _tick_fdir(self) -> None:
         for rule in self._fdir_rules:
             param_name = rule.parameter
             threshold = rule.threshold
             if threshold is None:
+                continue
+
+            # Phase gate. A disarmed rule is not merely "not evaluated": any
+            # latch it is holding is dropped and its persistence accumulator
+            # is reset, so dropping back below min_phase (an instructor
+            # rewind, an OBC reboot to bootloader) cannot leave a stale
+            # contingency pinning sc_mode to SAFE.
+            if not self._fdir_rule_armed(rule):
+                gated_key = f"{param_name}_{rule.action}"
+                self._fdir_triggered[gated_key] = False
+                if hasattr(self, '_fdir_persist'):
+                    self._fdir_persist[gated_key] = 0.0
                 continue
 
             # Resolve param name to ID
@@ -2269,6 +2346,8 @@ class SimulationEngine:
         safe_active = False
         emergency_active = False
         for rule in self._fdir_rules:
+            if not self._fdir_rule_armed(rule):
+                continue
             rule_key = f"{rule.parameter}_{rule.action}"
             if not self._fdir_triggered.get(rule_key, False):
                 continue
@@ -2295,22 +2374,26 @@ class SimulationEngine:
 
         Because this is recomputed every tick, EMERGENCY recovers to SAFE then
         NOMINAL automatically once the triggering contingencies clear.
+
+        ``sat.mode`` (parameter 0x0001) is the telemetered copy of exactly
+        this value, written here so the two cannot drift. It previously had
+        its own derivation in ``_publish_fdir_parameters`` that read the FDIR
+        latches and ignored the phase gate, so an S20 read of 0x0001 said
+        NOMINAL while the console header said SAFE throughout LEOP.
         """
         if self._fdir_emergency_active:
             self.sc_mode = SC_EMERGENCY
-            return
+        else:
+            phase = int(getattr(self, '_spacecraft_phase', SC_PHASE_NOMINAL))
+            if self._fdir_safe_active or phase < SC_PHASE_NOMINAL:
+                self.sc_mode = SC_SAFE
+            elif int(self.params.get(0x0600, 0)) == PAYLOAD_MODE_IMAGING:
+                self.sc_mode = SC_SCIENCE
+            else:
+                self.sc_mode = SC_NOMINAL
 
-        phase = int(getattr(self, '_spacecraft_phase', SC_PHASE_NOMINAL))
-        if self._fdir_safe_active or phase < SC_PHASE_NOMINAL:
-            self.sc_mode = SC_SAFE
-            return
-
-        payload_mode = int(self.params.get(0x0600, 0))
-        if payload_mode == PAYLOAD_MODE_IMAGING:
-            self.sc_mode = SC_SCIENCE
-            return
-
-        self.sc_mode = SC_NOMINAL
+        # One derivation, one convention (SC_SAFE/NOMINAL/SCIENCE/EMERGENCY).
+        self.params[0x0001] = float(self.sc_mode)
 
     def _resolve_param_name(self, name: str) -> Optional[int]:
         """Resolve a dotted parameter name to its id.
@@ -2406,7 +2489,13 @@ class SimulationEngine:
         0x0003 = invalid data length
         0x0004 = subsystem power off
         """
-        known_services = {2, 3, 5, 6, 8, 9, 11, 12, 15, 17, 18, 19, 20}
+        # 13 was missing (2026-08c item 9): ServiceDispatcher._handle_s13
+        # implements 13,1/13,3/13,5/13,9 and the catalogue ships
+        # S13_CREATE_TRANSFER etc., but every S13 TC arriving over the real
+        # uplink was refused here with 0x0001 "unknown service" before the
+        # handler could run — NOM-003's whole downlink chain was dead on
+        # the wire while working from the raw dispatcher.
+        known_services = {2, 3, 5, 6, 8, 9, 11, 12, 13, 15, 17, 18, 19, 20}
         if service not in known_services:
             return False, 0x0001
 
@@ -2418,7 +2507,18 @@ class SimulationEngine:
             8: {1},
             9: {1, 2},
             11: {4, 7, 9, 11, 13, 17},
-            12: {1, 2, 6, 7},
+            # S12: 1/2 global enable-disable, 3/4 per-definition
+            # enable-disable, 6 add, 7 delete, 12 report definitions ->
+            # TM(12,13). 3, 4 and 12 were implemented in ServiceDispatcher.
+            # _handle_s12 and catalogued as MON_ENABLE_DEF / MON_DISABLE_DEF /
+            # MON_REPORT_DEFS, but missing from this list, so all three were
+            # refused at acceptance with "S12.12 is not an implemented
+            # subtype" and the MCS "Refresh from Spacecraft" button could
+            # never populate the monitoring table.
+            12: {1, 2, 3, 4, 6, 7, 12},
+            # S13 large data transfer: 1 create, 3 download segment,
+            # 5 end transfer, 9 report status (2, 4, 10, 11 are TM replies).
+            13: {1, 3, 5, 9},
             15: {1, 2, 9, 11, 13},
             17: {1},
             18: {1, 2, 3, 4, 6},
@@ -2586,8 +2686,14 @@ class SimulationEngine:
                 func_id = pkt.data_field[0]
                 # OBDH boot maintenance + EPS power-line control +
                 # TTC antenna deploy (69) + PA on/off (66/67) for LEOP
-                # first-contact downlink establishment
-                if func_id in {19, 20, 52, 53, 54, 55, 56, 57, 61, 66, 67, 69}:
+                # first-contact downlink establishment + the mission-phase
+                # declaration (120). 120 is in the subset so the one command
+                # that owns the phase is never itself locked out by the phase
+                # gate; its own guards refuse an application phase while the
+                # OBC is in the bootloader, so being reachable here cannot be
+                # used to skip OBC_BOOT_APP.
+                if func_id in {19, 20, 52, 53, 54, 55, 56, 57, 61, 66, 67, 69,
+                               120}:
                     allowed = True
             if not allowed:
                 # Reject at acceptance — no S1.3/S1.7 is emitted.
@@ -3208,7 +3314,7 @@ class SimulationEngine:
             getattr(self, '_force_rt_pacing', False))
 
     #: Rate assumed when no TTC model is available (partial/mock engines).
-    #: The BEACON rung of the ladder — deliberately the slowest thing on the
+    #: The SAFE rung of the ladder — deliberately the slowest thing on the
     #: ladder so a missing model can never flatter the downlink.
     _TM_RATE_FALLBACK_BPS = 1000.0
 
@@ -3294,7 +3400,7 @@ class SimulationEngine:
                 # released by _tick_rt_emission at the ACTIVE tier's rate. The
                 # shipped HK structures generate 1351.5 bps of packets
                 # (~1557 bps of channel after RS + frame overhead), so at
-                # BEACON (1 kbps) the backlog grows without bound and packets
+                # SAFE (1 kbps) the backlog grows without bound and packets
                 # are dropped, while at LOW (16 kbps) and above it drains —
                 # which is what makes the tier observable at all (defect #85).
                 if len(pending) >= self._rt_backlog_max:
@@ -3535,32 +3641,7 @@ class SimulationEngine:
         elif t == 'set_phase':
             new_phase = int(cmd.get('phase', 6))
             if 0 <= new_phase <= 6:
-                old_phase = self._spacecraft_phase
-                self._spacecraft_phase = new_phase
-                # Gate HK SIDs, APID, and stores based on new phase
-                if new_phase <= 3:
-                    # Bootloader/beacon mode: only SID 11 active, bootloader APID
-                    self._enter_bootloader_mode()
-                    self._spacecraft_phase = new_phase
-                    # Arm the separation timer AFTER _enter_bootloader_mode(),
-                    # which zeroes it — otherwise commanding phase 1 left the
-                    # timer at 0 and it expired on the very next tick.
-                    if new_phase == 1:
-                        self._sep_timer = self._sep_timer_duration
-                else:
-                    # Application mode: all HK enabled, application APID, stores online.
-                    # Force OBDH sw_image to APPLICATION so the reboot-detection
-                    # logic in _tick_spacecraft_phase doesn't immediately revert
-                    # us back to bootloader on the next tick.
-                    obdh = self.subsystems.get("obdh")
-                    if obdh and hasattr(obdh, '_state'):
-                        obdh._state.sw_image = 1
-                        if hasattr(obdh._state, 'boot_app_pending'):
-                            obdh._state.boot_app_pending = False
-                    if old_phase <= 3:
-                        self._exit_bootloader_mode()
-                    else:
-                        self._apply_default_hk_enable()
+                old_phase = self.apply_phase_change(new_phase)
                 self._emit_event({
                     'event_id': 0x0052,
                     'severity': 2,
@@ -3871,7 +3952,7 @@ class SimulationEngine:
             s.pa_on = False  # Power amplifier OFF
             s.cmd_decode_timer = 900.0  # 15 min command decoder enable timer
             s.cmd_channel_active = True  # Command channel monitoring active
-            # BEACON tier — 1 kbps, BPSK, conv(7,1/2)+RS. This is the ONLY
+            # SAFE tier — 1 kbps, BPSK, conv(7,1/2)+RS. This is the ONLY
             # rung of the ladder the bootloader ever uses, and the only place
             # 1 kbps appears at all now (defect #85).
             s.data_rate_mode = getattr(ttc, '_beacon_tier', 0)
@@ -3879,7 +3960,7 @@ class SimulationEngine:
             if hasattr(ttc, '_apply_tier'):
                 ttc._apply_tier(s, s.data_rate_mode)
             logger.info("TTC configured: antenna=NOT_DEPLOYED, beacon_mode=ON, PA=OFF, "
-                        "TM tier=BEACON")
+                        "TM tier=SAFE")
 
         # OBDH configuration
         obdh = self.subsystems.get("obdh")

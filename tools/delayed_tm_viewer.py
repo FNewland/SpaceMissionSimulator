@@ -65,6 +65,79 @@ from tm_report import (  # type: ignore
 logger = logging.getLogger("delayed_tm_viewer")
 
 
+# ---------- ground limits on played-back series (POSITION_NEEDS G11) ----------
+#
+# The ground limit table lives in configs/<mission>/mcs/limits.yaml and its
+# parser lives in smo_common (`smo_common.config.loader.load_limits`,
+# `LimitDef` in config.schemas) — the MCS uses the same one, but this tool
+# may not import smo-mcs, and does not need to.
+
+def load_limits_by_pid(config_dir: Path) -> dict[int, Any]:
+    """{param_id: LimitDef} from mcs/limits.yaml; {} when absent/broken."""
+    try:
+        from smo_common.config.loader import load_limits
+        return {l.param_id: l for l in load_limits(config_dir)}
+    except Exception as e:  # noqa: BLE001 — limits are an overlay, not a dep
+        logger.warning("Could not load mcs/limits.yaml from %s: %s",
+                       config_dir, e)
+        return {}
+
+
+def _classify(v: float, lim) -> str:
+    """'red' | 'yellow' | 'ok' for one engineering value against one band."""
+    if lim.red_low is not None and v < lim.red_low:
+        return "red"
+    if lim.red_high is not None and v > lim.red_high:
+        return "red"
+    if lim.yellow_low is not None and v < lim.yellow_low:
+        return "yellow"
+    if lim.yellow_high is not None and v > lim.yellow_high:
+        return "yellow"
+    return "ok"
+
+
+def evaluate_limits(pts: list[tuple[float, float]], lim) -> dict[str, Any]:
+    """Time-in-band accounting for one decoded series.
+
+    Each sample owns the interval up to the next sample; the last sample
+    (and a single-sample series) gets the mean observed spacing, falling
+    back to the limit's ``check_interval_s``. 'yellow' means outside the
+    yellow band but inside red; 'red' means outside the red band — the two
+    times never double-count.
+    """
+    times = [t for t, _ in pts]
+    dts = [max(0.0, times[i + 1] - times[i]) for i in range(len(pts) - 1)]
+    positive = [d for d in dts if d > 0]
+    default_dt = (sum(positive) / len(positive) if positive
+                  else float(getattr(lim, "check_interval_s", 4.0) or 4.0))
+    t_yellow = t_red = 0.0
+    n_yellow = n_red = 0
+    worst = "ok"
+    for i, (_, v) in enumerate(pts):
+        dt = dts[i] if i < len(dts) and dts[i] > 0 else default_dt
+        c = _classify(v, lim)
+        if c == "red":
+            t_red += dt
+            n_red += 1
+            worst = "red"
+        elif c == "yellow":
+            t_yellow += dt
+            n_yellow += 1
+            if worst != "red":
+                worst = "yellow"
+    return {
+        "time_in_yellow_s": round(t_yellow, 3),
+        "time_in_red_s": round(t_red, 3),
+        "samples_yellow": n_yellow,
+        "samples_red": n_red,
+        "state": worst,
+        "band": {
+            "yellow_low": lim.yellow_low, "yellow_high": lim.yellow_high,
+            "red_low": lim.red_low, "red_high": lim.red_high,
+        },
+    }
+
+
 # ---------- core analysis ----------
 
 def list_dumps(dump_dir: Path) -> list[dict[str, Any]]:
@@ -187,8 +260,15 @@ class RemoteDumpStore:
         return out
 
 
-def analyse_dumps(paths: Iterable[Path], params_by_id: dict, hk_plist: dict) -> dict[str, Any]:
-    """Decode one or more dump files into a JSON-friendly summary."""
+def analyse_dumps(paths: Iterable[Path], params_by_id: dict, hk_plist: dict,
+                  limits_by_pid: dict[int, Any] | None = None) -> dict[str, Any]:
+    """Decode one or more dump files into a JSON-friendly summary.
+
+    ``limits_by_pid`` (G11): when given, every decoded series is run through
+    the ground limits (mcs/limits.yaml) and each parameter carries
+    time-in-yellow / time-in-red plus its band for plot shading; the result
+    carries a per-dump ``limits`` summary line.
+    """
     an = PassAnalysis()
     files_used: list[dict[str, Any]] = []
     for path in paths:
@@ -212,6 +292,10 @@ def analyse_dumps(paths: Iterable[Path], params_by_id: dict, hk_plist: dict) -> 
 
     hk: list[dict[str, Any]] = []
     anomalies: list[dict[str, Any]] = []
+    limits_by_pid = limits_by_pid or {}
+    lim_yellow: list[str] = []      # parameters whose worst state is yellow
+    lim_red: list[str] = []         # parameters whose worst state is red
+    lim_checked = 0
     for sid, samples in sorted(an.hk_samples.items()):
         if not samples:
             continue
@@ -237,7 +321,7 @@ def analyse_dumps(paths: Iterable[Path], params_by_id: dict, hk_plist: dict) -> 
                     anomalies.append({"sid": sid, "pid": pid,
                                       "name": meta.get("name", f"0x{pid:04X}"),
                                       "peak_delta": peak, "mean_delta": mean_d})
-            params_out.append({
+            entry: dict[str, Any] = {
                 "pid": pid,
                 "name": meta.get("name", f"0x{pid:04X}"),
                 "units": meta.get("units", ""),
@@ -246,7 +330,19 @@ def analyse_dumps(paths: Iterable[Path], params_by_id: dict, hk_plist: dict) -> 
                 "flag": flag,
                 # Compact array of [cuc, value] for client-side sparkline
                 "series": [[c, v] for c, v in pts],
-            })
+                # G11: ground-limit evaluation (None = no band configured)
+                "limit": None,
+            }
+            lim = limits_by_pid.get(pid)
+            if lim is not None:
+                verdict = evaluate_limits(pts, lim)
+                entry["limit"] = verdict
+                lim_checked += 1
+                if verdict["state"] == "red":
+                    lim_red.append(entry["name"])
+                elif verdict["state"] == "yellow":
+                    lim_yellow.append(entry["name"])
+            params_out.append(entry)
         hk.append({
             "sid": sid,
             "packet_count": an.hk_counts[sid],
@@ -254,8 +350,26 @@ def analyse_dumps(paths: Iterable[Path], params_by_id: dict, hk_plist: dict) -> 
             "params": params_out,
         })
 
+    # G11: one honest per-dump summary line for the ground-limit sweep.
+    if not limits_by_pid:
+        lim_summary = "no ground limits loaded"
+    elif lim_checked == 0:
+        lim_summary = "no decoded parameter carries a ground limit"
+    elif not lim_yellow and not lim_red:
+        lim_summary = (f"all {lim_checked} limit-checked parameters "
+                       f"within limits")
+    else:
+        lim_summary = (f"{len(lim_yellow)} parameter(s) exceeded yellow, "
+                       f"{len(lim_red)} red")
+
     return {
         "files": files_used,
+        "limits": {
+            "checked": lim_checked,
+            "yellow": lim_yellow,
+            "red": lim_red,
+            "summary": lim_summary,
+        },
         "first_cuc": an.first_time,
         "last_cuc": an.last_time,
         "total_packets": sum(an.pkt_counts.values()),
@@ -287,6 +401,8 @@ def make_app(dump_dir: Path | None, api_base: str | None = None) -> web.Applicat
     app["remote"] = remote
     app["params_by_id"] = params_by_id
     app["hk_plist"] = hk_plist
+    # G11: ground limits applied to every decoded series.
+    app["limits_by_pid"] = load_limits_by_pid(REPO / "configs" / "eosat1")
 
     async def index(_req: web.Request) -> web.Response:
         return web.Response(text=INDEX_HTML, content_type="text/html")
@@ -331,7 +447,8 @@ def make_app(dump_dir: Path | None, api_base: str | None = None) -> web.Applicat
                                       "packet_counts": [], "anomalies": [],
                                       "total_packets": 0,
                                       "first_cuc": None, "last_cuc": None})
-        result = analyse_dumps(paths, app["params_by_id"], app["hk_plist"])
+        result = analyse_dumps(paths, app["params_by_id"], app["hk_plist"],
+                               limits_by_pid=app["limits_by_pid"])
         return web.json_response(result)
 
     app.router.add_get("/", index)
@@ -401,6 +518,12 @@ th { color: var(--dim); font-weight: 500; position: sticky; top: 0; background: 
 td.num { text-align: right; }
 .sev-1 { color: #9bb; } .sev-2 { color: #34d399; } .sev-3 { color: var(--warn); } .sev-4 { color: var(--bad); }
 .flag { color: var(--warn); }
+/* G11: per-parameter ground-limit badges */
+.lim-badge { display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 10px; font-weight: 700; margin-right: 3px; white-space: nowrap; }
+.lim-badge.yellow { color: var(--warn); border: 1px solid var(--warn); }
+.lim-badge.red { color: var(--bad); border: 1px solid var(--bad); }
+.lim-ok { color: var(--good); font-size: 10px; }
+.lim-none { color: #556b85; font-size: 10px; }
 .dump-row { padding: 4px 6px; cursor: pointer; border-bottom: 1px solid #16223a; display: grid; grid-template-columns: 1fr 80px 110px 90px; gap: 6px; }
 .dump-row:hover { background: #15294a; }
 .dump-row.selected { background: #1a3a6a; }
@@ -546,6 +669,8 @@ function render(j) {
     ["S5 events", j.events.length],
     ["HK SIDs", j.hk.length],
     ["Anomalies", j.anomalies.length],
+    // G11: the per-dump ground-limit summary line
+    ["Ground limits", j.limits ? j.limits.summary : "—"],
     ["On-board time (CUC) range",
      `${j.first_cuc == null ? "—" : j.first_cuc.toFixed(3) + " (" + formatCucTime(j.first_cuc) + ")"}`
      + " → "
@@ -619,7 +744,7 @@ function render(j) {
         <h3 style="font-size:11px;color:var(--accent);margin:8px 0 4px;">SID ${sid.sid} — ${sid.packet_count} pkts, ${sid.sample_count} samples
         <button class="sm" onclick="plotAllForSid(${sid.sid}, ${JSON.stringify(sid.params).replace(/"/g, '&quot;')})">Plot All</button>
         </h3>
-        <table><thead><tr><th>ID</th><th>Name</th><th>Units</th><th class='num'>Min</th><th class='num'>Max</th><th class='num'>Mean</th><th class='num'>N</th><th>Trend</th><th></th></tr></thead><tbody>
+        <table><thead><tr><th>ID</th><th>Name</th><th>Units</th><th class='num'>Min</th><th class='num'>Max</th><th class='num'>Mean</th><th class='num'>N</th><th>Limits</th><th>Trend</th><th></th></tr></thead><tbody>
         ${sid.params.map(p => `<tr>
           <td>0x${p.pid.toString(16).padStart(4,"0").toUpperCase()}</td>
           <td>${escapeHtml(p.name)}</td>
@@ -628,8 +753,9 @@ function render(j) {
           <td class='num'>${fmtNum(p.max)}</td>
           <td class='num'>${fmtNum(p.mean)}</td>
           <td class='num'>${p.n}</td>
+          <td>${limitCell(p)}</td>
           <td>${spark(p.series)}</td>
-          <td><button class="sm" onclick="addChart(${sid.sid}, ${p.pid}, ${JSON.stringify(p.name).replace(/"/g, '&quot;')}, ${JSON.stringify(p.series)}, ${JSON.stringify(p.units).replace(/"/g, '&quot;')})">Plot</button> ${p.flag ? "<span class='flag'>Δ</span>" : ""}</td>
+          <td><button class="sm" onclick="addChart(${sid.sid}, ${p.pid}, ${JSON.stringify(p.name).replace(/"/g, '&quot;')}, ${JSON.stringify(p.series)}, ${JSON.stringify(p.units).replace(/"/g, '&quot;')}, ${JSON.stringify(p.limit).replace(/"/g, '&quot;')})">Plot</button> ${p.flag ? "<span class='flag'>Δ</span>" : ""}</td>
         </tr>`).join("")}
         </tbody></table>`).join("")
     : "No HK packets decoded.";
@@ -642,6 +768,56 @@ function render(j) {
     ? "<ul>" + j.anomalies.map(a => `<li>SID ${a.sid} ${escapeHtml(a.name)}: peak Δ=${fmtNum(a.peak_delta)} (mean ${fmtNum(a.mean_delta)})</li>`).join("") + "</ul>"
     : "None.";
 }
+
+/* G11: per-parameter time-in-yellow / time-in-red badges */
+function fmtDurS(s) {
+  if (s >= 60) return (s / 60).toFixed(1) + " min";
+  return s.toFixed(0) + " s";
+}
+function limitCell(p) {
+  const l = p.limit;
+  if (!l) return "<span class='lim-none'>no limit</span>";
+  if (l.state === "ok") return "<span class='lim-ok'>in band</span>";
+  let out = "";
+  if (l.time_in_red_s > 0) out += `<span class='lim-badge red'>RED ${fmtDurS(l.time_in_red_s)}</span>`;
+  if (l.time_in_yellow_s > 0) out += `<span class='lim-badge yellow'>YEL ${fmtDurS(l.time_in_yellow_s)}</span>`;
+  return out || "<span class='lim-ok'>in band</span>";
+}
+
+/* G11: limit-band shading on plotted series (yellow wash outside the yellow
+   band, red wash outside the red band, dashed threshold lines). */
+const limitBandPlugin = {
+  id: "limitBands",
+  beforeDatasetsDraw(chart, _args, opts) {
+    const b = opts && opts.band;
+    if (!b) return;
+    const area = chart.chartArea, y = chart.scales.y;
+    if (!area || !y) return;
+    const px = v => Math.max(area.top, Math.min(area.bottom, y.getPixelForValue(v)));
+    const ctx = chart.ctx;
+    ctx.save();
+    const zone = (fromPx, toPx, color) => {
+      const top = Math.min(fromPx, toPx), h = Math.abs(toPx - fromPx);
+      if (h > 0.5) { ctx.fillStyle = color; ctx.fillRect(area.left, top, area.right - area.left, h); }
+    };
+    const YEL = "rgba(245,158,11,0.08)", RED = "rgba(248,113,113,0.10)";
+    if (b.yellow_high != null) zone(area.top, px(b.yellow_high), YEL);
+    if (b.yellow_low != null) zone(px(b.yellow_low), area.bottom, YEL);
+    if (b.red_high != null) zone(area.top, px(b.red_high), RED);
+    if (b.red_low != null) zone(px(b.red_low), area.bottom, RED);
+    ctx.setLineDash([4, 3]); ctx.lineWidth = 1;
+    for (const [k, c] of [["yellow_low", "#f59e0b"], ["yellow_high", "#f59e0b"],
+                          ["red_low", "#f87171"], ["red_high", "#f87171"]]) {
+      const v = b[k];
+      if (v == null) continue;
+      const yv = y.getPixelForValue(v);
+      if (yv < area.top || yv > area.bottom) continue;
+      ctx.strokeStyle = c;
+      ctx.beginPath(); ctx.moveTo(area.left, yv); ctx.lineTo(area.right, yv); ctx.stroke();
+    }
+    ctx.restore();
+  }
+};
 
 function fmtNum(x) {
   if (x == null || !isFinite(x)) return "—";
@@ -687,7 +863,7 @@ function formatCucTime(cuc) {
   return new Date(CUC_EPOCH_UNIX_MS + cuc * 1000).toISOString().substr(11, 12);
 }
 
-function addChart(sid, pid, name, series, units) {
+function addChart(sid, pid, name, series, units, limit) {
   if (!series || series.length < 1) return;
   const chartId = `chart-${sid}-${pid}`;
   const chartsBody = $("chartsBody");
@@ -762,7 +938,9 @@ function addChart(sid, pid, name, series, units) {
         zoom: {
           pan: { enabled: true, mode: 'xy', modifierKey: 'ctrl' },
           zoom: { wheel: { enabled: true, speed: 0.1 }, pinch: { enabled: true }, mode: 'xy' }
-        }
+        },
+        // G11: limit-band shading from mcs/limits.yaml (null = no band)
+        limitBands: { band: limit && limit.band ? limit.band : null }
       },
       scales: {
         x: {
@@ -779,7 +957,8 @@ function addChart(sid, pid, name, series, units) {
     // datalabels options are configured. Referencing the undeclared global
     // `ChartDataLabels` threw a ReferenceError while building the options
     // object, killing every chart before it was constructed.
-    plugins: (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : []
+    plugins: [limitBandPlugin].concat(
+      (typeof ChartDataLabels !== 'undefined') ? [ChartDataLabels] : [])
   });
   chartInstances[chartId] = chart;
 }

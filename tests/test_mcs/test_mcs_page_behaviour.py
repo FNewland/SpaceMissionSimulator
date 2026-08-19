@@ -675,7 +675,9 @@ class TestS15ClearButton:
         assert out["count"] == "250"
         assert out["cap"] == " / 1000"
         assert out["width"] == "25%"
-        assert "ENABLED" in out["state"] and "25% full" in out["state"]
+        # 0.1 % resolution — the same resolution the OBDH page renders these
+        # stores at, so the two pages cannot appear to disagree by rounding.
+        assert "ENABLED" in out["state"] and "25.0% full" in out["state"]
 
     def test_store_card_uses_the_new_fields_when_they_arrive(self, tmp_path):
         out = run_js("""

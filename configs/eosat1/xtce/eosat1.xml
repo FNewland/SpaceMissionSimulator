@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <SpaceSystem xmlns="http://www.omg.org/spec/XTCE/20180204" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="EOSAT-1">
-  <Header version="1.0+2fdbeaed7708" classification="Unclassified — Simulation"/>
+  <Header version="1.0+f46653e0637e" classification="Unclassified — Simulation"/>
   <SpaceSystem name="CCSDS">
     <LongDescription>CCSDS Space Packet Protocol header definitions</LongDescription>
     <TelemetryMetaData>
@@ -672,15 +672,21 @@
         <FloatParameterType name="eps_fpa_cooler_cmd_Type">
           <FloatDataEncoding sizeInBits="32"/>
         </FloatParameterType>
-        <FloatParameterType name="eps_pl_prop_Type">
-          <FloatDataEncoding sizeInBits="32"/>
-        </FloatParameterType>
-        <FloatParameterType name="eps_line_current_8_Type">
-          <FloatDataEncoding sizeInBits="32"/>
+        <IntegerParameterType name="eps_pl_prop_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="eps_line_current_8_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="16" encoding="unsigned">
+            <DefaultCalibrator>
+              <PolynomialCalibrator>
+                <Term coefficient="0.001" exponent="1"/>
+              </PolynomialCalibrator>
+            </DefaultCalibrator>
+          </IntegerDataEncoding>
           <UnitSet>
             <Unit>A</Unit>
           </UnitSet>
-        </FloatParameterType>
+        </IntegerParameterType>
         <IntegerParameterType name="eps_eclipse_active_Type" signed="false">
           <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
         </IntegerParameterType>
@@ -1070,6 +1076,8 @@
             <ParameterRefEntry parameterRef="/EOSAT-1/EPS/eps_battery_heater_on"/>
             <ParameterRefEntry parameterRef="/EOSAT-1/EPS/eps_battery_heater_setpoint"/>
             <ParameterRefEntry parameterRef="/EOSAT-1/EPS/eps_wing_status"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/EPS/eps_pl_prop"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/EPS/eps_line_current_8"/>
           </EntryList>
         </SequenceContainer>
       </ContainerSet>
@@ -1431,45 +1439,63 @@
             </StaticAlarmRanges>
           </DefaultAlarm>
         </IntegerParameterType>
-        <FloatParameterType name="aocs_mag_x_Type">
-          <FloatDataEncoding sizeInBits="32"/>
+        <IntegerParameterType name="aocs_mag_x_Type" signed="true">
+          <IntegerDataEncoding sizeInBits="32" encoding="twosComplement"/>
           <UnitSet>
             <Unit>nT</Unit>
           </UnitSet>
-        </FloatParameterType>
-        <FloatParameterType name="aocs_mag_y_Type">
-          <FloatDataEncoding sizeInBits="32"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_mag_y_Type" signed="true">
+          <IntegerDataEncoding sizeInBits="32" encoding="twosComplement"/>
           <UnitSet>
             <Unit>nT</Unit>
           </UnitSet>
-        </FloatParameterType>
-        <FloatParameterType name="aocs_mag_z_Type">
-          <FloatDataEncoding sizeInBits="32"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_mag_z_Type" signed="true">
+          <IntegerDataEncoding sizeInBits="32" encoding="twosComplement"/>
           <UnitSet>
             <Unit>nT</Unit>
           </UnitSet>
-        </FloatParameterType>
+        </IntegerParameterType>
         <IntegerParameterType name="aocs_mode_Type" signed="false">
           <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
         </IntegerParameterType>
-        <FloatParameterType name="aocs_gps_lat_Type">
-          <FloatDataEncoding sizeInBits="32"/>
+        <IntegerParameterType name="aocs_gps_lat_Type" signed="true">
+          <IntegerDataEncoding sizeInBits="32" encoding="twosComplement">
+            <DefaultCalibrator>
+              <PolynomialCalibrator>
+                <Term coefficient="0.0001" exponent="1"/>
+              </PolynomialCalibrator>
+            </DefaultCalibrator>
+          </IntegerDataEncoding>
           <UnitSet>
             <Unit>deg</Unit>
           </UnitSet>
-        </FloatParameterType>
-        <FloatParameterType name="aocs_gps_lon_Type">
-          <FloatDataEncoding sizeInBits="32"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_gps_lon_Type" signed="true">
+          <IntegerDataEncoding sizeInBits="32" encoding="twosComplement">
+            <DefaultCalibrator>
+              <PolynomialCalibrator>
+                <Term coefficient="0.0001" exponent="1"/>
+              </PolynomialCalibrator>
+            </DefaultCalibrator>
+          </IntegerDataEncoding>
           <UnitSet>
             <Unit>deg</Unit>
           </UnitSet>
-        </FloatParameterType>
-        <FloatParameterType name="aocs_gps_alt_Type">
-          <FloatDataEncoding sizeInBits="32"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_gps_alt_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="32" encoding="unsigned">
+            <DefaultCalibrator>
+              <PolynomialCalibrator>
+                <Term coefficient="0.001" exponent="1"/>
+              </PolynomialCalibrator>
+            </DefaultCalibrator>
+          </IntegerDataEncoding>
           <UnitSet>
             <Unit>km</Unit>
           </UnitSet>
-        </FloatParameterType>
+        </IntegerParameterType>
         <FloatParameterType name="aocs_solar_beta_Type">
           <FloatDataEncoding sizeInBits="32"/>
           <UnitSet>
@@ -1813,45 +1839,6 @@
           <FloatDataEncoding sizeInBits="32"/>
         </FloatParameterType>
         <FloatParameterType name="aocs_sun_body_z_Type">
-          <FloatDataEncoding sizeInBits="32"/>
-        </FloatParameterType>
-        <FloatParameterType name="aocs_mag_a_x_Type">
-          <FloatDataEncoding sizeInBits="32"/>
-          <UnitSet>
-            <Unit>nT</Unit>
-          </UnitSet>
-        </FloatParameterType>
-        <FloatParameterType name="aocs_mag_a_y_Type">
-          <FloatDataEncoding sizeInBits="32"/>
-          <UnitSet>
-            <Unit>nT</Unit>
-          </UnitSet>
-        </FloatParameterType>
-        <FloatParameterType name="aocs_mag_a_z_Type">
-          <FloatDataEncoding sizeInBits="32"/>
-          <UnitSet>
-            <Unit>nT</Unit>
-          </UnitSet>
-        </FloatParameterType>
-        <FloatParameterType name="aocs_mag_b_x_Type">
-          <FloatDataEncoding sizeInBits="32"/>
-          <UnitSet>
-            <Unit>nT</Unit>
-          </UnitSet>
-        </FloatParameterType>
-        <FloatParameterType name="aocs_mag_b_y_Type">
-          <FloatDataEncoding sizeInBits="32"/>
-          <UnitSet>
-            <Unit>nT</Unit>
-          </UnitSet>
-        </FloatParameterType>
-        <FloatParameterType name="aocs_mag_b_z_Type">
-          <FloatDataEncoding sizeInBits="32"/>
-          <UnitSet>
-            <Unit>nT</Unit>
-          </UnitSet>
-        </FloatParameterType>
-        <FloatParameterType name="aocs_mag_select_Type">
           <FloatDataEncoding sizeInBits="32"/>
         </FloatParameterType>
         <IntegerParameterType name="aocs_css_px_Type" signed="false">
@@ -2528,6 +2515,84 @@
         <IntegerParameterType name="aocs_wheels_commissioned_Type" signed="false">
           <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
         </IntegerParameterType>
+        <IntegerParameterType name="aocs_gyro_cal_state_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_gyro_cal_progress_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+          <UnitSet>
+            <Unit>%</Unit>
+          </UnitSet>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_gyro_cal_bias_x_Type" signed="true">
+          <IntegerDataEncoding sizeInBits="16" encoding="twosComplement">
+            <DefaultCalibrator>
+              <PolynomialCalibrator>
+                <Term coefficient="1e-05" exponent="1"/>
+              </PolynomialCalibrator>
+            </DefaultCalibrator>
+          </IntegerDataEncoding>
+          <UnitSet>
+            <Unit>deg/s</Unit>
+          </UnitSet>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_gyro_cal_bias_y_Type" signed="true">
+          <IntegerDataEncoding sizeInBits="16" encoding="twosComplement">
+            <DefaultCalibrator>
+              <PolynomialCalibrator>
+                <Term coefficient="1e-05" exponent="1"/>
+              </PolynomialCalibrator>
+            </DefaultCalibrator>
+          </IntegerDataEncoding>
+          <UnitSet>
+            <Unit>deg/s</Unit>
+          </UnitSet>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_gyro_cal_bias_z_Type" signed="true">
+          <IntegerDataEncoding sizeInBits="16" encoding="twosComplement">
+            <DefaultCalibrator>
+              <PolynomialCalibrator>
+                <Term coefficient="1e-05" exponent="1"/>
+              </PolynomialCalibrator>
+            </DefaultCalibrator>
+          </IntegerDataEncoding>
+          <UnitSet>
+            <Unit>deg/s</Unit>
+          </UnitSet>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_gyro_cal_comp_mag_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="16" encoding="unsigned">
+            <DefaultCalibrator>
+              <PolynomialCalibrator>
+                <Term coefficient="1e-05" exponent="1"/>
+              </PolynomialCalibrator>
+            </DefaultCalibrator>
+          </IntegerDataEncoding>
+          <UnitSet>
+            <Unit>deg/s</Unit>
+          </UnitSet>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_gyro_cal_result_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_gyro_cal_reject_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="16" encoding="unsigned"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_gyro_units_mask_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_gyro_bias_resid_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="16" encoding="unsigned">
+            <DefaultCalibrator>
+              <PolynomialCalibrator>
+                <Term coefficient="1e-05" exponent="1"/>
+              </PolynomialCalibrator>
+            </DefaultCalibrator>
+          </IntegerDataEncoding>
+          <UnitSet>
+            <Unit>deg/s</Unit>
+          </UnitSet>
+        </IntegerParameterType>
         <FloatParameterType name="aocs_wheels_enabled_Type">
           <FloatDataEncoding sizeInBits="32"/>
         </FloatParameterType>
@@ -2540,42 +2605,60 @@
             <Unit>Nm</Unit>
           </UnitSet>
         </FloatParameterType>
-        <FloatParameterType name="aocs_gps_ecef_x_Type">
-          <FloatDataEncoding sizeInBits="32"/>
+        <IntegerParameterType name="aocs_gps_ecef_x_Type" signed="true">
+          <IntegerDataEncoding sizeInBits="32" encoding="twosComplement"/>
           <UnitSet>
             <Unit>m</Unit>
           </UnitSet>
-        </FloatParameterType>
-        <FloatParameterType name="aocs_gps_ecef_y_Type">
-          <FloatDataEncoding sizeInBits="32"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_gps_ecef_y_Type" signed="true">
+          <IntegerDataEncoding sizeInBits="32" encoding="twosComplement"/>
           <UnitSet>
             <Unit>m</Unit>
           </UnitSet>
-        </FloatParameterType>
-        <FloatParameterType name="aocs_gps_ecef_z_Type">
-          <FloatDataEncoding sizeInBits="32"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_gps_ecef_z_Type" signed="true">
+          <IntegerDataEncoding sizeInBits="32" encoding="twosComplement"/>
           <UnitSet>
             <Unit>m</Unit>
           </UnitSet>
-        </FloatParameterType>
-        <FloatParameterType name="aocs_gps_vel_x_Type">
-          <FloatDataEncoding sizeInBits="32"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_gps_vel_x_Type" signed="true">
+          <IntegerDataEncoding sizeInBits="32" encoding="twosComplement">
+            <DefaultCalibrator>
+              <PolynomialCalibrator>
+                <Term coefficient="0.001" exponent="1"/>
+              </PolynomialCalibrator>
+            </DefaultCalibrator>
+          </IntegerDataEncoding>
           <UnitSet>
             <Unit>m/s</Unit>
           </UnitSet>
-        </FloatParameterType>
-        <FloatParameterType name="aocs_gps_vel_y_Type">
-          <FloatDataEncoding sizeInBits="32"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_gps_vel_y_Type" signed="true">
+          <IntegerDataEncoding sizeInBits="32" encoding="twosComplement">
+            <DefaultCalibrator>
+              <PolynomialCalibrator>
+                <Term coefficient="0.001" exponent="1"/>
+              </PolynomialCalibrator>
+            </DefaultCalibrator>
+          </IntegerDataEncoding>
           <UnitSet>
             <Unit>m/s</Unit>
           </UnitSet>
-        </FloatParameterType>
-        <FloatParameterType name="aocs_gps_vel_z_Type">
-          <FloatDataEncoding sizeInBits="32"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="aocs_gps_vel_z_Type" signed="true">
+          <IntegerDataEncoding sizeInBits="32" encoding="twosComplement">
+            <DefaultCalibrator>
+              <PolynomialCalibrator>
+                <Term coefficient="0.001" exponent="1"/>
+              </PolynomialCalibrator>
+            </DefaultCalibrator>
+          </IntegerDataEncoding>
           <UnitSet>
             <Unit>m/s</Unit>
           </UnitSet>
-        </FloatParameterType>
+        </IntegerParameterType>
         <FloatParameterType name="aocs_mtq_dipole_total_Type">
           <FloatDataEncoding sizeInBits="32"/>
           <UnitSet>
@@ -2617,13 +2700,25 @@
         <Parameter name="aocs_rw2_speed" parameterTypeRef="aocs_rw2_speed_Type"/>
         <Parameter name="aocs_rw3_speed" parameterTypeRef="aocs_rw3_speed_Type"/>
         <Parameter name="aocs_rw4_speed" parameterTypeRef="aocs_rw4_speed_Type"/>
-        <Parameter name="aocs_mag_x" parameterTypeRef="aocs_mag_x_Type"/>
-        <Parameter name="aocs_mag_y" parameterTypeRef="aocs_mag_y_Type"/>
-        <Parameter name="aocs_mag_z" parameterTypeRef="aocs_mag_z_Type"/>
+        <Parameter name="aocs_mag_x" parameterTypeRef="aocs_mag_x_Type">
+          <LongDescription>Measured body-frame field Bx (noisy, failure-affected; 0 when invalid — see 0x025C)</LongDescription>
+        </Parameter>
+        <Parameter name="aocs_mag_y" parameterTypeRef="aocs_mag_y_Type">
+          <LongDescription>Measured body-frame field By</LongDescription>
+        </Parameter>
+        <Parameter name="aocs_mag_z" parameterTypeRef="aocs_mag_z_Type">
+          <LongDescription>Measured body-frame field Bz</LongDescription>
+        </Parameter>
         <Parameter name="aocs_mode" parameterTypeRef="aocs_mode_Type"/>
-        <Parameter name="aocs_gps_lat" parameterTypeRef="aocs_gps_lat_Type"/>
-        <Parameter name="aocs_gps_lon" parameterTypeRef="aocs_gps_lon_Type"/>
-        <Parameter name="aocs_gps_alt" parameterTypeRef="aocs_gps_alt_Type"/>
+        <Parameter name="aocs_gps_lat" parameterTypeRef="aocs_gps_lat_Type">
+          <LongDescription>GPS geodetic latitude (measured; valid when gps_fix &gt;= 2)</LongDescription>
+        </Parameter>
+        <Parameter name="aocs_gps_lon" parameterTypeRef="aocs_gps_lon_Type">
+          <LongDescription>GPS geodetic longitude (measured; valid when gps_fix &gt;= 2)</LongDescription>
+        </Parameter>
+        <Parameter name="aocs_gps_alt" parameterTypeRef="aocs_gps_alt_Type">
+          <LongDescription>GPS geodetic altitude (measured; valid when gps_fix &gt;= 2)</LongDescription>
+        </Parameter>
         <Parameter name="aocs_solar_beta" parameterTypeRef="aocs_solar_beta_Type">
           <LongDescription>Solar beta angle</LongDescription>
         </Parameter>
@@ -2742,27 +2837,6 @@
         </Parameter>
         <Parameter name="aocs_sun_body_z" parameterTypeRef="aocs_sun_body_z_Type">
           <LongDescription>Sun vector body Z (from CSS composite)</LongDescription>
-        </Parameter>
-        <Parameter name="aocs_mag_a_x" parameterTypeRef="aocs_mag_a_x_Type">
-          <LongDescription>Magnetometer A X-axis</LongDescription>
-        </Parameter>
-        <Parameter name="aocs_mag_a_y" parameterTypeRef="aocs_mag_a_y_Type">
-          <LongDescription>Magnetometer A Y-axis</LongDescription>
-        </Parameter>
-        <Parameter name="aocs_mag_a_z" parameterTypeRef="aocs_mag_a_z_Type">
-          <LongDescription>Magnetometer A Z-axis</LongDescription>
-        </Parameter>
-        <Parameter name="aocs_mag_b_x" parameterTypeRef="aocs_mag_b_x_Type">
-          <LongDescription>Magnetometer B X-axis</LongDescription>
-        </Parameter>
-        <Parameter name="aocs_mag_b_y" parameterTypeRef="aocs_mag_b_y_Type">
-          <LongDescription>Magnetometer B Y-axis</LongDescription>
-        </Parameter>
-        <Parameter name="aocs_mag_b_z" parameterTypeRef="aocs_mag_b_z_Type">
-          <LongDescription>Magnetometer B Z-axis</LongDescription>
-        </Parameter>
-        <Parameter name="aocs_mag_select" parameterTypeRef="aocs_mag_select_Type">
-          <LongDescription>Active magnetometer (0=A, 1=B)</LongDescription>
         </Parameter>
         <Parameter name="aocs_css_px" parameterTypeRef="aocs_css_px_Type">
           <LongDescription>CSS +X face illumination</LongDescription>
@@ -2980,6 +3054,36 @@
         <Parameter name="aocs_wheels_commissioned" parameterTypeRef="aocs_wheels_commissioned_Type">
           <LongDescription>Latched 1 once &gt;=3 wheels have been simultaneously enabled; cleared by an AOCS power-down. Lets FDIR tell a double wheel failure apart from an uncommissioned bus</LongDescription>
         </Parameter>
+        <Parameter name="aocs_gyro_cal_state" parameterTypeRef="aocs_gyro_cal_state_Type">
+          <LongDescription>Gyro bias calibration state: 0=IDLE, 1=RUNNING, 2=COMPLETE, 3=ABORTED</LongDescription>
+        </Parameter>
+        <Parameter name="aocs_gyro_cal_progress" parameterTypeRef="aocs_gyro_cal_progress_Type">
+          <LongDescription>Gyro bias calibration progress through the averaging arc (0-100)</LongDescription>
+        </Parameter>
+        <Parameter name="aocs_gyro_cal_bias_x" parameterTypeRef="aocs_gyro_cal_bias_x_Type">
+          <LongDescription>Bias estimated by the LAST completed gyro calibration, X body axis. Compare against aocs.gyro_bias_injected (0x0296) when an instructor has injected a gyro_bias fault</LongDescription>
+        </Parameter>
+        <Parameter name="aocs_gyro_cal_bias_y" parameterTypeRef="aocs_gyro_cal_bias_y_Type">
+          <LongDescription>Bias estimated by the last completed gyro calibration, Y body axis</LongDescription>
+        </Parameter>
+        <Parameter name="aocs_gyro_cal_bias_z" parameterTypeRef="aocs_gyro_cal_bias_z_Type">
+          <LongDescription>Bias estimated by the last completed gyro calibration, Z body axis</LongDescription>
+        </Parameter>
+        <Parameter name="aocs_gyro_cal_comp_mag" parameterTypeRef="aocs_gyro_cal_comp_mag_Type">
+          <LongDescription>Magnitude of the gyro bias compensation currently applied on board. Non-zero after a successful calibration; the HARDWARE bias (0x0296) is unchanged — calibration compensates the fault, it does not repair it</LongDescription>
+        </Parameter>
+        <Parameter name="aocs_gyro_cal_result" parameterTypeRef="aocs_gyro_cal_result_Type">
+          <LongDescription>Outcome of the last gyro calibration attempt: 0=never run, 1=SUCCESS, 2=FAILED/ABORTED</LongDescription>
+        </Parameter>
+        <Parameter name="aocs_gyro_cal_reject" parameterTypeRef="aocs_gyro_cal_reject_Type">
+          <LongDescription>Failure code of the last gyro-calibration refusal or abort (0 = none). 0x0A01 unpowered, 0x0A02 a gyro unit off, 0x0A03 no star-tracker reference, 0x0A04 rate too high, 0x0A05 already running, 0x0A06 preconditions lost mid-run, 0x0A07 abort with nothing running</LongDescription>
+        </Parameter>
+        <Parameter name="aocs_gyro_units_mask" parameterTypeRef="aocs_gyro_units_mask_Type">
+          <LongDescription>Per-unit gyro power state as a bitmask: bit0 = X unit (S2 device 0x0206), bit1 = Y (0x0207), bit2 = Z (0x0208). 0x07 = all three on. Tells the operator WHICH unit is off, which the 0x0294 count cannot</LongDescription>
+        </Parameter>
+        <Parameter name="aocs_gyro_bias_resid" parameterTypeRef="aocs_gyro_bias_resid_Type">
+          <LongDescription>Magnitude of the bias still present at the gyro output after on-board compensation. This is what drives GYRO_BIAS_HIGH (0x020B); a successful calibration drives it to zero even while the injected hardware fault persists</LongDescription>
+        </Parameter>
         <Parameter name="aocs_wheels_enabled" parameterTypeRef="aocs_wheels_enabled_Type">
           <LongDescription>Number of enabled reaction wheels</LongDescription>
         </Parameter>
@@ -2990,22 +3094,22 @@
           <LongDescription>Commanded total RW torque</LongDescription>
         </Parameter>
         <Parameter name="aocs_gps_ecef_x" parameterTypeRef="aocs_gps_ecef_x_Type">
-          <LongDescription>GPS ECEF position X</LongDescription>
+          <LongDescription>GPS ECEF position X (measured; valid when gps_fix &gt;= 2)</LongDescription>
         </Parameter>
         <Parameter name="aocs_gps_ecef_y" parameterTypeRef="aocs_gps_ecef_y_Type">
-          <LongDescription>GPS ECEF position Y</LongDescription>
+          <LongDescription>GPS ECEF position Y (measured; valid when gps_fix &gt;= 2)</LongDescription>
         </Parameter>
         <Parameter name="aocs_gps_ecef_z" parameterTypeRef="aocs_gps_ecef_z_Type">
-          <LongDescription>GPS ECEF position Z</LongDescription>
+          <LongDescription>GPS ECEF position Z (measured; valid when gps_fix &gt;= 2)</LongDescription>
         </Parameter>
         <Parameter name="aocs_gps_vel_x" parameterTypeRef="aocs_gps_vel_x_Type">
-          <LongDescription>GPS ECEF velocity X</LongDescription>
+          <LongDescription>GPS ECEF velocity X (measured; valid when gps_fix = 3)</LongDescription>
         </Parameter>
         <Parameter name="aocs_gps_vel_y" parameterTypeRef="aocs_gps_vel_y_Type">
-          <LongDescription>GPS ECEF velocity Y</LongDescription>
+          <LongDescription>GPS ECEF velocity Y (measured; valid when gps_fix = 3)</LongDescription>
         </Parameter>
         <Parameter name="aocs_gps_vel_z" parameterTypeRef="aocs_gps_vel_z_Type">
-          <LongDescription>GPS ECEF velocity Z</LongDescription>
+          <LongDescription>GPS ECEF velocity Z (measured; valid when gps_fix = 3)</LongDescription>
         </Parameter>
         <Parameter name="aocs_mtq_dipole_total" parameterTypeRef="aocs_mtq_dipole_total_Type">
           <LongDescription>Commanded total MTQ dipole</LongDescription>
@@ -3105,6 +3209,11 @@
             <ParameterRefEntry parameterRef="/EOSAT-1/AOCS/aocs_gyro_units_on"/>
             <ParameterRefEntry parameterRef="/EOSAT-1/AOCS/aocs_gyro_saturated"/>
             <ParameterRefEntry parameterRef="/EOSAT-1/AOCS/aocs_gyro_bias_injected"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/AOCS/aocs_gyro_units_mask"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/AOCS/aocs_gyro_bias_resid"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/AOCS/aocs_mag_x"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/AOCS/aocs_mag_y"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/AOCS/aocs_mag_z"/>
           </EntryList>
         </SequenceContainer>
       </ContainerSet>
@@ -3132,6 +3241,20 @@
             <Enumeration value="9" label="INERTIAL"/>
           </EnumerationList>
         </EnumeratedArgumentType>
+        <EnumeratedArgumentType name="AOCS_GYRO_CALIBRATION_action_ArgType">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned" byteOrder="mostSignificantByteFirst"/>
+          <EnumerationList>
+            <Enumeration value="0" label="START"/>
+            <Enumeration value="1" label="ABORT"/>
+          </EnumerationList>
+        </EnumeratedArgumentType>
+        <IntegerArgumentType name="AOCS_GYRO_CALIBRATION_duration_s_ArgType" signed="false">
+          <UnitSet>
+            <Unit>s</Unit>
+          </UnitSet>
+          <IntegerDataEncoding sizeInBits="16" encoding="unsigned" byteOrder="mostSignificantByteFirst"/>
+          <ValidRange minInclusive="0" maxInclusive="1800"/>
+        </IntegerArgumentType>
         <EnumeratedArgumentType name="AOCS_SET_POINTING_FRAME_frame_ArgType">
           <IntegerDataEncoding sizeInBits="8" encoding="unsigned" byteOrder="mostSignificantByteFirst"/>
           <EnumerationList>
@@ -3309,26 +3432,12 @@
           <LongDescription>Select primary star tracker</LongDescription>
           <ArgumentList>
             <Argument name="unit" argumentTypeRef="uint8_ArgType">
-              <LongDescription>0=ST1, 1=ST2</LongDescription>
+              <LongDescription>1=ST1, 2=ST2 (0 is refused)</LongDescription>
             </Argument>
           </ArgumentList>
           <CommandContainer name="ST_SELECT_Container">
             <EntryList>
               <FixedValueEntry name="func_id" binaryValue="06" sizeInBits="8"/>
-              <ArgumentRefEntry argumentRef="unit"/>
-            </EntryList>
-          </CommandContainer>
-        </MetaCommand>
-        <MetaCommand name="MAG_SELECT">
-          <LongDescription>Select magnetometer source</LongDescription>
-          <ArgumentList>
-            <Argument name="unit" argumentTypeRef="uint8_ArgType">
-              <LongDescription>0=primary, 1=redundant</LongDescription>
-            </Argument>
-          </ArgumentList>
-          <CommandContainer name="MAG_SELECT_Container">
-            <EntryList>
-              <FixedValueEntry name="func_id" binaryValue="07" sizeInBits="8"/>
               <ArgumentRefEntry argumentRef="unit"/>
             </EntryList>
           </CommandContainer>
@@ -3412,10 +3521,20 @@
           </CommandContainer>
         </MetaCommand>
         <MetaCommand name="AOCS_GYRO_CALIBRATION">
-          <LongDescription>Reset gyro bias estimate</LongDescription>
+          <LongDescription>Start (or abort) an on-board gyro bias calibration. The spacecraft averages the attitude filter's observed gyro bias over a quiet arc with the star tracker in the determination loop, then applies the result as a compensation on the gyro measurement path. Refused with a specific code if the preconditions do not hold (0x0A01 AOCS unpowered, 0x0A02 a gyro unit off, 0x0A03 no star-tracker reference, 0x0A04 body rate too high, 0x0A05 already running). Progress is aocs.gyro_cal_progress (0x02CA) and the estimate lands in aocs.gyro_cal_bias_x/y/z (0x02CB-0x02CD). NOTE the description used to read &quot;Reset gyro bias estimate&quot;, and that is exactly what the on-board handler did — it zeroed a truth state and returned success without estimating anything.</LongDescription>
+          <ArgumentList>
+            <Argument name="action" argumentTypeRef="AOCS_GYRO_CALIBRATION_action_ArgType" initialValue="0">
+              <LongDescription>0=START a calibration, 1=ABORT the one in progress</LongDescription>
+            </Argument>
+            <Argument name="duration_s" argumentTypeRef="AOCS_GYRO_CALIBRATION_duration_s_ArgType" initialValue="0">
+              <LongDescription>Averaging arc length. 0 = the configured default (sensors.gyro.calibration.duration_s, 300 s); other values are clamped to [30, 1800] s</LongDescription>
+            </Argument>
+          </ArgumentList>
           <CommandContainer name="AOCS_GYRO_CALIBRATION_Container">
             <EntryList>
               <FixedValueEntry name="func_id" binaryValue="0D" sizeInBits="8"/>
+              <ArgumentRefEntry argumentRef="action"/>
+              <ArgumentRefEntry argumentRef="duration_s"/>
             </EntryList>
           </CommandContainer>
         </MetaCommand>
@@ -4460,13 +4579,13 @@
           <LongDescription>Running image (0=bootloader, 1=application)</LongDescription>
         </Parameter>
         <Parameter name="obdh_hktm_buf_fill" parameterTypeRef="obdh_hktm_buf_fill_Type">
-          <LongDescription>HK/TM buffer fill level</LongDescription>
+          <LongDescription>S15 store 1 (HK_Store) fill — same value as TM(15,14) for store 1</LongDescription>
         </Parameter>
         <Parameter name="obdh_event_buf_fill" parameterTypeRef="obdh_event_buf_fill_Type">
-          <LongDescription>Event buffer fill level</LongDescription>
+          <LongDescription>S15 store 2 (Event_Store) fill — same value as TM(15,14) for store 2</LongDescription>
         </Parameter>
         <Parameter name="obdh_alarm_buf_fill" parameterTypeRef="obdh_alarm_buf_fill_Type">
-          <LongDescription>Alarm buffer fill level</LongDescription>
+          <LongDescription>S15 store 4 (Alarm_Store) fill — same value as TM(15,14) for store 4</LongDescription>
         </Parameter>
         <Parameter name="obdh_last_reboot_cause" parameterTypeRef="obdh_last_reboot_cause_Type">
           <LongDescription>Last reboot cause (0=none,1=watchdog,2=memory,3=switchover,4=commanded)</LongDescription>
@@ -4496,7 +4615,7 @@
           <LongDescription>Memory error count (correctable + uncorrectable)</LongDescription>
         </Parameter>
         <Parameter name="obdh_storage_fill" parameterTypeRef="obdh_storage_fill_Type">
-          <LongDescription>Onboard storage fill percentage</LongDescription>
+          <LongDescription>Mass-memory unit usage (mirror of obdh.mmm_used, 0x0303) — NOT an S15 store fill</LongDescription>
         </Parameter>
         <Parameter name="obdh_can_bus_status" parameterTypeRef="obdh_can_bus_status_Type">
           <LongDescription>CAN bus status (0=offline, 1=nominal, 2=degraded)</LongDescription>
@@ -4551,6 +4670,10 @@
             <ParameterRefEntry parameterRef="/EOSAT-1/OBDH/obdh_obc_time_fine"/>
             <ParameterRefEntry parameterRef="/EOSAT-1/OBDH/obdh_time_ref"/>
             <ParameterRefEntry parameterRef="/EOSAT-1/OBDH/obdh_time_since_sync_s"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/OBDH/fdir_level"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/OBDH/fdir_active_alarms"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/OBDH/fdir_critical_alarms"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/OBDH/fdir_high_alarms"/>
           </EntryList>
         </SequenceContainer>
       </ContainerSet>
@@ -5030,7 +5153,7 @@
         <Parameter name="ttc_rssi" parameterTypeRef="ttc_rssi_Type"/>
         <Parameter name="ttc_link_margin" parameterTypeRef="ttc_link_margin_Type"/>
         <Parameter name="ttc_tm_data_rate" parameterTypeRef="ttc_tm_data_rate_Type">
-          <LongDescription>Active TM information rate (BEACON 1000 / LOW 16000 / HIGH 128000)</LongDescription>
+          <LongDescription>Active TM information rate (SAFE 1000 / LOW 16000 / HIGH 128000)</LongDescription>
         </Parameter>
         <Parameter name="ttc_xpdr_temp" parameterTypeRef="ttc_xpdr_temp_Type"/>
         <Parameter name="ttc_ranging_status" parameterTypeRef="ttc_ranging_status_Type">
@@ -5102,7 +5225,7 @@
           <LongDescription>Modulation scheme (0=BPSK, 1=QPSK, 2=8PSK, 3=OQPSK)</LongDescription>
         </Parameter>
         <Parameter name="ttc_tm_tier" parameterTypeRef="ttc_tm_tier_Type">
-          <LongDescription>ACTIVE TM rate tier index (0=BEACON 1 kbps, 1=LOW 16 kbps, 2=HIGH 128 kbps) — what is on air now, after the permission gates</LongDescription>
+          <LongDescription>ACTIVE TM rate tier index (0=SAFE 1 kbps, 1=LOW 16 kbps, 2=HIGH 128 kbps) — what is on air now, after the permission gates</LongDescription>
         </Parameter>
         <Parameter name="ttc_tm_tier_cmd" parameterTypeRef="ttc_tm_tier_cmd_Type">
           <LongDescription>COMMANDED TM rate tier index (TTC_SET_DATA_RATE, S8 func 65). Differs from 0x0539 whenever a gate demotes the active tier</LongDescription>
@@ -5206,7 +5329,7 @@
           <EnumerationList>
             <Enumeration value="0" label="LOW" shortDescription="16 kbps BPSK conv(7,1/2)+RS - routine operations"/>
             <Enumeration value="1" label="HIGH" shortDescription="128 kbps QPSK RS(255,223) - dumps only (gated)"/>
-            <Enumeration value="255" label="BEACON" shortDescription="1 kbps bootloader beacon - not selectable here"/>
+            <Enumeration value="255" label="SAFE" shortDescription="1 kbps bootloader lifeline rate (ex-BEACON) - not selectable here"/>
           </EnumerationList>
         </EnumeratedArgumentType>
         <EnumeratedArgumentType name="TTC_SET_TX_POWER_level_ArgType">
@@ -5245,10 +5368,10 @@
           </CommandContainer>
         </MetaCommand>
         <MetaCommand name="TTC_SET_DATA_RATE">
-          <LongDescription>Select a rung of the TM data-rate ladder defined in subsystems/ttc.yaml tm_rate_tiers. Sets data_rate_mode (the COMMANDED tier), which the TTC tick resolves the active tier from, so the commanded tier survives the tick and is authoritative. Three tiers: LOW 16 kbps BPSK conv(7,1/2)+RS — ROUTINE OPERATIONS, and the safe-mode / FDIR fallback; HIGH 128 kbps QPSK RS(255,223) — delayed-telemetry playback and image dumps only; BEACON 1 kbps BPSK conv(7,1/2)+RS — bootloader/beacon lifeline, entered with TTC_SET_BEACON_MODE, not selectable here. LEGACY ENCODING PRESERVED VERBATIM: rate=0 still means &quot;the low rate&quot; and rate=1 still means &quot;the high rate&quot; — they now select LOW (16 kbps) and HIGH (128 kbps) instead of 1 kbps and 64 kbps, so existing procedures, OBCPs and the FDIR ttc_reduce_power action keep their meaning. Permission rules are enforced by REJECTION with an S1.8 execution failure (error 0x0007), never by silent clamping: HIGH requires a deployed antenna, DOWNLINK/dump mode (TTC_SET_DOWNLINK_MODE) and elevation &gt;= 10 deg, and every tier except BEACON is refused while beacon mode is latched. An unknown tier code gives error 0x0003.</LongDescription>
+          <LongDescription>Select a rung of the TM data-rate ladder defined in subsystems/ttc.yaml tm_rate_tiers. Sets data_rate_mode (the COMMANDED tier), which the TTC tick resolves the active tier from, so the commanded tier survives the tick and is authoritative. Three tiers: LOW 16 kbps BPSK conv(7,1/2)+RS — ROUTINE OPERATIONS, and the safe-mode / FDIR fallback; HIGH 128 kbps QPSK RS(255,223) — delayed-telemetry playback and image dumps only; SAFE 1 kbps BPSK conv(7,1/2)+RS — bootloader/contingency lifeline rate (renamed from BEACON, 2026-08c — &quot;beacon&quot; always means the UHF whip transmitter now), entered with TTC_SET_BEACON_MODE, not selectable here. LEGACY ENCODING PRESERVED VERBATIM: rate=0 still means &quot;the low rate&quot; and rate=1 still means &quot;the high rate&quot; — they now select LOW (16 kbps) and HIGH (128 kbps) instead of 1 kbps and 64 kbps, so existing procedures, OBCPs and the FDIR ttc_reduce_power action keep their meaning. Permission rules are enforced by REJECTION with an S1.8 execution failure (error 0x0007), never by silent clamping: HIGH requires a deployed antenna and DOWNLINK/dump mode (TTC_SET_DOWNLINK_MODE), and every tier except SAFE is refused while beacon mode is latched. An unknown tier code gives error 0x0003. There is NO on-board elevation gate (2026-08c): the 10 deg HIGH policy is a GROUND rule — the MCS warns when HIGH is commanded below 10 deg from its own contact geometry, and the planner schedules HIGH dumps above it.</LongDescription>
           <ArgumentList>
             <Argument name="rate" argumentTypeRef="TTC_SET_DATA_RATE_rate_ArgType" initialValue="0">
-              <LongDescription>Tier code: 0=LOW(16 kbps, routine operations), 1=HIGH(128 kbps, dumps only), 255=BEACON(1 kbps, bootloader only). Codes come from tm_rate_tiers[].command_code in subsystems/ttc.yaml.</LongDescription>
+              <LongDescription>Tier code: 0=LOW(16 kbps, routine operations), 1=HIGH(128 kbps, dumps only), 255=SAFE(1 kbps, bootloader only). Codes come from tm_rate_tiers[].command_code in subsystems/ttc.yaml.</LongDescription>
             </Argument>
           </ArgumentList>
           <CommandContainer name="TTC_SET_DATA_RATE_Container">
@@ -5298,7 +5421,7 @@
           </CommandContainer>
         </MetaCommand>
         <MetaCommand name="TTC_SET_BEACON_MODE">
-          <LongDescription>Enable/disable beacon mode (low-rate telemetry)</LongDescription>
+          <LongDescription>Enable/disable beacon MODE — pins the S-band ladder to the SAFE (1 kbps) rung. NOT the UHF beacon transmitter (TTC_BEACON_TX_ON/OFF).</LongDescription>
           <ArgumentList>
             <Argument name="on" argumentTypeRef="uint8_ArgType">
               <LongDescription>0=off, 1=on</LongDescription>
@@ -7112,18 +7235,18 @@ Completion sets the per-band coefficients; 0x0646 cal_valid_mask marks the bands
   <SpaceSystem name="FDIR">
     <TelemetryMetaData>
       <ParameterTypeSet>
-        <FloatParameterType name="fdir_level_Type">
-          <FloatDataEncoding sizeInBits="32"/>
-        </FloatParameterType>
-        <FloatParameterType name="fdir_active_alarms_Type">
-          <FloatDataEncoding sizeInBits="32"/>
-        </FloatParameterType>
-        <FloatParameterType name="fdir_critical_alarms_Type">
-          <FloatDataEncoding sizeInBits="32"/>
-        </FloatParameterType>
-        <FloatParameterType name="fdir_high_alarms_Type">
-          <FloatDataEncoding sizeInBits="32"/>
-        </FloatParameterType>
+        <IntegerParameterType name="fdir_level_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="fdir_active_alarms_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="fdir_critical_alarms_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        </IntegerParameterType>
+        <IntegerParameterType name="fdir_high_alarms_Type" signed="false">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        </IntegerParameterType>
       </ParameterTypeSet>
       <ParameterSet>
         <Parameter name="fdir_level" parameterTypeRef="fdir_level_Type">
@@ -7168,7 +7291,7 @@ Completion sets the per-band coefficients; 0x0646 cal_valid_mask marks the bands
       </ParameterTypeSet>
       <ParameterSet>
         <Parameter name="sat_mode" parameterTypeRef="sat_mode_Type">
-          <LongDescription>Spacecraft mode (0=safe, 1=nominal, 2=emergency)</LongDescription>
+          <LongDescription>Derived spacecraft mode — identical to sc_mode (0=SAFE, 1=NOMINAL, 2=SCIENCE, 3=EMERGENCY)</LongDescription>
         </Parameter>
         <Parameter name="proc_progress" parameterTypeRef="proc_progress_Type">
           <LongDescription>Procedure execution progress</LongDescription>
@@ -7187,41 +7310,27 @@ Completion sets the per-band coefficients; 0x0646 cal_valid_mask marks the bands
         </Parameter>
       </ParameterSet>
       <ContainerSet>
-        <SequenceContainer name="HK_PROP_SID9">
+        <SequenceContainer name="HK_GPS_NAV_SID12">
           <BaseContainer containerRef="/EOSAT-1/PUS/HKPacket">
             <RestrictionCriteria>
               <ComparisonList>
-                <Comparison parameterRef="/EOSAT-1/PUS/hk_SID" value="9"/>
+                <Comparison parameterRef="/EOSAT-1/PUS/hk_SID" value="12"/>
               </ComparisonList>
             </RestrictionCriteria>
           </BaseContainer>
           <EntryList>
-            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/prop_state"/>
-            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/prop_tank_pressure"/>
-            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/prop_propellant_mass"/>
-            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/prop_propellant_pct"/>
-            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/prop_tank_temp"/>
-            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/prop_catbed_temp"/>
-            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/prop_latch_a_state"/>
-            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/prop_latch_b_state"/>
-            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/prop_fcv_state"/>
-            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/prop_thrust_est"/>
-            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/prop_isp_est"/>
-            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/prop_dv_accum"/>
-            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/prop_dv_remaining"/>
-            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/prop_burn_status"/>
-            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/prop_burn_dv_cmd"/>
-            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/prop_burn_dv_achieved"/>
-            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/prop_burn_time_cmd"/>
-            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/prop_burn_time_elapsed"/>
-            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/prop_burn_count"/>
-            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/prop_total_on_time"/>
-            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/prop_abort_reason"/>
-            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/prop_arm_inhibit_mask"/>
-            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/prop_leak_rate"/>
-            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/prop_sc_mass"/>
-            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/prop_orbit_epoch_version"/>
-            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/prop_sma_km"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/aocs_gps_fix"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/aocs_gps_num_sats"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/aocs_gps_pdop"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/aocs_gps_lat"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/aocs_gps_lon"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/aocs_gps_alt"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/aocs_gps_ecef_x"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/aocs_gps_ecef_y"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/aocs_gps_ecef_z"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/aocs_gps_vel_x"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/aocs_gps_vel_y"/>
+            <ParameterRefEntry parameterRef="/EOSAT-1/Spacecraft/aocs_gps_vel_z"/>
           </EntryList>
         </SequenceContainer>
       </ContainerSet>
@@ -7253,6 +7362,15 @@ Completion sets the per-band coefficients; 0x0646 cal_valid_mask marks the bands
           <EnumerationList>
             <Enumeration value="0" label="CLOSED" shortDescription="Blade across the aperture — the dark-frame configuration"/>
             <Enumeration value="1" label="OPEN" shortDescription="Light path open — required for capture and for flat fields"/>
+          </EnumerationList>
+        </EnumeratedArgumentType>
+        <EnumeratedArgumentType name="SYS_SET_MISSION_PHASE_phase_ArgType">
+          <IntegerDataEncoding sizeInBits="8" encoding="unsigned" byteOrder="mostSignificantByteFirst"/>
+          <EnumerationList>
+            <Enumeration value="3" label="BOOTLOADER_OPS" shortDescription="OBC in bootloader, beacon HK only (backwards only, requires FORCE)"/>
+            <Enumeration value="4" label="LEOP" shortDescription="Application software booted, sequential checkout"/>
+            <Enumeration value="5" label="COMMISSIONING" shortDescription="All subsystems being checked out"/>
+            <Enumeration value="6" label="NOMINAL" shortDescription="Declared operational — unlocks sc_mode NOMINAL and the propulsion interlock"/>
           </EnumerationList>
         </EnumeratedArgumentType>
       </ArgumentTypeSet>
@@ -7512,8 +7630,8 @@ Completion sets the per-band coefficients; 0x0646 cal_valid_mask marks the bands
             </EntryList>
           </CommandContainer>
         </MetaCommand>
-        <MetaCommand name="S2_AOCS_MAGNETOMETER_A">
-          <LongDescription>Control magnetometer A (device 0x0209)</LongDescription>
+        <MetaCommand name="S2_AOCS_MAGNETOMETER">
+          <LongDescription>Control the magnetometer (single 3-axis unit, device 0x0209 — no redundant unit is fitted)</LongDescription>
           <ArgumentList>
             <Argument name="device_id" argumentTypeRef="uint16_ArgType">
               <LongDescription>Device ID (0x0209)</LongDescription>
@@ -7522,24 +7640,7 @@ Completion sets the per-band coefficients; 0x0646 cal_valid_mask marks the bands
               <LongDescription>0=OFF, 1=ON</LongDescription>
             </Argument>
           </ArgumentList>
-          <CommandContainer name="S2_AOCS_MAGNETOMETER_A_Container">
-            <EntryList>
-              <ArgumentRefEntry argumentRef="device_id"/>
-              <ArgumentRefEntry argumentRef="state"/>
-            </EntryList>
-          </CommandContainer>
-        </MetaCommand>
-        <MetaCommand name="S2_AOCS_MAGNETOMETER_B">
-          <LongDescription>Control magnetometer B (device 0x020A)</LongDescription>
-          <ArgumentList>
-            <Argument name="device_id" argumentTypeRef="uint16_ArgType">
-              <LongDescription>Device ID (0x020A)</LongDescription>
-            </Argument>
-            <Argument name="state" argumentTypeRef="uint8_ArgType">
-              <LongDescription>0=OFF, 1=ON</LongDescription>
-            </Argument>
-          </ArgumentList>
-          <CommandContainer name="S2_AOCS_MAGNETOMETER_B_Container">
+          <CommandContainer name="S2_AOCS_MAGNETOMETER_Container">
             <EntryList>
               <ArgumentRefEntry argumentRef="device_id"/>
               <ArgumentRefEntry argumentRef="state"/>
@@ -8799,6 +8900,42 @@ TM(13,2) response: transfer_id(2) + total_blocks(4) + crc32(4). The last two fie
           <CommandContainer name="GET_PARAM_Container">
             <EntryList>
               <ArgumentRefEntry argumentRef="param_id"/>
+            </EntryList>
+          </CommandContainer>
+        </MetaCommand>
+        <MetaCommand name="SYS_SET_MISSION_PHASE">
+          <LongDescription>Declare the mission phase. Nothing else advances the phase past 4 (LEOP): the on-board state machine only implements the automatic power-up chain 1-&gt;2-&gt;3-&gt;4 and the reboot revert to 3, so COMMISSIONING (5) and NOMINAL (6) are ground declarations and this is the telecommand that makes them.
+WHAT THE PHASE ACTUALLY GATES — the phase is not a label, it is a live interlock on six mechanisms:
+  * which subsystems tick at all (phases 0-1 tick nothing);
+  * telecommand acceptance — at phase &lt;= 3 the OBC is running the
+    bootloader and only the bootloader command subset is accepted
+    (S17.1, S9.1, S3 beacon HK, S20.1/3, S8.1 funcs 19/20/52-57/61/
+    66/67/69, and this command);
+  * the derived spacecraft mode — sc_mode (and its telemetered copy
+    sat.mode 0x0001) is forced to SAFE at any phase &lt; 6, so the console
+    header cannot read NOMINAL until this command has been sent;
+  * arming of the advanced fault-propagation model, which is disarmed
+    below phase 6 because during LEOP the wheels are legitimately
+    unpowered;
+  * the phase-gated legacy FDIR rules (fdir.yaml `min_phase`);
+  * the propulsion interlock — prop.yaml declares `min_phase: 6`, so
+    with the phase stuck at 4 no burn can ever be armed.
+
+GUARDS. Out-of-range (&gt; 6) is refused with 0x0C01. Phases 0-2 are pre-separation states owned by the launch vehicle and are never ground-commandable, forced or not (0x0C02) — commanding phase 0 would stop the subsystem ticks that carry the uplink and lock the operator out. Entering an application phase (&gt;= 4) while the OBC is running the bootloader is refused with 0x0C03; boot the application first with OBC_BOOT_APP (func 55) and the state machine advances 3-&gt;4 by itself. A BACKWARDS transition is refused with 0x0C04 unless the FORCE flag is set: a real mission does not casually go NOMINAL -&gt; LEOP, but an operator rehearsing a regression or unwinding a premature declaration must be able to, so the answer is reject-with-reason plus an explicit opt-in, not a blanket refusal. Every accepted change raises the S5 event MISSION_PHASE_CHANGED (0x0055) carrying the from and to phases.</LongDescription>
+          <DefaultSignificance consequenceLevel="critical"/>
+          <ArgumentList>
+            <Argument name="phase" argumentTypeRef="SYS_SET_MISSION_PHASE_phase_ArgType" initialValue="6">
+              <LongDescription>Target mission phase. 3-6 only; 0-2 are pre-separation states and are always refused.</LongDescription>
+            </Argument>
+            <Argument name="flags" argumentTypeRef="uint8_ArgType" initialValue="0">
+              <LongDescription>Bit 0 = FORCE (permit a backwards transition). Bits 1-7 reserved, must be 0.</LongDescription>
+            </Argument>
+          </ArgumentList>
+          <CommandContainer name="SYS_SET_MISSION_PHASE_Container">
+            <EntryList>
+              <FixedValueEntry name="func_id" binaryValue="78" sizeInBits="8"/>
+              <ArgumentRefEntry argumentRef="phase"/>
+              <ArgumentRefEntry argumentRef="flags"/>
             </EntryList>
           </CommandContainer>
         </MetaCommand>

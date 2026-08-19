@@ -372,7 +372,12 @@ pointing number from a run above ×60.**
 
 ### Link Override
 
-- **Override Passes**: Simulates continuous RF contact (overrides realistic pass schedule)
+- **Override Passes**: Forces GEOMETRIC visibility — the simulator behaves as
+  if a ground station were continuously in view (uplink forced; the contact
+  leg of the downlink gate satisfied). It does **not** resurrect a transmitter
+  that is off: with the S-band PA off or the `ttc_tx` line cold there is still
+  no telemetry and the radio page shows the carrier down, override or not
+  (2026-08c item 6). Use PA ON / line ON to restore the downlink.
   - When ON: All telemetry and commanding always available
   - When OFF: Link only available during simulated ground station passes
   - Useful for training independent of ground station passes

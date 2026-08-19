@@ -12,7 +12,7 @@ three rungs:
 
 | Tier | Rate | Modulation / coding | Purpose | Gates |
 |---|---|---|---|---|
-| BEACON | 1 000 bps | BPSK, conv(7,1/2)+RS | Bootloader / beacon lifeline | Not commandable — entered by `TTC_SET_BEACON_MODE` or by the bootloader |
+| SAFE (ex-BEACON) | 1 000 bps | BPSK, conv(7,1/2)+RS | Bootloader / contingency lifeline | Not commandable — entered by `TTC_SET_BEACON_MODE` or by the bootloader. "Beacon" now always means the separate UHF whip transmitter |
 | LOW | 16 000 bps | BPSK, conv(7,1/2)+RS | **Routine operations** and the safe-mode / FDIR fallback | None. Works with the antenna stowed and at any elevation |
 | HIGH | 128 000 bps | QPSK, RS(255,223) | Delayed-telemetry playback and image dumps ONLY | Antenna deployed **and** DOWNLINK mode **and** elevation >= 10 deg |
 
@@ -37,7 +37,7 @@ confirms that the new bit error rate remains acceptable after the transition.
 | ttc.link_status | 0x0501 | 2 (LOCKED) |
 | ttc.link_margin | 0x0503 | > 3.0 dB for HIGH, > 0 dB minimum |
 | ttc.tm_data_rate | 0x0506 | Active information rate (1000 / 16000 / 128000 bps) |
-| ttc.tm_tier | 0x0539 | ACTIVE tier index (0=BEACON, 1=LOW, 2=HIGH) |
+| ttc.tm_tier | 0x0539 | ACTIVE tier index (0=SAFE, 1=LOW, 2=HIGH) |
 | ttc.tm_tier_cmd | 0x053A | COMMANDED tier index — differs from 0x0539 when a gate refuses the tier |
 | ttc.tm_symbol_rate | 0x053B | 16000 Bd at LOW (BPSK), 64000 Bd at HIGH (QPSK) |
 | ttc.downlink_mode | 0x053C | 1 required before HIGH is accepted |
@@ -55,7 +55,7 @@ confirms that the new bit error rate remains acceptable after the transition.
 |---|---|---|---|---|
 | HK_REQUEST | 3 | 27 | — | Request one-shot HK report |
 | TTC_SET_DOWNLINK_MODE | 8 | 1 | 79 | Enter/leave DOWNLINK mode — the mode gate on HIGH |
-| TTC_SET_DATA_RATE | 8 | 1 | 65 | Select a ladder tier (0=LOW, 1=HIGH; 255=BEACON, bootloader only) |
+| TTC_SET_DATA_RATE | 8 | 1 | 65 | Select a ladder tier (0=LOW, 1=HIGH; 255=SAFE, bootloader only) |
 
 ## Procedure Steps
 

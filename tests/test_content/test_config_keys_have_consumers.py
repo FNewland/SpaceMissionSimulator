@@ -141,7 +141,11 @@ def _source_corpus() -> str:
     for root in SOURCE_ROOTS:
         if not root.exists():
             continue
-        for pattern in ("**/*.py", "**/*.html", "**/*.sh", "**/*.conf"):
+        # *.js included: the modern UI pages (static/modern/*.js) are
+        # first-class config consumers (e.g. mcs/display_config.yaml keys
+        # capture_gates/health_baselines are read by mcs.js). Agent 5 integration.
+        for pattern in ("**/*.py", "**/*.html", "**/*.js", "**/*.sh",
+                        "**/*.conf"):
             for f in root.glob(pattern):
                 if "__pycache__" in str(f):
                     continue

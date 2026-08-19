@@ -116,7 +116,7 @@ This takes approximately 10-30 seconds.
 ### Step 3a: Clear Beacon Mode and Restore the LOW Rung
 **Note:** Booting the application does **NOT** clear beacon mode. Entering the
 bootloader latched `ttc.beacon_mode` (0x0521) = 1, and it stays latched after the
-application is running. While it is latched, BEACON (1 000 bps) is the ONLY permitted
+application is running. While it is latched, the SAFE rung (1 000 bps, ex-BEACON) is the ONLY permitted
 tier: every `TTC_SET_DATA_RATE` is refused with an S1.8 execution failure, error
 `0x0007`, whose failure notice reads "TM rate is forced to the beacon tier in beacon
 mode (LOW refused)". The same text is raised as S5 event `0x030B COMMAND_REJECTED`.

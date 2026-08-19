@@ -33,7 +33,7 @@ operational awareness is fully transferred to the incoming shift team.
 | tcs.temp_fpa | 0x0408 | Current value |
 | ttc.link_status | 0x0501 | Current link state |
 | ttc.tm_data_rate | 0x0506 | Active rate — expect 16000 bps (LOW) in routine operations |
-| ttc.tm_tier | 0x0539 | ACTIVE tier (0=BEACON, 1=LOW, 2=HIGH) |
+| ttc.tm_tier | 0x0539 | ACTIVE tier (0=SAFE, 1=LOW, 2=HIGH) |
 | ttc.tm_tier_cmd | 0x053A | COMMANDED tier — must equal 0x0539 at handover |
 | ttc.downlink_mode | 0x053C | Expect 0 outside a dump |
 | payload.mode | 0x0600 | Current payload mode |

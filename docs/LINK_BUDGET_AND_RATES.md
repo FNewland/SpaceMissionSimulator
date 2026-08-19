@@ -53,7 +53,7 @@ copy of the numbers — they all read `configs/eosat1/subsystems/ttc.yaml`.
 
 | # | Tier | Information rate | Modulation | Coding | Coding gain | Symbol rate | Occupied BW | Command code |
 |---|------|------------------|------------|--------|-------------|-------------|-------------|--------------|
-| 0 | `BEACON` | 1 000 bps | BPSK | conv(7,½) + RS(255,223) | 7.5 dB | 1 kBd | 3.1 kHz | `0xFF` (not commandable) |
+| 0 | `SAFE` | 1 000 bps | BPSK | conv(7,½) + RS(255,223) | 7.5 dB | 1 kBd | 3.1 kHz | `0xFF` (not commandable) |
 | 1 | `LOW` | 16 000 bps | BPSK | conv(7,½) + RS(255,223) | 7.5 dB | 16 kBd | 49.8 kHz | `0x00` |
 | 2 | `HIGH` | 128 000 bps | QPSK | RS(255,223) | 6.0 dB | 64 kBd | 99.5 kHz | `0x01` |
 
@@ -62,9 +62,10 @@ The telecommand uplink is a **fixed 4 000 bps** and is deliberately *not* on the
 than it looks: the key used to default to the top TM rate, so a change to the downlink
 would silently have changed uplink lock timing.
 
-### 2.1 BEACON — 1 kbps, the lifeline
+### 2.1 SAFE — 1 kbps, the lifeline (renamed from BEACON, 2026-08c)
 
-`BEACON` exists to answer one question — *is the OBC alive?* — under the worst conditions
+`SAFE` (the rung formerly named BEACON — "beacon" now always means the UHF whip
+transmitter) exists to answer one question — *is the OBC alive?* — under the worst conditions
 the mission will ever see. It carries SID 11: seven parameters, a 29-byte packet, every
 30 seconds. That is **7.7 bps of average load**, so 1 kbps carries it with 130× headroom
 and a transmit burst of 0.23 s. Its occupied bandwidth, 3.1 kHz, is the narrowest signal
@@ -127,10 +128,10 @@ three ways, and every gate is enforced by **rejection**, never by silent clampin
 |------|-----------|-----------|------------------|
 | Antenna deployed | `requires_antenna: true` | `ttc.antenna_deployed` (0x0520) | A stowed patch has the wrong pattern for a sustained high-rate dump |
 | DOWNLINK mode on | `requires_downlink_mode: true` | `ttc.downlink_mode` (0x053C) | Bulk downlink must be a deliberate, planned activity — see §5 |
-| Elevation ≥ 10° | `min_elevation_deg: 10.0` | `ttc.contact_elevation` (0x050A) | Tracking rate, Doppler rate and multipath make a low-elevation 64 kBd QPSK dump a poor bet |
+| Elevation ≥ 10° — **GROUND policy, not on-board** | `min_elevation_deg: 10.0` (read by planner + MCS only) | ground contact geometry (0x050A shown for reference) | Tracking rate, Doppler rate and multipath make a low-elevation 64 kBd QPSK dump a poor bet — enforced by planning and an MCS arm-through hold |
 
 A command that fails a gate returns an S1.8 execution failure with error `0x0007` and a
-message naming the gate: *"HIGH (128000 bps) requires elevation >= 10 deg (now 6.4 deg)"*.
+message naming the gate, e.g. *"HIGH (128000 bps) requires DOWNLINK/dump mode"*.
 An unknown tier code returns `0x0003`. Nothing is quietly substituted. A clamp would teach
 an operator that the spacecraft ignores them; a rejection with a reason teaches them the
 rule.
@@ -173,7 +174,7 @@ makes the same information fit in half the spectrum:
 
 | Tier | Bits/symbol | Symbol rate | Occupied BW (SRRC α=0.35) | % of the 5 MHz mission channel |
 |------|------------:|------------:|--------------------------:|-------------------------------:|
-| BEACON | 1 (BPSK) | 1 kBd | 3.1 kHz | 0.1 % |
+| SAFE | 1 (BPSK) | 1 kBd | 3.1 kHz | 0.1 % |
 | LOW | 1 (BPSK) | 16 kBd | 49.8 kHz | 1.0 % |
 | HIGH | 2 (QPSK) | 64 kBd | 99.5 kHz | 2.0 % |
 
@@ -214,7 +215,7 @@ coding gain.
 
 **Link margin (dB) at 5° elevation — the worst geometry any station sees:**
 
-| Station | G/T (dB/K) | BEACON | LOW | HIGH |
+| Station | G/T (dB/K) | SAFE | LOW | HIGH |
 |---------|-----------:|-------:|----:|-----:|
 | Inuvik | 22.0 | 59.8 | 47.7 | 37.2 |
 | Svalbard | 21.5 | 59.3 | 47.2 | 36.7 |
@@ -224,7 +225,7 @@ coding gain.
 
 **Link margin (dB) at 10° elevation — where the HIGH tier's gate opens:**
 
-| Station | BEACON | LOW | HIGH |
+| Station | SAFE | LOW | HIGH |
 |---------|-------:|----:|-----:|
 | Inuvik | 64.0 | 52.0 | 41.5 |
 | Svalbard | 63.5 | 51.5 | 41.0 |
@@ -234,7 +235,7 @@ coding gain.
 
 **Link margin (dB) at zenith:**
 
-| Station | BEACON | LOW | HIGH |
+| Station | SAFE | LOW | HIGH |
 |---------|-------:|----:|-----:|
 | Inuvik | 76.3 | 64.3 | 53.8 |
 | Svalbard | 75.8 | 63.8 | 53.3 |
@@ -252,15 +253,15 @@ look at this table, because it is the more common real-world situation and it te
 harder lesson: **the rate is chosen by policy, bandwidth, power, thermal cost and pass
 planning, not by a power cliff.**
 
-That is why the HIGH tier is gated on mode and elevation rather than on a margin
-threshold. Modelling a fake cliff at 10° would have been easier to explain and less
-honest.
+That is why the HIGH tier is gated on mode on board, with the 10° elevation rule
+enforced on the GROUND (planner + MCS hold) rather than by a margin threshold.
+Modelling a fake cliff at 10° would have been easier to explain and less honest.
 
 **The rungs are separated by exactly what the budget predicts.** Read any row:
 
 | Step | Rate ratio | Rate term | Coding change | Predicted | Measured (Iqaluit @5°) |
 |------|-----------:|----------:|---------------|----------:|----------------------:|
-| BEACON → LOW | 16× | −12.04 dB | none | −12.04 dB | 57.8 − 45.7 = **−12.1 dB** |
+| SAFE → LOW | 16× | −12.04 dB | none | −12.04 dB | 57.8 − 45.7 = **−12.1 dB** |
 | LOW → HIGH | 8× | −9.03 dB | conv+RS 7.5 → RS 6.0 dB | −10.53 dB | 45.7 − 35.2 = **−10.5 dB** |
 
 If a measured set does not show those two steps, the fault is in the model, not in the
@@ -404,9 +405,9 @@ only because dumps are booked onto the right passes.
 
 | Command | Service | Subtype | Func | Argument |
 |---------|--------:|--------:|-----:|----------|
-| `TTC_SET_DATA_RATE` | 8 | 1 | **65** | one `uint8` tier code: `0x00` = LOW, `0x01` = HIGH, `0xFF` = BEACON (not accepted in nominal software) |
+| `TTC_SET_DATA_RATE` | 8 | 1 | **65** | one `uint8` tier code: `0x00` = LOW, `0x01` = HIGH, `0xFF` = SAFE (not accepted in nominal software) |
 | `TTC_SET_DOWNLINK_MODE` | 8 | 1 | **79** | one `uint8`: 1 = enter DOWNLINK/dump mode, 0 = leave |
-| `TTC_SET_BEACON_MODE` | 8 | 1 | 70 | one `uint8`: 1 = force the BEACON rung |
+| `TTC_SET_BEACON_MODE` | 8 | 1 | 70 | one `uint8`: 1 = force the SAFE (1 kbps) rung |
 
 **The legacy encoding is preserved verbatim.** `rate=0` has always meant "the low rate"
 and `rate=1` "the high rate". Every printed procedure, every OBCP and the FDIR
@@ -462,16 +463,25 @@ four different gates all report `0x0007`.
 |---|------|-----------|-----:|------------------------------|
 | 1 | Tier code must be a real tier | any | `0x0003` | `Invalid TM rate/tier <x>. Valid: 0=LOW(16000 bps), 1=HIGH(128000 bps), …` |
 | 2 | **Beacon mode forces the beacon tier** | LOW, HIGH | `0x0007` | `TM rate is forced to the beacon tier in beacon mode (LOW refused)` |
-| 3 | BEACON is bootloader/beacon-only | BEACON (`0xFF`) | `0x0007` | `BEACON is a bootloader/beacon-only tier (1000 bps); not selectable in nominal operations` |
+| 3 | SAFE is bootloader-only | SAFE (`0xFF`) | `0x0007` | `SAFE is a bootloader-only tier (1000 bps); not selectable in nominal operations` |
 | 4 | Antenna must be deployed | LOW, HIGH | `0x0007` | `HIGH (128000 bps) requires a deployed antenna` |
 | 5 | DOWNLINK/dump mode must be on | HIGH | `0x0007` | `HIGH (128000 bps) requires DOWNLINK/dump mode (TTC_SET_DOWNLINK_MODE)` |
-| 6 | Elevation ≥ 10° (while the link is up) | HIGH | `0x0007` | `HIGH (128000 bps) requires elevation >= 10 deg (now 6.4 deg)` |
 | — | TT&C TX power line must be on | any | `0x0004` | rejected earlier, at *acceptance*: `S8 func_id 65: power line 'ttc_tx' is OFF` |
 
-Gates 1–6 are `ttc_basic._tier_permission_error`; the power-line gate is the engine's
-central acceptance-time check. Gates 4–6 apply to the ACTIVE tier every tick as well, so
+Gates 1–5 are `ttc_basic._tier_permission_error`; the power-line gate is the engine's
+central acceptance-time check. Gates 4–5 apply to the ACTIVE tier every tick as well, so
 HIGH auto-reverts and resumes without re-commanding (§6.2) — but the *commanded* change
 above is refused outright.
+
+**Gate 6 (elevation ≥ 10°) no longer exists ON BOARD** (2026-08c): a spacecraft
+cannot know its elevation as seen from a station, so the 10° HIGH rule moved to the
+GROUND — `subsystems/ttc.yaml tm_rate_tiers[HIGH].min_elevation_deg` is read by the
+mission planner (which schedules HIGH dumps above it) and by the MCS commanding page
+(which raises an arm-through hold when HIGH is commanded below it, from the ground's
+own contact geometry). The refusal text
+`HIGH ... requires elevation >= 10 deg` can therefore no longer be produced by the
+spacecraft; the physics still degrades low-elevation links honestly through the
+cosec atmospheric loss and the G/T de-rate.
 
 **The exact command sequence.**
 
@@ -505,13 +515,14 @@ If the PA *is* off, the symptom is now unmistakable: no S-band telemetry, only t
 beacon's SID 11 every 30 s, with `ttc.pa_on` inside that beacon reading 0.
 
 Leaving beacon mode (step 3) also resets the **commanded** tier to LOW. Before 2026-08b
-it reset only the flag, so the console reported commanded = BEACON / active = LOW
+it reset only the flag, so the console reported commanded = SAFE / active = LOW
 indefinitely and the tier-demotion display could never clear.
 
 *Select HIGH for a dump, then give it back:*
 
 ```
-1. …LOW selectable as above, and elevation >= 10 deg  ← gate 6
+1. …LOW selectable as above (elevation ≥ 10 deg is a GROUND policy hold in the
+   MCS, not an on-board gate)
 2. S8.1 func 79  TTC_SET_DOWNLINK_MODE, on = 1        ← clears gate 5
 3. S8.1 func 65  TTC_SET_DATA_RATE, rate = 0x01       → HIGH, 128 kbps
 4. …dump (S15.9 / S13)…
@@ -621,7 +632,7 @@ the answer to *is the S-band chain alive?* is no. That is why the textbook has s
 why `UPGRADE_ROADMAP.md` scope (d) asked for the UHF numbers to be kept as the
 bootloader-beacon link.
 
-Until 2026-08b it was not implemented. `BEACON` was rung 0 of the S-band ladder — the
+Until 2026-08b it was not implemented. The rung now named `SAFE` was rung 0 of the S-band ladder — the
 same PA, the same antenna, 1 kbps instead of 16 — so switching the S-band PA off silenced
 the lifeline along with everything else. Franz's ruling R2: build the second radio.
 
@@ -650,7 +661,7 @@ CubeSat beacons actually sit.
 
 450 km orbit, slant range from the same geometry table as §4.
 
-| Elevation | Slant range | UHF FSPL @437.5 MHz | Eb/N₀ | **Beacon margin** | S-band LOW margin | S-band BEACON rung |
+| Elevation | Slant range | UHF FSPL @437.5 MHz | Eb/N₀ | **Beacon margin** | S-band LOW margin | S-band SAFE rung |
 |---|---:|---:|---:|---:|---:|---:|
 | 5° | 1 943.7 km | 151.04 dB | 31.9 dB | **29.8 dB** | 45.7 dB | 57.8 dB |
 | 10° | 1 569.6 km | 149.19 dB | 35.3 dB | **33.2 dB** | 50.0 dB | 62.1 dB |
@@ -671,7 +682,7 @@ required       9.6 uncoded − 7.5 conv(7,½)+RS           =    2.10 dB
 MARGIN                                                       29.81 dB
 ```
 
-Now put that next to the S-band `BEACON` rung at the same geometry and the same
+Now put that next to the S-band `SAFE` rung at the same geometry and the same
 information rate — 57.8 dB — and account for the 28.0 dB difference. It is **not** one
 effect:
 
@@ -720,7 +731,7 @@ This is the trap, and it is the reason the beacon transmitter went unbuilt for a
 
 | Name | What it is | Telemetry | Changed by |
 |---|---|---|---|
-| **`BEACON` tier** | rung 0 of the **S-band** TM rate ladder — 1 kbps, BPSK, conv+RS | `ttc.tm_tier` 0x0539 = 0 | entering beacon mode or the bootloader |
+| **`SAFE` tier** (ex-BEACON) | rung 0 of the **S-band** TM rate ladder — 1 kbps, BPSK, conv+RS | `ttc.tm_tier` 0x0539 = 0 | entering beacon mode or the bootloader |
 | **`beacon_mode`** | a latched flag that pins the S-band ladder to that rung | `ttc.beacon_mode` 0x0521 | `TTC_SET_BEACON_MODE`, S8 func **70** |
 | **beacon transmitter** | a **second radio** at 437.5 MHz carrying SID 11 | `ttc.beacon_tx_on` 0x0526, `ttc.beacon_active` 0x0527 | `TTC_BEACON_TX_ON`/`_OFF`, S8 funcs **97/98** |
 
@@ -731,5 +742,5 @@ beacon quietly available underneath.
 
 **In the bootloader all three line up, which is exactly why they got conflated.** The
 bootloader sets `pa_on = False`, `antenna_deployed = False` and `beacon_mode = True`, so
-the S-band ladder sits on its BEACON rung *and* the S-band chain is inhibited *and* the
+the S-band ladder sits on its SAFE (ex-BEACON) rung *and* the S-band chain is inhibited *and* the
 UHF beacon is the only thing on the air. The three states coincide there and only there.

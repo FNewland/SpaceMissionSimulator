@@ -39,7 +39,7 @@ attitude determination capability and minimizes impact on mission operations.
 |---|---|---|---|---|
 | HK_REQUEST | 3 | 27 | — | Request one-shot HK report |
 | ST2_POWER | 8 | 1 | 5 | Star tracker 2 power on |
-| ST_SELECT | 8 | 1 | 6 | Select primary star tracker |
+| ST_SELECT | 8 | 1 | 6 | Select primary star tracker (wire: 1=ST1, 2=ST2, 0 refused) |
 | ST1_POWER | 8 | 1 | 4 | Star tracker 1 power off (isolation) |
 | AOCS_SET_MODE | 8 | 1 | 0 | Set AOCS mode (fallback to COARSE_SUN) |
 
@@ -80,7 +80,10 @@ order, on a spacecraft that had just lost attitude reference.
 
 ### Step 3: Select Star Tracker 2 as Primary
 **LABEL:** `STEP-3`
-**TC:** `ST_SELECT(unit=1)` (Service 8, Subtype 1, func_id 6) — Select ST2 as the primary attitude sensor
+**TC:** `ST_SELECT(unit=2)` (Service 8, Subtype 1, func_id 6) — Select ST2 as the
+primary attitude sensor. WIRE ENCODING IS 1=ST1, 2=ST2 (0 is refused): the old
+`unit=1` here SILENTLY RE-SELECTED the failed ST1 while the card believed it
+had switched to ST2 (2026-08c ruling)
 **TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — AOCS housekeeping, 10 s after the select
 **Verify:** `aocs.att_error` (0x0217) begins decreasing (attitude solution improving)
 **Verify:** `aocs.st2_status == 2` (0x0243, timeout 15 s) — TRACKING, confirmed stable

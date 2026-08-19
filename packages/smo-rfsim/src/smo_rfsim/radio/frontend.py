@@ -10,6 +10,7 @@ import time
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,14 @@ class RadioStatus:
     control_enabled: bool = False
     # Achieved downlink throughput measured at the receiver
     throughput_bps: float = 0.0
+    # ── Spacecraft transmitter state, from the sim's tx_active gate
+    # (2026-08c item 6). None = no sim feedback yet. The radio page shows
+    # this so "PA off" and "out of view" are distinguishable at a glance,
+    # and so the instructor pass override (which forces GEOMETRIC
+    # visibility only) is visibly unable to resurrect a dead transmitter.
+    sc_tx_on: Optional[bool] = None
+    sc_pa_on: Optional[bool] = None
+    pass_override: bool = False
     # Timestamp
     timestamp: float = 0.0
 
@@ -174,6 +183,16 @@ class RadioFrontend:
         else:
             self.status.ber_log10 = -1.0  # no meaningful BER
         self.status.link_margin_db = eb_n0_db - 9.6
+
+    def update_sc_tx(self, tx_on: Optional[bool] = None,
+                     pa_on: Optional[bool] = None,
+                     pass_override: bool = False):
+        """Spacecraft transmitter state from the sim (2026-08c item 6)."""
+        if tx_on is not None:
+            self.status.sc_tx_on = bool(tx_on)
+        if pa_on is not None:
+            self.status.sc_pa_on = bool(pa_on)
+        self.status.pass_override = bool(pass_override)
 
     def update_lock(self, carrier: LockState, bit_sync: LockState,
                     frame_sync: LockState):

@@ -37,6 +37,9 @@ from typing import Any
 import numpy as np
 
 from smo_common.models.subsystem import SubsystemModel
+from smo_simulator.failure_spec import (
+    FailureSpec, ParamSpec, T_FLOAT, enum, number,
+)
 
 G0 = 9.80665
 
@@ -92,6 +95,12 @@ class PropState:
     state: int = ST_SAFED
     m_prop_kg: float = 0.400
     tank_p_bar: float = 22.0
+    # Injected overpressure floor [bar], 0 = no injection. The blowdown
+    # relation recomputes `tank_p_bar` from the propellant load on EVERY tick,
+    # so an injection that only wrote `tank_p_bar` was erased within one tick
+    # and `tank_overpressure` had no observable effect at all. This field is
+    # part of the dataclass, so it also survives a breakpoint round trip.
+    tank_overpressure_bar: float = 0.0
     tank_temp_c: float = 15.0
     catbed_temp_c: float = 5.0     # mirror of 0x0409 for status/telemetry
     latch_a: int = VLV_OPEN        # branch A normally open
@@ -341,8 +350,10 @@ class PropBasicModel(SubsystemModel):
         if s.state == ST_FIRING:
             self._integrate_burn(dt, orbit_state)
 
-        # Blowdown pressure follows the propellant load
-        s.tank_p_bar = self._tank_pressure(s.m_prop_kg)
+        # Blowdown pressure follows the propellant load, unless an injected
+        # overpressure (pressurant thermal runaway) holds it above that.
+        s.tank_p_bar = max(self._tank_pressure(s.m_prop_kg),
+                           s.tank_overpressure_bar)
 
         # Threshold events (edge-triggered)
         self._threshold_events()
@@ -757,6 +768,55 @@ class PropBasicModel(SubsystemModel):
 
     # ── Failures ─────────────────────────────────────────────────────
 
+    # ─── Failure injection ───────────────────────────────────────────
+    # Declarative parameter specs — single source for the instructor form,
+    # FailureManager validation and the scenario content gate.
+    FAILURE_SPECS = {
+        "leak": FailureSpec(
+            name="leak", label="Propellant leak",
+            effect="Continuous propellant loss: tank mass (0x0B02) falls and "
+                   "blowdown pressure (0x0B01) decays faster than the burn "
+                   "plan predicts.",
+            magnitude=None,
+            params=(number("rate_mg_s", "Leak rate", unit="mg/s", lo=0.0,
+                           hi=1000.0, default=2.0, step=0.1),),
+        ),
+        "latch_stuck_open": FailureSpec(
+            name="latch_stuck_open", label="Latch valve stuck open",
+            effect="Selected latch valve reads FAULT and cannot be closed; "
+                   "with a seeping FCV the module loses propellant. Emits "
+                   "PROP_VALVE_FAULT (0x080A).",
+            magnitude=None,
+            params=(
+                enum("branch", "Latch valve", [0, 1],
+                     labels=["Latch A (branch 0)", "Latch B (branch 1)"],
+                     default=0),
+                number("rate_mg_s", "Resulting leak rate", unit="mg/s", lo=0.0,
+                       hi=1000.0, default=20.0, step=0.1),
+            ),
+        ),
+        "thrust_degraded": FailureSpec(
+            name="thrust_degraded", label="Thruster underperformance",
+            effect="Scales delivered thrust (catalyst bed degradation): the "
+                   "burn under-delivers dv. Emits PROP_UNDERPERFORMANCE "
+                   "(0x080C).",
+            magnitude=ParamSpec(
+                name="magnitude", type=T_FLOAT, label="Performance factor",
+                unit="fraction of nominal thrust", min=0.0, max=1.0,
+                default=0.6, step=0.01,
+                description="1.0 = nominal, 0.0 = no thrust at all."),
+        ),
+        "tank_overpressure": FailureSpec(
+            name="tank_overpressure", label="Tank overpressure",
+            effect="Pressurant thermal runaway: tank pressure (0x0B01) is "
+                   "forced to 24 bar + 4 bar x magnitude, over the red limit.",
+            magnitude=ParamSpec(
+                name="magnitude", type=T_FLOAT, label="Overpressure severity",
+                unit="fraction (1.0 = +4 bar over 24 bar)", min=0.0, max=4.0,
+                default=1.0, step=0.05),
+        ),
+    }
+
     def inject_failure(self, failure: str, magnitude: float = 1.0, **kw) -> None:
         s = self._state
         if failure == "leak":
@@ -776,8 +836,11 @@ class PropBasicModel(SubsystemModel):
                        f"PROP_UNDERPERFORMANCE: thrust factor "
                        f"{s.perf_factor:.2f}")
         elif failure == "tank_overpressure":
-            # Thermal-runaway teaching case: pressurant heats, P climbs
-            s.tank_p_bar = max(s.tank_p_bar, 24.0 + magnitude * 4.0)
+            # Thermal-runaway teaching case: pressurant heats, P climbs and
+            # STAYS up (0x0807 PROP_TANK_PRESSURE_HIGH, arm interlock refuses
+            # the burn) until the injection is cleared.
+            s.tank_overpressure_bar = 24.0 + magnitude * 4.0
+            s.tank_p_bar = max(s.tank_p_bar, s.tank_overpressure_bar)
 
     def clear_failure(self, failure: str, **kw) -> None:
         s = self._state
@@ -792,6 +855,7 @@ class PropBasicModel(SubsystemModel):
         elif failure == "thrust_degraded":
             s.perf_factor = 1.0
         elif failure == "tank_overpressure":
+            s.tank_overpressure_bar = 0.0
             s.tank_p_bar = self._tank_pressure(s.m_prop_kg)
 
     # ── Telemetry / state ────────────────────────────────────────────

@@ -330,32 +330,42 @@ class TestOBDHEnhanced:
     # 15. Buffer fill tracking (event buffer)
     # ------------------------------------------------------------------
     def test_buffer_fill_tracking(self):
-        """record_event should increase event_buf_fill. Buffer should
-        stop accepting events when full."""
+        """record_event should increase event_buf_count. Buffer should
+        stop accepting events when full.
+
+        `event_buf_fill` is the reported PERCENTAGE (of the S15 event store
+        when one exists, of the local counter otherwise); `event_buf_count`
+        is the packet count. They used to be the same field, which is how a
+        raw count ended up on a console gauge labelled '%'.
+        """
         model = self._make_model()
-        initial = model._state.event_buf_fill
-        assert initial == 0
+        assert model._state.event_buf_count == 0
+        assert model._state.event_buf_fill == 0.0
 
         # Record a few events
         for _ in range(5):
             result = model.record_event()
             assert result is True
 
-        assert model._state.event_buf_fill == 5, (
-            "event_buf_fill should be 5 after recording 5 events"
+        assert model._state.event_buf_count == 5, (
+            "event_buf_count should be 5 after recording 5 events"
         )
 
         # Fill to capacity
         capacity = model._state.event_buf_capacity
-        model._state.event_buf_fill = capacity
+        model._state.event_buf_count = capacity
 
         # Attempt to record one more
         result = model.record_event()
         assert result is False, (
             "record_event should return False when event buffer is full"
         )
-        assert model._state.event_buf_fill == capacity, (
-            "event_buf_fill should not exceed capacity"
+        assert model._state.event_buf_count == capacity, (
+            "event_buf_count should not exceed capacity"
+        )
+        model._refresh_buffer_fill()
+        assert model._state.event_buf_fill == 100.0, (
+            "a full buffer must report 100 %, not the raw packet count"
         )
 
     # ------------------------------------------------------------------
@@ -365,28 +375,33 @@ class TestOBDHEnhanced:
         """record_alarm should increase alarm_buf_fill. Filling past
         capacity should return False."""
         model = self._make_model()
-        assert model._state.alarm_buf_fill == 0
+        assert model._state.alarm_buf_count == 0
+        assert model._state.alarm_buf_fill == 0.0
 
         # Record a few alarms
         for _ in range(3):
             result = model.record_alarm()
             assert result is True
 
-        assert model._state.alarm_buf_fill == 3, (
-            "alarm_buf_fill should be 3 after recording 3 alarms"
+        assert model._state.alarm_buf_count == 3, (
+            "alarm_buf_count should be 3 after recording 3 alarms"
         )
 
         # Fill to capacity
         capacity = model._state.alarm_buf_capacity
-        model._state.alarm_buf_fill = capacity
+        model._state.alarm_buf_count = capacity
 
         # Attempt to record one more
         result = model.record_alarm()
         assert result is False, (
             "record_alarm should return False when alarm buffer is full"
         )
-        assert model._state.alarm_buf_fill == capacity, (
-            "alarm_buf_fill should not exceed capacity"
+        assert model._state.alarm_buf_count == capacity, (
+            "alarm_buf_count should not exceed capacity"
+        )
+        model._refresh_buffer_fill()
+        assert model._state.alarm_buf_fill == 100.0, (
+            "a full buffer must report 100 %, not the raw packet count"
         )
 
     # ------------------------------------------------------------------

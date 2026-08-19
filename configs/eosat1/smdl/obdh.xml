@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="OBDH" Creator="EOSAT-1 SMDL Generator" Version="1.0+2fdbeaed7708">
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="OBDH" Creator="EOSAT-1 SMDL Generator" Version="1.0+f46653e0637e">
   <Description>SMP2 model catalogue for OBDH subsystem</Description>
   <Type Name="UInt8" Uuid="4e73fc8f-c4b0-5788-a75e-634a28fbbdd8" xsi:type="Integer" Size="1" Signed="false"/>
   <Type Name="UInt16" Uuid="a3adba6a-8630-5a9d-a78b-683cf4e4fd19" xsi:type="Integer" Size="2" Signed="false"/>
@@ -54,13 +54,13 @@
       <Description>Running image (0=bootloader, 1=application)</Description>
     </Field>
     <Field Name="obdh_hktm_buf_fill" Uuid="a8187a2d-b9cd-5301-9cdf-44325a376582" Type="UInt16" Kind="Output" View="true">
-      <Description>HK/TM buffer fill level [%]</Description>
+      <Description>S15 store 1 (HK_Store) fill — same value as TM(15,14) for store 1 [%]</Description>
     </Field>
     <Field Name="obdh_event_buf_fill" Uuid="cb46fec5-9b8e-5a9c-b358-ee04d4bfc132" Type="UInt16" Kind="Output" View="true">
-      <Description>Event buffer fill level [%]</Description>
+      <Description>S15 store 2 (Event_Store) fill — same value as TM(15,14) for store 2 [%]</Description>
     </Field>
     <Field Name="obdh_alarm_buf_fill" Uuid="37f7f79b-de84-5307-8cef-7851f3a999c5" Type="UInt16" Kind="Output" View="true">
-      <Description>Alarm buffer fill level [%]</Description>
+      <Description>S15 store 4 (Alarm_Store) fill — same value as TM(15,14) for store 4 [%]</Description>
     </Field>
     <Field Name="obdh_last_reboot_cause" Uuid="be29b8aa-0d1a-5864-9bd1-a93f32f972b2" Type="Float32" Kind="Output" View="true">
       <Description>Last reboot cause (0=none,1=watchdog,2=memory,3=switchover,4=commanded)</Description>
@@ -90,7 +90,7 @@
       <Description>Memory error count (correctable + uncorrectable)</Description>
     </Field>
     <Field Name="obdh_storage_fill" Uuid="0cfd0ccb-2820-5a46-8327-ff9b2f1677de" Type="Float32" Kind="Output" View="true">
-      <Description>Onboard storage fill percentage [%]</Description>
+      <Description>Mass-memory unit usage (mirror of obdh.mmm_used, 0x0303) — NOT an S15 store fill [%]</Description>
     </Field>
     <Field Name="obdh_can_bus_status" Uuid="12826e84-5880-5af9-abe6-33932befbc40" Type="Float32" Kind="Output" View="true">
       <Description>CAN bus status (0=offline, 1=nominal, 2=degraded)</Description>

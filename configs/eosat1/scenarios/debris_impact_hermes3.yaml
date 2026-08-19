@@ -20,6 +20,8 @@
 #   temp_battery = 0x0407
 
 name: "Debris Impact — HERMES-3 SA-2B (corrected)"
+initial_conditions:
+  soc_pct: 78.0
 difficulty: ADVANCED
 duration_s: 2400
 briefing: |
@@ -44,26 +46,12 @@ events:
       onset: step
       face: my               # maps to SA-B wing (-Y face)
 
-  # Drive bus voltage below 24 V minimum to force alarm
-  - time_offset_s: 0
-    action: set_parameter
-    params:
-      param_id: 0x0105       # eps.bus_voltage
-      value: 23.1
-
-  # Start battery draining (SoC visible to operator)
-  - time_offset_s: 0
-    action: set_parameter
-    params:
-      param_id: 0x0101       # eps.bat_soc
-      value: 78.0
-
-  # Reduced power generation visible on HK
-  - time_offset_s: 0
-    action: set_parameter
-    params:
-      param_id: 0x0107       # eps.power_gen
-      value: 741.0
+  # NOTE: this block used to poke 0x0105 (bus_voltage), 0x0101 (bat_soc) and
+  # 0x0107 (power_gen) with set_parameter. EPS recomputes all three from its
+  # own physics on the very next tick, so the values survived under one second
+  # and the scenario looked like it "did nothing". The starting SoC now comes
+  # from initial_conditions (which EPS honours), and bus voltage / generated
+  # power fall out of the panel loss above, as they physically should.
 
   # F-2 AOCS — RW-2 bearing degradation from impact torque (T+02:15)
   - time_offset_s: 135
@@ -76,12 +64,10 @@ events:
       onset_duration_s: 30
       wheel: 1               # RW-2 (0-indexed)
 
-  # Force RW-2 speed into alarm range
-  - time_offset_s: 135
-    action: set_parameter
-    params:
-      param_id: 0x0208       # aocs.rw2_speed
-      value: 5620.0
+  # NOTE: a set_parameter on 0x0208 (aocs.rw2_speed) used to live here. AOCS
+  # integrates the wheel speeds every tick and overwrites it immediately; the
+  # rw_bearing injection above is what actually drives RW-2 up in speed and
+  # temperature.
 
   # F-3 TCS — heater circuit cut by EPS load shed (T+04:40)
   - time_offset_s: 280
@@ -92,12 +78,19 @@ events:
       magnitude: 1.0
       onset: step
 
-  # Battery temperature dropping (heater off)
+  # Battery temperature dropping (heater cut by the strike). This used to be
+  # a set_parameter on 0x0407 (tcs.temp_battery), which TCS recomputes every
+  # tick — the value survived under a second. The battery heater circuit is
+  # failed instead, so the zone genuinely cools and the low-temperature limit
+  # trips, which is what the briefing asks the operator to recover ("restore
+  # heaters once bus >= 23 V").
   - time_offset_s: 280
-    action: set_parameter
+    action: inject
     params:
-      param_id: 0x0407       # tcs.temp_battery
-      value: 8.0
+      subsystem: tcs
+      failure: heater_failure
+      circuit: battery
+      onset: step
 
   # F-4 TTC — uplink degraded by load shed (T+07:10)
   - time_offset_s: 430

@@ -74,10 +74,10 @@ def _boot_rich_engine() -> SimulationEngine:
     eng._tc_scheduler.insert(eng._get_cuc_time() + 500_000, FAKE_TC)
 
     # Failures: one gradual, one intermittent (exercises flicker RNG state).
-    eng._failure_manager.inject("eps", "sa_degraded", magnitude=0.5,
-                                onset="gradual", duration_s=0.0)
-    eng._failure_manager.inject("ttc", "tx_intermittent", magnitude=1.0,
-                                onset="intermittent")
+    eng._failure_manager.inject("eps", "solar_array_partial", magnitude=0.5,
+                                onset="gradual", duration_s=0.0, array="A")
+    eng._failure_manager.inject("ttc", "high_ber", magnitude=1.0,
+                                onset="intermittent", offset=8.0)
 
     # S12: toggle one shipped definition's enable flag.
     disp = eng._dispatcher
@@ -136,7 +136,7 @@ def test_save_perturb_load_deep_equals():
     # Perturb thoroughly.
     for _ in range(50):
         eng._tick_once(1.0)
-    eng._failure_manager.inject("aocs", "gyro_drift", magnitude=1.0,
+    eng._failure_manager.inject("aocs", "gyro_bias", magnitude=1.0,
                                 onset="step")
     eng._tc_scheduler.delete_all()
     disp = eng._dispatcher

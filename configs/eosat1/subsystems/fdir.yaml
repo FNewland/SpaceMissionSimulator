@@ -1,3 +1,20 @@
+# Legacy (threshold) FDIR rule set, evaluated every tick by
+# Engine._tick_fdir(). The advanced fault-propagation model lives in
+# fdir/fault_propagation.yaml and is a separate mechanism.
+#
+# `min_phase:` (optional, default = no gate) — the lowest spacecraft phase in
+# which the rule is ARMED. Phases: 0 PRE_SEPARATION, 1 SEPARATION_TIMER,
+# 2 INITIAL_POWER_ON, 3 BOOTLOADER_OPS, 4 LEOP, 5 COMMISSIONING, 6 NOMINAL.
+#
+# Almost every rule here is hardware protection — battery SoC and bus voltage,
+# battery/OBC/wheel/PA temperature, reboot count, CAN bus — and stays ungated
+# on purpose: LEOP is precisely when a mishandled spacecraft flattens its
+# battery, and a blanket `phase >= 6` on the whole file would switch those
+# protections off for the entire early mission.
+#
+# A `min_phase` belongs only on a rule whose trigger condition IS the expected
+# state of an uncommissioned spacecraft. Two rules qualify; both are annotated
+# below.
 enabled: true
 rules:
   - parameter: eps.bat_soc
@@ -39,6 +56,16 @@ rules:
     # SUSTAINED excursion is an anomaly. safe_mode_aocs now commands
     # COARSE_SUN (sun-safe), not DETUMBLE.
     persist_s: 420.0
+    # Armed only once commissioned. Before phase 6 a large attitude error is
+    # the expected state, not an anomaly: the spacecraft detumbles from
+    # separation tip-off rates in LEOP and is deliberately slewed around
+    # during AOCS commissioning (COM-004/COM-005/COM-013). Left ungated the
+    # rule fires ~7 minutes into every run and demotes aocs.mode back to
+    # COARSE_SUN under the operator, which is the "AOCS never reaches
+    # NOMINAL" half of the SAFE-mode lock-in. Attitude performance is what
+    # this rule protects, and attitude performance is only a requirement once
+    # the spacecraft is declared operational.
+    min_phase: 6
   - parameter: obdh.temp
     condition: "> 65"
     threshold: 65.0
@@ -96,6 +123,18 @@ rules:
     level: 2
     action: safe_mode_aocs
     description: "Multi-wheel failure triggers safe mode"
+    # Armed only once commissioned. The bootloader powers the spacecraft up
+    # with all four wheels disabled (Engine._enter_bootloader_mode), and
+    # mission.yaml boots into the bootloader on every run, so aocs.wheels_
+    # enabled (0x0260) is legitimately 0 on the first tick AOCS runs. Ungated,
+    # this level-2 rule latched on tick 1 of every session, pinned sc_mode to
+    # SAFE for the rest of the run and re-demoted aocs.mode out of NOMINAL —
+    # and because it re-triggers the instant it clears, no procedure could
+    # recover it. This is the identical deadlock the advanced fault model
+    # documents for aocs_wheel_failure_dual. Wheels are enabled by explicit
+    # command (AOCS_ENABLE_WHEEL, S8.1 func 3) in COM-004; powering the EPS
+    # aocs_wheels line does NOT enable them.
+    min_phase: 6
 
   - parameter: obdh.can_bus_status
     condition: "< 1"

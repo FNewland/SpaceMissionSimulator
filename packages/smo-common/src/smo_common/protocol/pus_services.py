@@ -52,6 +52,34 @@ FAILURE_CODES: dict[int, str] = {
     0x0026: "Calibration refused: shutter in the wrong position",
     0x0027: "Calibration refused: calibration lamp in the wrong state",
     0x0028: "Capture refused: shutter closed",
+    # AOCS gyro bias calibration (S8.1 func 13 AOCS_GYRO_CALIBRATION). A bias
+    # calibration is only meaningful against a stable attitude reference and at
+    # low body rate, so each precondition gets its own code — the console names
+    # the gate instead of printing one generic 0x0007 for five distinct causes.
+    # The same codes appear in `aocs.gyro_cal_reject` (0x02D0) and in the
+    # AOCS_GYRO_CAL_ABORT (0x0212) event text when a RUNNING calibration loses
+    # its preconditions part-way through.
+    0x0A01: "Gyro calibration refused: AOCS unpowered (mode OFF/SAFE_BOOT)",
+    0x0A02: "Gyro calibration refused: not all three gyro units are powered "
+            "(S2 devices 0x0206-0x0208)",
+    0x0A03: "Gyro calibration refused: no stable attitude reference — the "
+            "selected star tracker is not tracking (>=5 stars) or is not "
+            "yet aiding the estimator (aocs.est_source bit 0)",
+    0x0A04: "Gyro calibration refused: body rate above the calibration limit",
+    0x0A05: "Gyro calibration refused: a calibration is already running",
+    0x0A06: "Gyro calibration aborted: preconditions lost during the run",
+    0x0A07: "Gyro calibration abort refused: no calibration is running",
+    0x0A08: "Gyro calibration abandoned by operator command",
+    # 2026-08c item 9 — AOCS mode-entry refusals. DETUMBLE is the B-dot law
+    # (magnetometer in, magnetorquers out); it used to be enterable with
+    # nothing enabled. FINE entry gets its own code so the S1.8 no longer
+    # reports the generic 0x0001 for a precondition refusal.
+    0x0A20: "DETUMBLE refused: magnetometer off or failed — B-dot has no "
+            "field reference (S2 device 0x0209)",
+    0x0A21: "DETUMBLE refused: magnetorquers disabled or all rods off/failed "
+            "— B-dot has no actuator",
+    0x0A22: "FINE_POINT refused: entry preconditions unmet (decode "
+            "aocs.fine_ready 0x02C5)",
     # Phase D (brief 03 WP-2a) — propulsion arm interlocks, one code each,
     # mirroring the arm_inhibit_mask (0x0B15) bits
     0x0B01: "Arm refused: catalyst bed below minimum temperature",
@@ -74,6 +102,16 @@ FAILURE_CODES: dict[int, str] = {
     0x0B11: "Execute refused: not ARMED (PROP_SET_BURN + PROP_ARM first)",
     0x0B12: "Valve command refused: latch valve(s) stuck",
     0x0B13: "Inhibit-clear refused: bad key",
+    # Mission-phase declaration (S8.1 func 120 SYS_SET_MISSION_PHASE). One
+    # code per guard, so the console names the refusal instead of printing a
+    # generic "not permitted in the current state" for four different causes.
+    0x0C01: "Phase change refused: target phase outside 0-6",
+    0x0C02: "Phase change refused: phases 0-2 are pre-separation states and "
+            "are not ground-commandable",
+    0x0C03: "Phase change refused: cannot enter an application phase while "
+            "the OBC is running the bootloader (OBC_BOOT_APP first)",
+    0x0C04: "Phase change refused: backwards transition requires the FORCE "
+            "flag",
 }
 
 # Service 6 reuses the low codes with memory-specific meanings

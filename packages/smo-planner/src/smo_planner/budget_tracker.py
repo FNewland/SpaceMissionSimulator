@@ -53,11 +53,57 @@ The budget reports the two consequences a mission planner has to live with:
     the plan has committed to bulk dumps. A pass spent dumping is a pass not
     spent on anything else, so this number is the real cost of imagery.
 
+POWER BUDGET — WHAT IT COMPUTES, AND WHERE IT DISAGREES WITH THE SIMULATOR
+--------------------------------------------------------------------------
+``compute_power_budget`` integrates the battery over the contact horizon from
+the propagator's own eclipse and solar-beta series. It will REFUSE to produce
+a number when that series does not cover the window or when any term is
+non-finite — see the method docstring for why (the "0 % on PC / 100 % on Mac"
+report). Battery capacity, like every other budget parameter, comes from the
+mission config (``eps.yaml battery.capacity_wh`` = 100 Wh).
+
+The LOAD and GENERATION model, however, is still this module's own, and it
+does NOT agree with the spacecraft the simulator flies. Measured over the
+shipped 24 h nominal plan at the shipped TLE (beta ~49.5 deg, eclipse 0.315),
+against ``tools/power_budget.py`` at its worst-beta EOL sizing case:
+
+    quantity (orbit-average)   this module   tools/power_budget.py
+    generation                    30.5 W            38.1 W
+    load, no activities           33.2 W            25.5 W  (quiescent)
+    load, nominal imaging day     35.1 W            32.6 W  (nominal_imaging)
+    margin                        -4.7 W            +5.5 W
+
+so the planner calls the shipped nominal day INFEASIBLE (SoC floors) while the
+simulator's own sizing tool closes it with +5.5 W and a 77 % minimum SoC. The
+gap is about 15 W on a 38 W spacecraft, and it is in the constants below, not
+in the integration:
+
+  * ``ECLIPSE_BASE_POWER_W`` / ``SUNLIGHT_BASE_POWER_W`` = 32 W is "OBC 15 W +
+    RX 5 W + wheels 12 W". None of those three wattages appears in
+    ``eps.yaml``, which has obc 6.0, transponder_rx 1.5 and (AOCS-owned)
+    9 W of wheels at NOMINAL. They are the pre-2026-08b manual figures that
+    ``docs/plan_2026-08b/POWER_SIZING.md`` explicitly retired as fictional.
+  * ``SOLAR_ARRAY_MAX_W`` = 64 W is the two deployable wings alone at beta 0
+    (2 x 0.120 m2 x 267.2 W/m2 EOL). It omits the 0.198 m2 of body panels and
+    models the SADA-tracked wings as a flat ``cos(beta)`` derate rather than
+    the plane-of-array geometry ``EPSBasicModel`` actually uses.
+  * activity ``power_w`` (75 W for an imaging_pass) is ADDED ON TOP of the
+    32 W base, whereas the spacecraft draws payload 5.5 W + cooler 15 W for
+    the same activity — and it is only charged while the activity overlaps a
+    CONTACT, so the same activity costs nothing outside a pass.
+
+This is recorded, not silently corrected: aligning the planner's load and
+array model to ``eps.yaml`` / ``EPSBasicModel`` is an EPS-workstream change,
+and making the planner agree by tuning constants here would hide which of the
+two is right. Until then, treat the planner's absolute SoC as pessimistic and
+use it for TRENDS and CONSTRAINT ORDERING, not for closure claims;
+``tools/power_budget.py`` owns the closure claim.
+
 Model parameters (EOSAT-1):
-  - Eclipse base drain: 32 W (OBC 15 W + RX 5 W + wheels 12 W)
+  - Eclipse base drain: 32 W (see the disagreement above)
   - Sunlight base drain: 32 W (loads same, but solar panels charge)
   - Solar array output: ~64 W peak, varies with cos(beta)
-  - Battery capacity: 120 Wh (eps.yaml battery.capacity_wh)
+  - Battery capacity: 100 Wh (eps.yaml battery.capacity_wh)
 """
 from __future__ import annotations
 
@@ -76,7 +122,12 @@ logger = logging.getLogger(__name__)
 ECLIPSE_BASE_POWER_W = 32.0
 SUNLIGHT_BASE_POWER_W = 32.0
 SOLAR_ARRAY_MAX_W = 64.0   # Deployed wings: ~64W peak sunlit generation
-BATTERY_CAPACITY_WH = 120.0
+# Fallback only — the real value comes from subsystems/eps.yaml
+# battery.capacity_wh (100.0, GomSpace NanoPower BPX 8S-1P; see
+# docs/plan_2026-08b/POWER_SIZING.md section 2.6). The old 120.0 here was a
+# fourth number claiming to be the battery: it never matched the spacecraft,
+# and it silently flattered every SoC computed without a config directory.
+BATTERY_CAPACITY_WH = 100.0
 INITIAL_SOC_PERCENT = 80.0
 MIN_SOC_PERCENT = 25.0
 # Fallback only — the real value comes from payload.yaml total_storage_mb
@@ -118,6 +169,22 @@ SYSTEM_NOISE_TEMP_K = 290.0  # Ground station system noise temperature
 BOLTZMANN_DBW = -228.6    # Boltzmann constant in dBW/K/Hz
 REQUIRED_EBNО_DB = 10.0   # Required Eb/N0 for BPSK BER=1e-6
 IMPLEMENTATION_LOSS_DB = 2.0  # Modulation/coding implementation loss
+
+
+def _clamp_finite(value: float, lo: float, hi: float) -> float:
+    """Clamp *value* to [lo, hi], PRESERVING a non-finite input.
+
+    ``max(lo, min(hi, x))`` looks like a clamp but is really a NaN launderer:
+    Python's ``min``/``max`` return the first argument when a comparison is
+    False, so ``max(0.0, min(100.0, nan))`` is ``100.0`` and the mirror-image
+    ``max(0.0, min(nan, 100.0))`` is ``0.0``. That is exactly how one bad term
+    became an exact 0 % or an exact 100 % — a plausible-looking answer with no
+    computation behind it. Here a NaN stays a NaN so ``math.isfinite`` can
+    catch it and the budget can say it does not know.
+    """
+    if not math.isfinite(value):
+        return value
+    return max(lo, min(hi, value))
 
 
 def _central_angle_deg(elevation_deg: float, altitude_km: float) -> float:
@@ -258,6 +325,7 @@ def budget_params_from_config(
         "station_downlink_rate_bps": {},
         "min_dump_elevation_deg": {},
         "station_setup_s": {},
+        "station_teardown_s": {},
         "sources": {},
     }
 
@@ -323,6 +391,11 @@ def budget_params_from_config(
         params["min_dump_elevation_deg"][st.name] = float(st.min_dump_elevation_deg)
         params["station_setup_s"][st.name] = float(st.setup_time_s) + float(
             st.teardown_time_s)
+        # ...and WHERE in the window that overhead falls. Setup is spent after
+        # AOS and teardown before LOS, i.e. on the two LOWEST-elevation ends of
+        # the pass — which is why it must be modelled as a window and not as a
+        # uniform derating of the whole pass (see _pass_window).
+        params["station_teardown_s"][st.name] = float(st.teardown_time_s)
         if st.min_elevation_deg is not None:
             params["elevation_mask_deg"] = float(st.min_elevation_deg)
 
@@ -373,6 +446,7 @@ class BudgetTracker:
         orbit_altitude_km: float = ORBIT_ALTITUDE_KM,
         hk_stream_bps: float = 0.0,
         station_setup_s: dict[str, float] | None = None,
+        station_teardown_s: dict[str, float] | None = None,
     ):
         self._contacts = sorted(contacts or [], key=lambda c: c.get("aos", ""))
         self._schedule = sorted(schedule or [], key=lambda a: a.get("start_time", ""))
@@ -405,6 +479,7 @@ class BudgetTracker:
         self._altitude_km = float(orbit_altitude_km)
         self._hk_stream_bps = float(hk_stream_bps)
         self._station_setup_s = dict(station_setup_s or {})
+        self._station_teardown_s = dict(station_teardown_s or {})
 
     @classmethod
     def from_config(
@@ -441,91 +516,176 @@ class BudgetTracker:
             orbit_altitude_km=p["orbit_altitude_km"],
             hk_stream_bps=p["hk_stream_bps"],
             station_setup_s=p["station_setup_s"],
+            station_teardown_s=p.get("station_teardown_s"),
         )
 
-    def compute_power_budget(self) -> dict:
-        """Compute 24-hour power budget with SoC predictions at pass boundaries.
+    def _not_computable(self, reason: str, **extra) -> dict:
+        """A power budget that could not be computed, said so.
 
-        Returns a dict with:
-          - initial_soc: starting battery SoC %
-          - pass_predictions: list of {pass_id, gs_name, aos, los, soc_at_aos, soc_at_los}
-          - final_soc: predicted SoC at end of 24h period
-          - warnings: list of constraint violation messages
-          - total_charge_wh: total energy charged
-          - total_drain_wh: total energy consumed
+        The failure this exists to prevent: the integration ran on FABRICATED
+        illumination inputs, the result saturated against the battery rails,
+        and the UI printed a confident ``0.0 %`` or ``100.0 %``. Both rails
+        look like answers. ``final_soc`` is ``None`` here precisely so that
+        nothing downstream can format it as a percentage by accident — and the
+        UI must render ``reason`` instead of a number.
+        """
+        return {
+            "computable": False,
+            "reason": reason,
+            "initial_soc": self._initial_soc,
+            "pass_predictions": [],
+            "final_soc": None,
+            "warnings": [reason],
+            "total_charge_wh": None,
+            "total_drain_wh": None,
+            "soc_saturated": False,
+            "ground_track_points": len(self._ground_track),
+            **extra,
+        }
+
+    def compute_power_budget(self) -> dict:
+        """Integrate the battery over the contact horizon.
+
+        ROOT CAUSE OF THE "0 % ON PC / 100 % ON MAC" REPORT
+        ---------------------------------------------------
+        The energy balance needs two things the propagator supplies and this
+        module does not: whether the spacecraft is illuminated, and at what
+        solar beta angle. Both came from ``ground_track``. When the track was
+        absent, or covered a different window from the contacts, the old code
+        silently substituted constants — ``0.35`` eclipse fraction and
+        ``30 deg`` beta — and integrated on them anyway. Those constants are
+        not neutral: they put the orbit-average balance on the OTHER SIDE of
+        zero from the real one.
+
+            no track at all      -> beta 30 deg  -> +4 W average -> rails at 100 %
+            real / stale track   -> beta ~50 deg -> -5 W average -> rails at   0 %
+
+        Nothing about the spacecraft differs between the two machines. What
+        differed was only whether ``_ground_track_cache`` happened to be
+        populated and covering when ``/api/budget/power`` was served — the
+        planner's cached track is ``horizons.ground_track_hours`` (3 h) long
+        while the contact horizon is 24 h, it is rebuilt on a background timer,
+        and a sim-time jump drops it (``_plan_dirty``). A tiny difference in
+        an input the operator cannot see became a 100-point difference in the
+        headline number, because the per-pass clamp
+        ``max(0, min(capacity, soc))`` turns any sustained sign error into a
+        rail and then presents the rail as a prediction.
+
+        The same clamp also laundered NaN: ``max(0.0, min(100.0, nan))`` is
+        ``100.0`` in Python (and ``max(0.0, min(nan, 100.0))`` is ``0.0``), so
+        a single non-finite term anywhere produced an exact rail too.
+
+        This version REFUSES to integrate on data it does not have. If the
+        illumination series does not cover the window, or any term comes out
+        non-finite, it returns ``computable: False`` with a reason and
+        ``final_soc: None``. When it does integrate, the battery is still
+        physically clamped to [0, capacity] — a battery cannot do otherwise —
+        but hitting a rail is RECORDED (``soc_saturated``) and warned about, so
+        a floored result is never mistaken for a prediction.
         """
         warnings: list[str] = []
         pass_predictions: list[dict] = []
 
         if not self._contacts:
-            return {
-                "initial_soc": self._initial_soc,
-                "pass_predictions": [],
-                "final_soc": self._initial_soc,
-                "warnings": ["No contact windows available for budget computation"],
-                "total_charge_wh": 0.0,
-                "total_drain_wh": 0.0,
-            }
+            return self._not_computable(
+                "No contact windows available for budget computation")
 
-        # Build timeline events from contacts
+        bounded = [
+            (i, c, _parse_iso(c.get("aos", "")), _parse_iso(c.get("los", "")))
+            for i, c in enumerate(self._contacts)
+        ]
+        bounded = [b for b in bounded if b[2] is not None and b[3] is not None]
+        if not bounded:
+            return self._not_computable(
+                "Contact windows carry no parseable AOS/LOS times")
+
+        window_start = bounded[0][2]
+        window_end = max(b[3] for b in bounded)
+
+        # ── Does the illumination series cover what we must integrate? ──
+        covered, coverage = self._illumination_coverage(window_start, window_end)
+        if not covered:
+            return self._not_computable(coverage["reason"], **{
+                k: v for k, v in coverage.items() if k != "reason"})
+
+        if self._battery_wh <= 0 or not math.isfinite(self._battery_wh):
+            return self._not_computable(
+                f"Battery capacity is {self._battery_wh} Wh — the state of "
+                f"charge is undefined")
+
         soc_wh = self._battery_wh * (self._initial_soc / 100.0)
         total_charge = 0.0
         total_drain = 0.0
+        floor_hits = 0
+        ceiling_hits = 0
+        first_floor_utc: str | None = None
 
-        # Process inter-pass and pass intervals
-        prev_time_str = self._contacts[0].get("aos", "")
-        prev_time = _parse_iso(prev_time_str) if prev_time_str else None
+        prev_time = window_start
 
-        for idx, contact in enumerate(self._contacts):
-            aos_str = contact.get("aos", "")
-            los_str = contact.get("los", "")
+        def _step(duration_s: float, start: datetime, end: datetime,
+                  extra_drain_wh: float = 0.0) -> str | None:
+            """Advance the integration; returns a reason string on failure."""
+            nonlocal soc_wh, total_charge, total_drain, floor_hits, ceiling_hits
+            nonlocal first_floor_utc
+            illum = self._illumination(start, end)
+            if illum is None:
+                return (f"Illumination/beta unavailable for "
+                        f"{start.isoformat()}..{end.isoformat()}")
+            eclipse_fraction, beta_deg = illum
+            drain_wh, charge_wh = self._energy_balance(
+                duration_s, eclipse_fraction, beta_deg)
+            drain_wh += extra_drain_wh
+            if not (math.isfinite(drain_wh) and math.isfinite(charge_wh)):
+                return (f"Non-finite energy term over "
+                        f"{start.isoformat()}..{end.isoformat()} "
+                        f"(drain={drain_wh}, charge={charge_wh}, "
+                        f"eclipse_fraction={eclipse_fraction}, beta={beta_deg})")
+            total_charge += charge_wh
+            total_drain += drain_wh
+            soc_wh = soc_wh + charge_wh - drain_wh
+            if not math.isfinite(soc_wh):
+                return f"State of charge became {soc_wh} at {end.isoformat()}"
+            # A real battery cannot go past its rails. Clamping is physical —
+            # PRESENTING the clamp as a prediction is what was wrong.
+            if soc_wh < 0.0:
+                soc_wh = 0.0
+                floor_hits += 1
+                if first_floor_utc is None:
+                    first_floor_utc = end.isoformat()
+            elif soc_wh > self._battery_wh:
+                soc_wh = self._battery_wh
+                ceiling_hits += 1
+            return None
+
+        for idx, contact, aos, los in bounded:
             gs_name = contact.get("gs_name", "unknown")
-            pass_duration_s = contact.get("duration_s", 0)
 
-            aos = _parse_iso(aos_str) if aos_str else None
-            los = _parse_iso(los_str) if los_str else None
+            if aos > prev_time:
+                err = _step((aos - prev_time).total_seconds(), prev_time, aos)
+                if err:
+                    return self._not_computable(err, **coverage)
 
-            if aos is None or los is None:
-                continue
+            soc_at_aos = (soc_wh / self._battery_wh) * 100.0
 
-            # --- Inter-pass interval (before this pass) ---
-            if prev_time and aos > prev_time:
-                gap_s = (aos - prev_time).total_seconds()
-                eclipse_fraction = self._estimate_eclipse_fraction(prev_time, aos)
-                drain_wh, charge_wh = self._energy_balance(
-                    gap_s, eclipse_fraction, prev_time, aos
-                )
-                soc_wh = soc_wh + charge_wh - drain_wh
-                total_charge += charge_wh
-                total_drain += drain_wh
-
-            soc_at_aos = max(0.0, min(100.0, (soc_wh / self._battery_wh) * 100.0))
-
-            # --- Pass interval ---
+            pass_duration_s = float(contact.get("duration_s", 0) or 0.0)
+            if pass_duration_s <= 0:
+                pass_duration_s = max(0.0, (los - aos).total_seconds())
             if pass_duration_s > 0:
-                eclipse_fraction = self._estimate_eclipse_fraction(aos, los)
-                pass_drain, pass_charge = self._energy_balance(
-                    pass_duration_s, eclipse_fraction, aos, los
-                )
-                # Add activity consumption during pass
-                activity_drain = self._activity_power_during(aos, los)
-                pass_drain += activity_drain
-                soc_wh = soc_wh + pass_charge - pass_drain
-                total_charge += pass_charge
-                total_drain += pass_drain
+                err = _step(pass_duration_s, aos, los,
+                            extra_drain_wh=self._activity_power_during(aos, los))
+                if err:
+                    return self._not_computable(err, **coverage)
 
-            soc_wh = max(0.0, min(self._battery_wh, soc_wh))
-            soc_at_los = max(0.0, min(100.0, (soc_wh / self._battery_wh) * 100.0))
+            soc_at_los = (soc_wh / self._battery_wh) * 100.0
 
-            pass_pred = {
+            pass_predictions.append({
                 "pass_id": idx + 1,
                 "gs_name": gs_name,
-                "aos": aos_str,
-                "los": los_str,
+                "aos": contact.get("aos", ""),
+                "los": contact.get("los", ""),
                 "soc_at_aos": round(soc_at_aos, 1),
                 "soc_at_los": round(soc_at_los, 1),
-            }
-            pass_predictions.append(pass_pred)
+            })
 
             if soc_at_aos < MIN_SOC_PERCENT:
                 warnings.append(
@@ -538,22 +698,45 @@ class BudgetTracker:
                     f"(below {MIN_SOC_PERCENT}% threshold)"
                 )
 
-            prev_time = los
+            prev_time = max(prev_time, los)
 
-        final_soc = max(0.0, min(100.0, (soc_wh / self._battery_wh) * 100.0))
+        final_soc = (soc_wh / self._battery_wh) * 100.0
 
         # Check if any scheduled activity would cause SoC to drop below threshold
         for activity in self._schedule:
-            act_warnings = self._check_activity_power(activity, pass_predictions)
-            warnings.extend(act_warnings)
+            warnings.extend(
+                self._check_activity_power(activity, pass_predictions))
+
+        if floor_hits:
+            warnings.insert(0, (
+                f"SOC_FLOOR_REACHED: the battery model hit 0 % at "
+                f"{first_floor_utc} and stayed on the floor for {floor_hits} "
+                f"of {len(pass_predictions)} pass intervals. The plan is "
+                f"INFEASIBLE — the energy balance is negative, and every SoC "
+                f"reported after that instant is the floor, not a prediction."))
+        if ceiling_hits and not floor_hits:
+            warnings.insert(0, (
+                f"SOC_CEILING_REACHED: the battery reached 100 % on "
+                f"{ceiling_hits} of {len(pass_predictions)} pass intervals; "
+                f"the surplus above full charge is not stored, so the reported "
+                f"final SoC is the ceiling, not a prediction."))
 
         return {
+            "computable": True,
+            "reason": None,
             "initial_soc": self._initial_soc,
             "pass_predictions": pass_predictions,
             "final_soc": round(final_soc, 1),
             "warnings": warnings,
             "total_charge_wh": round(total_charge, 1),
             "total_drain_wh": round(total_drain, 1),
+            "battery_capacity_wh": self._battery_wh,
+            # Saturation is a property of the ANSWER and has to travel with it.
+            "soc_saturated": bool(floor_hits or ceiling_hits),
+            "soc_floor_hits": floor_hits,
+            "soc_ceiling_hits": ceiling_hits,
+            "first_soc_floor_utc": first_floor_utc,
+            **coverage,
         }
 
     # ── Data budget ──────────────────────────────────────────────
@@ -580,6 +763,70 @@ class BudgetTracker:
         overhead_s = float(self._station_setup_s.get(contact.get("gs_name", ""), 0.0))
         return max(0.0, duration_s - overhead_s)
 
+    def _pass_window(self, contact: dict) -> dict | None:
+        """Time model of one contact window: WHEN each rung is available.
+
+        The budget used to treat a pass as a single averaged number — one
+        blended rate smeared uniformly across the window, with the ground
+        station's setup/teardown taken off as a flat percentage. Both
+        approximations are wrong in the same direction and they compound:
+
+          * the DUMP (HIGH) tier is available only while the pass is above
+            ``min_dump_elevation_deg``, and that is a CONTIGUOUS arc CENTRED on
+            closest approach — not a fraction sprinkled evenly over the window;
+          * ground setup happens right after AOS and teardown right before LOS,
+            so the seconds the overhead eats are the two LOWEST-elevation ends
+            of the pass, not a uniform slice of it.
+
+        A 330 s dump anchored on closest approach (which is exactly what
+        ``standard_plans.yaml`` books) therefore sits wholly inside the HIGH
+        arc and wholly inside the usable window, and moves a full image. The
+        smeared model charged it the pass average AND a share of the edge
+        overhead, crediting ~69 % of the achievable volume — which is why a
+        plan whose dumps were correctly placed still failed to close.
+
+        Returns ``None`` when the contact carries no parseable AOS/LOS.
+        """
+        aos = _parse_iso(contact.get("aos", ""))
+        los = _parse_iso(contact.get("los", ""))
+        if aos is None or los is None or los <= aos:
+            return None
+
+        gs_name = contact.get("gs_name", "")
+        span_s = (los - aos).total_seconds()
+        overhead_s = min(float(self._station_setup_s.get(gs_name, 0.0)), span_s)
+        trail_s = float(self._station_teardown_s.get(gs_name, overhead_s / 2.0))
+        trail_s = max(0.0, min(trail_s, overhead_s))
+        lead_s = overhead_s - trail_s
+
+        u0 = aos + timedelta(seconds=lead_s)
+        u1 = los - timedelta(seconds=trail_s)
+        if u1 <= u0:                       # overhead swallows the whole window
+            mid = aos + timedelta(seconds=span_s / 2.0)
+            u0 = u1 = mid
+
+        max_el_deg = float(contact.get("max_elevation_deg", 15.0) or 0.0)
+        gate = self._dump_gate_deg(gs_name)
+        f_high = fraction_above_elevation(
+            max_el_deg, gate, self._mask_deg, self._altitude_km)
+        mid = aos + timedelta(seconds=span_s / 2.0)
+        half_high_s = f_high * span_s / 2.0
+        h0 = mid - timedelta(seconds=half_high_s)
+        h1 = mid + timedelta(seconds=half_high_s)
+
+        usable_s = max(0.0, (u1 - u0).total_seconds())
+        high_s = max(0.0, (min(u1, h1) - max(u0, h0)).total_seconds())
+        high_s = min(high_s, usable_s)
+        return {
+            "aos": aos, "los": los, "span_s": span_s,
+            "usable_start": u0, "usable_end": u1, "usable_s": usable_s,
+            "high_start": h0, "high_end": h1, "high_s": high_s,
+            "high_fraction": f_high,
+            "gate_deg": gate,
+            "dump_bps": self._dump_rate_for(gs_name),
+            "routine_bps": self._routine_rate_bps,
+        }
+
     def _pass_profile(self, contact: dict) -> dict:
         """Rate profile of one contact window under the ladder.
 
@@ -588,25 +835,43 @@ class BudgetTracker:
         refused and the same seconds carry only the routine tier (LOW). The
         split point is geometry, so the fraction is derived
         (:func:`fraction_above_elevation`) rather than assumed.
+
+        ``capacity_mb`` is the INTEGRAL of that piecewise rate over the usable
+        window (:meth:`_pass_window`) — what the pass carries if a dump uses
+        all of it — not the blended rate times the usable seconds.
         """
         gs_name = contact.get("gs_name", "")
-        max_el_deg = float(contact.get("max_elevation_deg", 15.0) or 0.0)
-        gate = self._dump_gate_deg(gs_name)
-        usable_s = self._usable_seconds(contact)
-
-        f_high = fraction_above_elevation(
-            max_el_deg, gate, self._mask_deg, self._altitude_km)
         dump_bps = self._dump_rate_for(gs_name)
         routine_bps = self._routine_rate_bps
-        mean_bps = f_high * dump_bps + (1.0 - f_high) * routine_bps
-        capacity_mb = mean_bps * (1.0 - self._overhead) * usable_s / (8.0 * MB)
+        eff = 1.0 - self._overhead
+
+        win = self._pass_window(contact)
+        if win is None:
+            # No parseable window: fall back to the flat model on duration_s
+            # alone, which is all the information there is.
+            max_el_deg = float(contact.get("max_elevation_deg", 15.0) or 0.0)
+            gate = self._dump_gate_deg(gs_name)
+            f_high = fraction_above_elevation(
+                max_el_deg, gate, self._mask_deg, self._altitude_km)
+            usable_s = self._usable_seconds(contact)
+            high_s = f_high * usable_s
+        else:
+            f_high = win["high_fraction"]
+            gate = win["gate_deg"]
+            usable_s = win["usable_s"]
+            high_s = win["high_s"]
+
+        low_s = max(0.0, usable_s - high_s)
+        capacity_bits = (dump_bps * high_s + routine_bps * low_s) * eff
+        capacity_mb = capacity_bits / (8.0 * MB)
+        mean_bps = (capacity_bits / eff / usable_s) if usable_s > 0 else 0.0
         return {
             "capacity_mb": capacity_mb,
             "usable_s": usable_s,
             "high_fraction": f_high,
-            "high_seconds": f_high * usable_s,
-            "dump_tier": self._dump_tier if f_high > 0.0 else self._routine_tier,
-            "dump_capable": f_high > 0.0,
+            "high_seconds": high_s,
+            "dump_tier": self._dump_tier if high_s > 0.0 else self._routine_tier,
+            "dump_capable": high_s > 0.0,
             "gate_deg": gate,
             "mean_rate_bps": mean_bps,
         }
@@ -686,6 +951,9 @@ class BudgetTracker:
                 "elevation_efficiency": round(prof["high_fraction"], 3),
                 "high_fraction": round(prof["high_fraction"], 3),
                 "usable_s": round(prof["usable_s"], 1),
+                # Seconds of the usable window that are actually above the
+                # dump-elevation gate — the seconds a dump can run at HIGH.
+                "high_seconds": round(prof["high_seconds"], 1),
                 "dump_tier": prof["dump_tier"],
                 "dump_capable": prof["dump_capable"],
                 "min_dump_elevation_deg": prof["gate_deg"],
@@ -718,23 +986,30 @@ class BudgetTracker:
                 continue
             dump_intervals.append((t0, t0 + timedelta(seconds=dur)))
 
-        pass_intervals: list[tuple[datetime, datetime, int, float]] = []
+        # Each contact contributes a USABLE window and, inside it, the arc that
+        # actually holds the DUMP tier. Downlink is evaluated against those two
+        # windows instead of against a pass-average rate, so a dump is credited
+        # the rate it really gets for the seconds it really runs.
+        pass_windows: list[dict] = []
         for idx, contact in enumerate(self._contacts):
-            aos = _parse_iso(contact.get("aos", ""))
-            los = _parse_iso(contact.get("los", ""))
-            if aos is None or los is None or los <= aos:
+            win = self._pass_window(contact)
+            if win is None or win["usable_s"] <= 0:
                 continue
-            capacity_mb, _eff = self._pass_capacity_mb(contact)
-            span_s = (los - aos).total_seconds()
-            pass_intervals.append((aos, los, idx, capacity_mb / span_s))
+            win = dict(win, idx=idx)
+            pass_windows.append(win)
 
         boundaries: set[datetime] = set()
         for t0, t1, _ in gen_intervals:
             boundaries.update((t0, t1))
         for t0, t1 in dump_intervals:
             boundaries.update((t0, t1))
-        for t0, t1, _i, _r in pass_intervals:
-            boundaries.update((t0, t1))
+        for win in pass_windows:
+            boundaries.update((win["usable_start"], win["usable_end"]))
+            # the HIGH arc's edges are rate discontinuities too, but only where
+            # they fall inside the usable window
+            for edge in (win["high_start"], win["high_end"]):
+                if win["usable_start"] < edge < win["usable_end"]:
+                    boundaries.add(edge)
 
         horizon_start = min(boundaries) if boundaries else None
         horizon_end = max(boundaries) if boundaries else None
@@ -758,15 +1033,25 @@ class BudgetTracker:
                 gen_rate += self._hk_mb_per_hour / 3600.0
                 hk_mb += self._hk_mb_per_hour / 3600.0 * dt_s
 
-                dl_rate = 0.0
+                dl_rate = 0.0                      # MB per second
                 pass_idx: int | None = None
                 dumping = any(d0 <= t0 and d1 >= t1 for (d0, d1) in dump_intervals)
                 if dumping:
-                    for (p0, p1, idx, rate) in pass_intervals:
-                        if p0 <= t0 and p1 >= t1:
-                            dl_rate += rate
-                            pass_idx = idx
-                            break
+                    # One transmit chain: overlapping windows at two dishes are
+                    # ONE downlink opportunity, so take the best rung available,
+                    # not the first station in list order.
+                    best_bps = 0.0
+                    for win in pass_windows:
+                        if not (win["usable_start"] <= t0
+                                and win["usable_end"] >= t1):
+                            continue
+                        in_high = (win["high_start"] <= t0
+                                   and win["high_end"] >= t1)
+                        bps = win["dump_bps"] if in_high else win["routine_bps"]
+                        if bps > best_bps:
+                            best_bps = bps
+                            pass_idx = win["idx"]
+                    dl_rate = best_bps * (1.0 - self._overhead) / (8.0 * MB)
 
                 onboard_mb += gen_rate * dt_s
                 if onboard_mb > self._storage_mb:
@@ -970,18 +1255,23 @@ class BudgetTracker:
         self,
         duration_s: float,
         eclipse_fraction: float,
-        start: datetime | None = None,
-        end: datetime | None = None,
+        beta_deg: float,
     ) -> tuple[float, float]:
         """Compute (drain_wh, charge_wh) over a time interval.
+
+        Both illumination inputs are now REQUIRED ARGUMENTS. They used to be
+        looked up inside here, which is how a missing ground track turned into
+        a silent default instead of a refusal: the caller had no way to know
+        the numbers it got back were built on constants.
 
         Args:
             duration_s: interval duration in seconds
             eclipse_fraction: fraction of interval spent in eclipse (0.0-1.0)
-            start, end: time bounds (used for activity power lookup)
+            beta_deg: solar beta angle over the interval, degrees
 
         Returns:
-            (total_drain_wh, total_charge_wh)
+            (total_drain_wh, total_charge_wh) — may be non-finite if the inputs
+            are; the caller checks and refuses rather than clamping.
         """
         hours = duration_s / 3600.0
         eclipse_hours = hours * eclipse_fraction
@@ -990,12 +1280,12 @@ class BudgetTracker:
         # Base system drain (always running)
         drain_wh = ECLIPSE_BASE_POWER_W * eclipse_hours + SUNLIGHT_BASE_POWER_W * sunlight_hours
 
-        # Solar charge (only in sunlight) — use actual beta angle from propagator
-        midpoint = None
-        if start is not None and end is not None:
-            midpoint = start + (end - start) / 2
-        beta_deg = self._get_beta_angle(at_time=midpoint)
-        charge_w = SOLAR_ARRAY_MAX_W * math.cos(math.radians(min(abs(beta_deg), 89.0)))
+        # Solar charge (only in sunlight), from the propagator's beta angle.
+        # NOTE the deliberate absence of a clamp on `beta_deg`: a NaN must
+        # propagate to the caller's isfinite() check, not be quietly turned
+        # into 89 deg by a min().
+        charge_w = SOLAR_ARRAY_MAX_W * math.cos(
+            math.radians(_clamp_finite(abs(beta_deg), 0.0, 89.0)))
         charge_wh = charge_w * sunlight_hours
 
         return drain_wh, charge_wh
@@ -1027,71 +1317,115 @@ class BudgetTracker:
 
         return total_wh
 
-    def _estimate_eclipse_fraction(self, start: datetime, end: datetime) -> float:
-        """Estimate fraction of time in eclipse between start and end.
+    # ── Illumination series (the power budget's only external input) ──
 
-        Uses ground track data if available, otherwise uses a default
-        ~35% eclipse fraction for a 450km SSO orbit.
+    def _track_series(self) -> list[tuple[datetime, bool, float | None]]:
+        """The ground track as a sorted (time, in_eclipse, beta) series.
+
+        Times are PARSED, not compared as strings. The old code did
+        ``start.isoformat() <= point["utc"] <= end.isoformat()``, which is only
+        correct while every producer spells the offset identically: the same
+        instant written ``...T10:00:00Z``, ``...T10:00:00+00:00`` and
+        ``...T11:00:00+01:00`` gives three different strings, and a bare second
+        (``+00:00``) sorts before the same second with microseconds
+        (``.5+00:00``) because ``'+' < '.'``. Any of those spellings silently
+        emptied the sample set and sent the budget to the fabricated default.
         """
-        if not self._ground_track:
-            return 0.35  # default SSO eclipse fraction
-
-        eclipse_count = 0
-        total_count = 0
-        start_iso = start.isoformat()
-        end_iso = end.isoformat()
-
-        for point in self._ground_track:
-            utc = point.get("utc", "")
-            if start_iso <= utc <= end_iso:
-                total_count += 1
-                if point.get("in_eclipse", False):
-                    eclipse_count += 1
-
-        if total_count == 0:
-            return 0.35
-        return eclipse_count / total_count
-
-    def _get_beta_angle(self, at_time: datetime | None = None) -> float:
-        """Get solar beta angle from ground track data.
-
-        Searches the ground track for the nearest point to *at_time* and
-        returns the propagator-computed beta angle.  Falls back to a
-        moderate SSO default (30 deg) only if no ground track is loaded.
-        """
-        if not self._ground_track:
-            return 30.0
-
-        # If no specific time requested, return the median beta from the track
-        betas = [
-            pt.get("solar_beta_deg", 30.0)
-            for pt in self._ground_track
-            if "solar_beta_deg" in pt
-        ]
-        if not betas:
-            return 30.0
-
-        if at_time is None:
-            # Use the median value across the planning window
-            betas_sorted = sorted(betas)
-            return betas_sorted[len(betas_sorted) // 2]
-
-        # Find the closest ground-track point to the requested time
-        target_iso = at_time.isoformat()
-        best_beta = betas[0]
-        best_diff = float("inf")
+        cached = getattr(self, "_track_series_cache", None)
+        if cached is not None:
+            return cached
+        series: list[tuple[datetime, bool, float | None]] = []
         for pt in self._ground_track:
-            utc_str = pt.get("utc", "")
-            if not utc_str:
+            t = _parse_iso(pt.get("utc", ""))
+            if t is None:
                 continue
-            pt_time = _parse_iso(utc_str)
-            if pt_time is None:
-                continue
-            diff = abs((pt_time - at_time).total_seconds())
-            if diff < best_diff:
-                best_diff = diff
-                best_beta = pt.get("solar_beta_deg", 30.0)
-        return best_beta
+            beta = pt.get("solar_beta_deg")
+            try:
+                beta = float(beta) if beta is not None else None
+            except (TypeError, ValueError):
+                beta = None
+            series.append((t, bool(pt.get("in_eclipse", False)), beta))
+        series.sort(key=lambda s: s[0])
+        self._track_series_cache = series
+        return series
+
+    def _track_step_s(self) -> float:
+        """Median sample spacing of the ground track (0 if fewer than 2)."""
+        series = self._track_series()
+        if len(series) < 2:
+            return 0.0
+        gaps = sorted((series[i + 1][0] - series[i][0]).total_seconds()
+                      for i in range(len(series) - 1))
+        return gaps[len(gaps) // 2]
+
+    def _illumination_coverage(
+        self, start: datetime, end: datetime
+    ) -> tuple[bool, dict]:
+        """Does the ground track cover [start, end]? Returns (ok, details)."""
+        series = self._track_series()
+        details: dict = {
+            "ground_track_points": len(series),
+            "window_start_utc": start.isoformat(),
+            "window_end_utc": end.isoformat(),
+            "ground_track_start_utc": series[0][0].isoformat() if series else None,
+            "ground_track_end_utc": series[-1][0].isoformat() if series else None,
+        }
+        if not series:
+            details["reason"] = (
+                "No illumination data: the power budget needs an eclipse and "
+                "solar-beta series over the plan window, and the ground track "
+                "is empty. (It is NOT safe to assume a nominal eclipse "
+                "fraction — doing so is what produced a confident 100 %.)")
+            return False, details
+        if not any(b is not None for _t, _e, b in series):
+            details["reason"] = (
+                "Ground track carries no solar_beta_deg samples, so the solar "
+                "array output cannot be evaluated")
+            return False, details
+
+        tol = timedelta(seconds=max(self._track_step_s(), 1.0))
+        t_first, t_last = series[0][0], series[-1][0]
+        if start < t_first - tol or end > t_last + tol:
+            short_h = max(0.0, (end - t_last).total_seconds()) / 3600.0
+            details["reason"] = (
+                f"Illumination data covers "
+                f"{t_first.isoformat()}..{t_last.isoformat()} but the plan "
+                f"window is {start.isoformat()}..{end.isoformat()} — "
+                f"{short_h:.1f} h of the window has no eclipse/beta data. "
+                f"Extend the ground-track horizon to cover the contact "
+                f"horizon before the budget can be computed.")
+            return False, details
+        details["illumination_source"] = "ground_track"
+        return True, details
+
+    def _illumination(
+        self, start: datetime, end: datetime
+    ) -> tuple[float, float] | None:
+        """(eclipse_fraction, mean beta deg) over [start, end], or None.
+
+        ``None`` means "not known" and the caller must refuse to integrate.
+        There is deliberately no default: the whole defect was a default.
+        """
+        series = self._track_series()
+        if not series:
+            return None
+
+        inside = [s for s in series if start <= s[0] <= end]
+        if not inside:
+            # Short interval between two samples: bracket it. Only reachable
+            # once _illumination_coverage has confirmed the window is inside
+            # the track's extent, so this interpolates, it never extrapolates.
+            before = [s for s in series if s[0] <= start]
+            after = [s for s in series if s[0] >= end]
+            inside = ([before[-1]] if before else []) + ([after[0]] if after else [])
+            if not inside:
+                return None
+
+        eclipse_fraction = sum(1 for _t, e, _b in inside if e) / len(inside)
+        betas = [b for _t, _e, b in inside if b is not None]
+        if not betas:
+            return None
+        return eclipse_fraction, sum(betas) / len(betas)
 
     def _check_activity_power(
         self, activity: dict, pass_predictions: list[dict]

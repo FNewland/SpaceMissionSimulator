@@ -9,7 +9,7 @@ The binary `tm_rate_lo_bps: 1000` / `tm_rate_hi_bps: 64000` switch is replaced
 by a config-declared three-rung ladder in
 ``configs/eosat1/subsystems/ttc.yaml``:
 
-    BEACON    1 000 bps  BPSK  conv(7,1/2)+RS   bootloader / beacon only
+    SAFE      1 000 bps  BPSK  conv(7,1/2)+RS   bootloader / lifeline (renamed from BEACON, 2026-08c)
     LOW      16 000 bps  BPSK  conv(7,1/2)+RS   ROUTINE OPERATIONS (default),
                                                 and the safe/FDIR fallback
     HIGH    128 000 bps  QPSK  RS(255,223)      delayed TM + image dumps;
@@ -18,7 +18,7 @@ by a config-declared three-rung ladder in
 These tests pin: the ladder comes from config; tier selection and the
 rejection rules; the commanded tier stays authoritative across ticks (defect
 #74 must not regress); telemetry reports the active tier and its rate; both TM
-pacers honour the tier; the HK backlog drains at NOMINAL and grows at BEACON;
+pacers honour the tier; the HK backlog drains at NOMINAL and grows at SAFE;
 the catalogue's declared byte count matches the handler (the defect #80
 class); modulation follows the tier and moves the symbol rate, not the bit
 rate; and the per-tier/per-station link margins reproduce the researched
@@ -81,7 +81,7 @@ class TestLadderIsConfiguration:
 
     def test_shipped_ladder(self):
         m = _model()
-        assert [t["name"] for t in m.tiers] == ["BEACON", "LOW", "HIGH"]
+        assert [t["name"] for t in m.tiers] == ["SAFE", "LOW", "HIGH"]
         assert [t["bps"] for t in m.tiers] == [1000, 16000, 128000]
         assert [t["modulation"] for t in m.tiers] == ["BPSK", "BPSK", "QPSK"]
         assert [t["coding"] for t in m.tiers] == ["CONV_RS", "CONV_RS", "RS"]
@@ -108,7 +108,7 @@ class TestLadderIsConfiguration:
 
     def test_schema_validates_and_derives_the_deprecated_aliases(self):
         cfg = TTCConfig(**TTC_YAML)
-        assert [t.name for t in cfg.tm_rate_tiers] == ["BEACON", "LOW", "HIGH"]
+        assert [t.name for t in cfg.tm_rate_tiers] == ["SAFE", "LOW", "HIGH"]
         assert cfg.tier("HIGH").bps == 128000
         assert cfg.tier("HIGH").bits_per_symbol == 2
         # Aliases resolve for out-of-lane readers even when absent from YAML.
@@ -195,9 +195,11 @@ class TestTierSelection:
             {"command": "set_tm_rate", "rate": 128000})["tier"] == "HIGH"
 
     def test_beacon_is_rejected_in_nominal_operations(self):
+        # The 1 kbps rung is named SAFE now (2026-08c) — "BEACON" the tier
+        # name is gone; only the UHF transmitter is called the beacon.
         m = _model()
         m._state.antenna_deployed = True
-        r = m.handle_command({"command": "set_tm_rate", "rate": "BEACON"})
+        r = m.handle_command({"command": "set_tm_rate", "rate": "SAFE"})
         assert r["success"] is False
         assert r["error_code"] == 0x0007
         assert "bootloader" in r["message"] or "beacon" in r["message"].lower()
@@ -212,7 +214,7 @@ class TestTierSelection:
     def test_beacon_tier_is_permitted_in_beacon_mode(self):
         m = _model()
         m.handle_command({"command": "set_beacon_mode", "on": True})
-        r = m.handle_command({"command": "set_tm_rate", "rate": "BEACON"})
+        r = m.handle_command({"command": "set_tm_rate", "rate": "SAFE"})
         assert r["success"] and r["tm_data_rate"] == 1000
 
     def test_high_needs_a_deployed_antenna(self):
@@ -237,14 +239,16 @@ class TestTierSelection:
         assert r["success"] is False and r["error_code"] == 0x0007
         assert "DOWNLINK" in r["message"]
 
-    def test_high_needs_the_elevation_gate_while_in_contact(self):
+    def test_high_has_no_onboard_elevation_gate(self):
+        """2026-08c item 5: a spacecraft does not know its ground-station
+        elevation, so HIGH is ACCEPTED at 6 deg — the 10 deg rule is a
+        GROUND policy (planner scheduling + MCS arm-through hold)."""
         m = _model()
         m._state.antenna_deployed = True
         m._state.downlink_mode = True
         m.tick(1.0, _orbit(elevation=6.0, range_km=1900.0), {})
         r = m.handle_command({"command": "set_tm_rate", "rate": "HIGH"})
-        assert r["success"] is False and r["error_code"] == 0x0007
-        assert "elevation" in r["message"]
+        assert r["success"] and m._state.tm_data_rate == 128000
 
     def test_high_is_granted_above_the_elevation_gate(self):
         m = _model()
@@ -295,19 +299,28 @@ class TestCommandedTierIsAuthoritative:
         assert m._state.tm_data_rate == 128000
         assert m.tier_name(m._state.tm_tier) == "HIGH"
 
-    def test_high_auto_reverts_below_the_gate_and_comes_back(self):
+    def test_high_auto_reverts_on_gate_and_comes_back(self):
         """The gate demotes the ACTIVE tier only; the COMMANDED tier survives,
-        so HIGH resumes on the next good geometry without re-commanding."""
+        so HIGH resumes without re-commanding. 2026-08c item 5: elevation is
+        no longer a gate (ground policy), so the exercised gate is DOWNLINK
+        mode — and low elevation alone must NOT demote."""
         m = _model()
         m._state.antenna_deployed = True
         m._state.downlink_mode = True
         m.tick(1.0, _orbit(elevation=45.0, range_km=600.0), {})
         assert m.handle_command({"command": "set_tm_rate", "rate": "HIGH"})["success"]
 
+        # Low elevation: HIGH STAYS — the spacecraft cannot know elevation.
         m.tick(1.0, _orbit(elevation=6.0, range_km=1900.0), {})
+        assert m.tier_name(m._state.tm_tier) == "HIGH"
+
+        # A real on-board gate (DOWNLINK mode) demotes the active tier only.
+        m._state.downlink_mode = False
+        m.tick(1.0, _orbit(elevation=45.0, range_km=600.0), {})
         assert m.tier_name(m._state.tm_tier) == "LOW"          # demoted
         assert m.tier_name(m._state.data_rate_mode) == "HIGH"  # still commanded
 
+        m._state.downlink_mode = True
         m.tick(1.0, _orbit(elevation=45.0, range_km=600.0), {})
         assert m.tier_name(m._state.tm_tier) == "HIGH"
         assert m._state.tm_data_rate == 128000
@@ -330,7 +343,7 @@ class TestCommandedTierIsAuthoritative:
         for _ in range(5):
             m.tick(1.0, _orbit(), {})
         assert m._state.tm_data_rate == 1000
-        assert m.tier_name(m._state.tm_tier) == "BEACON"
+        assert m.tier_name(m._state.tm_tier) == "SAFE"
 
     def test_leaving_beacon_mode_lands_on_low_not_beacon(self):
         m = _model()
@@ -366,7 +379,10 @@ class TestTierTelemetry:
         m.tick(1.0, _orbit(elevation=45.0, range_km=600.0), {})
         m.handle_command({"command": "set_tm_rate", "rate": "HIGH"})
         p: dict[int, float] = {}
-        m.tick(1.0, _orbit(elevation=6.0, range_km=1900.0), p)
+        # 2026-08c item 5: elevation no longer gates — stow the antenna to
+        # exercise a real on-board gate.
+        m._state.antenna_deployed = False
+        m.tick(1.0, _orbit(elevation=45.0, range_km=600.0), p)
         assert p[0x053A] == m.tier_index("HIGH")  # commanded
         assert p[0x0539] == m.tier_index("LOW")   # active
         assert p[0x0506] == 16000
@@ -441,7 +457,7 @@ class TestPacingHonoursTheTier:
         and return the backlog depth afterwards."""
         ttc = engine.subsystems["ttc"]
         orbit = _orbit(elevation=45.0, range_km=600.0)
-        if tier_name == "BEACON":
+        if tier_name == "SAFE":
             ttc._state.beacon_mode = True
         else:
             ttc._state.beacon_mode = False
@@ -473,10 +489,10 @@ class TestPacingHonoursTheTier:
         """1000 bps is BELOW the 1557 bps HK channel rate, so the backlog can
         never clear — which is precisely why 1 kbps is a beacon rate and not
         an operations rate (Franz's complaint, quantified)."""
-        short = self._run(engine, "BEACON", seconds=30)
+        short = self._run(engine, "SAFE", seconds=30)
         engine._rt_pending.clear()
         engine._rt_byte_budget = 0.0
-        long = self._run(engine, "BEACON", seconds=60)
+        long = self._run(engine, "SAFE", seconds=60)
         assert short > 0, "the backlog must build at the beacon rate"
         assert long > short, "the backlog must GROW, not settle"
 
@@ -558,14 +574,14 @@ class TestCatalogueAgreesWithTheHandler:
     def test_catalogue_documents_every_tier_code(self):
         c = self._cmd("TTC_SET_DATA_RATE")
         desc = c["description"] + c["fields"][0]["description"]
-        for name in ("LOW", "HIGH", "BEACON"):
+        for name in ("LOW", "HIGH", "SAFE"):
             assert name in desc
         assert "16 kbps" in desc and "128 kbps" in desc and "1 kbps" in desc
 
     def test_catalogue_codes_match_the_ttc_config(self):
         m = _model()
         codes = {t["name"]: t.get("command_code") for t in m.tiers}
-        assert codes == {"BEACON": 0xFF, "LOW": 0x00, "HIGH": 0x01}
+        assert codes == {"SAFE": 0xFF, "LOW": 0x00, "HIGH": 0x01}
 
     def test_dispatcher_decodes_the_catalogued_single_byte(self, engine):
         ttc = engine.subsystems["ttc"]
@@ -630,7 +646,7 @@ class TestModulationFollowsTheTier:
 
     def test_symbol_rate_per_tier(self):
         m = _model()
-        assert m.tier_symbol_rate(m.tier_index("BEACON")) == 1000
+        assert m.tier_symbol_rate(m.tier_index("SAFE")) == 1000
         assert m.tier_symbol_rate(m.tier_index("LOW")) == 16000
         assert m.tier_symbol_rate(m.tier_index("HIGH")) == 64000
 

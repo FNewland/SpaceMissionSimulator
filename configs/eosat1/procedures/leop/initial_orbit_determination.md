@@ -1,113 +1,138 @@
 # LEOP-003: Initial Orbit Determination
 **Subsystem:** AOCS / Flight Dynamics
 **Phase:** LEOP
-**Revision:** 1.0
+**Revision:** 2.0 --- 2026-08c flow redesign. This is now the LAST LEOP card: it
+runs AFTER the GPS receiver has been powered (LEOP-007), the clock synced
+(LEOP-006) and HK SID 12 enabled, verifies the PVT solution on the parameters
+the spacecraft actually downlinks (0x0210-0x0212 / 0x0231-0x0236 --- the old
+card read 0x0230-0x0236 as lat/lon/alt, which are now the ECEF state), and
+ends LEOP with the phase-5 declaration.
 **Approved:** Flight Operations Director
 
+**Entry state:** LEOP-006 exit state --- COARSE_SUN sun hold, clock referenced
+(0x0A13 in {1,2,3}), GPS receiver ON with `aocs.gps_fix` (0x0274) >= 2, HK
+SID 12 (GPS_NAV) enabled and emitting every 8 s.
+
 ## Purpose
-Verify the on-board GPS receiver has achieved a valid position fix. Compare measured
-orbital parameters with the predicted 450 km sun-synchronous orbit (98.0 degree
-inclination). Validate orbit altitude, inclination, and LTAN against mission
-requirements to confirm correct orbit insertion by the launch vehicle.
+Verify the on-board GPS navigation solution, compare the measured orbit with
+the launcher-predicted sun-synchronous orbit, distribute the refined elements
+to Flight Dynamics and the ground-station network --- and, on a GO from all
+positions, DECLARE THE END OF LEOP by commanding mission phase 5
+(COMMISSIONING). Nothing on board advances the phase past 4; the declaration
+is this card's flight telecommand, sent once, here, and nowhere else.
 
 ## Prerequisites
-- [ ] LEOP-001 through LEOP-004 completed successfully
-- [ ] Spacecraft in COARSE_SUN mode with stable attitude
-- [ ] On-board time synchronized (LEOP-001 Step 5)
-- [ ] GPS receiver powered on (automatic at separation)
-- [ ] Bidirectional S-band link active
-- [ ] Flight Dynamics team ready with predicted TLE from launch provider
+- [ ] LEOP-001 through LEOP-007 (definitive order 001, 002, 004, 007, 005,
+      006) completed
+- [ ] `aocs.gps_fix` (0x0274) >= 2 and HK SID 12 on the downlink (LEOP-006)
+- [ ] On-board time referenced (`obdh.time_ref` 0x0A13 != 0, LEOP-006)
+- [ ] Bidirectional S-band link active on a scheduled pass
+- [ ] Flight Dynamics team ready with the predicted TLE from the launch provider
 
 ## Procedure Steps
 
-### Step 1 — Check GPS Receiver Status
-**TC:** `GET_PARAM(param_id=0x0230)` (Service 20, Subtype 3) — GPS receiver power status
-**Verify:** GPS receiver power = ON (value 1) within 10s
-**TC:** `GET_PARAM(param_id=0x0231)` (Service 20, Subtype 3) — GPS receiver mode
-**Verify:** GPS mode = NAVIGATING (value 2) within 10s
-**GO/NO-GO:** GPS receiver operational and in navigation mode
+### Step 1 --- Verify the GPS Navigation Solution Is Downlinking
+**TC:** `HK_REQUEST(sid=12)` (Service 3, Subtype 27) --- one-shot GPS_NAV report
+**Verify:** `aocs.gps_fix` (0x0274) >= 2 within 10s --- 3D fix (0=none, 1=2D, 2=3D, 3=3D+vel)
+**Verify:** `aocs.gps_num_sats` (0x0276) >= 4 within 10s --- enough satellites for a 3D solution
+**Verify:** `aocs.gps_pdop` (0x0275) reported within 10s --- record the dilution
+**Note:** The PVT channels are honest-invalid: position (0x0210-0x0212,
+0x0231-0x0233) reads zero below fix 2 and velocity (0x0234-0x0236) reads zero
+below fix 3. A zeroed solution here means WAIT for the fix, not "the orbit is
+at the centre of the Earth".
+**GO/NO-GO:** Fix quality sufficient for orbit determination
 
-### Step 2 — Verify GPS Satellite Visibility
-**TC:** `GET_PARAM(param_id=0x0232)` (Service 20, Subtype 3) — number of tracked GPS satellites
-**Verify:** Number of tracked satellites >= 4 within 30s
-**Action:** If fewer than 4 satellites tracked, wait up to 5 minutes for acquisition. GPS cold start in LEO may require up to 15 minutes.
-**GO/NO-GO:** Sufficient GPS satellites tracked for 3D position fix
+### Step 2 --- Read the Position Fix
+**TC:** `GET_PARAM(param_id=0x0210)` (Service 20, Subtype 3) --- `aocs.gps_lat` (deg)
+**TC:** `GET_PARAM(param_id=0x0211)` (Service 20, Subtype 3) --- `aocs.gps_lon` (deg)
+**TC:** `GET_PARAM(param_id=0x0212)` (Service 20, Subtype 3) --- `aocs.gps_alt` (km)
+**Verify:** `aocs.gps_lat` (0x0210) in range [-90, +90] within 10s
+**Verify:** `aocs.gps_lon` (0x0211) in range [-180, +180] within 10s
+**Verify:** `aocs.gps_alt` (0x0212) in range [400 km, 550 km] within 10s
+**Note:** The acceptance band is deliberately wide. The mission DESIGN orbit is
+450 km (`orbit.yaml` `altitude_km: 450`), but the shipped TLE's mean motion
+(15.24 rev/day) propagates to a 503-530 km orbit --- a known
+configuration inconsistency (see the model-bug register; do not "fix" it from
+the console). Record the measured altitude and hand the discrepancy to Flight
+Dynamics; tighten this band to [430, 470] once the TLE matches the declared
+orbit.
+**GO/NO-GO:** Position fix valid and altitude in the accepted LEO band
 
-### Step 3 — Read GPS Position Fix
-**TC:** `GET_PARAM(param_id=0x0233)` (Service 20, Subtype 3) — GPS latitude (degrees)
-**TC:** `GET_PARAM(param_id=0x0234)` (Service 20, Subtype 3) — GPS longitude (degrees)
-**TC:** `GET_PARAM(param_id=0x0235)` (Service 20, Subtype 3) — GPS altitude (km)
-**Verify:** GPS latitude in range [-90, +90] within 10s
-**Verify:** GPS longitude in range [-180, +180] within 10s
-**Verify:** GPS altitude in range [430 km, 470 km] within 10s
-**GO/NO-GO:** GPS position fix valid and altitude consistent with the 450 km orbit
+### Step 3 --- Read the ECEF State Vector
+**TC:** `GET_PARAM(param_id=0x0231)` (Service 20, Subtype 3) --- ECEF X (m)
+**TC:** `GET_PARAM(param_id=0x0232)` (Service 20, Subtype 3) --- ECEF Y (m)
+**TC:** `GET_PARAM(param_id=0x0233)` (Service 20, Subtype 3) --- ECEF Z (m)
+**TC:** `GET_PARAM(param_id=0x0234)` (Service 20, Subtype 3) --- ECEF velocity X (m/s)
+**TC:** `GET_PARAM(param_id=0x0235)` (Service 20, Subtype 3) --- ECEF velocity Y (m/s)
+**TC:** `GET_PARAM(param_id=0x0236)` (Service 20, Subtype 3) --- ECEF velocity Z (m/s)
+**Verify:** Position magnitude sqrt(X^2+Y^2+Z^2) in range [6700 km, 6950 km]
+**Verify:** Velocity magnitude in range [7400 m/s, 7900 m/s] --- circular-orbit
+speed at the measured altitude (sqrt(mu/a), mu = 398600.4418 km^3/s^2)
+**Action:** Record the full state vector with its GPS timestamp for Flight
+Dynamics.
+**GO/NO-GO:** State vector self-consistent (r x v sensible for a near-circular LEO)
 
-### Step 4 — Read GPS Velocity Vector
-**TC:** `GET_PARAM(param_id=0x0236)` (Service 20, Subtype 3) — GPS velocity magnitude (m/s)
-**Verify:** GPS velocity in range [7550 m/s, 7650 m/s] within 10s
-**Action:** Record velocity vector. Expected circular velocity at 450 km altitude is
-approximately **7644 m/s** — sqrt(mu/a) with mu = 398600.4418 km^3/s^2 and
-a = 6371 + 450 = 6821 km.
-**GO/NO-GO:** Velocity magnitude consistent with the 450 km circular orbit
+### Step 4 --- Flight Dynamics Comparison
+**Action:** Transmit the GPS-derived state vector to Flight Dynamics. Flight
+Dynamics computes osculating elements and compares with the launcher-predicted
+orbit: inclination within 0.2 deg of 98.0 deg, eccentricity < 0.01, LTAN
+within 15 minutes of the mission requirement.
+**Action:** Confirm the orbit period against the TLE mean motion; note the
+altitude discrepancy from Step 2 in the comparison.
+**GO/NO-GO:** Orbital elements consistent with a sun-synchronous insertion
 
-### Step 5 — Compare with Predicted Orbit
-**Action:** Transmit GPS-derived state vector to Flight Dynamics. Flight Dynamics computes osculating orbital elements and compares with launcher-predicted orbit.
-**Verify:** Semi-major axis within 5 km of predicted (**6821 km** nominal =
-`earth_radius_km` 6371 + `altitude_km` 450 from `configs/eosat1/orbit.yaml`)
-**Verify:** Eccentricity < 0.005 (near-circular)
-**Verify:** Inclination within 0.1 degrees of 98.0 degrees
-**GO/NO-GO:** Orbital elements consistent with predicted sun-synchronous orbit
-
-### Step 6 — Verify Sun-Synchronous Orbit Properties
-**Action:** Flight Dynamics confirms LTAN (Local Time of Ascending Node) matches the
-mission requirement. For the 450 km SSO, the J2 precession rate maintains the
-sun-synchronous condition at **98.0 degree** inclination — the value in
-`orbit.yaml` (`inclination_deg: 98.0`) and in the shipped TLE.
-**Verify:** LTAN within 15 minutes of target value (as specified by mission requirement)
-**Verify:** Orbit period approximately **93.4 minutes (5606 seconds +/- 30 s)** —
-2*pi*sqrt(a^3/mu) at a = 6821 km. Cross-check against the TLE mean motion in
-`orbit.yaml`, 15.24 rev/day = 5669 s; the two differ because the TLE carries a
-small eccentricity and is a mean element set, so anything in 5600-5680 s is
-consistent.
-**GO/NO-GO:** Sun-synchronous orbit confirmed within tolerance
-
-### Step 7 — Update On-Board Orbit Propagator
-**TC:** `SET_PARAM(param_id=0x0240, value=EPOCH)` (Service 20, Subtype 1) — propagator epoch
-**TC:** `SET_PARAM(param_id=0x0241, value=STATE)` (Service 20, Subtype 1) — propagator state
-**Note:** S20.1 carries ONE float32 value per command (`param_id` + `value`),
-so a full state vector is uploaded one component at a time, not as a
-single blob.
-**Action:** Upload refined state vector from Flight Dynamics to on-board orbit propagator for autonomous eclipse prediction and ground station pass scheduling.
-**Verify:** Propagator state update acknowledged within 10s
-**GO/NO-GO:** On-board propagator updated with refined orbit
-
-### Step 8 — Second GPS Fix Comparison
-**Action:** Wait 10 minutes and acquire a second GPS position fix to verify consistency.
-**TC:** `GET_PARAM(param_id=0x0233)` (Service 20, Subtype 3) — GPS latitude
-**TC:** `GET_PARAM(param_id=0x0234)` (Service 20, Subtype 3) — GPS longitude
-**TC:** `GET_PARAM(param_id=0x0235)` (Service 20, Subtype 3) — GPS altitude
-**Verify:** Altitude remains in range [430 km, 470 km] within 10s
-**Action:** Confirm position is consistent with orbit propagation over the 10-minute interval.
+### Step 5 --- Second Fix Consistency Check
+**Action:** Wait 10 minutes (SID 12 keeps sampling every 8 s).
+**TC:** `HK_REQUEST(sid=12)` (Service 3, Subtype 27) --- second GPS_NAV report
+**Verify:** `aocs.gps_alt` (0x0212) within 20 km of the Step 2 reading
+**Verify:** `aocs.gps_fix` (0x0274) still >= 2
+**Action:** Confirm the position moved along-track consistently with the
+propagated orbit over the interval.
 **GO/NO-GO:** GPS fixes consistent and repeatable
 
-### Step 9 — Generate Orbit Determination Report
-**Action:** Compile all GPS readings, computed orbital elements, comparison with predicted orbit, and LTAN verification. Distribute Orbit Determination Report. Provide refined TLE to ground station network for pass prediction updates.
-**GO/NO-GO:** Orbit determination complete — LEOP phase concluded
+### Step 6 --- Distribute the Orbit Determination Report
+**Action:** Compile all GPS readings, computed elements, the comparison with
+the predicted orbit and the LTAN verification. Distribute the Orbit
+Determination Report and the refined TLE to the ground-station network for
+pass-prediction updates.
+**GO/NO-GO:** Orbit determination complete
+
+### Step 7 --- GO/NO-GO Poll and END-OF-LEOP Phase Declaration
+**Action:** FD initiates the GO/NO-GO poll across all positions. Each position
+reports subsystem status. This is the ONLY place the phase-5 declaration is
+sent; no other card carries it.
+**Note:** The command is `critical` --- the phase gates telecommand acceptance,
+the derived spacecraft mode, FDIR arming and the propulsion arm interlock ---
+so read the argument back before calling the step complete. It is also the
+FD's quick command (OBDH group, "Set Mission Phase") in the MCS.
+**TC:** `SYS_SET_MISSION_PHASE(phase=5, flags=0)` (Service 8, Subtype 1, func_id 120)
+**Verify:** `eps.spacecraft_phase` (0x0129) = 5 within 5s
+**Action:** Confirm event `MISSION_PHASE_CHANGED` (0x0055) appears in the
+event log carrying `4 (LEOP) -> 5 (COMMISSIONING)`.
+**GO/NO-GO:** All positions GO; phase = COMMISSIONING --- LEOP is over
 
 ## Off-Nominal Handling
-- If GPS receiver not powered on: Command `SET_PARAM(param_id=0x0230, value=1)` to power on GPS. Wait 15 minutes for cold start acquisition. If receiver does not respond, check power bus via EPS telemetry.
-- If fewer than 4 satellites tracked after 15 minutes: Check GPS antenna pointing (may be obscured by spacecraft body in current attitude). Consider rotating spacecraft if safe to do so. Use ground-based ranging as backup for orbit determination.
-- If GPS altitude outside [430, 470] km range: Verify GPS fix quality (PDOP value). If fix quality good, alert Flight Dynamics — may indicate orbit insertion error. Assess mission impact and potential orbit correction manoeuvre requirements.
-- If inclination differs from 98.0 deg by more than 0.2 deg: Flag to Flight Dynamics for assessment. Small inclination errors may be correctable; large errors may impact sun-synchronous properties and mission lifetime.
-- If GPS provides no fix after 30 minutes: Use ground-based tracking (range/range-rate from Iqaluit and Troll) for initial orbit determination. Schedule GPS receiver investigation during commissioning.
+- If `aocs.gps_fix` < 2: confirm the receiver device is ON (`S2_AOCS_GPS_RECEIVER` device 0x020F, LEOP-007). Wait out the cold start (up to 15 min). If no fix after 30 minutes, fall back to ground-based range/Doppler from Iqaluit and Troll for the initial orbit and schedule a GPS investigation for commissioning; the phase declaration may still proceed on a ground-tracked orbit with FD approval.
+- If SID 12 is absent from the downlink: `HK_ENABLE(sid=12)` (Service 3, Subtype 5) was missed or lost (LEOP-006 Step 6a) --- re-issue it.
+- If the altitude is outside even the wide [400, 550] km band: verify PDOP first. With a good fix this is an insertion anomaly --- alert Flight Dynamics and assess a correction manoeuvre before declaring phase 5.
+- If inclination differs from 98.0 deg by more than 0.2 deg: flag to Flight Dynamics; sun-synchronous precession and mission lifetime are affected.
+- If `SYS_SET_MISSION_PHASE` is refused: 0x0C03 means the OBC is (back) in the bootloader --- re-run LEOP-001 Step 5 and LEOP-006 first. 0x0C04 means a backwards declaration without FORCE.
+
+## Exit state
+- Mission phase = 5 (COMMISSIONING); `sat.mode` (0x0001) still derives SAFE ---
+  only the phase-6 declaration at the END of commissioning (COM-013) unlocks
+  NOMINAL
+- Spacecraft still in the COARSE_SUN hold, wheels disabled, payload dark ---
+  exactly the entry state COM-001 declares
+- GPS receiver ON, SID 12 emitting (left running: commissioning and nominal
+  ops use it)
 
 ## Post-Conditions
-- [ ] GPS receiver operational with valid 3D fix
-- [ ] Orbit altitude confirmed approximately 450 km
-- [ ] Inclination confirmed approximately 98.0 degrees
-- [ ] Orbit eccentricity confirmed near-circular (< 0.005)
-- [ ] LTAN verified within mission requirements
-- [ ] On-board orbit propagator updated with refined state vector
-- [ ] Orbit Determination Report distributed to mission team
-- [ ] Refined TLE distributed to ground station network
-- [ ] LEOP phase complete — GO for Commissioning phase
+- [ ] GPS PVT verified on the downlinked SID 12 channels
+- [ ] State vector recorded and delivered to Flight Dynamics
+- [ ] Orbit Determination Report + refined TLE distributed
+- [ ] Phase 5 declared (event 0x0055 logged) --- LEOP complete
+
+**NEXT:** Commissioning, starting with COM-001 (EPS Checkout). The definitive
+commissioning order is COM-001 ... COM-013 as indexed, with COM-003 (sensor
+calibration) deliberately BEFORE COM-004 (wheel enable).

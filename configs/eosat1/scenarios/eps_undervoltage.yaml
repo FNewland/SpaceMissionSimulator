@@ -11,7 +11,10 @@ events:
     params:
       subsystem: eps
       failure: undervoltage
-      magnitude: 3.0
+      # `magnitude` on this failure was a bare severity that the model
+      # multiplied by 10 to get percentage points of SoC. It now takes the
+      # real engineering value directly (this was 3.0 => 30 % SoC).
+      soc_pct: 30.0
       onset: gradual
       onset_duration_s: 600
 expected_responses:

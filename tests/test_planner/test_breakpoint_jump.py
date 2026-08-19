@@ -29,6 +29,9 @@ from smo_common.config.schemas import MissionConfig, OrbitConfig
 T0 = datetime(2026, 3, 10, 12, 0, 0, tzinfo=timezone.utc)
 
 
+_UNREACHABLE_SIM_URL = "http://127.0.0.1:59999/api/state"
+
+
 def _make_planner(payload=None):
     orbit_cfg = OrbitConfig(
         tle_line1="1 25544U 98067A   24001.00000000  .00000000  00000-0  00000-0 0  9999",
@@ -40,7 +43,15 @@ def _make_planner(payload=None):
          patch("smo_planner.server.OrbitPropagator", return_value=MagicMock()), \
          patch("smo_planner.server.OrbitPlanner", return_value=MagicMock()), \
          patch("smo_common.config.loader.load_mission_config", return_value=mc):
-        server = PlannerServer("/tmp/fake_config", http_port=0, time_source="sim")
+        # Point the constructor at a port nothing can be listening on. The
+        # PlannerServer takes its first sim anchor during __init__, BEFORE the
+        # test can swap _fetch_sim_state -- so with the default
+        # localhost:8080 these tests passed only when no simulator happened to
+        # be running on the developer's machine, and failed silently-differently
+        # when one was. The unreachable URL makes the "sim was never reachable"
+        # premise true by construction.
+        server = PlannerServer("/tmp/fake_config", http_port=0, time_source="sim",
+                               sim_state_url=_UNREACHABLE_SIM_URL)
     server._fetch_sim_state = lambda: payload
     return server
 

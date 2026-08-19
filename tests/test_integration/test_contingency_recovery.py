@@ -235,25 +235,30 @@ class TestProgressiveLoadShed:
 class TestAOCSSensorRecovery:
     """Test AOCS sensor loss -> backup switch -> recovery."""
 
-    def test_mag_a_failure_fallback_to_b(self):
-        """Mag A failure should automatically fallback to mag B."""
+    def test_mag_failure_invalidates_the_field(self):
+        """Single-string mag (2026-08-19): a mag failure means NO valid field
+        -- there is no unit B to fall back to. The old fallback test passed
+        vacuously after the dual-mag retirement (mag_a_fail no-ops), which is
+        exactly the defect class this suite exists to catch."""
         aocs = AOCSBasicModel()
         aocs.configure({})
-        aocs._state.mode = 4  # MODE_NOMINAL — power on the mag bus
-        aocs.inject_failure("mag_a_fail")
+        aocs._state.mode = 4  # MODE_NOMINAL -- power on the mag bus
+        aocs.inject_failure("mag_failure")
         params = {}
         orbit = make_orbit_state()
         aocs.tick(1.0, orbit, params)
-        assert aocs._state.mag_valid is True  # Fallback to B
+        assert aocs._state.mag_valid is False
 
-    def test_mag_select_b_after_a_failure(self):
-        """Operator can explicitly select mag B after A fails."""
+    def test_mag_select_refused_single_string(self):
+        """2026-08-19: EO-Sat-1 flies ONE magnetometer (owner ruling, no
+        redundancy). mag_select is kept only for the honest 0x0007 refusal;
+        recovery from a mag failure is a power-cycle or the injection clear,
+        exercised by the rewritten aocs_sensor_loss_recovery card."""
         aocs = AOCSBasicModel()
         aocs.configure({})
-        aocs.inject_failure("mag_a_fail")
+        aocs.inject_failure("mag_failure")
         result = aocs.handle_command({"command": "mag_select", "source": "B"})
-        assert result["success"] is True
-        assert aocs._state.mag_select == 'B'
+        assert result["success"] is False
 
     def test_st_failure_boot_backup(self):
         """ST1 failure -> boot ST2 -> select ST2 recovery."""

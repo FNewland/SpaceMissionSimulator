@@ -24,7 +24,7 @@ for the receiver, burn wire deployable antennas, and low-rate/high-rate data mod
 | Uplink Frequency    | 2025.0 MHz (S-band) | 2025.0 MHz (S-band) |
 | Downlink Frequency  | 2200.0 MHz (S-band) | 2200.0 MHz (S-band) |
 | Uplink Data Rate    | 4 kbps (fixed)   | 4 kbps (fixed)   |
-| Downlink (BEACON)   | 1 kbps           | 1 kbps           |
+| Downlink (SAFE)     | 1 kbps           | 1 kbps           |
 | Downlink (LOW)      | 16 kbps          | 16 kbps          |
 | Downlink (HIGH)     | 128 kbps         | 128 kbps         |
 | Modulation          | BPSK (TC) / BPSK or QPSK (TM, per tier) | same |
@@ -89,7 +89,7 @@ modulation, its own coding and its own permission gates.
 
 | Tier | Rate | Modulation / coding | Symbol rate | Occupied BW | Purpose |
 |------|------|---------------------|-------------|-------------|---------|
-| BEACON | 1 kbps | BPSK, conv(7,1/2)+RS | 1 kBd | 3.1 kHz | Bootloader and beacon mode only |
+| SAFE | 1 kbps | BPSK, conv(7,1/2)+RS | 1 kBd | 3.1 kHz | Bootloader / contingency lifeline (renamed from BEACON, 2026-08c) |
 | LOW | 16 kbps | BPSK, conv(7,1/2)+RS | 16 kBd | 49.8 kHz | **Routine operations** and the safe-mode / FDIR fallback |
 | HIGH | 128 kbps | QPSK, RS(255,223) | 64 kBd | 99.5 kHz | Delayed-telemetry playback and image dumps only |
 
@@ -101,23 +101,37 @@ TM transfer framing. LOW carries that at under 10 % duty *and* plays back roughl
 falls behind. Nothing is degraded about routine operations at LOW; the antenna may even
 be stowed.
 
-**BEACON (1 kbps) is a lifeline, not an operations rate.** 1000 bps is *below* the
-1557 bps housekeeping generation rate, so a spacecraft held at BEACON accumulates a
+**SAFE (1 kbps) is a lifeline, not an operations rate.** (This rung was renamed from
+BEACON in 2026-08c: "beacon" now always means the UHF whip transmitter, the second
+radio.) 1000 bps is *below* the
+1557 bps housekeeping generation rate, so a spacecraft held at SAFE accumulates a
 real-time backlog that can never drain. It exists to carry SID 11 (28 bytes every 30 s =
 7.5 bps) out of the bootloader with over 100x headroom and the narrowest possible
 occupied bandwidth. It is entered by `TTC_SET_BEACON_MODE` (func 70) or by the
 bootloader — never by `TTC_SET_DATA_RATE`.
 
-**HIGH (128 kbps) is earned, not selected.** It is refused unless all three gates are
-satisfied:
+**HIGH (128 kbps) is earned, not selected.** On board it is refused unless BOTH
+gates the spacecraft can itself know are satisfied:
 
 1. the antenna is deployed (`ttc.antenna_deployed`, 0x0520 = 1);
 2. DOWNLINK / payload-dump mode is on (`TTC_SET_DOWNLINK_MODE`, func 79;
-   `ttc.downlink_mode`, 0x053C = 1);
-3. the elevation is at least 10 deg (`ttc.contact_elevation`, 0x050A).
+   `ttc.downlink_mode`, 0x053C = 1).
 
 A tier whose gates are open is **rejected** with an S1.8 execution failure
 (error 0x0007), never silently clamped — the failure text names the open gate.
+(While beacon MODE is latched — func 70 — every tier except SAFE is refused
+with the same 0x0007.)
+
+**The 10 deg elevation rule is a GROUND policy, not an on-board gate**
+(2026-08c): a real spacecraft does not know its elevation as seen from a
+station, so the flight software neither refuses nor demotes HIGH on elevation.
+The policy number lives in `subsystems/ttc.yaml`
+`tm_rate_tiers[HIGH].min_elevation_deg` (10 deg) and is enforced by the
+GROUND segment: the mission planner schedules HIGH dumps above it, and the
+MCS commanding page raises an arm-through hold when HIGH is commanded below
+it, computed from the ground's own contact geometry. Below 10 deg the physics
+still bites honestly — cosec-scaled atmospheric loss and the G/T de-rate cost
+real margin and raise the BER the ground sees.
 
 **Commanding.** `TTC_SET_DATA_RATE` (Service 8, Subtype 1, **func 65**) takes one uint8
 tier code. The legacy binary encoding is preserved verbatim: `rate=0` is "the low rate"
@@ -128,10 +142,11 @@ rates.
 **Active vs commanded.** The gates act on the ACTIVE tier, never on the COMMANDED one.
 `ttc.tm_tier_cmd` (0x053A) is what the ground asked for; `ttc.tm_tier` (0x0539) is what
 is on air. They diverge when a gate closes — most commonly as a pass descends below
-10 deg — and converge again when it reopens, without re-commanding. A console that shows
+10 deg — and converge again when it reopens, without re-commanding (gate closures are the
+antenna, DOWNLINK mode or the beacon-mode latch — never elevation). A console that shows
 only one of the two turns a diagnosable condition into a mystery.
 
-**Rate and margin.** Each rung costs `10*log10(R2/R1)` of Eb/N0: BEACON to LOW is
+**Rate and margin.** Each rung costs `10*log10(R2/R1)` of Eb/N0: SAFE to LOW is
 12.04 dB, LOW to HIGH is 9.03 dB. Coding adds to that — conv(7,1/2)+RS is worth 7.5 dB
 against RS(255,223)'s 6.0 dB — so stepping down from HIGH to LOW recovers 9.03 + 1.5 =
 10.5 dB in total. See `docs/LINK_BUDGET_AND_RATES.md` for the derivation and the
@@ -139,13 +154,13 @@ per-station table, or run `python tools/link_budget_ladder.py`.
 
 ### 2.5 Beacon Packet Mode
 
-During LEOP and BOOTLOADER operations, the TTC transmits beacon packets on the BEACON
+During LEOP and BOOTLOADER operations, the TTC transmits beacon packets on the SAFE
 rung of the ladder:
 
 | Parameter          | Value                                      |
 |--------------------|--------------------------------------------|
 | Beacon Rate        | 1 packet every 30 seconds                  |
-| Data Rate          | 1 kbps (BEACON tier)                       |
+| Data Rate          | 1 kbps (SAFE tier)                         |
 | Symbol Rate        | 1 kBd, BPSK, conv(7,1/2)+RS, ~3.1 kHz occupied |
 | Content            | SID 11 — minimal OBC health telemetry      |
 | Modulation         | BPSK                                       |
@@ -172,7 +187,7 @@ health and initiate recovery commanding.
 Computed by `python tools/link_budget_ladder.py`, which drives the same model object the
 simulator flies, so these numbers cannot drift from the spacecraft.
 
-| Parameter            | BEACON (1 kbps) | LOW (16 kbps) | HIGH (128 kbps) |
+| Parameter            | SAFE (1 kbps)   | LOW (16 kbps) | HIGH (128 kbps) |
 |----------------------|-----------------|---------------|-----------------|
 | EIRP (10 dBW + 3 dBi)| 13 dBW          | 13 dBW        | 13 dBW          |
 | Free Space Loss @5 deg | -165.1 dB (1944.5 km) | -165.1 dB | -165.1 dB |
@@ -188,10 +203,10 @@ Two things follow, and both are on the syllabus:
 * **Every rung closes with tens of dB to spare.** At 450 km to a professional polar dish
   this link is not power-limited. What differentiates the tiers is occupied bandwidth,
   PA power and thermal cost, ground-modem configuration and mode policy — not a power
-  cliff. The 10 deg gate on HIGH is an operational rule, not the point at which the link
-  fails.
+  cliff. The 10 deg rule on HIGH is a GROUND policy (planner scheduling + MCS
+  commanding hold), not the point at which the link fails — and not an on-board gate.
 * **Margin still responds to rate exactly as the budget says it should.** LOW is 12.04 dB
-  below BEACON and HIGH is 10.5 dB below LOW (9.03 dB of rate plus 1.5 dB of coding).
+  below SAFE and HIGH is 10.5 dB below LOW (9.03 dB of rate plus 1.5 dB of coding).
   Read the ladder off the `-10*log10(R)` term and it comes out right.
 
 Link margin decreases with lower elevation angles: path loss rises, atmospheric loss is
@@ -308,7 +323,7 @@ Schedule switchover commands with sufficient contact time remaining.
    commandable.
 7. After antenna deployment (burn wire), verify RSSI improvement from pre-deployment
    levels. A marginal improvement may indicate incomplete deployment.
-8. During LEOP first contact, expect beacon packets on the BEACON tier (1 kbps, 1 kBd,
+8. During LEOP first contact, expect beacon packets on the SAFE tier (1 kbps, 1 kBd,
    BPSK conv(7,1/2)+RS). Configure the ground demodulator for 1 kBd before AOS and
    re-configure it for 16 kBd immediately after application boot, when the ladder's
    `default_tier` (LOW) becomes active — the beacon demodulator will not lock 16 kbps.

@@ -10,6 +10,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from smo_common.models.subsystem import SubsystemModel
+from smo_simulator.failure_spec import (
+    FailureSpec, ParamSpec, T_FLOAT, T_INT, enum, number,
+)
 
 # Software image constants
 SW_BOOTLOADER = 0
@@ -57,6 +60,33 @@ OBC_POWER_LINE_PARAM = 0x0110
 
 #: Sentinel for obdh.time_since_sync_s when the clock has never been synced.
 TIME_SINCE_SYNC_NEVER = 0xFFFFFFFF
+
+# ── Buffer-fill telemetry ↔ S15 on-board stores ──────────────────────
+# obdh.hktm_buf_fill / event_buf_fill / alarm_buf_fill (0x0312/0x0313/0x0314)
+# are NOT a second, independent set of buffers living inside the OBC. They are
+# the fill of the S15 on-board stores that TM(15,14) reports and that the
+# console's PUS SERVICES → S15 Storage page shows. There is exactly one set of
+# stores on board, so there must be exactly one number per store.
+#
+# They used to be a free-running stub: hktm_buf_fill accumulated a random
+# `uniform(0, 2)` percentage every second against a fictitious 1000-slot
+# capacity and drained only while the TTC carrier was locked — i.e. it was a
+# model of *ground contact*, not of storage. Measured headlessly against the
+# shipped config it saturated at 100 % roughly 25 minutes into every gap
+# between passes while the real HK_Store (18 000 slots) sat at 15–35 %, and it
+# read 0 % during a pass while the real store kept growing. event_buf_fill and
+# alarm_buf_fill were worse: raw packet counts declared with units "%" that
+# nothing on board ever incremented, so they read 0 for ever.
+#
+# param key → S15 store id (see smo_simulator.tm_storage.DEFAULT_STORES).
+BUFFER_STORE_IDS = {"hktm": 1, "event": 2, "alarm": 4}
+
+
+def _pct(count: float, capacity: float) -> float:
+    """count/capacity as a percentage, clamped to [0, 100]."""
+    if capacity <= 0:
+        return 0.0
+    return max(0.0, min(100.0, float(count) / float(capacity) * 100.0))
 
 # Onboard-clock S5 events (event_catalog.yaml, OBDH block).
 EV_OBC_TIME_SET = 0x030C       # S9,1 ground SET_TIME
@@ -127,12 +157,23 @@ class OBDHState:
     bus_b_status: int = BUS_OK
 
     # ── Buffer management ──
-    hktm_buf_fill: float = 0.0  # stored as PERCENTAGE (0.0–100.0)
+    # All three *_buf_fill values are PERCENTAGES (0.0–100.0) of the matching
+    # S15 on-board store (BUFFER_STORE_IDS): store 1 HK, store 2 events,
+    # store 4 alarms. They are refreshed from the store every tick and are the
+    # same numbers TM(15,14) reports — see the note at the top of this module.
+    hktm_buf_fill: float = 0.0
+    event_buf_fill: float = 0.0
+    alarm_buf_fill: float = 0.0
+    # Fallback capacities, used ONLY when the model is constructed standalone
+    # (unit tests) with no engine and therefore no S15 storage to read. When a
+    # store is present its own capacity is authoritative.
     hktm_buf_capacity: int = 1000
-    event_buf_fill: int = 0
     event_buf_capacity: int = 500
-    alarm_buf_fill: int = 0
     alarm_buf_capacity: int = 200
+    # Local event/alarm counters behind record_event() / record_alarm(). Kept
+    # so the standalone model still has a fill to report without a store.
+    event_buf_count: int = 0
+    alarm_buf_count: int = 0
 
     # ── Last reboot cause ──
     last_reboot_cause: int = REBOOT_NONE
@@ -183,6 +224,11 @@ class OBDHBasicModel(SubsystemModel):
         import random as _random
         self.rng = _random.Random(20260731)  # deterministic standalone fallback; engine overrides via derive_rng
         self._cpu_base = 35.0
+        # Nominal CPU load, from `obdh.cpu_baseline_pct`. `cpu_spike` moves
+        # `_cpu_base`; clearing it used to restore a hard-coded 35 %, which
+        # silently reconfigured the spacecraft whenever the config said
+        # otherwise.
+        self._cpu_base_nominal = 35.0
         self._param_ids: dict[str, int] = {}
         self._event_to_emit: tuple[int, str] | None = None  # (event_id, event_name)
         self._prev_mode = 0
@@ -221,6 +267,7 @@ class OBDHBasicModel(SubsystemModel):
     def configure(self, config: dict[str, Any]) -> None:
         self._state.watchdog_period = config.get("watchdog_period_ticks", 30)
         self._cpu_base = config.get("cpu_baseline_pct", 35.0)
+        self._cpu_base_nominal = self._cpu_base
 
         # Buffer capacities
         buffers = config.get("buffers", {})
@@ -439,6 +486,62 @@ class OBDHBasicModel(SubsystemModel):
             self._reboot(REBOOT_COMMAND)
         return on
 
+    # ─── Buffer fill (S15 on-board stores) ───────────────────────────
+
+    def store_fill_pct(self) -> dict[str, float] | None:
+        """Fill percentage of each S15 store behind the buffer telemetry.
+
+        Returns ``{"hktm": pct, "event": pct, "alarm": pct}`` read from
+        ``engine._tm_storage``, or None when no storage is reachable (the
+        model constructed standalone in a unit test, or an engine mock).
+        The percentages are exactly ``count / capacity * 100`` — the same
+        expression ``OnboardTMStorage.get_status()`` reports in TM(15,14), so
+        the two consoles pages are numerically identical by construction.
+        """
+        eng = getattr(self, "_engine", None)
+        storage = getattr(eng, "_tm_storage", None) if eng is not None else None
+        if storage is None:
+            return None
+        try:
+            status = {int(st["id"]): st for st in storage.get_status()}
+        except Exception:  # noqa: BLE001 — a mock/absent store must not break the tick
+            return None
+        out: dict[str, float] = {}
+        for key, store_id in BUFFER_STORE_IDS.items():
+            st = status.get(store_id)
+            if st is None:
+                continue
+            try:
+                cap = float(st.get("capacity") or 0.0)
+                count = float(st.get("count") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            pct = 0.0 if cap <= 0 else count / cap * 100.0
+            out[key] = max(0.0, min(100.0, pct))
+        return out or None
+
+    def _refresh_buffer_fill(self) -> None:
+        """Refresh the three buffer-fill percentages from the S15 stores.
+
+        With no store reachable (standalone model) the event/alarm fills fall
+        back to the local record_event()/record_alarm() counters and the HK
+        fill simply holds — it is never invented.
+        """
+        s = self._state
+        fills = self.store_fill_pct()
+        if fills is not None:
+            s.hktm_buf_fill = float(fills.get("hktm", s.hktm_buf_fill))
+            s.event_buf_fill = float(fills.get("event", s.event_buf_fill))
+            s.alarm_buf_fill = float(fills.get("alarm", s.alarm_buf_fill))
+        else:
+            s.event_buf_fill = _pct(s.event_buf_count, s.event_buf_capacity)
+            s.alarm_buf_fill = _pct(s.alarm_buf_count, s.alarm_buf_capacity)
+        # Belt and braces: these are percentages and nothing downstream may
+        # ever render a value above 100 % with a '%' suffix again.
+        s.hktm_buf_fill = max(0.0, min(100.0, float(s.hktm_buf_fill)))
+        s.event_buf_fill = max(0.0, min(100.0, float(s.event_buf_fill)))
+        s.alarm_buf_fill = max(0.0, min(100.0, float(s.alarm_buf_fill)))
+
     def _apply_device_power_gates(self, s: "OBDHState") -> None:
         """Reflect OBDH equipment powered OFF via S2 device access into the
         telemetry. Wires the S2_OBDH_* on/off commands, previously dead flags.
@@ -588,35 +691,12 @@ class OBDHBasicModel(SubsystemModel):
             # Bootloader: minimal power consumption
             s.heat_dissipation_w = 2.0 + self.rng.gauss(0, 0.1)
 
-        # Buffer fill simulation — expressed as a PERCENTAGE (0..100) so
-        # that the MCS "Buffer Fill – HK TM" widget (param 0x0312) never
-        # exceeds 100%. Previously the counter was a raw packet count
-        # clamped to `hktm_buf_capacity` (=1000), but the widget was
-        # rendering that number directly with a '%' suffix — producing
-        # physically impossible readings (observed 353%). See
-        # defects/01-obdh-hk-tm-buffer-fill-overflow.md.
-        #
-        # The authoritative S15 store fill is computed in
-        # OnboardTMStorage.get_status(); until this model is wired to the
-        # real store, we simulate a well-behaved percentage here that:
-        #   - accumulates slowly while the application is running,
-        #   - drains when the downlink is active (TTC carrier lock),
-        #   - is hard-clamped to [0, 100].
-        if s.sw_image == SW_APPLICATION:
-            # Accumulate a small percentage every tick (equivalent to the
-            # previous raw count scaled by 100/capacity).
-            # Rate per unit sim time (plan A-3): scale by dt so the fill
-            # rate is invariant under sub-stepping / acceleration.
-            accumulate_pct = self.rng.uniform(0.0, 2.0) * dt * (100.0 / max(1, s.hktm_buf_capacity))
-            s.hktm_buf_fill = min(100.0, float(s.hktm_buf_fill) + accumulate_pct)
-            # Drain when downlink active (TTC carrier lock)
-            carrier_lock = shared_params.get(0x0510, 0)
-            if carrier_lock:
-                drain_pct = self.rng.uniform(1.0, 5.0) * dt * (100.0 / max(1, s.hktm_buf_capacity))
-                s.hktm_buf_fill = max(0.0, float(s.hktm_buf_fill) - drain_pct)
-                s.event_buf_fill = max(0, s.event_buf_fill - self.rng.randint(0, 2))
-        # Hard-clamp in all cases (belt and braces)
-        s.hktm_buf_fill = max(0.0, min(100.0, float(s.hktm_buf_fill)))
+        # ── Buffer fill ──
+        # Read straight off the S15 on-board stores (BUFFER_STORE_IDS) so the
+        # OBDH page and the PUS SERVICES → S15 Storage page cannot disagree:
+        # they are the same store, reported once. See the module note for what
+        # the free-running stub that used to live here did instead.
+        self._refresh_buffer_fill()
 
         # Event generation — edge detection and dispatch to engine
         events_to_emit = []
@@ -841,19 +921,23 @@ class OBDHBasicModel(SubsystemModel):
         return event
 
     def record_event(self) -> bool:
-        """Record an event in event buffer. Returns False if buffer full."""
+        """Record an event in event buffer. Returns False if buffer full.
+
+        Counts into `event_buf_count`; the reported `event_buf_fill` is a
+        percentage and comes from the S15 event store whenever one exists.
+        """
         s = self._state
-        if s.event_buf_fill >= s.event_buf_capacity:
+        if s.event_buf_count >= s.event_buf_capacity:
             return False
-        s.event_buf_fill += 1
+        s.event_buf_count += 1
         return True
 
     def record_alarm(self) -> bool:
         """Record an alarm in alarm buffer. Returns False if buffer full."""
         s = self._state
-        if s.alarm_buf_fill >= s.alarm_buf_capacity:
+        if s.alarm_buf_count >= s.alarm_buf_capacity:
             return False
-        s.alarm_buf_fill += 1
+        s.alarm_buf_count += 1
         return True
 
     def get_telemetry(self) -> dict[int, float]:
@@ -1027,6 +1111,93 @@ class OBDHBasicModel(SubsystemModel):
 
         return {"success": False, "message": f"Unknown: {command}"}
 
+    # ─── Failure injection ───────────────────────────────────────────
+    # Declarative parameter specs — single source for the instructor form,
+    # FailureManager validation and the scenario content gate.
+    FAILURE_SPECS = {
+        "watchdog_reset": FailureSpec(
+            name="watchdog_reset", label="Watchdog armed / about to bite",
+            effect="Arms the watchdog with a full period; unless the "
+                   "application kicks it, the OBC reboots.",
+            magnitude=None, reversible=True,
+        ),
+        "obc_crash": FailureSpec(
+            name="obc_crash", label="OBC crash (watchdog reboot)",
+            effect="Immediate watchdog reboot: uptime resets, reboot counter "
+                   "increments, cause = WATCHDOG, TM stops for the boot time.",
+            magnitude=None, reversible=False,
+            notes="One-shot: nothing to clear, the reboot already happened.",
+        ),
+        "memory_errors": FailureSpec(
+            name="memory_errors", label="EDAC correctable memory errors",
+            effect="Bumps the corrected-error counter; the operator sees the "
+                   "EDAC rate climb without a reboot.",
+            magnitude=None,
+            params=(number("count", "Errors to add", unit="errors", lo=1,
+                           hi=10000, default=5, integer=True),),
+        ),
+        "memory_corruption": FailureSpec(
+            name="memory_corruption", label="Uncorrectable memory error",
+            effect="Uncorrectable EDAC event: emits MEMORY_ERROR (0x0302) and "
+                   "reboots the OBC.",
+            magnitude=None, reversible=False,
+            params=(number("count", "Errors to add", unit="errors", lo=1,
+                           hi=10000, default=10, integer=True),),
+        ),
+        "memory_segment_fail": FailureSpec(
+            name="memory_segment_fail", label="Mass-memory segment failure",
+            effect="Permanently fails one of the 4 OBC memory segments; "
+                   "usable capacity shrinks and mmm_used_pct rises.",
+            magnitude=None,
+            params=(enum("segment", "Memory segment", [0, 1, 2, 3],
+                         labels=["Segment 0", "Segment 1", "Segment 2",
+                                 "Segment 3"], default=0),),
+        ),
+        "cpu_spike": FailureSpec(
+            name="cpu_spike", label="CPU load spike",
+            effect="Holds the OBC CPU load at the given percentage; task "
+                   "overruns and buffer backlog follow.",
+            magnitude=None,
+            params=(number("load", "CPU load", unit="%", lo=0.0, hi=100.0,
+                           default=95.0, step=1.0),),
+        ),
+        "bus_failure": FailureSpec(
+            name="bus_failure", label="CAN bus failure",
+            effect="Marks one of the redundant CAN buses FAILED; the bus "
+                   "isolation logic must cross over to the other.",
+            magnitude=None,
+            params=(enum("bus", "CAN bus", ["A", "B"],
+                         labels=["Bus A (nominal)", "Bus B (redundant)"],
+                         default="A"),),
+        ),
+        "boot_image_corrupt": FailureSpec(
+            name="boot_image_corrupt", label="Application image corrupt",
+            effect="The application image fails its CRC — the NEXT boot stops "
+                   "in the bootloader.",
+            magnitude=None,
+        ),
+        "stuck_in_bootloader": FailureSpec(
+            name="stuck_in_bootloader", label="Stuck in bootloader",
+            effect="Drops the OBC into the bootloader image now and inhibits "
+                   "the application boot: sw_image = 0 immediately.",
+            magnitude=None,
+        ),
+        "clock_drift": FailureSpec(
+            name="clock_drift", label="Onboard clock oscillator drift",
+            effect="Forces the OBC oscillator drift rate. The onboard clock "
+                   "walks away from UTC until a GPS/S9 time sync pulls it back "
+                   "(500 ppm is about 43 s/day; nominal is about 12 ppm).",
+            magnitude=ParamSpec(
+                name="magnitude", type=T_FLOAT,
+                label="Severity (x the 500 ppm failure drift)",
+                unit="fraction", min=0.0, max=10.0, default=1.0, step=0.05,
+                description="Ignored when an explicit ppm is given."),
+            params=(number("ppm", "Drift rate", unit="ppm", lo=-100000.0,
+                           hi=100000.0, step=1.0,
+                           description="Absolute drift; overrides magnitude."),),
+        ),
+    }
+
     def inject_failure(self, failure: str, magnitude: float = 1.0,
                        **kw) -> None:
         s = self._state
@@ -1114,7 +1285,7 @@ class OBDHBasicModel(SubsystemModel):
             s.mem_errors = max(0, s.mem_errors - int(kw.get("count", 5)))
 
         elif failure == "cpu_spike":
-            self._cpu_base = 35.0
+            self._cpu_base = self._cpu_base_nominal
 
         elif failure == "bus_failure":
             bus = kw.get("bus", "A").upper()
@@ -1153,7 +1324,8 @@ class OBDHBasicModel(SubsystemModel):
     # on restore would be exactly the gyro_bias bug of the last batch.
     _EXTRA_STATE_KEYS = ("_rng_state", "_clock_drift_drawn",
                          "_clock_drift_saved", "_uptime_acc",
-                         "_prev_gps_fix_ok", "_prev_obc_line_on")
+                         "_prev_gps_fix_ok", "_prev_obc_line_on",
+                         "_cpu_base", "_cpu_base_nominal")
 
     def get_state(self) -> dict[str, Any]:
         import dataclasses
@@ -1168,6 +1340,10 @@ class OBDHBasicModel(SubsystemModel):
         d["_uptime_acc"] = float(self._uptime_acc)
         d["_prev_gps_fix_ok"] = bool(self._prev_gps_fix_ok)
         d["_prev_obc_line_on"] = self._prev_obc_line_on
+        # `cpu_spike` lives ONLY here — not in the dataclass — so a snapshot
+        # that dropped it healed an injected CPU overload on restore.
+        d["_cpu_base"] = float(self._cpu_base)
+        d["_cpu_base_nominal"] = float(self._cpu_base_nominal)
         return d
 
     def set_state(self, state: dict[str, Any]) -> None:
@@ -1185,6 +1361,9 @@ class OBDHBasicModel(SubsystemModel):
                                            state.get("uptime_s", 0) or 0))
         self._prev_gps_fix_ok = bool(state.get("_prev_gps_fix_ok", False))
         self._prev_obc_line_on = state.get("_prev_obc_line_on")
+        self._cpu_base_nominal = float(state.get("_cpu_base_nominal",
+                                                 self._cpu_base_nominal))
+        self._cpu_base = float(state.get("_cpu_base", self._cpu_base))
         restore_dataclass_state(self._state, state,
                                 skip=self._EXTRA_STATE_KEYS)
 

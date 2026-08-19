@@ -1,8 +1,17 @@
 # LEOP-006: Time Synchronisation
 **Subsystem:** OBDH / Time Management
 **Phase:** LEOP
-**Revision:** 2.0
+**Revision:** 3.0 --- 2026-08c flow redesign. This ONE card now owns the whole
+LEOP boot-then-sync logic, both paths: the GROUND set (S9.1) as the immediate
+action, then GPS discipline (S8.1 func 80) once the receiver --- powered in
+LEOP-007 --- holds a fix. The duplicate `SET_TIME` step that used to live in
+LEOP-001 is gone; NOM-008 remains the routine-ops clock card.
 **Approved:** Flight Operations Director
+
+**Entry state:** LEOP-005 exit state --- COARSE_SUN sun hold, application image
+running, clock UNSET (`obdh.time_ref` 0x0A13 = 0, counting from J2000), GPS
+receiver ON (device 0x020F, LEOP-007 Step 4) and acquiring; HK SID 12 not yet
+enabled.
 
 ## Purpose
 Establish the spacecraft's time reference for the first time after separation.
@@ -31,6 +40,9 @@ all subsequent time-tagged operations, event logs and science data depend upon.
 - [ ] No time-tagged command sequences loaded onboard (fresh post-separation
       state). Any tag uplinked before the clock is set was computed against a
       clock reading the year 2000 and will not fire as intended.
+- [ ] GPS receiver powered (LEOP-007 Step 4) --- `S2_AOCS_GPS_RECEIVER` device
+      0x020F ON. Path B below needs `aocs.gps_fix` (0x0274) >= 2; a cold start
+      can take up to 15 minutes, which the ground path does not wait for
 - [ ] Flight Director has authorised time synchronisation
 
 ## Procedure Steps
@@ -167,10 +179,37 @@ the next pass and trend it.
 check would measure the discipline loop rather than the oscillator, and means
 nothing. During LEOP the reference is normally GROUND.
 
+### Step 6a --- PATH B: GPS Time Discipline (once the receiver has a fix)
+**TC:** `HK_ENABLE(sid=12)` (Service 3, Subtype 5) --- GPS_NAV housekeeping, 8 s.
+NOT default-enabled: without this command the PVT solution never reaches the
+ground and LEOP-003 runs blind.
+**Verify:** Periodic SID 12 begins emitting within one 8 s structure interval
+**Verify:** `aocs.gps_fix` (0x0274) >= 2 within 900s --- a 3D fix (encoding
+0=none, 1=2D, 2=3D, 3=3D+vel; the sync command refuses below 2). Cold-start TTFF is up to 15 minutes from
+the LEOP-007 power-on; if the fix is not yet in, continue the pass and send
+the sync on the next contact --- the ground reference from Step 4 carries the
+mission meanwhile.
+**TC:** `OBC_GPS_TIME_SYNC` (Service 8, Subtype 1, func_id 80)
+**Verify:** S1.1 acceptance + S1.7 execution complete received within 5s
+**Verify:** `obdh.time_ref` (0x0A13) = 2 (GPS) within 15s --- disciplined; 3
+(HOLDOVER) is acceptable if the fix dips right after the sync and means the
+same successful set with discipline waiting on the next fix
+**Verify:** `obdh.time_since_sync_s` (0x0A14) reads a small value
+**Note:** ORDER MATTERS: because the ground set (Step 4) already put the clock
+within a second of truth, the GPS jump here is milliseconds --- far under the
+5-second jump that forces AOCS to SAFE_BOOT (event 0x020F, CTG-027). Running
+this path FIRST on a never-set clock would jump the full offset from J2000
+and re-initialise the AOCS mid-LEOP. That ordering is the point of this card.
+**Note:** While `time_ref` = 2 the clock is continuously disciplined and the
+Step 6 rate check measures the discipline loop, not the oscillator --- record
+the rate figure from BEFORE this step.
+**GO/NO-GO:** Clock GPS-disciplined (or HOLDOVER with a ground-set clock)
+
 ### Step 7 --- Confirm Time-Stamping and Log the Result
 **TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27) --- confirm OBDH state post-sync
 **Verify:** `obdh.uptime` (0x0308) > 0 --- the OBC has not rebooted during the sync
-**Verify:** `obdh.time_ref == 1` (0x0A13, timeout 10 s) --- reference still GROUND
+**Verify:** `obdh.time_ref` (0x0A13) in {1, 2, 3} --- GROUND if Path B was
+deferred, GPS/HOLDOVER once it has run
 **Action:** Confirm that housekeeping packets now carry plausible mission-date
 timestamps in the PUS secondary header rather than year-2000 values.
 **Action:** Log the following in the LEOP time-sync record:
@@ -190,9 +229,11 @@ be interpreted.
 ## Off-Nominal Handling
 - If `REQUEST_TIME` (S9.2) is not acknowledged: verify TTC link integrity. Re-send
   once. If still no response, the OBC time management service may not be
-  initialised --- attempt an OBC soft reset via `OBC_SET_MODE(mode=1)` (Service 8,
-  Subtype 1, func_id 50) and retry. Note that a full reboot resets the clock
-  again, so re-run this card afterwards.
+  initialised --- with FD approval cycle the OBC through SAFE and back:
+  `OBC_SET_MODE(mode=1)` (SAFE) then `OBC_SET_MODE(mode=0)` (NOMINAL --- always
+  restore; never leave the card with a SAFE OBC) and retry. Note that a FULL
+  reboot (func 52) resets the clock again, so a reboot means re-running this
+  card afterwards.
 - If `obdh.time_ref` (0x0A13) reads 0 (NONE) again after a successful sync: the
   OBC rebooted. Check `obdh.uptime` (0x0308) and `obdh.reboot_count` (0x030A).
   The bootloader resets the clock to J2000 on every reset and booting the
@@ -218,17 +259,28 @@ be interpreted.
   resumes. GPS synchronisation and its AOCS side effects are CTG-027 --- note
   that a GPS sync jump larger than 5 s forces AOCS to SAFE_BOOT (event 0x020F).
 
+## Exit state
+- Clock set within 1.0 s of UTC; `obdh.time_ref` (0x0A13) = 2 (GPS) --- or 1
+  (GROUND) if Path B was deferred to the next pass, or 3 (HOLDOVER) if the fix
+  dipped after the sync
+- HK SID 12 (GPS_NAV) enabled and emitting --- LEOP-003's entry state
+- GPS receiver still ON with its fix state as read; AOCS mode UNCHANGED
+  (COARSE_SUN) --- the ground-first ordering guarantees no SAFE_BOOT kick
+- No other state changed by this card
+
 ## Post-Conditions
 - [ ] Onboard clock synchronised to UTC within 1.0 s (LEOP accuracy threshold)
-- [ ] `obdh.time_ref` (0x0A13) = 1 (GROUND) --- the clock now has a reference
+- [ ] `obdh.time_ref` (0x0A13) has a reference (1 GROUND / 2 GPS / 3 HOLDOVER)
 - [ ] `obdh.time_since_sync_s` (0x0A14) reads a small value, no longer 4294967295
-- [ ] Clock drift rate verified < 100 ppm, with the measurement interval recorded
+- [ ] Clock drift rate verified < 100 ppm (measured BEFORE GPS discipline), with the measurement interval recorded
 - [ ] Time synchronisation log entry completed for the LEOP record
 - [ ] Housekeeping telemetry packets carry mission-date CUC timestamps
-- [ ] OBC mode unchanged (SAFE or NOMINAL) and no reboot during the sync
+- [ ] OBC mode unchanged and no reboot during the sync
 - [ ] Slant range and OWLT recorded from HK SID 6
 - [ ] `obdh.obc_time` (0x0309) agrees with the TM(9,2) report
-- [ ] Ready to proceed with LEOP-007 Summary Checkout
+
+**NEXT:** LEOP-003 (Initial Orbit Determination --- ends LEOP with the phase-5
+declaration)
 
 ---
 *AIG --- Artificial Intelligence Generated Content*

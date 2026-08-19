@@ -55,6 +55,7 @@ from smo_common.orbit.propagator import OrbitPropagator, GroundStation
 from smo_planner.orbit_planner import OrbitPlanner
 from smo_planner.activity_scheduler import ActivityScheduler, ActivityState
 from smo_planner.budget_tracker import (
+    BATTERY_CAPACITY_WH,
     DUMP_RATE_BPS,
     ELEVATION_MASK_DEG,
     MIN_DUMP_ELEVATION_DEG,
@@ -66,6 +67,7 @@ from smo_planner.imaging_planner import ImagingPlanner
 from smo_planner.planner_config import (
     load_planner_config, check_station_alignment, format_alignment_report,
 )
+from smo_planner.utils import parse_iso as _parse_iso_utc
 from smo_planner.plan_templates import (
     load_standard_plans, validate_templates, instantiate_template,
 )
@@ -76,7 +78,8 @@ logger = logging.getLogger(__name__)
 class PlannerServer:
     def __init__(self, config_dir: str | Path, http_port: int = 9091,
                  time_source: str | None = None, sim_state_url: str | None = None,
-                 connect_host: str = "localhost", bind_host: str | None = None):
+                 connect_host: str = "localhost", bind_host: str | None = None,
+                 ui_mode: str | None = None):
         self.config_dir = Path(config_dir)
         self.http_port = http_port
         # Bind address (D-2): was hard-coded 0.0.0.0 while start.sh claimed
@@ -128,6 +131,26 @@ class PlannerServer:
         )
         logger.info("Planner time source: %s (sim_state_url=%s)",
                     self._time_source, self._sim_state_url)
+        # ── UI mode resolution (design_2026-08 plan §1.2) ────────────
+        # House precedence, same as time_source: CLI --ui > SMO_UI env >
+        # mission-config `ui:` > default "classic" (flips to modern only
+        # after the Agent-5 verification gate). Per-request `?ui=`, /classic
+        # and /modern override for one response; /wide branches on the same
+        # resolution (see _handle_index_wide).
+        try:
+            _cfg_ui = _mc.ui  # mission config loaded above; None if absent
+        except Exception:  # noqa: BLE001 — config never loaded
+            _cfg_ui = None
+        self._ui_mode = (
+            ui_mode
+            or _os.environ.get("SMO_UI")
+            or _cfg_ui
+            or "modern"   # default flipped to modern (Agent-5 gate passed)
+        ).strip().lower()
+        if self._ui_mode not in ("classic", "modern"):
+            logger.warning("Unknown ui mode %r — falling back to classic",
+                           self._ui_mode)
+            self._ui_mode = "classic"
         # Sim-clock anchor cache (sim mode). anchor_sim_time + (wall-now -
         # anchor_wall)*speed = current sim time. Refreshed by _refresh_sim_anchor
         # at most ~1/s; falls back to last anchor then wall clock if unreachable.
@@ -395,6 +418,10 @@ class PlannerServer:
 
         app = web.Application()
         app.router.add_get("/", self._handle_index)
+        # Explicit generation routes (plan §1.2): compare classic and modern
+        # live in two tabs regardless of the resolved default.
+        app.router.add_get("/classic", self._handle_index_classic)
+        app.router.add_get("/modern", self._handle_index_modern)
         app.router.add_get("/wide", self._handle_index_wide)
         app.router.add_get("/api/contacts", self._handle_contacts)
         app.router.add_get("/api/schedule", self._handle_schedule)
@@ -466,6 +493,17 @@ class PlannerServer:
                 break
         if vendor_dir and vendor_dir.exists():
             app.router.add_static("/static/vendor/", vendor_dir)
+        # Shared design system (design_2026-08 plan §1.1): one canonical
+        # runtime copy served from smo_common package data at the SAME URL
+        # on all three servers. Mounted BEFORE /static/ so the broader mount
+        # cannot shadow it (aiohttp resolves in registration order).
+        import smo_common as _smo_common
+        _shared_ui = Path(_smo_common.__file__).parent / "ui"
+        if _shared_ui.is_dir():
+            app.router.add_static("/static/shared/", _shared_ui)
+        else:  # pragma: no cover — packaging error, say so loudly
+            logger.warning("smo_common ui/ package data missing (%s) — "
+                           "modern pages will render unstyled", _shared_ui)
         if static_dir.exists():
             app.router.add_static("/static/", static_dir)
         runner = web.AppRunner(app)
@@ -573,7 +611,16 @@ class PlannerServer:
             # sim-time jump: the cached contacts/ground track describe an
             # orbit that no longer exists. Swap in the new TLE, rebuild the
             # propagators and mark the plan dirty (defect-#59 machinery).
+            #
+            # SIM-ONLY (disposition L3): the elset comes from the simulator
+            # and only exists in training. In real mode the planner keeps
+            # the configured TLE — honest behaviour; operator TLE upload is
+            # future work with its own path. _refresh_sim_anchor already
+            # early-returns in real mode; this explicit guard is defence in
+            # depth so a future caller cannot re-open the coupling.
             ev = payload.get("orbit_epoch_version")
+            if self._time_source != "sim":
+                ev = None
             if ev is not None and int(ev) != getattr(
                     self, "_orbit_epoch_version", 0):
                 elset = payload.get("orbit_elset") or {}
@@ -750,23 +797,70 @@ class PlannerServer:
                 if state.gs_range_km is not None else None,
         }
 
+    # ── UI switch (design_2026-08 plan §1.2) ──────────────────────────
+    # Both UIs hit the same API; these handlers only decide WHICH page is
+    # served. Index responses carry Cache-Control: no-cache so a mode flip
+    # is never masked by a cached index (risk R9).
+
+    def _resolve_ui(self, request) -> str:
+        """Per-request UI mode: ?ui= wins over the resolved server mode."""
+        q = (request.query.get("ui") or "").strip().lower()
+        if q in ("classic", "modern"):
+            return q
+        # getattr: house tests build servers via __new__ without __init__.
+        return getattr(self, "_ui_mode", "classic")
+
+    def _serve_page(self, rel: str, missing_note: str):
+        page = Path(__file__).parent / "static" / rel
+        if page.exists():
+            return web.FileResponse(
+                page, headers={"Cache-Control": "no-cache"})
+        return web.Response(
+            text=f"<h1>SMO Planner — {missing_note}</h1>"
+                 "<p>The classic planner is at <a href=\"/classic\">"
+                 "/classic</a>.</p>",
+            content_type="text/html",
+            headers={"Cache-Control": "no-cache"})
+
+    def _serve_index(self, mode: str):
+        if mode == "modern":
+            return self._serve_page("modern/index.html",
+                                    "modern UI assets not installed")
+        return self._serve_page("index.html", "static/index.html not found")
+
     async def _handle_index(self, request):
-        index_file = Path(__file__).parent / "static" / "index.html"
-        if index_file.exists():
-            return web.FileResponse(index_file)
-        return web.Response(text="<h1>SMO Planner — static/index.html not found</h1>",
-                            content_type="text/html")
+        return self._serve_index(self._resolve_ui(request))
+
+    async def _handle_index_classic(self, request):
+        """GET /classic — always the classic page (live A/B comparison)."""
+        return self._serve_index("classic")
+
+    async def _handle_index_modern(self, request):
+        """GET /modern — always the modern page (live A/B comparison)."""
+        return self._serve_index("modern")
 
     async def _handle_index_wide(self, request):
-        """Serve the wide-screen (5760x1080) planner UI.
+        """Serve the wall-display planner UI (documented classroom URL).
 
         Phase G: this used to serve `static/index-wide.html`, a second 1822-line
         planner UI that drifted independently of `index.html` (planner_audit.md
         records the two being fixed separately, with different ground-station
         lists). `/wide` is a documented classroom URL — the installation manual
-        and DEPLOYMENT.md both cite it — so the route stays, but it is now a
-        LAYOUT MODE of the one page rather than a second implementation.
+        and DEPLOYMENT.md both cite it — so the route stays. Behaviour by UI
+        mode (design_2026-08 plan §1.2 / §2.3):
+
+        - classic: redirect to `/?layout=wide` — the classic page's layout
+          mode (the Phase G consolidation, preserved verbatim). The `ui`
+          override is carried through so `/wide?ui=classic` stays classic
+          after the redirect even when the server default is modern.
+        - modern: serve `static/modern/wide.html`, a DISTINCT non-interactive
+          wall page (own layout, not a class toggle on the interactive page).
         """
+        if self._resolve_ui(request) == "modern":
+            return self._serve_page("modern/wide.html",
+                                    "modern wide-display assets not installed")
+        if (request.query.get("ui") or "").strip().lower() == "classic":
+            raise web.HTTPFound("/?layout=wide&ui=classic")
         raise web.HTTPFound("/?layout=wide")
 
     async def _handle_contacts(self, request):
@@ -951,6 +1045,11 @@ class PlannerServer:
                 template, t0,
                 contacts=self._contacts_cache,
                 ground_track=track,
+                # The catalogue is what tells the resolver each activity's
+                # duration, resources and mutual exclusions, so it can place
+                # the flexible anchors around the pass-pinned ones instead of
+                # on top of them.
+                activity_types=self._activity_types,
             )
             added = []
             for spec in specs:
@@ -1227,7 +1326,58 @@ class PlannerServer:
 
     # ── Wave 7: Power/Data budget ─────────────────────────────────
 
-    def _make_budget_tracker(self, initial_onboard_mb: float = 0.0) -> BudgetTracker:
+    def _illumination_track(self) -> list[dict]:
+        """Ground track covering the CONTACT horizon, for the power budget.
+
+        ``_ground_track_cache`` is only ``horizons.ground_track_hours`` (3 h)
+        long because it exists to draw the map, while the power budget
+        integrates over the whole 24 h contact horizon. Handing the map's track
+        to the budget left 21 of 24 hours with no eclipse or beta data — and
+        the tracker used to paper over that with constants, which is the root
+        cause of the "final SoC is 0 on one machine and 100 on another" report
+        (see BudgetTracker.compute_power_budget). The tracker now refuses to
+        integrate on data it does not have, so the server has to actually
+        supply it.
+
+        Cached per epoch; falls back to the map track (and the budget then
+        honestly reports itself as not computable) if propagation fails.
+        """
+        contacts = self._contacts_cache or []
+        if not contacts:
+            return self._ground_track_cache
+        t0 = _parse_iso_utc(contacts[0].get("aos", ""))
+        t_end = max(
+            (p for p in (_parse_iso_utc(c.get("los", "")) for c in contacts)
+             if p is not None), default=None)
+        if t0 is None or t_end is None or t_end <= t0:
+            return self._ground_track_cache
+
+        hours = (t_end - t0).total_seconds() / 3600.0 + 0.5
+        key = (t0.isoformat(), round(hours, 2))
+        if getattr(self, "_illum_track_key", None) == key:
+            return self._illum_track_cache
+        try:
+            prop = OrbitPropagator(
+                self._tle1, self._tle2, ground_stations=self._gs_list,
+                earth_radius_km=self._earth_r,
+            )
+            track = OrbitPlanner(prop).predict_ground_track(
+                t0, duration_hours=hours,
+                step_s=float(self.planner_cfg.horizons.ground_track_step_s),
+            )
+        except Exception as e:
+            logger.warning(
+                "Could not propagate the %.1f h illumination track for the "
+                "power budget (%s) — the budget will report itself as not "
+                "computable rather than assume an eclipse fraction", hours, e)
+            return self._ground_track_cache
+        self._illum_track_key = key
+        self._illum_track_cache = track
+        return track
+
+    def _make_budget_tracker(self, initial_onboard_mb: float = 0.0,
+                             ground_track: list[dict] | None = None
+                             ) -> BudgetTracker:
         """Budget tracker built from the mission config (defect #60).
 
         Storage capacity, image size, downlink rates and battery capacity come
@@ -1241,9 +1391,10 @@ class PlannerServer:
         return BudgetTracker(
             contacts=self._contacts_cache,
             schedule=self._scheduler.get_schedule(),
-            ground_track=self._ground_track_cache,
+            ground_track=(self._ground_track_cache if ground_track is None
+                          else ground_track),
             initial_soc=p.get("initial_soc", 80.0),
-            battery_capacity_wh=p.get("battery_capacity_wh", 120.0),
+            battery_capacity_wh=p.get("battery_capacity_wh", BATTERY_CAPACITY_WH),
             storage_capacity_mb=p.get("storage_capacity_mb", 20000.0),
             downlink_rate_bps=p.get("downlink_rate_bps", DUMP_RATE_BPS),
             protocol_overhead=p.get("protocol_overhead", 0.20),
@@ -1264,15 +1415,22 @@ class PlannerServer:
             orbit_altitude_km=p.get("orbit_altitude_km", ORBIT_ALTITUDE_KM),
             hk_stream_bps=p.get("hk_stream_bps", 0.0),
             station_setup_s=p.get("station_setup_s"),
+            station_teardown_s=p.get("station_teardown_s"),
         )
 
     async def _handle_power_budget(self, request):
         """Return 24-hour power budget with SoC predictions.
 
         GET /api/budget/power
+
+        The budget may legitimately answer "I cannot compute this"
+        (``computable: false`` with a ``reason`` and ``final_soc: null``). That
+        is a 200, not a 500 — it is a result about the plan's inputs, and the
+        UI is required to render the reason rather than a 0 % / 100 % bar.
         """
         try:
-            tracker = self._make_budget_tracker()
+            tracker = self._make_budget_tracker(
+                ground_track=self._illumination_track())
             budget = tracker.compute_power_budget()
             return web.json_response(budget)
         except Exception as e:
@@ -1487,16 +1645,25 @@ def main():
                         help="HTTP bind address (default $SMO_BIND or 0.0.0.0)")
     parser.add_argument("--connect-host", default="localhost",
                         help="Host of the simulator (used to derive the default "
-                             "sim_state_url http://<host>:8080/api/state).")
+                             "sim_state_url when neither --sim-state-url, "
+                             "SMO_SIM_STATE_URL nor the mission/planner config "
+                             "provides one).")
     parser.add_argument("--time-source", default=None, choices=["sim", "real"],
                         help="Planner clock source: 'sim' (follow simulator "
                              "sim_time/speed) or 'real' (wall-clock UTC). Overrides "
                              "SMO_TIME_SOURCE env and mission-config time_source.")
+    # P6 (design_2026-08 §4): the help text no longer advertises a
+    # ":8080/api/state" literal — the default is config-resolved
+    # (planner.yaml time.sim_state_url / mission.yaml sim_state_url).
     parser.add_argument("--sim-state-url", default=None,
                         help="Simulator state endpoint to poll for sim_time/speed in "
-                             "sim mode. Overrides SMO_SIM_STATE_URL env and "
-                             "mission-config sim_state_url. "
-                             "Default http://<connect_host>:8080/api/state.")
+                             "sim mode. Overrides SMO_SIM_STATE_URL env and the "
+                             "mission/planner config sim_state_url.")
+    parser.add_argument("--ui", default=None, choices=["classic", "modern"],
+                        help="Console generation served at '/': 'classic' or 'modern'. "
+                             "Overrides SMO_UI env and mission-config ui. Per-request "
+                             "?ui= and the /classic and /modern routes win over all; "
+                             "/wide follows the same resolution.")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     asyncio.run(PlannerServer(
@@ -1505,6 +1672,7 @@ def main():
         sim_state_url=args.sim_state_url,
         connect_host=args.connect_host,
         bind_host=args.host,
+        ui_mode=args.ui,
     ).start())
 
 if __name__ == "__main__":

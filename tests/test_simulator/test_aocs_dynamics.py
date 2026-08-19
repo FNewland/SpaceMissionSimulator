@@ -249,11 +249,21 @@ class TestPointingPerformance:
 
     def test_nadir_tracking_pitch_rate(self):
         """In NOMINAL the body pitch rate settles at the orbit rate
-        (-0.063 °/s about body Y) and nadir_body_z → 1."""
+        (-0.063 °/s about body Y) and nadir_body_z → 1.
+
+        The PHYSICS claim is on the TRUE rate. The published rate_pitch is
+        the bias-corrected ESTIMATE, which legitimately carries whatever
+        Gauss-Markov gyro bias the MEKF has not yet observed (a few
+        millideg/s) — asserting the estimate against the orbit rate at 5 %
+        made this a lottery on the RNG draw ordering (2026-08c: the
+        single-magnetometer rework shifted the draws and exposed it)."""
         m, o, p = settled_model(MODE_NOMINAL, ticks=1500)
         w_o = math.degrees(math.sqrt(
             att.MU_EARTH / ((6378.137 + 450.0) * 1000.0) ** 3))
-        assert m._state.rate_pitch == pytest.approx(-w_o, rel=0.05)
+        true_pitch = math.degrees(float(m._state.omega_true[1]))
+        assert true_pitch == pytest.approx(-w_o, rel=0.05)
+        # The estimate tracks the truth to within gyro bias + noise.
+        assert m._state.rate_pitch == pytest.approx(true_pitch, abs=0.005)
         assert p[0x02B2] == pytest.approx(1.0, abs=0.01)
 
     def test_slew_30deg_completes_and_resumes_nominal(self):

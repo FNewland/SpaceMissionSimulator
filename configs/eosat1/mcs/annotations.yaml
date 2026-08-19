@@ -1,0 +1,316 @@
+# ============================================================================
+# GUIDED-mode teaching annotations for the SMO MCS modern console.
+# Served verbatim by GET /api/annotations (additive, Agent-1 contract);
+# consumed by static/modern/mcs.js (annotationText / applyAnnotations).
+#
+# Shape (owned by the modern MCS page):
+#   <page-or-area id>:
+#     <element id>: {n: <number shown in the badge>, text: "<annotation>"}
+# A bare string is also accepted (renders without a number).
+# ============================================================================
+
+ovr:
+  schematic:
+    n: 1
+    text: >-
+      This schematic IS the navigation: click the element you are worried about.
+      Everything grey is nominal — that is deliberate (ISA-101). Colour appears
+      only when a parameter leaves its ground limits, so your eye is pulled to
+      deviation, never to decoration. The mode caption at the top names its
+      source: on a real mission it comes from telemetry (0x0700), never from
+      the simulator's internal truth.
+  timeline:
+    n: 2
+    text: >-
+      One contact timeline, one pass table. EOSAT-1 is in a ~450 km sun-synchronous
+      orbit: you get a handful of 5-12 minute ground-station passes per day and the
+      spacecraft is on its own the rest of the time. Everything you uplink and
+      everything you downlink must fit these windows — which is why the store-fill
+      figure in the SEE card matters, and why operations are planned around
+      AOS/LOS, not around wall-clock convenience.
+
+l2:
+  quick-commands:
+    n: 3
+    text: >-
+      Commanding lives on the subsystem page, gated by console position — the same
+      discipline as a real control room, where the EPS controller cannot fire a
+      thruster. Commands marked CRITICAL take two presses: ARM, then EXECUTE.
+      That pause is not bureaucracy; it models the error-prevention step every
+      hazardous command carries in flight operations.
+  derived:
+    n: 16
+    text: >-
+      These are Level-3 projections the GROUND computes — trend slope from the
+      telemetry archive, limits from limits.yaml, orbit state from the
+      propagator. The spacecraft never downlinks them, hence the GND mark. And
+      they are honest: when the trend does not support a projection (battery
+      charging, no history yet, not in eclipse) the row says INVALID and why,
+      instead of showing a fabricated number. An invalid projection is
+      information too — it usually means the threat is not currently
+      approaching.
+
+eps:
+  schematic:
+    n: 4
+    text: >-
+      Follow the energy: solar wings → MPPT → 28 V bus → battery, then out through
+      nine switched power lines. In eclipse (~35 min of every ~94 min orbit) the
+      battery is the only source, so watch SoC (0x0101) and the power margin
+      (0x0135). The load-shed ladder below is the spacecraft's own defence: it
+      sheds payload first, survival heaters last.
+
+tcs:
+  schematic:
+    n: 5
+    text: >-
+      Thermal control is a budget, not a thermostat: heaters spend electrical
+      power to hold the battery and OBC inside their limits through eclipse, and
+      the FPA cooler pulls the detector tens of degrees below ambient for imaging.
+      A heater stuck ON shows up first in EPS as a power-margin drop — subsystems
+      couple, and the causal-chain view on any alarm will walk you across them.
+
+aocs:
+  schematic:
+    n: 6
+    text: >-
+      The mode chain runs left to right from survival (SAFE) to performance
+      (FINE_POINT): each stage needs better knowledge (star trackers vs coarse
+      sun sensors) and better actuation (wheels vs magnetorquers). Momentum |h|
+      accumulates from environmental torques and must be dumped (DESAT) through
+      the magnetorquers — if it saturates the wheels, pointing is lost.
+  fine-ready:
+    n: 17
+    text: >-
+      aocs.fine_ready (0x02C5) is a bitmask where ZERO means "cleared for
+      FINE_POINT" and every set bit names the precondition that is failing —
+      the chips decode it from the parameter dictionary so you never read raw
+      hex under pressure. Bit 4 (momentum above 70 %) matters beyond AOCS: it
+      is the "a desaturation is coming" warning that can pre-empt an imaging
+      window (procedure NOM-002 tells Payload Ops to watch exactly this bit).
+
+ttc:
+  schematic:
+    n: 7
+    text: >-
+      Lock is a ladder: carrier, then bit, then frame — you cannot have frame
+      sync without the two below it, so the chain diagnoses a bad link for you.
+      The TM tier shows ACTIVE vs COMMANDED separately: if the on-board gate has
+      demoted the downlink rate, the console says so instead of just being slow.
+  pass-fit:
+    n: 18
+    text: >-
+      The fit verdict is one division the console does so you stop doing it in
+      your head at AOS: queued data (payload store + HK/event buffers) divided
+      by what this pass can move (active tier rate × time to LOS). Above 1.0
+      the backlog will NOT fit — raise the tier if the link margin allows, or
+      re-plan the dump across the next passes before you are blind again.
+  link-overlay:
+    n: 19
+    text: >-
+      Measured signal only tells you something when you know what it SHOULD be.
+      The dashed curve is the ground's own link budget — range and elevation
+      from the propagator, FSPL, the station G/T — and the solid trace is what
+      the receiver actually measures. When measured runs several dB below
+      predicted at the same geometry, that gap is a real loss (antenna
+      pointing, weather, hardware), not orbit physics: a 6 dB deficit at high
+      elevation is an anomaly even though the link still closes.
+  blind-tc:
+    n: 20
+    text: >-
+      Blind commanding (CON-004) is for when the downlink is gone but the
+      uplink may still work: you send with NO telemetry confirmation. The
+      toggle takes an armed double-press and an FD GO, every subsequent
+      command is tagged BLIND in the history, and the tag only clears to
+      "BLIND ✓ TM" when a verification report finally arrives. The discipline
+      exists because a blind send that "looked identical to a normal one" is
+      how real missions have double-commanded spacecraft.
+
+pld:
+  schematic:
+    n: 8
+    text: >-
+      The imaging chain: a cold FPA (cooler running, temperature at setpoint)
+      produces usable SNR; images land in the on-board store; the store drains
+      only during ground-station passes. Payload is also the first load shed —
+      science always gives way to survival.
+  pass-fit:
+    text: >-
+      Same verdict as the TT&C page, seen from the product side: it is YOUR
+      imagery queued in the store, moving over THEIR link. If the ratio is
+      above 1.0, decide with TT&C before AOS what gets priority — a capture
+      you cannot downlink is a capture you may lose to store overwrite.
+  capture-gates:
+    n: 21
+    text: >-
+      NOM-002's capture gates, gathered from three subsystems onto one card:
+      AOCS in FINE_POINT with every fine-ready bit clear, the FPA declared
+      ready and its temperature in the imaging band, and enough battery to
+      afford the shot. One red gate = NO-GO; a grey gate means the telemetry
+      to judge it is missing, which is NOT a GO. The gate table itself lives
+      in annotations.yaml (pld.capture-gates.gates) so an instructor can
+      tighten or relax the criteria per exercise.
+    gates:
+      - { label: "AOCS mode = FINE_POINT", param: "0x020F", op: eq, value: 5 }
+      - { label: "fine_ready mask clear",  param: "0x02C5", op: eq, value: 0 }
+      - { label: "FPA ready flag",         param: "0x0610", op: eq, value: 1 }
+      - { label: "SoC > 50 %",             param: "0x0101", op: gt, value: 50 }
+      - { label: "FPA temp in band (−40…−10 °C)", param: "0x0408", op: range, min: -40, max: -10 }
+
+prp:
+  schematic:
+    n: 9
+    text: >-
+      Propulsion is guarded by intent, not by a single button: the arm-inhibit
+      mask (0x0B15) must clear, both latch valves and the flow-control valve
+      must open, and the catalyst bed must be hot before a burn. Every inhibit
+      is a separate telemetered fact — this is how real spacecraft make
+      "it cannot fire by accident" provable.
+  arm-inhibit:
+    n: 22
+    text: >-
+      prop.arm_inhibit_mask (0x0B15) is the single most decision-relevant word
+      on this page: eleven interlocks, and ARM is refused while ANY bit is
+      set. The chips decode each bit from the parameter dictionary so "why
+      can't I arm?" has an instant, named answer — catbed cold, tank pressure,
+      AOCS not in the right mode, eclipse, no burn loaded… Clear the cause,
+      not the symptom: inhibits exist to be satisfied, not overridden.
+  burn-plan:
+    n: 23
+    text: >-
+      Two sources of truth about the same burn: what is LOADED on board
+      (prop.burn_dv_cmd / burn_time_cmd, from telemetry) and what Flight
+      Dynamics PLANNED (the orbit_manoeuvre activity in the planner). They
+      must agree before anyone says GO — a mismatch here has historically
+      meant a stale upload or an edited plan that never reached the
+      spacecraft. If the planner is unreachable the card says so; the
+      fallback is a voice cross-check with FDS, never an assumption.
+
+obd:
+  schematic:
+    n: 10
+    text: >-
+      The OBC is single point of failure by design, so it is duplicated: OBC-A
+      active, OBC-B in standby, two CAN buses. Watch the buffer fills — telemetry
+      the spacecraft cannot downlink queues on board (S15 stores) and overflows
+      are silent data loss. SEU counts are the space environment writing to your
+      memory.
+
+cmd:
+  builder:
+    n: 11
+    text: >-
+      Every command is a PUS telecommand: service.subtype plus a data field.
+      Build it from the catalogue fields (engineering units, calibrated and
+      validated), PACK to see the exact bytes that go to space, or paste hex and
+      DECODE it back. The verification stepper under SEND is the spacecraft
+      answering: acceptance (S1.1) then execution (S1.7). A command with no
+      verification is a command you do not know arrived.
+
+diag:
+  pus:
+    n: 12
+    text: >-
+      Level 4: the raw PUS service panels. S3 controls what housekeeping the
+      spacecraft volunteers; S11 is the on-board schedule that acts while you
+      are out of contact; S6 is memory surgery (dump, patch, CRC); S15 the
+      stored-telemetry stores; S12/S19 the on-board limit monitors and their
+      autonomous reactions; S9 the clock correlation. The PARAMS panel can fetch
+      any catalogued parameter on demand with TC(20,3).
+
+fdir:
+  strip:
+    n: 13
+    text: >-
+      FDIR shown honestly: this strip and the tables contain only what the
+      spacecraft TOLD us — S5 events, S12 monitor states, S19 rules, and the
+      telemetered mode. In training mode an extra panel shows the simulator's
+      internal autonomy truth; it is labelled as not-downlinked and disappears
+      on a real mission, because the ground never gets to see it.
+  autonomy:
+    text: >-
+      Instructor truth, not telemetry. Compare it with the S5/S12 story the
+      spacecraft downlinks — the gap between what is happening and what you can
+      SEE happening is the whole discipline of flight control.
+
+proc:
+  runner:
+    n: 14
+    text: >-
+      Procedures are the unit of real operations — nobody free-types commands at
+      a spacecraft during an anomaly. Load one, run it step-by-step, and watch
+      each step's command go through the same verification chain. The builder
+      lets you author your own: command, telemetry check, wait, GO/NO-GO —
+      authoring a procedure is a genuine ground-segment engineering task.
+
+trnd:
+  archive:
+    n: 15
+    text: >-
+      Trends answer Level-3 situation-awareness questions: not "what is SoC"
+      but "where will SoC be at eclipse exit". Eclipse and contact bands are
+      drawn behind every trace because orbital events drive almost every curve
+      on this spacecraft. The provenance banner tells you when the archive
+      cannot be trusted — an honest gap beats a confident fabrication.
+  baseline:
+    n: 24
+    text: >-
+      Degradation is invisible in real time — a battery does not fail between
+      two telemetry frames, it drifts over months. This card compares today's
+      health telemetry against the commissioning snapshot the instructor
+      recorded in annotations.yaml, computes the drift on the console, and
+      flags anything past 5 % (the NOM-011 long-term trend review threshold).
+      Leak rate is flagged on any sustained non-zero value: its baseline is
+      zero by definition.
+  baseline-health:
+    text: >-
+      Commissioning baseline snapshot for the baseline-vs-now health card
+      (POSITION_NEEDS G15). The instructor records end-of-commissioning
+      values here; the console computes delta and percent drift client-side
+      and flags >5 % per NOM-011. abs_flag is the absolute-delta threshold
+      used when the baseline is zero (e.g. leak rate).
+    baselines:
+      "0x0120": { label: "Battery DoD (orbit mean)", value: 18.0, units: "%" }
+      "0x0121": { label: "Battery charge cycles", value: 210, units: "" }
+      "0x0136": { label: "Battery health", value: 100.0, units: "%" }
+      "0x0124": { label: "Solar array A degradation factor", value: 1.0, units: "" }
+      "0x0125": { label: "Solar array B degradation factor", value: 1.0, units: "" }
+      "0x0B16": { label: "Propellant leak rate", value: 0.0, units: "mg/s", abs_flag: 0.05 }
+
+# ── drawer / GO-NO-GO / alarm-drawer surfaces (POSITION_NEEDS G6-G8) ────────
+
+drawer:
+  conlog:
+    n: 25
+    text: >-
+      The console log is the mission's decision record: the server appends
+      every TC with its verdict, every alarm acknowledgement and every
+      GO/NO-GO result automatically (marked AUTO), and you add notes and
+      MARKs with your position attached. This is the SPACON's log discipline
+      from the book — "log it or it didn't happen" — and it is what the
+      shift handover and the pass report are reconstructed from. MARK stamps
+      the moment; write the why in a note while you still remember it.
+
+gonogo:
+  matrix:
+    n: 26
+    text: >-
+      A GO/NO-GO poll is a defined call, not a vibe check: the call matrix
+      row shown with each open poll says who initiates the call, which desks
+      MUST respond before FD rules, and whether the situation is CRITICAL.
+      If your desk is listed, silence is not consent — answer GO, NO-GO or
+      STANDBY. Rows come from mcs/gonogo_matrix.yaml, the config mirror of
+      the desk procedures manual.
+
+alarms:
+  first-out:
+    n: 27
+    text: >-
+      In a cascade the first alarm is the cause and the rest are consequences
+      — a bus undervoltage takes out AOCS sensors, payload and heaters within
+      seconds. When four or more active alarms share ancestry in the ground
+      fault-propagation model, the drawer collapses them under the FIRST-OUT
+      root so you treat the disease, not the symptoms. The grouping is an
+      INFERENCE from config, not telemetry: confirm against the S5 event
+      order before you commit to a diagnosis.
+

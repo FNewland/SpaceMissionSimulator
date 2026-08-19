@@ -51,8 +51,12 @@ class SimulatorServer:
         tm_server = await asyncio.start_server(
             self._handle_tm_client, self._bind_host, self._tm_port)
 
-        # Start HTTP/WS server using instructor app (serves UI + all APIs)
-        self._app = create_instructor_app(self.engine)
+        # Start HTTP/WS server using instructor app (serves UI + all APIs).
+        # ui_mode plumb-through only (design_2026-08 plan §1.2): resolution
+        # (CLI --ui > SMO_UI env > default classic) lives in
+        # create_instructor_app.
+        self._app = create_instructor_app(
+            self.engine, ui_mode=self._config.get("ui_mode"))
         app = self._app
         runner = web.AppRunner(app)
         await runner.setup()
@@ -163,6 +167,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--port", type=int, default=None,
                         help="HTTP/WebSocket port for the instructor UI "
                              "(default $SMO_SIM_HTTP_PORT or 8080)")
+    parser.add_argument("--ui", default=None, choices=["classic", "modern"],
+                        help="Instructor console generation served at '/': "
+                             "'classic' or 'modern'. Overrides SMO_UI env. "
+                             "Per-request ?ui= and the /classic and /modern "
+                             "routes win over all (?ui= composes with ?sub=).")
     return parser
 
 
@@ -184,7 +193,7 @@ def main():
     engine = SimulationEngine(config_dir=args.config, speed=args.speed)
     server = SimulatorServer(engine, config={
         "tc_port": 8001, "tm_port": 8002, "http_port": http_port,
-        "bind_host": args.host,
+        "bind_host": args.host, "ui_mode": args.ui,
     })
     asyncio.run(server.start())
 

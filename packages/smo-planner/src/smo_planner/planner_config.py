@@ -138,6 +138,31 @@ class PlannerImagingConfig(BaseModel):
     enforce_revisit: bool = True
 
 
+class PlannerServicesConfig(BaseModel):
+    """Cross-origin service endpoints the planner UI may READ (G1/G14).
+
+    ADDITIVE and default-unset: ``None`` is the designed absent state — the
+    UI renders the corresponding readout as absent ("not configured") rather
+    than guessing a host. The planner server itself never calls these; they
+    are handed to the browser via ``GET /api/config/planner`` so the modern
+    pages can fetch the rfsim pass-rollup store and the MCS state block
+    (derived readouts) directly, read-only.
+    """
+    rfsim_url: str | None = Field(
+        default=None,
+        description="Base URL of the rfsim radio web UI (e.g. "
+                    "http://localhost:8094). The planner UI reads "
+                    "<rfsim_url>/api/pass-rollups for achieved per-pass RF "
+                    "rollups. None = rollups not shown (designed absent state).")
+    mcs_url: str | None = Field(
+        default=None,
+        description="Base URL of the MCS (e.g. http://localhost:9090). The "
+                    "wall display reads <mcs_url>/api/state for the ground-"
+                    "derived readouts (pass fit, SoC at eclipse exit). "
+                    "None = those readouts fall back to the planner's own "
+                    "budget machinery or render as absent.")
+
+
 class PlannerDefaultPlanConfig(BaseModel):
     """What the planner's schedule contains at start-up."""
     start_empty: bool = Field(
@@ -195,6 +220,7 @@ class PlannerConfig(BaseModel):
     default_plan: PlannerDefaultPlanConfig = Field(
         default_factory=PlannerDefaultPlanConfig)
     alignment: PlannerAlignmentConfig = Field(default_factory=PlannerAlignmentConfig)
+    services: PlannerServicesConfig = Field(default_factory=PlannerServicesConfig)
     stations: list[PlannerStationConfig] = Field(default_factory=list)
 
     def station(self, name: str) -> PlannerStationConfig | None:

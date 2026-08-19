@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <!-- ==================================================================
+       SMO DESIGN SYSTEM — glyphs.svg
+       Symbol sprite for the P6 status-glyph vocabulary and the subsystem
+       monograms. Served at /static/shared/glyphs.svg; referenced as
+       <use href="/static/shared/glyphs.svg#g-NAME"> (components.js glyph()).
+
+       All strokes/fills use currentColor so the surrounding .ds-chip /
+       status class decides the colour; the SHAPE alone must carry the
+       state (greyscale acceptance test, PRINCIPLES P6):
+         warning   = HOLLOW triangle (up = high side, down = low side)
+         alarm     = FILLED triangle
+         stale     = em-dash over hatch (the hatch comes from CSS)
+         commanded = DASHED hollow diamond
+         off       = hollow ring
+       Monograms are 2-3 letter marks used by nav rails and schematic slots
+       (identity is carried by slot + monogram, never hue — P1).
+       ================================================================== -->
+
+  <!-- status glyphs: 12x12 viewBox -->
+  <symbol id="g-warn-up" viewBox="0 0 12 12">
+    <path d="M6 1.5 L11 10.5 H1 Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="g-warn-down" viewBox="0 0 12 12">
+    <path d="M6 10.5 L1 1.5 H11 Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="g-alarm-up" viewBox="0 0 12 12">
+    <path d="M6 1 L11.5 11 H0.5 Z" fill="currentColor"/>
+  </symbol>
+  <symbol id="g-alarm-down" viewBox="0 0 12 12">
+    <path d="M6 11 L0.5 1 H11.5 Z" fill="currentColor"/>
+  </symbol>
+  <symbol id="g-stale" viewBox="0 0 12 12">
+    <line x1="2" y1="6" x2="10" y2="6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+    <line x1="1.5" y1="10.5" x2="10.5" y2="1.5" stroke="currentColor" stroke-width="1" opacity="0.55"/>
+  </symbol>
+  <symbol id="g-commanded" viewBox="0 0 12 12">
+    <path d="M6 1 L11 6 L6 11 L1 6 Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="2.2 1.6" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="g-off" viewBox="0 0 12 12">
+    <circle cx="6" cy="6" r="4.4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+  </symbol>
+  <!-- acknowledged check + shelved clock (ISA-18.2 lifecycle, P7) -->
+  <symbol id="g-ack" viewBox="0 0 12 12">
+    <path d="M2 6.5 L5 9.5 L10 2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="g-shelved" viewBox="0 0 12 12">
+    <circle cx="6" cy="6" r="4.6" fill="none" stroke="currentColor" stroke-width="1.2"/>
+    <path d="M6 3.4 V6 L8 7.4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+  </symbol>
+
+  <!-- subsystem monograms: 20x14 viewBox, mono caps, currentColor -->
+  <symbol id="g-mono-ovr" viewBox="0 0 20 14">
+    <text x="10" y="11" text-anchor="middle" font-family="SFMono-Regular,Consolas,Menlo,monospace" font-size="9" font-weight="700" fill="currentColor">OVR</text>
+  </symbol>
+  <symbol id="g-mono-eps" viewBox="0 0 20 14">
+    <text x="10" y="11" text-anchor="middle" font-family="SFMono-Regular,Consolas,Menlo,monospace" font-size="9" font-weight="700" fill="currentColor">EPS</text>
+  </symbol>
+  <symbol id="g-mono-tcs" viewBox="0 0 20 14">
+    <text x="10" y="11" text-anchor="middle" font-family="SFMono-Regular,Consolas,Menlo,monospace" font-size="9" font-weight="700" fill="currentColor">TCS</text>
+  </symbol>
+  <symbol id="g-mono-aocs" viewBox="0 0 20 14">
+    <text x="10" y="11" text-anchor="middle" font-family="SFMono-Regular,Consolas,Menlo,monospace" font-size="8" font-weight="700" fill="currentColor">AOC</text>
+  </symbol>
+  <symbol id="g-mono-ttc" viewBox="0 0 20 14">
+    <text x="10" y="11" text-anchor="middle" font-family="SFMono-Regular,Consolas,Menlo,monospace" font-size="9" font-weight="700" fill="currentColor">TTC</text>
+  </symbol>
+  <symbol id="g-mono-pld" viewBox="0 0 20 14">
+    <text x="10" y="11" text-anchor="middle" font-family="SFMono-Regular,Consolas,Menlo,monospace" font-size="9" font-weight="700" fill="currentColor">PLD</text>
+  </symbol>
+  <symbol id="g-mono-prp" viewBox="0 0 20 14">
+    <text x="10" y="11" text-anchor="middle" font-family="SFMono-Regular,Consolas,Menlo,monospace" font-size="9" font-weight="700" fill="currentColor">PRP</text>
+  </symbol>
+  <symbol id="g-mono-obd" viewBox="0 0 20 14">
+    <text x="10" y="11" text-anchor="middle" font-family="SFMono-Regular,Consolas,Menlo,monospace" font-size="9" font-weight="700" fill="currentColor">OBD</text>
+  </symbol>
+  <symbol id="g-mono-fdir" viewBox="0 0 20 14">
+    <text x="10" y="11" text-anchor="middle" font-family="SFMono-Regular,Consolas,Menlo,monospace" font-size="7.5" font-weight="700" fill="currentColor">FDIR</text>
+  </symbol>
+</svg>

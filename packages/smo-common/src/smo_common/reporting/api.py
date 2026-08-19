@@ -34,6 +34,7 @@ from .generate import (
     list_templates,
     templates_dir_for,
 )
+from .plotting import log_plotting_status, plotting_status
 from .spec import SpecError, load_spec, validate_spec
 from .catalogs import Catalogs
 
@@ -106,6 +107,10 @@ def register_report_routes(
         return web.json_response({
             "owner": owner, "store": str(reports_dir),
             "count": len(out), "reports": out,
+            # Which interpreter this host runs under, and whether it can plot.
+            # An operator who has "already installed matplotlib" can see from
+            # here that the server is a different Python.
+            "plotting": plotting_status().as_dict(),
         })
 
     async def handle_templates(_req):
@@ -183,6 +188,11 @@ def register_report_routes(
             "__OWNER__", json.dumps(owner or "ground segment")),
             content_type="text/html")
 
+    # Say once, at boot, whether this process can draw a plot. The failure
+    # used to be invisible until an operator waited out a report generation
+    # and got a notice telling them to run a command they had already run.
+    log_plotting_status(logger, owner=owner or "reports")
+
     prefix = prefix.rstrip("/")
     app.router.add_get(prefix, handle_list)
     app.router.add_get(prefix + "/", handle_list)
@@ -233,6 +243,8 @@ th { color:var(--dim); font-weight:500; }
   <button id="refresh">Refresh</button>
 </header>
 <main>
+  <pre class="sub" id="plotting" style="display:none;margin:0 0 8px;
+       white-space:pre-wrap;font:inherit;"></pre>
   <h2>GENERATE</h2>
   <div class="row">
     <label for="tmpl">Template</label>
@@ -292,11 +304,37 @@ function renderVars(){
   }
 }
 
+// Plot capability of THIS server process. "matplotlib is not installed" is
+// only actionable next to the interpreter it is not installed in.
+function renderPlotting(p){
+  const el = $("plotting");
+  if (!p){ el.style.display = "none"; return; }
+  el.style.display = "";
+  if (p.available){
+    el.className = "sub";
+    el.textContent = "Plots: " + p.summary;
+    return;
+  }
+  el.className = "err";
+  el.textContent =
+    "PLOTS DISABLED — " + p.summary + "\n" +
+    "interpreter : " + p.executable + "\n" +
+    "environment : " + p.environment + "\n" +
+    "matplotlib  : " + (p.version || "not importable") + "\n" +
+    "error       : " + p.error + "\n" +
+    (p.state === "not-installed"
+      ? "This server runs under the interpreter above; installing into any "
+        + "other Python will not help. Run:\n  " + p.install_command
+      : "matplotlib is present for this interpreter — the error above is the "
+        + "real failure, not a missing package.");
+}
+
 async function refresh(){
   let d;
   try { d = await (await fetch(API)).json(); }
   catch(e){ $("sub").textContent = "cannot reach " + API; return; }
   $("sub").textContent = OWNER + " — " + d.count + " report(s)";
+  renderPlotting(d.plotting);
   if (!d.reports.length){
     $("list").innerHTML = '<span class="empty">No reports yet. Pick a ' +
       'template above and press Generate (needs delayed-TM dumps in the ' +

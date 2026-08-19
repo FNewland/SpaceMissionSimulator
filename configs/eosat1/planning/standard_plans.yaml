@@ -55,9 +55,19 @@ templates:
       #     activity sits above the gate. The old AOS+1 min anchor put a
       #     600 s dump across the low-elevation front half of the window.
       #
-      # Eight dumps at stride 3 still spread across ~9 h of the shift, which is
-      # what lets the plan close: the day's last data-generating activity is
+      # Eight dumps at stride 3 spread across most of the shift, which is what
+      # lets the plan close: the day's last data-generating activity is
       # followed by real downlink opportunities (defect #82).
+      #
+      # NOTE on what a "pass" is here. Stride 3 counts downlink OPPORTUNITIES,
+      # not raw contact windows. EOSAT-1's five stations produce ~52 windows a
+      # day and consecutive windows frequently overlap in time — the spacecraft
+      # is above the horizon at two dishes at once — but there is only one
+      # transmit chain, so that is one opportunity, not two. Counting windows
+      # made stride 1 (downlink_catchup) book two 330 s dumps on the same few
+      # minutes of clock; plan_templates._upcoming_passes now collapses
+      # overlapping windows to the highest-elevation one, leaving ~29
+      # gate-clearing opportunities a day.
       - type: data_dump
         anchor: pass_relative
         pass_index: 0
@@ -113,12 +123,31 @@ templates:
       - type: housekeeping_collection
         anchor: offset_from_now
         offset_min: 1
+      # Calibration then imaging, on the SAME sunlit arc, separated by an
+      # explicit offset.
+      #
+      # These used to be two bare `min_offset_min` values (10 and 30) and they
+      # collided: `daylight_relative` resolves to the first sunlit ground-track
+      # sample at or after `now + min_offset_min`, and the ~35 min eclipse is
+      # longer than the 20 min that separated them, so whenever both fell in
+      # the same eclipse BOTH snapped to the same daylight-arc start. The
+      # result was a calibration and an imaging_pass at the identical instant —
+      # two activities that both hold payload + aocs and are declared mutually
+      # exclusive in activity_types.yaml. That was a genuine plan defect, and
+      # the only real overlap the shipped templates ever produced.
+      #
+      # Anchoring both to the same arc and spacing them with `offset_min` makes
+      # the separation independent of where the eclipse happens to fall:
+      # calibration at D+0 (180 s), imaging at D+5 min (120 s).
       - type: calibration
         anchor: daylight_relative
         min_offset_min: 10
+        note: "Payload/AOCS calibration on the first sunlit arc"
       - type: imaging_pass
         anchor: daylight_relative
-        min_offset_min: 30
+        min_offset_min: 10
+        offset_min: 5
+        note: "Checkout acquisition, 5 min after the calibration completes"
       - type: data_dump
         anchor: pass_relative
         pass_index: 0

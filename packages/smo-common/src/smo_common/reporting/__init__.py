@@ -29,9 +29,18 @@ Library layout::
     periods.py     period resolution (pass/orbit/day/absolute/relative/dump)
     analysis.py    stats, OOL time, gap/completeness, commands, breakdowns
     render_html.py self-contained HTML renderer (matplotlib Agg → base64 PNG)
+    plotting.py    the ONE matplotlib/backend probe + its operator diagnostic
     generate.py    orchestration — generate_report()
     api.py         register_report_routes() for the MCS / viewer / simulator
 """
+from .plotting import (  # noqa: F401
+    PlottingStatus,
+    PlottingUnavailable,
+    log_plotting_status,
+    plotting_status,
+    require_plotting,
+    unavailable_message,
+)
 from .spec import ReportSpec, load_spec, validate_spec  # noqa: F401
 from .catalogs import Catalogs  # noqa: F401
 from .dataset import TelemetryDataset  # noqa: F401

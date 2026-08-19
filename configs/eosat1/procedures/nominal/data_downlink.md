@@ -57,11 +57,18 @@ lines(u16), quality_pct(u8), status(u8), flags(u8), segment(u8). Pick the
 **TC:** `TTC_SET_DOWNLINK_MODE(on=1)` (Service 8, Subtype 1, func_id 79) --- enter
 DOWNLINK/dump mode, the mode gate on the HIGH tier
 **TC:** `TTC_SET_DATA_RATE(rate=1)` (Service 8, Subtype 1, func_id 65) --- raise the TM
-rate ladder to HIGH (128 kbps QPSK RS(255,223)). REJECTED with S1.8 error 0x0007 unless
-the antenna is deployed, DOWNLINK mode is on and `ttc.contact_elevation` (0x050A) is
->= 10 deg
+rate ladder to HIGH (128 kbps QPSK RS(255,223)). The ON-BOARD gates are exactly:
+antenna deployed + DOWNLINK mode on + beacon-mode latch clear (each unmet gate
+is an S1.8 with error 0x0007 naming it). There is NO on-board elevation gate
+(2026-08c): the 10-deg rule on HIGH is GROUND arm-through policy --- the MCS
+warns from its own contact geometry when HIGH is commanded below 10 deg and
+the operator must explicitly confirm past the warning; the planner schedules
+HIGH dumps above it
 **Verify:** `ttc.tm_data_rate` (0x0506) = 128000 bps and `ttc.tm_tier` (0x0539) =
 `ttc.tm_tier_cmd` (0x053A) = 2 within 10 s
+**Note:** Flown order (2026-08c): HK(6) link check -> catalogue -> DOWNLINK
+mode + HIGH (with the ground arm-through above) -> S13.1 open (blocks + CRC)
+-> segments -> status -> end -> back to LOW. That is this card's Steps 1-6.
 **Note:** Do NOT command a payload mode here. There is no PLAYBACK mode and
 `PAYLOAD_SET_MODE(mode=3)` is CALIBRATION since Phase 4 — sending it would start
 a calibration in the middle of a downlink pass. The payload stays in STANDBY for

@@ -14,14 +14,18 @@ briefing: |
   Start with: SMO_RF_MODE=FRAME ./start.sh
 
 events:
-  # Ground-segment failure — injected from the Radio UI (rfsim), not by the
-  # simulator's failure manager. See gs_rf_degradation.yaml (defect #52).
+  # Ground-segment tracking loss. This was an "INSTRUCTOR CUE" message asking
+  # the instructor to inject it by hand from the Radio UI, because the
+  # simulator had no ground-segment failure of its own. `ttc/gs_tracking_loss`
+  # is a real injection now, with the penalty in real dB, so the scenario
+  # produces the effect itself.
   - time_offset_s: 30
-    action: message
+    action: inject
     params:
-      text: >-
-        INSTRUCTOR CUE: inject ground failure tracking_loss magnitude 1.0 from the
-        Radio UI (rfsim) — complete antenna tracking loss, 15 dB penalty.
+      subsystem: ttc
+      failure: gs_tracking_loss
+      db: 15.0
+    note: "Antenna stops following the pass — 15 dB link penalty"
 
   - time_offset_s: 300
     action: inject

@@ -188,7 +188,7 @@ class TestDataRateModes:
     def test_ladder_rungs_are_the_configured_ones(self):
         """The shipped ladder is 1 / 16 / 128 kbps (defect #85)."""
         model = _make_model()
-        assert [t["name"] for t in model.tiers] == ["BEACON", "LOW", "HIGH"]
+        assert [t["name"] for t in model.tiers] == ["SAFE", "LOW", "HIGH"]
         assert [t["bps"] for t in model.tiers] == [1000, 16000, 128000]
 
     def test_deprecated_aliases_track_the_ladder(self):
@@ -226,7 +226,7 @@ class TestBeaconMode:
         assert model._state.beacon_mode is False
 
     def test_beacon_mode_forces_beacon_tier(self):
-        """In beacon mode the ladder is pinned to BEACON (1 kbps)."""
+        """In beacon mode the ladder is pinned to SAFE (1 kbps; ex-BEACON)."""
         model = _make_model()
         model.handle_command({"command": "deploy_antennas"})  # Deploy first
         model.handle_command({"command": "set_beacon_mode", "on": True})
@@ -235,7 +235,7 @@ class TestBeaconMode:
         model.tick(1.0, orbit, params)
         assert model._state.tm_data_rate == model.tier_bps(model._beacon_tier)
         assert model._state.tm_data_rate == 1000
-        assert model.tier_name(model._state.tm_tier) == "BEACON"
+        assert model.tier_name(model._state.tm_tier) == "SAFE"
 
     def test_beacon_mode_param_in_shared(self):
         """Param 0x0521 should reflect beacon_mode state."""

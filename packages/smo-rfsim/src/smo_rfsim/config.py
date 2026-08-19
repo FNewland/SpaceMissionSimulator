@@ -100,7 +100,7 @@ class CCSDSConfig:
     rs_enabled: bool = True
     convolutional_enabled: bool = True
     # Follow the spacecraft's active TM rate tier's FEC (defect #85): the
-    # BEACON and LOW tiers code conv(7,1/2)+RS, NOMINAL and HIGH code RS only.
+    # SAFE and LOW tiers code conv(7,1/2)+RS, HIGH codes RS only.
     # Opt-in because the pure-Python Viterbi decoder (~5 s/frame) is only
     # affordable at the 1-16 kbps tiers; leave it False to run RS-only
     # everywhere and cost the low tiers ~1.5 dB, which their >25 dB margins

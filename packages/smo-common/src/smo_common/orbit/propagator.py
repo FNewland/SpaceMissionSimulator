@@ -436,6 +436,31 @@ class OrbitPropagator:
             "time_to_eclipse_exit_s": exit_s,
         }
 
+    def station_geometry_at(self, utc: datetime,
+                            station_name: str) -> Optional[dict]:
+        """Elevation / azimuth / slant range to one named station at ``utc``.
+
+        Additive public helper (POSITION_NEEDS G5): the MCS link-prediction
+        endpoint needs (elevation, range) time series for a specific pass
+        without mutating the propagator's own state. Returns ``None`` when
+        the station is unknown or SGP4 fails at that epoch.
+        """
+        gs = next((g for g in self._ground_stations
+                   if g.name == station_name), None)
+        if gs is None:
+            return None
+        t = utc
+        jd, fr = jday(t.year, t.month, t.day, t.hour, t.minute,
+                      t.second + t.microsecond * 1e-6)
+        e, r, _ = self._sat.sgp4(jd, fr)
+        if e != 0:
+            return None
+        r_ecef = _eci_to_ecef(np.array(r), _gmst(jd + fr))
+        el, az, rng = _look_angles(r_ecef, gs.ecef, gs.lat_rad, gs.lon_rad)
+        return {"elevation_deg": float(el), "azimuth_deg": float(az),
+                "range_km": float(rng),
+                "min_elevation_deg": float(gs.min_elevation_deg)}
+
     def _elevation_at(self, utc: datetime, gs: GroundStation) -> float:
         t = utc
         jd, fr = jday(t.year, t.month, t.day, t.hour, t.minute,

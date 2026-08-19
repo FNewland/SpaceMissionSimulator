@@ -64,8 +64,11 @@ class TestPortTakesEffect:
 
         import smo_simulator.server as srv
 
+        # **kw: the server now also plumbs ui_mode through to
+        # create_instructor_app (design_2026-08 plan §1.2); this test only
+        # cares about the port wiring.
         monkeypatch.setattr(srv, "create_instructor_app",
-                            lambda engine: web.Application())
+                            lambda engine, **kw: web.Application())
 
         class _StubEngine:
             def start(self):

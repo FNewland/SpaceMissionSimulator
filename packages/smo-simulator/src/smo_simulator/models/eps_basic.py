@@ -15,6 +15,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from smo_common.models.subsystem import SubsystemModel
+from smo_simulator.failure_spec import (
+    FailureSpec, ParamSpec, T_FLOAT, T_BOOL, enum, number,
+)
 
 # Panel face normals in body frame (6U cubesat body-mounted panels)
 PANEL_NORMALS = {
@@ -22,6 +25,10 @@ PANEL_NORMALS = {
     'py': (0, 1, 0), 'my': (0, -1, 0),
     'pz': (0, 0, 1), 'mz': (0, 0, -1),
 }
+
+# Body faces carrying solar cells — single source for the panel-loss injection
+# parameter and for `sa_panel_degradation`'s keys.
+SOLAR_PANEL_FACES = tuple(PANEL_NORMALS)
 
 # Power line definitions
 # (name, switchable, default_on, description)
@@ -147,6 +154,13 @@ class EPSState:
     _prev_sa_degraded: bool = False  # Solar-array-degraded edge state
     # ── Load shedding and control ──
     load_shed_stage: int = 0         # 0=none, 1/2/3=progressive shed
+    # Stage latched by EPS_EMERGENCY_LOAD_SHED (or EPS_SET_MODE safing) —
+    # 2026-08c item 8. The tick used to recompute load_shed_stage purely
+    # from bus voltage, so a COMMANDED shed was overwritten to 0 on the
+    # very next tick (0x0134 never moved, no stage event ever fired) and
+    # the command looked like a no-op from the console. Dataclass field so
+    # a breakpoint restore cannot heal the latch.
+    commanded_shed_stage: int = 0
     # Lines shed by the bus-voltage shedder, in shed order — consumed by the
     # hysteresis auto-restore (brief 01 WP-7). Operator/safe-mode switch-offs
     # are NOT recorded here and are never auto-restored.
@@ -236,6 +250,9 @@ class EPSBasicModel(SubsystemModel):
         # UV/OV thresholds
         self._uv_threshold = 26.5
         self._ov_threshold = 29.5
+        # Pre-injection OV threshold, so clearing an `overvoltage` injection
+        # restores the CONFIGURED value rather than the module default.
+        self._ov_threshold_nominal: float | None = None
         # Protection / event tuning — module-level defaults, overridden by the
         # simulation.yaml `eps:` block in configure() (defect #51).
         self._line_power_w = {"htr_bat": 6.0, "htr_obc": 4.0, "aocs_wheels": 6.0}
@@ -1011,14 +1028,20 @@ class EPSBasicModel(SubsystemModel):
                 events_to_generate.append((0x010F, f"PDU overcurrent trip: {line_name}"))
 
         # ── Event detection: Load shedding stages ──
-        # Calculate current load shed stage
-        cur_load_shed_stage = 0
+        # The published stage (0x0134) is the max of the COMMANDED latch
+        # (EPS_EMERGENCY_LOAD_SHED / EPS_SET_MODE safing) and the autonomous
+        # bus-voltage shedder's progress (2026-08c item 8 — the commanded
+        # stage used to be recomputed to 0 here every tick).
+        cur_load_shed_stage = int(getattr(s, "commanded_shed_stage", 0))
         if s.bus_voltage < self._shed_voltage:
             shed_count = sum(1 for ln in self._shed_order if not s.power_lines.get(ln, False))
-            cur_load_shed_stage = min(3, shed_count)
+            cur_load_shed_stage = max(cur_load_shed_stage, min(3, shed_count))
 
-        if cur_load_shed_stage > s._prev_load_shed_stage:
-            events_to_generate.append((0x0106 + cur_load_shed_stage - 1, f"Load shed stage {cur_load_shed_stage}"))
+        # One event PER STAGE crossed, so a direct 0 -> 3 shed still logs
+        # stages 1 and 2 (each stage is a distinct S5 event id the FDIR /
+        # alarm journal keys on).
+        for st in range(s._prev_load_shed_stage + 1, cur_load_shed_stage + 1):
+            events_to_generate.append((0x0106 + st - 1, f"Load shed stage {st}"))
 
         s.load_shed_stage = cur_load_shed_stage
 
@@ -1076,7 +1099,13 @@ class EPSBasicModel(SubsystemModel):
                 n_shed = len(self._shed_order) if s.eps_mode >= 2 else 2
                 for load_name in self._shed_order[:n_shed]:
                     s.power_lines[load_name] = False
-                s.load_shed_stage = max(s.load_shed_stage, n_shed)
+                # Latch the commanded stage so the tick's stage derivation
+                # (above) keeps 0x0134 truthful next tick instead of
+                # zeroing it (2026-08c item 8).
+                s.commanded_shed_stage = max(
+                    int(getattr(s, "commanded_shed_stage", 0)),
+                    min(3, n_shed))
+                s.load_shed_stage = max(s.load_shed_stage, min(3, n_shed))
 
         # Push events to the engine for S5 generation (defect #23)
         if events_to_generate and getattr(self, '_engine', None):
@@ -1432,6 +1461,109 @@ class EPSBasicModel(SubsystemModel):
             self._state.power_lines[line_name] = True
         return {"success": True}
 
+    # ─── Failure injection ───────────────────────────────────────────
+    #
+    # FAILURE_SPECS is the single source of truth for what each injection
+    # below accepts. The instructor UI generates its form from it (served by
+    # GET /api/failure-catalog), FailureManager.inject() validates against it,
+    # and the scenario content gate checks every shipped scenario file with
+    # it. Keep it adjacent to inject_failure() — if you add a `kwargs.get(...)`
+    # there, it needs a ParamSpec here or callers cannot reach it.
+    FAILURE_SPECS = {
+        "solar_array_partial": FailureSpec(
+            name="solar_array_partial",
+            label="Solar array partial degradation",
+            effect="Scales one wing's output by (1 - magnitude); array current "
+                   "0x0146/0x0147 and bus power fall, SoC follows.",
+            magnitude=ParamSpec(
+                name="magnitude", type=T_FLOAT, label="Output loss",
+                unit="fraction", min=0.0, max=1.0, default=0.5, step=0.01,
+                description="0 = healthy, 1 = wing dead"),
+            params=(
+                enum("array", "Wing", ["A", "B"], labels=["Wing A (+Y)", "Wing B (-Y)"],
+                     default="A"),
+            ),
+        ),
+        "solar_panel_loss": FailureSpec(
+            name="solar_panel_loss", label="Solar panel (body face) loss",
+            effect="Zeroes/derates one body face's contribution to array current.",
+            magnitude=ParamSpec(
+                name="magnitude", type=T_FLOAT, label="Output loss",
+                unit="fraction", min=0.0, max=1.0, default=1.0, step=0.01),
+            params=(
+                enum("face", "Panel face", SOLAR_PANEL_FACES,
+                     labels=[f.upper() for f in SOLAR_PANEL_FACES], default="px"),
+            ),
+        ),
+        "solar_array_total_loss": FailureSpec(
+            name="solar_array_total_loss", label="Total solar array loss",
+            effect="Both wings and all body faces dead — worst-case power "
+                   "contingency, drives the progressive load-shed ladder.",
+            magnitude=None,
+        ),
+        "bat_cell": FailureSpec(
+            name="bat_cell", label="Battery cell failure",
+            effect="Marks one cell string failed: capacity and bus voltage drop.",
+            magnitude=ParamSpec(name="magnitude", type=T_BOOL,
+                                label="Failed", default=True),
+        ),
+        "bus_short": FailureSpec(
+            name="bus_short", label="Main bus short",
+            effect="Adds a large parasitic load to the 28 V bus; SoC collapses.",
+            magnitude=ParamSpec(name="magnitude", type=T_BOOL,
+                                label="Shorted", default=True),
+        ),
+        "overcurrent": FailureSpec(
+            name="overcurrent", label="Power line overcurrent",
+            effect="Multiplies the selected line's draw; above its OC threshold "
+                   "the LCL trips and the line drops out.",
+            magnitude=ParamSpec(
+                name="magnitude", type=T_FLOAT, label="Current multiplier",
+                unit="x nominal", min=0.0, max=20.0, default=3.0, step=0.1),
+            params=(
+                enum("line_index", "Power line", list(range(len(POWER_LINE_NAMES))),
+                     labels=[f"{i} — {d[3]}" for i, d in enumerate(POWER_LINE_DEFS)],
+                     default=3),
+            ),
+        ),
+        "undervoltage": FailureSpec(
+            name="undervoltage", label="Battery undervoltage (SoC drain)",
+            effect="One-shot removal of state of charge, to drive the "
+                   "undervoltage protection ladder.",
+            magnitude=ParamSpec(
+                name="magnitude", type=T_FLOAT,
+                label="Severity (legacy: x10 % SoC)", unit="fraction",
+                min=0.0, max=10.0, default=2.0, step=0.1,
+                description="Ignored when an explicit SoC drop is given."),
+            params=(
+                number("soc_pct", "SoC to remove", unit="% SoC", lo=0.0,
+                       hi=100.0, step=0.5,
+                       description="Absolute value; overrides magnitude."),
+            ),
+            reversible=False,
+            notes="Not reversible by clear: SoC recovers physically by charging.",
+        ),
+        "overvoltage": FailureSpec(
+            name="overvoltage", label="Overvoltage detection threshold drop",
+            effect="Lowers the OV trip threshold so the OV flag sets at the "
+                   "current bus voltage.",
+            magnitude=ParamSpec(
+                name="magnitude", type=T_FLOAT, label="Threshold reduction",
+                unit="V", min=0.0, max=4.5, default=2.0, step=0.1),
+        ),
+        "sada_stuck": FailureSpec(
+            name="sada_stuck", label="Solar array drive stuck",
+            effect="Freezes the SADA shaft: 0x0133 goes flat, wing currents "
+                   "develop a |sin| ripple, orbit-average yield falls ~36 %.",
+            magnitude=None,
+            params=(
+                number("angle_deg", "Seize at angle", unit="deg", lo=-180.0,
+                       hi=360.0, step=1.0,
+                       description="Omit to seize at the current shaft angle."),
+            ),
+        ),
+    }
+
     def inject_failure(self, failure: str, magnitude: float = 1.0, **kwargs) -> None:
         if failure == "solar_array_partial":
             arr = kwargs.get("array", "A")
@@ -1450,10 +1582,22 @@ class EPSBasicModel(SubsystemModel):
                 line_name = POWER_LINE_NAMES[line_idx]
                 self._state.oc_inject[line_name] = magnitude
         elif failure == "undervoltage":
-            # Reduce bus voltage artificially
-            self._state.bat_soc_pct = max(0.0, self._state.bat_soc_pct - magnitude * 10)
+            # Remove state of charge so the bus voltage falls and the
+            # undervoltage protection ladder runs. `soc_pct` is the real
+            # engineering value (percentage points of SoC to remove); the
+            # legacy `magnitude * 10` mapping is kept for scenario files and
+            # the old 0..1 severity slider that predate the typed parameter.
+            drop = kwargs.get("soc_pct")
+            if drop is None:
+                drop = magnitude * 10.0
+            self._state.bat_soc_pct = max(0.0,
+                                          self._state.bat_soc_pct - float(drop))
         elif failure == "overvoltage":
-            # Will be detected by ov_flag threshold check
+            # Will be detected by ov_flag threshold check. Remember the
+            # CONFIGURED threshold so clear_failure restores simulation.yaml's
+            # `eps.ov_threshold_v` instead of a hard-coded 29.5 V.
+            if self._ov_threshold_nominal is None:
+                self._ov_threshold_nominal = self._ov_threshold
             self._ov_threshold = max(25.0, self._ov_threshold - magnitude)
         elif failure == "solar_panel_loss":
             face = kwargs.get("face", "px")
@@ -1503,7 +1647,9 @@ class EPSBasicModel(SubsystemModel):
             # zeroing any residual injection bookkeeping. Recovery is physical.
             pass
         elif failure == "overvoltage":
-            self._ov_threshold = 29.5
+            if self._ov_threshold_nominal is not None:
+                self._ov_threshold = self._ov_threshold_nominal
+                self._ov_threshold_nominal = None
         elif failure == "solar_panel_loss":
             face = kwargs.get("face", "px")
             if face in self._state.sa_panel_degradation:
@@ -1519,11 +1665,26 @@ class EPSBasicModel(SubsystemModel):
             for face in self._state.sa_panel_degradation:
                 self._state.sa_panel_degradation[face] = 1.0
 
+    # Model-level (non-dataclass) entries carried in the state dict. These are
+    # FAILURE state: `sada_stuck` lives entirely in `_sada_stuck` /
+    # `_sada_tracking` and `overvoltage` entirely in `_ov_threshold`, neither
+    # of which is a dataclass field — so before this both injections silently
+    # HEALED across a breakpoint save/load (the gyro_bias bug again).
+    _EXTRA_STATE_KEYS = ("_rng_state", "_sada_stuck", "_sada_tracking",
+                         "_sada_target_angle", "_ov_threshold",
+                         "_ov_threshold_nominal")
+
     def get_state(self) -> dict[str, Any]:
         import dataclasses
         from smo_common.state import rng_state_to_json
         d = dataclasses.asdict(self._state)
         d["_rng_state"] = rng_state_to_json(self.rng.getstate())
+        d["_sada_stuck"] = bool(self._sada_stuck)
+        d["_sada_tracking"] = bool(self._sada_tracking)
+        d["_sada_target_angle"] = float(self._sada_target_angle)
+        d["_ov_threshold"] = float(self._ov_threshold)
+        d["_ov_threshold_nominal"] = (None if self._ov_threshold_nominal is None
+                                      else float(self._ov_threshold_nominal))
         return d
 
     def set_state(self, state: dict[str, Any]) -> None:
@@ -1532,7 +1693,18 @@ class EPSBasicModel(SubsystemModel):
         # lists into live model state (G2-f).
         from smo_common.state import restore_dataclass_state, restore_rng
         restore_rng(self.rng, state.get("_rng_state"))
-        restore_dataclass_state(self._state, state, skip=("_rng_state",))
+        if "_sada_stuck" in state:
+            self._sada_stuck = bool(state["_sada_stuck"])
+            self._sada_tracking = bool(state.get("_sada_tracking",
+                                                 self._sada_tracking))
+            self._sada_target_angle = float(state.get("_sada_target_angle",
+                                                      self._sada_target_angle))
+        if "_ov_threshold" in state:
+            self._ov_threshold = float(state["_ov_threshold"])
+            nom = state.get("_ov_threshold_nominal")
+            self._ov_threshold_nominal = None if nom is None else float(nom)
+        restore_dataclass_state(self._state, state,
+                                skip=self._EXTRA_STATE_KEYS)
 
     def set_bat_ambient_temp(self, temp_c: float) -> None:
         self._bat_temp_env = temp_c
@@ -1563,15 +1735,55 @@ class EPSBasicModel(SubsystemModel):
         return {"success": True, "message": f"Load {line_name} switched {'ON' if state else 'OFF'}"}
 
     def _emergency_load_shed(self, stage: int) -> dict[str, Any]:
-        """Immediately shed loads to specified stage (1, 2, or 3)."""
+        """Immediately shed loads to the commanded stage (0-3).
+
+        2026-08c item 8, two defects fixed here:
+
+        * it used to write ``power_lines[load] = not should_shed`` — i.e. a
+          SHED command POWERED ON every load beyond the commanded stage, so
+          "shed stage 1" could silently energise the FPA cooler, the wheels
+          and the prop line. Shedding is now monotonic: it only ever turns
+          lines OFF. Restoration is the operator's job, line by line (same
+          contract as EPS_SET_MODE safing).
+        * the commanded stage was not latched, so the next tick recomputed
+          ``load_shed_stage`` from bus voltage alone and published 0 — the
+          command produced no stage telemetry and no stage event.
+
+        Stage N sheds the first N lines of the shed order
+        (payload, fpa_cooler, ttc_tx); stage 0 clears the commanded latch
+        without re-powering anything. Side effects match the autonomous
+        bus-voltage shedder so a shed payload really stops imaging and a
+        shed ttc_tx really silences the transmitter.
+        """
         if stage < 0 or stage > 3:
             return {"success": False, "message": "Invalid load shed stage (0-3)"}
-        # Shed loads up to target stage
-        for idx, load_name in enumerate(LOAD_SHED_ORDER):
-            should_shed = (idx + 1) <= stage
-            self._state.power_lines[load_name] = not should_shed
-        self._state.load_shed_stage = stage
-        return {"success": True, "message": f"Emergency load shed stage {stage}"}
+        s = self._state
+        newly_shed: list[str] = []
+        already_off: list[str] = []
+        for load_name in self._shed_order[:stage]:
+            if s.power_lines.get(load_name, False):
+                s.power_lines[load_name] = False
+                newly_shed.append(load_name)
+                if load_name == "payload":
+                    s.payload_mode = 0
+                elif load_name == "fpa_cooler":
+                    s.fpa_cooler_on = False
+                elif load_name == "ttc_tx":
+                    s.transponder_tx = False
+            else:
+                already_off.append(load_name)
+        s.commanded_shed_stage = stage
+        s.load_shed_stage = max(s.load_shed_stage, stage)
+        if stage == 0:
+            return {"success": True,
+                    "message": ("Load shed stage 0: commanded-shed latch "
+                                "cleared — no lines re-powered (restore "
+                                "lines individually with EPS_POWER_ON)")}
+        detail = f"shed {', '.join(newly_shed) if newly_shed else 'nothing new'}"
+        if already_off:
+            detail += f"; already off: {', '.join(already_off)}"
+        return {"success": True,
+                "message": f"Emergency load shed stage {stage} ({detail})"}
 
     def _get_power_budget_summary(self) -> dict[str, Any]:
         """Return current power generation vs consumption summary."""

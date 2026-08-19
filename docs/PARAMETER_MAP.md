@@ -19,28 +19,29 @@ Columns:
 
 | | Count |
 |---|---:|
-| Catalogued parameters | 446 |
-| In at least one HK SID | 321 |
-| On-demand (S20-readable) | 146 |
-| Declared stubs (model does not compute) | 20 |
+| Catalogued parameters | 449 |
+| In at least one HK SID | 349 |
+| On-demand (S20-readable) | 125 |
+| Declared stubs (model does not compute) | 14 |
 | Ground limit bands | 52 |
 | S12 on-board monitors | 46 |
-| Ground-derived pseudo-parameters (`derived.yaml`) | 3 |
+| Ground-derived pseudo-parameters (`derived.yaml`) | 11 |
 
 ## Housekeeping structures
 
 | SID | Name | Members |
 |---:|---|---:|
-| 1 | EPS | 52 |
-| 2 | AOCS | 81 |
+| 1 | EPS | 54 |
+| 2 | AOCS | 86 |
 | 3 | TCS | 17 |
-| 4 | Platform | 30 |
+| 4 | Platform | 34 |
 | 5 | Payload | 31 |
 | 6 | TTC | 32 |
-| 7 | AOCS_DETERMINATION | 41 |
+| 7 | AOCS_DETERMINATION | 49 |
 | 8 | EPS Power Management | 13 |
 | 9 | PROP | 26 |
 | 11 | Beacon | 7 |
+| 12 | GPS_NAV | 12 |
 
 ## aocs
 
@@ -57,13 +58,13 @@ Columns:
 | `0x0208` | aocs.rw2_speed | RPM | 2 |  |  | AOCS Reaction Wheel 2 Overspeed (-5000.0…5000.0, WARNING) |  |
 | `0x0209` | aocs.rw3_speed | RPM | 2 |  |  | AOCS Reaction Wheel 3 Overspeed (-5000.0…5000.0, WARNING) |  |
 | `0x020A` | aocs.rw4_speed | RPM | 2 |  |  | AOCS Reaction Wheel 4 Overspeed (-5000.0…5000.0, WARNING) |  |
-| `0x020B` | aocs.mag_x | nT |  | yes |  |  |  |
-| `0x020C` | aocs.mag_y | nT |  | yes |  |  |  |
-| `0x020D` | aocs.mag_z | nT |  | yes |  |  |  |
+| `0x020B` | aocs.mag_x | nT | 2 |  |  |  |  |
+| `0x020C` | aocs.mag_y | nT | 2 |  |  |  |  |
+| `0x020D` | aocs.mag_z | nT | 2 |  |  |  |  |
 | `0x020F` | aocs.mode |  | 2 |  |  |  |  |
-| `0x0210` | aocs.gps_lat | deg |  | yes |  |  |  |
-| `0x0211` | aocs.gps_lon | deg |  | yes |  |  |  |
-| `0x0212` | aocs.gps_alt | km |  | yes |  |  |  |
+| `0x0210` | aocs.gps_lat | deg | 12 |  |  |  |  |
+| `0x0211` | aocs.gps_lon | deg | 12 |  |  |  |  |
+| `0x0212` | aocs.gps_alt | km | 12 |  |  |  |  |
 | `0x0215` | aocs.css_sun_confidence |  |  | yes |  |  |  |
 | `0x0216` | aocs.solar_beta | deg |  | yes |  |  |  |
 | `0x0217` | aocs.att_error | deg | 2 |  | -1…1 / -2…2 | AOCS Attitude Error High (0.0…1.0, WARNING) |  |
@@ -74,20 +75,13 @@ Columns:
 | `0x0220` | aocs.sun_body_x |  |  | yes |  |  |  |
 | `0x0221` | aocs.sun_body_y |  |  | yes |  |  |  |
 | `0x0222` | aocs.sun_body_z |  |  | yes |  |  |  |
-| `0x0223` | aocs.mag_a_x | nT |  | yes |  |  |  |
-| `0x0224` | aocs.mag_a_y | nT |  | yes |  |  |  |
-| `0x0225` | aocs.mag_a_z | nT |  | yes |  |  |  |
-| `0x0226` | aocs.mag_b_x | nT |  | yes |  |  |  |
-| `0x0227` | aocs.mag_b_y | nT |  | yes |  |  |  |
-| `0x0228` | aocs.mag_b_z | nT |  | yes |  |  |  |
-| `0x0229` | aocs.mag_select |  |  | yes |  |  |  |
 | `0x0230` | aocs.wheel_torque_cmd | Nm |  | yes |  |  | yes |
-| `0x0231` | aocs.gps_ecef_x | m |  | yes |  |  | yes |
-| `0x0232` | aocs.gps_ecef_y | m |  | yes |  |  | yes |
-| `0x0233` | aocs.gps_ecef_z | m |  | yes |  |  | yes |
-| `0x0234` | aocs.gps_vel_x | m/s |  | yes |  |  | yes |
-| `0x0235` | aocs.gps_vel_y | m/s |  | yes |  |  | yes |
-| `0x0236` | aocs.gps_vel_z | m/s |  | yes |  |  | yes |
+| `0x0231` | aocs.gps_ecef_x | m | 12 |  |  |  |  |
+| `0x0232` | aocs.gps_ecef_y | m | 12 |  |  |  |  |
+| `0x0233` | aocs.gps_ecef_z | m | 12 |  |  |  |  |
+| `0x0234` | aocs.gps_vel_x | m/s | 12 |  |  |  |  |
+| `0x0235` | aocs.gps_vel_y | m/s | 12 |  |  |  |  |
+| `0x0236` | aocs.gps_vel_z | m/s | 12 |  |  |  |  |
 | `0x0240` | aocs.st1_status |  | 2 |  |  | AOCS Star Tracker 1 Blind (0.0…2.5, ALARM) |  |
 | `0x0241` | aocs.st1_num_stars |  | 2 |  |  |  |  |
 | `0x0242` | aocs.st2_num_stars |  | 2 |  |  |  |  |
@@ -120,9 +114,9 @@ Columns:
 | `0x0271` | aocs.gyro_bias_y | deg/s | 2 |  |  | AOCS Gyro Y-Axis Bias High (-0.5…0.5, WARNING) |  |
 | `0x0272` | aocs.gyro_bias_z | deg/s | 2 |  |  | AOCS Gyro Z-Axis Bias High (-0.5…0.5, WARNING) |  |
 | `0x0273` | aocs.gyro_temp | C | 2 |  | 0…50 / -10…60 |  |  |
-| `0x0274` | aocs.gps_fix |  | 2 |  |  |  |  |
-| `0x0275` | aocs.gps_pdop |  | 2 |  | 0…4 / 0…6 |  |  |
-| `0x0276` | aocs.gps_num_sats |  | 2 |  |  |  |  |
+| `0x0274` | aocs.gps_fix |  | 2, 12 |  |  |  |  |
+| `0x0275` | aocs.gps_pdop |  | 2, 12 |  | 0…4 / 0…6 |  |  |
+| `0x0276` | aocs.gps_num_sats |  | 2, 12 |  |  |  |  |
 | `0x0277` | aocs.mag_field_total | nT | 2 |  |  |  |  |
 | `0x027A` | aocs.css_px |  | 2 | yes |  |  |  |
 | `0x027B` | aocs.css_mx |  | 2 | yes |  |  |  |
@@ -197,6 +191,16 @@ Columns:
 | `0x02C6` | aocs.fidelity_mode |  | 7 |  |  |  |  |
 | `0x02C7` | aocs.geoloc_err_m | m | 7 |  |  |  |  |
 | `0x02C8` | aocs.power_w | W | 7 |  |  |  |  |
+| `0x02C9` | aocs.gyro_cal_state |  | 7 |  |  |  |  |
+| `0x02CA` | aocs.gyro_cal_progress | % | 7 |  |  |  |  |
+| `0x02CB` | aocs.gyro_cal_bias_x | deg/s | 7 |  |  |  |  |
+| `0x02CC` | aocs.gyro_cal_bias_y | deg/s | 7 |  |  |  |  |
+| `0x02CD` | aocs.gyro_cal_bias_z | deg/s | 7 |  |  |  |  |
+| `0x02CE` | aocs.gyro_cal_comp_mag | deg/s | 7 |  |  |  |  |
+| `0x02CF` | aocs.gyro_cal_result |  | 7 |  |  |  |  |
+| `0x02D0` | aocs.gyro_cal_reject |  | 7 |  |  |  |  |
+| `0x02D1` | aocs.gyro_units_mask |  | 2 |  |  |  |  |
+| `0x02D2` | aocs.gyro_bias_resid | deg/s | 2 |  |  |  |  |
 
 ## eps
 
@@ -275,17 +279,17 @@ Columns:
 | `0x0147` | eps.sa_wing_my_current | A | 8 |  |  |  |  |
 | `0x0148` | eps.bus_load_current | A | 8 |  |  |  |  |
 | `0x0149` | eps.fpa_cooler_cmd |  |  | yes |  |  |  |
-| `0x014A` | eps.pl_prop |  |  | yes |  |  |  |
-| `0x014B` | eps.line_current_8 | A |  | yes |  |  |  |
+| `0x014A` | eps.pl_prop |  | 1 |  |  |  |  |
+| `0x014B` | eps.line_current_8 | A | 1 |  |  |  |  |
 
 ## fdir
 
 | ID | Name | Unit | HK SID | S20 | Ground limits (Y / R) | S12 | Stub |
 |---|---|---|---|:-:|---|---|:-:|
-| `0x0700` | fdir.level |  |  | yes |  |  |  |
-| `0x0701` | fdir.active_alarms |  |  | yes |  |  |  |
-| `0x0702` | fdir.critical_alarms |  |  | yes |  |  |  |
-| `0x0703` | fdir.high_alarms |  |  | yes |  |  |  |
+| `0x0700` | fdir.level |  | 4 | yes |  |  |  |
+| `0x0701` | fdir.active_alarms |  | 4 | yes |  |  |  |
+| `0x0702` | fdir.critical_alarms |  | 4 | yes |  |  |  |
+| `0x0703` | fdir.high_alarms |  | 4 | yes |  |  |  |
 
 ## obdh
 
@@ -547,4 +551,12 @@ Computed by the ground segment from the ephemeris and the station list. They are
 | contact.current_gs |  | Current ground station index (ground: orbit propagation vs ground_stations.yaml) |
 | contact.time_to_aos | s | Time to acquisition of signal (ground: next contact window) |
 | contact.in_contact |  | Currently in contact (ground: elevation above the station mask) |
+| eps.soc_at_eclipse_exit_pred | % | Predicted battery SoC at eclipse exit (ground: archive SoC slope projected over time_to_eclipse_exit; valid only in eclipse) — PT5 |
+| eps.time_to_soc_yellow | s | Time until eps.bat_soc crosses its limits.yaml yellow-low at the current archive slope (valid only while falling) — PT6 |
+| aocs.time_to_mom_70pct | s | Time until aocs.momentum_saturation_pct reaches 70% (the fine_ready bit-4 / desat-planning threshold) at the current archive slope — AO4 |
+| obdh.time_to_buf_full | s | Worst-case time until an OBDH store (HK/event/alarm buffer fill) reaches 100% at the current archive slope — FS8 |
+| ttc.pass_data_capacity_bytes | bytes | Downlink capacity of the current pass remainder (in contact) or the next predicted pass: active TM tier rate x pass seconds — TC5 input |
+| prop.catbed_ready_eta | s | Time until catbed temperature reaches interlocks.catbed_min_c (subsystems/prop.yaml) at the current archive heat-up slope — PR3 |
+| ttc.pass_fit_ratio | ratio | G3 verdict, one number: downlink backlog bytes / pass_data_capacity_bytes. >1.0 = will NOT fit in the pass at the active tier — TC5/PL5/FS8 |
+| obdh.time_offset_ms | ms | Measured on-board minus ground clock offset (spacecraft CUC vs sim time), in milliseconds — FS3 |
 

@@ -1,8 +1,18 @@
 # COM-012: First Light
 **Subsystem:** Payload / AOCS
 **Phase:** COMMISSIONING
-**Revision:** 1.0
+**Revision:** 2.0 --- 2026-08c: the image-transfer step now flies the REAL
+Service-13 chain (S13.1 create -> 0x062D raises -> 0x062E drains -> S13.5
+end), which works over the wire since the 2026-08c simulator fixes ---
+`PAYLOAD_INITIATE_TRANSFER` (func 94) remains the on-board spool command but
+the ground-facing downlink of a product is S13. Mode codes and FPA bands
+corrected. Entry/exit states declared. Runs BEFORE COM-011 (calibration
+needs a verified imaging chain --- and "first light" means the FIRST image).
 **Approved:** Flight Operations Director
+
+**Entry state:** COM-010 exit state --- payload STANDBY, cooler RUNNING with
+`payload.fpa_ready` (0x0610) = 1 at the -15C setpoint, AOCS commanded
+NOMINAL, downlink LOW, DOWNLINK mode off.
 
 ## Purpose
 Capture the first image with the EOSAT-1 multispectral imager. Transition the
@@ -13,7 +23,7 @@ initial quality assessment. This milestone confirms end-to-end imaging capabilit
 ## Prerequisites
 - [ ] COM-009 (Payload Power-On) completed — payload in STANDBY
 - [ ] COM-010 (FPA Cooler Activation) completed — `payload.fpa_ready` (0x0610) = 1 at the commanded setpoint (-15C: band -16.5C to -14.5C)
-- [ ] AOCS in NOMINAL (mode 3) or FINE_POINT (mode 4) — nadir-pointing
+- [ ] AOCS in NOMINAL (mode 4) — Step 1 takes it to FINE_POINT (mode 5)
 - [ ] `aocs.att_error` (0x0217) < 0.5 deg (pointing accuracy sufficient for imaging)
 - [ ] `eps.bat_soc` (0x0101) > 70%
 - [ ] Spacecraft approaching a known calibration ground site (e.g., Libya-4, Railroad Valley)
@@ -37,7 +47,8 @@ bitmask reads 0 (mode 5 is otherwise refused with TM(1,8))
 
 ### Step 2 — Verify FPA Temperature Before Imaging
 **TC:** `GET_PARAM(param_id=0x0601)` (Service 20, Subtype 3) — FPA temperature
-**Verify:** `payload.fpa_temp` (0x0601) in range [-32C, -28C] within 10s
+**Verify:** `payload.fpa_temp` (0x0601) in range [-16.5C, -14.5C] within 10s —
+the -15C setpoint band (`payload.fpa_ready` 0x0610 = 1 is the same statement)
 **GO/NO-GO:** FPA at operational temperature
 
 ### Step 3 — Verify Payload Ready for Imaging
@@ -77,13 +88,33 @@ bitmask reads 0 (mode 5 is otherwise refused with TM(1,8))
 **Action:** Payload returns to STANDBY. FPA cooler continues running. Image data preserved in storage.
 **GO/NO-GO:** Payload safely returned to STANDBY after capture
 
-### Step 8 — Downlink Image Preview
-**Action:** Request low-resolution preview thumbnail for ground assessment. Full image downlink scheduled for dedicated data dump pass.
-**TC:** `PAYLOAD_INITIATE_TRANSFER(scene_id=1)` (Service 8, Subtype 1, func_id 94) — start the on-board transfer of the product  
-**Wire:** `5E 00 01`
-**Verify:** `GET_PARAM(param_id=0x062E)` (Service 20, Subtype 3) — `payload.transfer_progress` reaches 100 % within 30 s
-**Action:** Downlink preview via S-band TM. Payload team assesses image for: correct geometry, spectral band presence, no dead pixels in initial inspection, reasonable scene content.
-**GO/NO-GO:** Preview image received and shows valid scene content
+### Step 8 — Downlink the Product Over Service 13
+**Action:** Downlink the first-light product with the real bulk-data chain.
+Raise the ladder first: HIGH needs DOWNLINK mode + the deployed antenna
+(COM-006); the 10-deg elevation rule is GROUND arm-through policy, not an
+on-board gate.
+**TC:** `TTC_SET_DOWNLINK_MODE(on=1)` (Service 8, Subtype 1, func_id 79)
+**TC:** `TTC_SET_DATA_RATE(rate=1)` (Service 8, Subtype 1, func_id 65) — HIGH
+**Verify:** `ttc.tm_data_rate` (0x0506) = 128000 bps within 10 s
+**TC:** `S13_CREATE_TRANSFER(scene_id=1, size_mb=0)` (Service 13, Subtype 1) — open the transfer against the catalogued first-light product
+**Verify:** TM(13,2) transfer-open report received within 10 s — record the
+transfer id, `total_blocks` and the CRC-32 (the ground checks the reassembled
+product against it)
+**Verify:** `payload.transfer_active` (0x062D) = 1 within 15 s
+**Verify:** `payload.transfer_progress` (0x062E) increasing over successive
+SID 5 samples — the transfer drains at the ACTIVE information rate and stalls
+if the link drops
+**TC:** `S13_REPORT_STATUS(transfer_id=T)` (Service 13, Subtype 9) — status mid-dump
+**TC:** `S13_END_TRANSFER(transfer_id=T)` (Service 13, Subtype 5) — close the session
+**Verify:** `payload.transfer_active` (0x062D) = 0 within 15 s
+**Note:** Closing a FULLY-dumped session deletes the product on board and
+returns its storage; a partial session leaves it for the next pass.
+**TC:** `TTC_SET_DATA_RATE(rate=0)` (Service 8, Subtype 1, func_id 65) — back to LOW
+**TC:** `TTC_SET_DOWNLINK_MODE(on=0)` (Service 8, Subtype 1, func_id 79) — release the gate
+**Verify:** `ttc.tm_data_rate` (0x0506) = 16000 bps and `ttc.downlink_mode` (0x053C) = 0
+**Action:** CRC-32 the reassembled product on the ground against the TM(13,2)
+value; payload team assesses geometry, band presence, dead pixels, content.
+**GO/NO-GO:** Product downlinked over S13, checksum OK, HIGH released
 
 ### Step 9 — First Light Assessment
 **Action:** Payload team performs preliminary assessment of the preview image:
@@ -92,14 +123,17 @@ bitmask reads 0 (mode 5 is otherwise refused with TM(1,8))
 - No systematic image artifacts (striping, banding, saturation)
 - FPA dark current consistent with the -15C operating setpoint
 - Image not blank or fully saturated
+**TC:** `AOCS_SET_MODE(mode=4)` (Service 8, Subtype 1, func_id 0) — release FINE_POINT, back to commanded NOMINAL
+**TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — AOCS state readback
+**Verify:** `aocs.mode` (0x020F) = 4 within 30s
 **TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 27) — final payload state check
 **Verify:** `payload.mode` (0x0600) = 1 (STANDBY) within 10s
-**Verify:** `payload.fpa_temp` (0x0601) in range [-32C, -28C] (cooler maintained) within 10s
+**Verify:** `payload.fpa_temp` (0x0601) in range [-16.5C, -14.5C] (cooler maintained) within 10s
 **Action:** Record First Light timestamp, image metadata, and preliminary quality assessment. Distribute First Light Report.
 **GO/NO-GO:** First Light milestone achieved — imaging chain functional
 
 ## Off-Nominal Handling
-- If FINE_POINT not achieved before target overpass: Capture image in NOMINAL (mode 3) with degraded pointing. Image quality will be reduced but first light objective still met. Note pointing accuracy in report.
+- If FINE_POINT not achieved before target overpass: the capture gate REQUIRES FINE_POINT with total error < 0.05 deg — it will refuse in NOMINAL. Re-run the fine-ready check, fix the named mask bit, and take the next overpass.
 - If payload does not transition to IMAGING (mode 2): Retry once. If persistent, check `GET_PARAM(param_id=0x0603)` self-test and `GET_PARAM(param_id=0x0601)` FPA temperature. Payload may refuse IMAGING if FPA not at setpoint. Return to STANDBY and troubleshoot.
 - If `payload.last_scene_id` does not advance: check the capture gates — `payload.mode` (0x0600) = 2, `payload.fpa_ready` (0x0610) = 1, `aocs.mode` (0x020F) = 5 FINE_POINT with total error (0x02AA) < 0.05 deg. A refused capture returns TM(1,8) naming the failed gate. If detector integration failed, retry capture. If persistent, check FPA electronics via `HK_REQUEST(sid=5)`. Power cycle payload if needed.
 - If image file size = 0 or very small (< 1 MB): Data write failure. Check mass memory interface. Retry capture. If storage full, delete test data and retry.
@@ -108,10 +142,17 @@ bitmask reads 0 (mode 5 is otherwise refused with TM(1,8))
 
 ## Post-Conditions
 - [ ] First image captured and stored on mass memory
-- [ ] Preview image downlinked and assessed
+- [ ] Product downlinked over S13 with CRC-32 verified
 - [ ] Scene geometry, spectral content, and image quality preliminary PASS
 - [ ] Payload returned to STANDBY (cooler still running)
 - [ ] Image metadata and quality metrics recorded
 - [ ] First Light Report distributed to mission team
-- [ ] Full image downlink scheduled for next data dump pass
-- [ ] GO decision for COM-011 (Payload Radiometric Calibration)
+
+## Exit state
+- Payload STANDBY, cooler running, `payload.transfer_active` (0x062D) = 0
+- AOCS returned to commanded NOMINAL (mode 4) after the imaging window
+- Downlink back at LOW, DOWNLINK mode released — the HIGH gate is never left
+  open at card exit
+- First-light product dumped (deleted on board if the session completed)
+
+**NEXT:** COM-011 (Payload Radiometric Calibration)

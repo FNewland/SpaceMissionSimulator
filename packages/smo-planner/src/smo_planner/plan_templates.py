@@ -141,6 +141,24 @@ def validate_templates(
 def _upcoming_passes(contacts: list[dict], now: datetime,
                      station: str | None,
                      min_max_elevation_deg: float = 0.0) -> list[dict]:
+    """Downlink OPPORTUNITIES, in time order, from now on.
+
+    Not the same thing as "contact windows". EOSAT-1 sees five stations and
+    gets ~52 windows a day, and consecutive windows routinely overlap in time —
+    the spacecraft is above the horizon at Svalbard and Troll at the same
+    instant. The spacecraft has **one** transmit chain, so two temporally
+    overlapping windows are ONE opportunity, and the planner must pick the
+    better of them.
+
+    Treating them as two separate passes is what made ``downlink_catchup``
+    (repeat 8, ``repeat_pass_stride: 1``) book two 330 s dumps on the same few
+    minutes of clock and then report them as overlapping: the template asked
+    for "the next eight passes" and got the next eight *windows*, several of
+    which were the same pass seen from two dishes.
+
+    Overlapping windows are collapsed keeping the one with the highest max
+    elevation — the best link, and the one most likely to hold the HIGH tier.
+    """
     out = []
     for c in contacts or []:
         los = _parse_iso(c.get("los", ""))
@@ -152,8 +170,28 @@ def _upcoming_passes(contacts: list[dict], now: datetime,
                 c.get("max_elevation_deg", 0.0) or 0.0) < min_max_elevation_deg:
             continue
         out.append(c)
-    out.sort(key=lambda c: c.get("aos", ""))
-    return out
+    # Chronological, not lexical: window times may be spelled "Z", "+00:00" or
+    # with a non-UTC offset, and those do not sort against each other as
+    # strings (utils.iso_sort_key).
+    out.sort(key=lambda c: _iso_key(c.get("aos")))
+
+    collapsed: list[dict] = []
+    for c in out:
+        aos = _parse_iso(c.get("aos", ""))
+        los = _parse_iso(c.get("los", ""))
+        if aos is None or los is None:
+            continue
+        if collapsed:
+            prev = collapsed[-1]
+            prev_los = _parse_iso(prev.get("los", ""))
+            if prev_los is not None and aos < prev_los:
+                # Same physical opportunity seen from a second station.
+                prev_el = float(prev.get("max_elevation_deg", 0.0) or 0.0)
+                if float(c.get("max_elevation_deg", 0.0) or 0.0) > prev_el:
+                    collapsed[-1] = c
+                continue
+        collapsed.append(c)
+    return collapsed
 
 
 def _pass_time(contact: dict, at: str) -> datetime | None:
@@ -178,24 +216,84 @@ def _next_daylight(ground_track: list[dict], after: datetime) -> datetime | None
     return None
 
 
+def _clashes(a: dict, b: dict) -> bool:
+    """True if two resolved specs cannot both run as placed.
+
+    Same rule the scheduler validates with: the intervals must overlap, AND the
+    pair must either be declared mutually exclusive in activity_types.yaml
+    (``conflicts_with``) or want the same subsystem (``requires_subsystems``).
+    An activity whose type is not in the catalogue declares no resources and is
+    treated as competing with everything, so an unknown type never hides a
+    clash.
+    """
+    if not (a["start"] < b["end"] and a["end"] > b["start"]):
+        return False
+    if b["name"] in a["conflicts_with"] or a["name"] in b["conflicts_with"]:
+        return True
+    if not a["resources"] or not b["resources"]:
+        return True
+    return bool(a["resources"] & b["resources"])
+
+
 def instantiate_template(
     template: PlanTemplateConfig,
     now: datetime,
     contacts: list[dict] | None = None,
     ground_track: list[dict] | None = None,
+    activity_types: list[dict] | dict[str, dict] | None = None,
 ) -> tuple[list[dict], list[str]]:
     """Resolve a template into concrete activity specs at *now*.
 
     Returns ``(specs, warnings)`` where each spec is
     ``{"name": <activity type>, "start_time": iso, "extras": {...}}`` ready for
     ``ActivityScheduler.add_activity(name, start_time, **extras)``.
+
+    Resolution is **two-phase** when *activity_types* (the activity_types.yaml
+    catalogue) is supplied, because the anchors are not equally free:
+
+    * ``pass_relative`` is PINNED — the activity has to happen while the
+      spacecraft is over a dish, and there is nowhere else to put it.
+    * ``absolute`` / ``offset_from_now`` / ``daylight_relative`` are FLEXIBLE —
+      "20 minutes from now, in sunlight" describes a class of instants, not
+      one instant.
+
+    Resolving them in one undifferentiated pass is what put a daylight
+    ``imaging_pass`` on top of a booked ``data_dump`` (a declared mutual
+    exclusion: the HIGH tier needs DOWNLINK mode, imaging needs FINE_POINT)
+    roughly a third of the time, depending on where the template happened to be
+    loaded in the orbit. The pinned activities are now placed first and the
+    flexible ones slip forward to the first instant that still satisfies their
+    own anchor — the next sunlit sample for a daylight anchor — with a warning
+    naming what they moved for. Without *activity_types* the behaviour is the
+    old single-phase one, so existing callers are unaffected.
     """
     specs: list[dict] = []
     warnings: list[str] = []
     contacts = contacts or []
     ground_track = ground_track or []
 
-    for entry in template.activities:
+    if isinstance(activity_types, list):
+        catalogue = {a["name"]: a for a in activity_types if a.get("name")}
+    else:
+        catalogue = dict(activity_types or {})
+
+    # Pinned entries first, then flexible ones, so the flexible ones can see
+    # what the pinned ones already occupy. Within each group, template order.
+    ordered = sorted(
+        enumerate(template.activities),
+        key=lambda iv: (0 if iv[1].anchor == "pass_relative" else 1, iv[0]),
+    ) if catalogue else list(enumerate(template.activities))
+    placed: list[dict] = []
+
+    for _, entry in ordered:
+        atype = catalogue.get(entry.type, {})
+        duration_s = float(
+            entry.duration_s
+            if entry.duration_s is not None
+            else atype.get("duration_s", 300))
+        resources = set(atype.get("requires_subsystems") or [])
+        conflicts_with = set(atype.get("conflicts_with") or [])
+
         for rep in range(max(1, entry.repeat)):
             start: datetime | None = None
             extras: dict[str, Any] = {}
@@ -248,6 +346,57 @@ def instantiate_template(
             if start is None:
                 warnings.append(f"{entry.type}: could not resolve a start time — skipped")
                 continue
+
+            # ── Deconfliction (flexible anchors only) ──────────────
+            if catalogue and entry.anchor != "pass_relative":
+                candidate = {
+                    "name": entry.type,
+                    "resources": resources,
+                    "conflicts_with": conflicts_with,
+                    "start": start,
+                    "end": start + timedelta(seconds=duration_s),
+                }
+                slipped_for: str | None = None
+                # Bounded: every iteration moves the candidate strictly past
+                # one blocker's end, and there are finitely many blockers.
+                for _ in range(len(placed) + 1):
+                    blocker = next(
+                        (p for p in placed if _clashes(candidate, p)), None)
+                    if blocker is None:
+                        break
+                    after = blocker["end"]
+                    if entry.anchor == "daylight_relative":
+                        # Still has to be in sunlight: take the next sunlit
+                        # sample, not merely the next free second.
+                        nxt = _next_daylight(
+                            ground_track,
+                            after - timedelta(minutes=entry.offset_min))
+                        after = (nxt + timedelta(minutes=entry.offset_min)
+                                 ) if nxt is not None else after
+                    if after <= candidate["start"]:
+                        after = blocker["end"]
+                    slipped_for = blocker["name"]
+                    candidate["start"] = after
+                    candidate["end"] = after + timedelta(seconds=duration_s)
+                else:
+                    warnings.append(
+                        f"{entry.type}: could not find a free slot near its "
+                        f"anchor — placed at {candidate['start'].isoformat()} "
+                        f"with a clash remaining")
+                if slipped_for:
+                    warnings.append(
+                        f"{entry.type}: anchored start was occupied by "
+                        f"{slipped_for} — slipped to "
+                        f"{candidate['start'].isoformat()}")
+                start = candidate["start"]
+
+            placed.append({
+                "name": entry.type,
+                "resources": resources,
+                "conflicts_with": conflicts_with,
+                "start": start,
+                "end": start + timedelta(seconds=duration_s),
+            })
 
             if entry.priority:
                 extras["priority"] = entry.priority

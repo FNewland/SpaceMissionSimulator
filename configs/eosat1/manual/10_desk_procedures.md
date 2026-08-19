@@ -323,6 +323,11 @@ procedure execution:
 
 ## GO/NO-GO Call Matrix
 
+> **Note (G7):** this table is a MIRROR of the machine-readable matrix in
+> `configs/eosat1/mcs/gonogo_matrix.yaml`, which the MCS serves at
+> `GET /api/gonogo-matrix` for the GO/NO-GO panel. Edit the YAML first,
+> then keep this table in step.
+
 | Situation | Who Calls | Who Must Respond | FD Decision |
 |-----------|-----------|------------------|-------------|
 | Load shed level increase | eps_tcs | affected desks | FD authorises each level |

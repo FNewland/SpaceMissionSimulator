@@ -25,24 +25,25 @@ events:
       onset_duration_s: 120
     note: "Mild space segment BER degradation (ionospheric interference)"
 
-  # Ground-segment failures are NOT simulator failures: the ground station RF
-  # chain lives in the RF simulator (packages/smo-rfsim, configs/eosat1/rfsim.yaml)
-  # and is injected from the Radio UI / rfsim API. The scenario engine has no
-  # `ground_failure` backend, so these events previously loaded and then did
-  # nothing at all (defect #52). They are now cue messages for the instructor.
+  # Ground-segment RF impairments. These were "INSTRUCTOR CUE" messages
+  # asking the instructor to inject them by hand from the Radio UI, because
+  # the simulator had no ground-segment failures. ttc_basic implements them
+  # now, in real dB, so the scenario produces the degradation itself.
   - time_offset_s: 180
-    action: message
+    action: inject
     params:
-      text: >-
-        INSTRUCTOR CUE: inject ground failure lna_degradation magnitude 0.5 from
-        the Radio UI (rfsim) — ground LNA pre-amp failing, 3 dB noise increase.
+      subsystem: ttc
+      failure: gs_lna_degradation
+      db: 3.0
+    note: "Ground LNA pre-amp failing — 3 dB noise-figure increase"
 
   - time_offset_s: 360
-    action: message
+    action: inject
     params:
-      text: >-
-        INSTRUCTOR CUE: inject ground failure antenna_mispoint magnitude 0.3 from
-        the Radio UI (rfsim) — antenna servo drift, 3 dB pointing loss.
+      subsystem: ttc
+      failure: gs_antenna_mispoint
+      db: 3.0
+    note: "Antenna servo drift — 3 dB pointing loss"
 
 expected_responses:
   - { category: detect, description: "Detect Eb/N0 dropping and BER rising on Radio display" }

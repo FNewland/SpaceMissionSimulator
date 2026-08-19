@@ -98,7 +98,11 @@ class TestUIUsesServerTime:
         ("drawGroundTrack", "const nowMs = simNow();"),
         ("drawTimeline", "const now = simNow();"),
         ("updateContactsTable", "const now = simNow();"),
-        ("openModal", "const now = simNowDate();"),
+        # openModal prefills the "Start Time (UTC)" field. What this pins is
+        # that the instant comes from the PLANNER's clock; the value is now
+        # formatted straight to UTC digits rather than being shifted by the
+        # browser's offset first, so there is no `const now` to match.
+        ("openModal", "simNowDate()"),
     ])
     def test_time_consuming_paths_use_sim_time(self, script, fn, marker):
         start = script.index("function " + fn)

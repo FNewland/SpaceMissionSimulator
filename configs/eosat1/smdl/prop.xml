@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="Prop" Creator="EOSAT-1 SMDL Generator" Version="1.0+2fdbeaed7708">
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="Prop" Creator="EOSAT-1 SMDL Generator" Version="1.0+f46653e0637e">
   <Description>SMP2 model catalogue for Prop subsystem</Description>
   <Type Name="UInt8" Uuid="9e3bbe90-63c9-5852-942f-84b545bd4020" xsi:type="Integer" Size="1" Signed="false"/>
   <Type Name="UInt16" Uuid="677c92a2-eb5f-5fd2-af71-c878b557eae5" xsi:type="Integer" Size="2" Signed="false"/>

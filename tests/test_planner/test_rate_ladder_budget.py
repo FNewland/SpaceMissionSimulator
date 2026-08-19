@@ -98,9 +98,21 @@ class TestPerActivityRateSplit:
         low_only = b["routine_rate_bps"] * eff * usable_s / (8 * 1024 * 1024)
         high_only = b["dump_rate_bps"] * eff * usable_s / (8 * 1024 * 1024)
         assert low_only < pass1["capacity_mb"] < high_only
+        # The mean is the integral of the piecewise rate over the USABLE
+        # window, not the whole-window blend. Ground setup/teardown is spent at
+        # the two ends of the pass, i.e. on its lowest-elevation (routine-rate)
+        # seconds, so trimming it raises the mean rather than leaving it
+        # unchanged. Pinning `high_fraction * HIGH + (1 - high_fraction) * LOW`
+        # here was pinning the smeared model that under-credited every dump.
+        high_s = pass1["high_seconds"]
+        low_s = usable_s - high_s
+        assert 0.0 < high_s < usable_s
         assert pass1["mean_rate_bps"] == pytest.approx(
-            pass1["high_fraction"] * b["dump_rate_bps"]
-            + (1 - pass1["high_fraction"]) * b["routine_rate_bps"], abs=200.0)
+            (high_s * b["dump_rate_bps"] + low_s * b["routine_rate_bps"])
+            / usable_s, abs=200.0)
+        assert pass1["capacity_mb"] == pytest.approx(
+            (high_s * b["dump_rate_bps"] + low_s * b["routine_rate_bps"])
+            * eff / (8 * 1024 * 1024), abs=0.05)
 
     def test_data_dump_reaches_high_and_the_checker_agrees(self):
         checker = DataVolumeConstraintChecker.from_params(
@@ -151,17 +163,45 @@ class TestPerActivityRateSplit:
         # channel — the price of an operator being able to see WHICH clock
         # reference the OBC is on and how stale the sync is, without which
         # NOM-008 is guesswork. 0.5 % of the HK stream.
-        assert hk_bps == pytest.approx(1629.0, abs=2.0)
+        # 2026-08d: the gyro-calibration telemetry landed too --- 0x02D1
+        # gyro_units_mask (u8) and 0x02D2 gyro_bias_resid (f32) on AOCS SID 2
+        # (4 s), and the seven gyro_cal_* parameters on determination SID 7.
+        # +7 bps. Both additions exist so a stale clock and an uncalibrated
+        # gyro are VISIBLE rather than inferred.
+        # 2026-08e (design_2026-08 disposition M5-M7): the four FDIR summary
+        # parameters 0x0700-0x0703 (fdir.level + three alarm counters, u8
+        # each) joined platform HK SID 4 (8 s) so the console's spacecraft
+        # mode / FDIR story is TM-derived instead of read from the
+        # simulator's state endpoint — the only honest option in real mode.
+        # 4 bytes every 8 s = +4.6 bps of channel; still ~10 % of the LOW
+        # rung and the rate-ladder argument this test exists for is unchanged.
+        # 2026-08-19 (LEOP field findings): magnetometer TM (0x020B-0D, 0x0277,
+        # 0x025C -> SID 2) landed so B-dot activity is finally checkable
+        # against a visible field, and GPS PVT gained its own SID 12 GPS_NAV
+        # (8 s) so orbit determination has real position/velocity to read.
+        # +55 bps total. SID 12 is NOT default-enabled, so the ROUTINE channel
+        # a spacecraft actually flies is lower than this all-SIDs figure --
+        # this test deliberately prices the everything-enabled worst case.
+        assert hk_bps == pytest.approx(1696.0, abs=2.0)
         contacts = _contacts([("Svalbard", 20 + 45 * i, 445, 25.0)
                               for i in range(24)])
         b = BudgetTracker.from_config(CONFIG_DIR, contacts=contacts
                                       ).compute_data_budget()
-        # 16.1 -> 16.7 MB/day for the same reason as the +54 bps above.
-        assert b["hk_stream_mb_per_day"] == pytest.approx(16.7, abs=0.3)
+        # 16.7 -> 17.5 MB/day with the mag TM + SID 12 GPS_NAV additions
+        # (see the bps note above; same everything-enabled worst case).
+        assert b["hk_stream_mb_per_day"] == pytest.approx(17.5, abs=0.3)
         frac = b["hk_contact_fraction_percent"]
         assert frac["LOW"] == pytest.approx(8 * frac["HIGH"], rel=0.02)
         assert frac["LOW"] > 8 * frac["HIGH"] / 1.01     # LOW is the expensive one
-        assert 20.0 < frac["LOW"] < 60.0
+        # Envelope raised 60 -> 62 with the 2026-08e FDIR-summary addition
+        # (+4.6 bps pushed LOW's HK contact fraction from ~59.9 % to
+        # ~60.1 %). The pedagogical point is INTACT — indeed sharper: at the
+        # LOW rung, routine housekeeping now eats ~3/5 of the day's contact
+        # seconds, which is exactly why 16 kbps is the operational floor.
+        # Band widened 62 -> 65 with the 2026-08-19 HK additions (mag TM +
+        # SID 12 GPS_NAV, everything-enabled worst case; see the bps note
+        # above). The argument stands: HK dominates LOW, is negligible at HIGH.
+        assert 20.0 < frac["LOW"] < 65.0
         assert frac["HIGH"] < 10.0
 
 

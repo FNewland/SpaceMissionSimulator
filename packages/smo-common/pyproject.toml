@@ -22,3 +22,10 @@ reports = ["matplotlib>=3.7"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/smo_common"]
+# The shared modern-UI design system (smo_common/ui/*.css|js|svg) is
+# PACKAGE DATA, not code: every server mounts it at /static/shared/ via
+# Path(smo_common.__file__).parent / "ui". Hatchling ships the entire
+# package directory (not just .py files) by default; `artifacts` pins the
+# UI files explicitly so a future ignore/exclude rule can never silently
+# drop them from the wheel and break a split deployment.
+artifacts = ["src/smo_common/ui/*"]

@@ -139,6 +139,7 @@ s19_rules:
       kind: param          # S12 monitor on 0x0503 TTC link margin
       id: 0x0503   # was: TTC link_margin critical (from S12)
     action_func_id: 68   # S8 func 68: TTC set_tx_power (increase). NOTE: func 55 is OBDH obc_boot_app, NOT set-TX — mapping 55 here auto-booted the OBC out of bootloader at startup (bug 3 root cause).
+    action_data: [2]     # level 2 = HIGH (5 W). Without the byte the handler refused the action every firing ("needs a 1-byte level") and the autonomous boost never ran.
     description: "TTC Link Margin Critical -> Increase TX Power"
     enabled: true
 
@@ -157,6 +158,7 @@ s19_rules:
       kind: param          # S12 monitor on 0x050C TTC bit error rate
       id: 0x050C   # was: TTC bit error rate high (from S12)
     action_func_id: 68   # S8 func 68: TTC set_tx_power (increase). NOTE: func 55 is OBDH obc_boot_app, NOT set-TX — mapping 55 here auto-booted the OBC out of bootloader at startup (bug 3 root cause).
+    action_data: [2]     # level 2 = HIGH (5 W); same missing-argument refusal as ea 4001.
     description: "TTC High BER -> Increase TX Power"
     enabled: true
 

@@ -56,6 +56,10 @@ INTENTIONALLY_API_ONLY: dict[str, str] = {
     "simulator /api/scenario/debrief":
         "scenario debrief export consumed by the instructor's own tooling "
         "and by the acceptance suite, not by a page in this repo",
+    "mcs /api/annotations":
+        "RETIRED teaching layer (owner ruling 2026-08-19): always serves {} "
+        "and no page references it any more; the route is kept only for "
+        "URL stability (additive-only API rule / route snapshot)",
     # The four /api/archive/* endpoints and the /api/displays/* set were
     # allowlisted here as "implemented, no UI yet". Phase G lane 1 built the
     # TRENDS tab (WP-4) and surfaced system-overview / contact-schedule /

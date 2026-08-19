@@ -85,6 +85,14 @@ sections:
       source: [s1_verification],
       show: [utc, seq, apid, accept, execute, error_code, error_text, reason],
       flag_rule: "outcome in [REJECTED, FAILED, NO_VERIFICATION]" }
+  # G8: the decision record — TC sends + S1 verdicts, alarm acks, GO/NO-GO
+  # polls, marks and free-text notes from the MCS console-log store.
+  # Renders an explicit "store unreachable" notice when the MCS is down.
+  - { type: console_log, id: console_log, title: "Console log" }
+  # G14: plan-vs-achieved RF line items from the rfsim pass-rollup store
+  # (predicted AOS vs achieved lock, mean Eb/N0, FER, data volume).
+  - { type: pass_rollup, id: rf_rollup,
+      title: "RF pass rollup — plan vs achieved" }
   - { type: events, id: events, title: "Events", severity_min: 2,
       include_synthetic_s12: true, resolve_names: event_catalog,
       group_by: severity,

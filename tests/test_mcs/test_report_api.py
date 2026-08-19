@@ -160,3 +160,52 @@ async def test_reports_page_served(report_env):
         body = await r.text()
         assert "DELAYED-TM REPORTS" in body
         assert "Generate report" in body
+
+
+# ── "matplotlib IS installed" — make the mismatch visible from the MCS ────
+
+async def test_report_listing_names_the_interpreter_it_runs_under(report_env):
+    """An operator who has installed matplotlib needs to see WHICH python
+    this server is, without reading a server log."""
+    app, _ = report_env
+    async with TestClient(TestServer(app)) as client:
+        r = await client.get("/api/reports")
+        d = await r.json()
+    p = d["plotting"]
+    assert p["executable"] == sys.executable
+    assert p["environment"]
+    assert "-m pip install" in p["install_command"]
+    assert sys.executable in p["install_command"]
+    if p["available"]:
+        assert p["backend"].lower() == "agg"   # never an interactive backend
+        assert p["state"] == "ok"
+    else:
+        assert p["error"]
+
+
+async def test_reports_page_renders_the_plotting_status(report_env):
+    app, _ = report_env
+    async with TestClient(TestServer(app)) as client:
+        body = await (await client.get("/reports")).text()
+    assert 'id="plotting"' in body
+    assert "renderPlotting" in body
+    assert "install_command" in body
+
+
+def test_mounting_the_report_api_logs_the_extra_status_once(tmp_path, caplog):
+    """Startup check: say at boot whether this process can draw a plot,
+    rather than only failing when a report is finally generated."""
+    import logging
+
+    from smo_common.reporting import plotting as _plotting
+
+    _plotting._cached = None
+    app = web.Application()
+    with caplog.at_level(logging.INFO,
+                         logger="smo_common.reporting.api"):
+        register_report_routes(app, lambda: tmp_path, CONFIG_DIR,
+                               reports_dir=tmp_path / "reports", owner="MCS")
+    text = "\n".join(rec.getMessage() for rec in caplog.records)
+    assert "MCS" in text
+    assert "plotting" in text.lower()
+    assert sys.executable in text

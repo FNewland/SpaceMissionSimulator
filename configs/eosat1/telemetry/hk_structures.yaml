@@ -67,6 +67,12 @@ structures:
       # reported "generation drops off way too fast" symptom. It stays in
       # SID 8 as well; duplication across structures is normal and costs a byte.
       - { param_id: 0x0144, pack_format: B, scale: 1 }     # wing_status
+      # 2026-08c item 3: the ninth power line (propulsion). The 0x0110/0x0118
+      # blocks were sized for 8 lines; prop's ids are explicit (0x014A/0x014B)
+      # and were on_demand-only, so the console's PL8 PROP row read "—"
+      # forever. 3 bytes at 1 Hz = 24 bps of the 16 kbps LOW tier.
+      - { param_id: 0x014A, pack_format: B, scale: 1 }     # pl_prop status
+      - { param_id: 0x014B, pack_format: H, scale: 1000 }  # line_current_8 (A)
 
   # Phase B (brief 01 WP-11): EPS power-management SID — wing/SADA status,
   # per-wing currents, total load current, eclipse flag, power margin and the
@@ -194,6 +200,21 @@ structures:
       - { param_id: 0x0294, pack_format: B, scale: 1 }   # gyro_units_on
       - { param_id: 0x0295, pack_format: B, scale: 1 }   # gyro_saturated
       - { param_id: 0x0296, pack_format: H, scale: 100000 }  # gyro_bias_injected
+      # WHICH unit is off, not just how many — the count cannot tell "the X
+      # channel is down" from "the Z channel is down", and those have very
+      # different consequences for a nadir-pointing spacecraft.
+      - { param_id: 0x02D1, pack_format: B, scale: 1 }   # gyro_units_mask
+      # Bias still present at the gyro output AFTER on-board compensation: the
+      # scalar an operator trends to confirm a calibration actually took.
+      - { param_id: 0x02D2, pack_format: H, scale: 100000 }  # gyro_bias_resid
+      # 2026-08c item 1: MEASURED body-frame magnetic field. The B-dot law is
+      # magnetometer-driven, but the measured B was on_demand-only, so MTQ
+      # behaviour could not be checked from the console. int32 nT covers the
+      # full LEO field (±60 000 nT) with margin; validity is 0x025C above.
+      # 12 bytes at 4 s = 24 bps.
+      - { param_id: 0x020B, pack_format: i, scale: 1 }   # mag_x (nT, measured)
+      - { param_id: 0x020C, pack_format: i, scale: 1 }   # mag_y
+      - { param_id: 0x020D, pack_format: i, scale: 1 }   # mag_z
 
   - sid: 3
     name: TCS
@@ -263,6 +284,20 @@ structures:
       - { param_id: 0x0A12, pack_format: H, scale: 1 }   # obc_time_fine (1/65536 s)
       - { param_id: 0x0A13, pack_format: B, scale: 1 }   # time_ref
       - { param_id: 0x0A14, pack_format: I, scale: 1 }   # time_since_sync_s
+      # FDIR summary (design_2026-08 disposition M5-M7): the modern console
+      # derives its spacecraft-mode / FDIR story from TELEMETRY instead of
+      # the simulator's state endpoint, so these four (written every tick by
+      # the engine's FDIR telemetry pass, previously on-demand only) now
+      # ride routine platform HK. 4 bytes every 8 s = +4.6 bps of channel
+      # after RS/framing expansion — the price of an honest TM-derived FDIR
+      # story that also works in real mode. SID 4 chosen because it is the
+      # platform SID that already carries the other spacecraft-level state
+      # (phase 0x0129, clock trio) at the right 8 s cadence; SID 1/2
+      # (1-4 s) would multiply the cost for no operational gain.
+      - { param_id: 0x0700, pack_format: B, scale: 1 }   # fdir.level (0-3)
+      - { param_id: 0x0701, pack_format: B, scale: 1 }   # fdir.active_alarms
+      - { param_id: 0x0702, pack_format: B, scale: 1 }   # fdir.critical_alarms
+      - { param_id: 0x0703, pack_format: B, scale: 1 }   # fdir.high_alarms
 
   - sid: 5
     name: Payload
@@ -409,6 +444,18 @@ structures:
       - { param_id: 0x02C6, pack_format: B, scale: 1 }      # fidelity mode
       - { param_id: 0x02C7, pack_format: I, scale: 10 }     # geoloc err m
       - { param_id: 0x02C8, pack_format: H, scale: 10 }     # aocs power W
+      # Gyro bias calibration (S8.1 func 13). It belongs on the determination
+      # SID: it is an ESTIMATOR activity, it runs for minutes, and an operator
+      # watching a calibration needs progress at the 4 s cadence of this SID
+      # rather than the 8 s of SID 2.
+      - { param_id: 0x02C9, pack_format: B, scale: 1 }      # cal state
+      - { param_id: 0x02CA, pack_format: B, scale: 1 }      # cal progress %
+      - { param_id: 0x02CB, pack_format: h, scale: 100000 } # cal bias x deg/s
+      - { param_id: 0x02CC, pack_format: h, scale: 100000 } # cal bias y
+      - { param_id: 0x02CD, pack_format: h, scale: 100000 } # cal bias z
+      - { param_id: 0x02CE, pack_format: H, scale: 100000 } # applied comp mag
+      - { param_id: 0x02CF, pack_format: B, scale: 1 }      # cal result
+      - { param_id: 0x02D0, pack_format: H, scale: 1 }      # cal reject code
 
   # SID 9 — Propulsion (Phase D). NOTE: brief 03 planned "SID 7", but Phase C
   # took SID 7 for AOCS determination; SID 9 is the next free structure.
@@ -492,3 +539,28 @@ structures:
       - { param_id: 0x0311, pack_format: B, scale: 1 }      # sw_image
       - { param_id: 0x030C, pack_format: B, scale: 1 }      # active_obc
       - { param_id: 0x0516, pack_format: B, scale: 1 }      # ttc.pa_on
+
+  # SID 12 — GPS navigation (2026-08c item 2). The receiver reported only
+  # fix/PDOP/sat-count; the PVT solution the orbit-determination procedures
+  # (LEOP-003) rely on was never downlinked. All values are MEASURED
+  # (receiver noise scaled by PDOP), gated on gps_fix: position zeroed below
+  # fix 2, velocity zeroed below fix 3 — honest-invalid, never truth.
+  # Disabled at power-up like every subsystem SID (simulation.yaml
+  # default_enabled_sids [1, 11]); enable with TC(3,5) HK_ENABLE sid=12
+  # during GPS commissioning. ~35 bytes at 8 s ≈ 35 bps.
+  - sid: 12
+    name: GPS_NAV
+    interval_s: 8.0
+    parameters:
+      - { param_id: 0x0274, pack_format: B, scale: 1 }      # gps_fix
+      - { param_id: 0x0276, pack_format: B, scale: 1 }      # num_sats
+      - { param_id: 0x0275, pack_format: H, scale: 100 }    # pdop
+      - { param_id: 0x0210, pack_format: i, scale: 10000 }  # lat (1e-4 deg)
+      - { param_id: 0x0211, pack_format: i, scale: 10000 }  # lon (1e-4 deg)
+      - { param_id: 0x0212, pack_format: I, scale: 1000 }   # alt (km, mm res)
+      - { param_id: 0x0231, pack_format: i, scale: 1 }      # ECEF X (m)
+      - { param_id: 0x0232, pack_format: i, scale: 1 }      # ECEF Y (m)
+      - { param_id: 0x0233, pack_format: i, scale: 1 }      # ECEF Z (m)
+      - { param_id: 0x0234, pack_format: i, scale: 1000 }   # vel X (mm/s)
+      - { param_id: 0x0235, pack_format: i, scale: 1000 }   # vel Y (mm/s)
+      - { param_id: 0x0236, pack_format: i, scale: 1000 }   # vel Z (mm/s)

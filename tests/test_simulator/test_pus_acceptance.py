@@ -35,7 +35,13 @@ VALID_SUBTYPES = {
     8: {1},
     9: {1, 2},
     11: {4, 7, 9, 11, 13, 17},
-    12: {1, 2, 6, 7},
+    # 3/4 (per-definition enable/disable) and 12 (report definitions) are
+    # implemented by ServiceDispatcher._handle_s12 and catalogued as
+    # MON_ENABLE_DEF / MON_DISABLE_DEF / MON_REPORT_DEFS. They used to be
+    # missing from the acceptance whitelist, so TC(12,12) — the one the MCS
+    # "Refresh from Spacecraft" button sends — came back "S12.12 is not an
+    # implemented subtype".
+    12: {1, 2, 3, 4, 6, 7, 12},
     15: {1, 2, 9, 11, 13},
     17: {1},
     19: {1, 2, 4, 5, 8},
@@ -225,7 +231,9 @@ class TestInvalidServiceRejected:
 
     # NOTE: service 18 (OBCP) was moved out of this list when on-board
     # scripting was implemented (defect #48) — it is now a known service.
-    @pytest.mark.parametrize("service", [0, 4, 7, 10, 13, 14, 16, 99, 255])
+    # 13 removed 2026-08c item 9: S13 large-data transfer is a real,
+    # implemented service (13,1/3/5/9) and must pass acceptance.
+    @pytest.mark.parametrize("service", [0, 4, 7, 10, 14, 16, 99, 255])
     def test_invalid_service_rejected(self, service):
         """Services outside the known set should be rejected."""
         engine = _make_engine()
@@ -247,7 +255,10 @@ class TestInvalidSubtypeRejected:
         (6, 1),
         (9, 99),
         (11, 1),
-        (12, 3),
+        # (12, 3) used to be here: MON_ENABLE_DEF is implemented and
+        # catalogued, so refusing it was the defect, not the contract. 12.5 is
+        # genuinely unimplemented.
+        (12, 5),
         (15, 3),
         (17, 2),
         (19, 3),

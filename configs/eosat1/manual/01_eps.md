@@ -180,6 +180,16 @@ first: `payload` → `fpa_cooler` → `ttc_tx` → `aocs_wheels` → `prop`. Pro
 deliberately LAST — losing the line mid-burn triggers the on-board burn abort (reason 4).
 `eps.load_shed_stage` (0x0134) reports how far down the list the EPS has gone.
 
+Shedding can also be COMMANDED with `EPS_EMERGENCY_LOAD_SHED` (S8 func 25,
+stage 0-3): stage N immediately sheds the first N lines of the order (stage 1
+= payload, 2 = + FPA cooler, 3 = + TTC TX — stage 3 silences your own
+downlink, deliberately). 2026-08c item 8 semantics: shedding is **monotonic**
+— a shed command only ever turns lines OFF (it used to re-energise every line
+beyond the commanded stage), stage 0 clears the commanded latch without
+re-powering anything, and restoration is the operator's job line by line
+(`EPS_POWER_ON`). The commanded stage is latched into 0x0134 and events
+`LOAD_SHED_STAGE_1..3` (0x0106-0x0108) fire once per stage crossed.
+
 #### Cold-Redundant PDM Path
 
 A redundant PDM path (PDM-B) provides an alternate power distribution path. PDM-B is

@@ -136,8 +136,20 @@ def _tc_references(path: Path) -> list[dict]:
     return refs
 
 
+#: S8.1 functions that legitimately drive NO subsystem model, because what
+#: they command is engine-level state rather than a piece of equipment. The
+#: "did a subsystem model get called" probe below cannot see those, so each
+#: one needs a reason here.
+ENGINE_LEVEL_FUNCS: dict[int, str] = {
+    120: "SYS_SET_MISSION_PHASE — the mission phase is engine state "
+         "(Engine.apply_phase_change); no subsystem model owns it",
+}
+
+
 def _routed_subsystems(func_id: int) -> set[str]:
     """Which subsystem handlers S8.1 func_id actually drives."""
+    if func_id in ENGINE_LEVEL_FUNCS:
+        return {"<engine>"}
     engine = MagicMock()
     engine.params = {}
     engine.tm_builder = MagicMock()

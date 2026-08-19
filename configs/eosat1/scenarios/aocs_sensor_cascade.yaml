@@ -38,7 +38,7 @@ events:
     action: inject
     params:
       subsystem: aocs
-      failure: mag_a_fail
+      failure: mag_failure
       magnitude: 1.0
       onset: step
   # The instructor book advertises this scenario as including "IMU drifts", but
@@ -57,7 +57,7 @@ events:
 expected_responses:
   - { category: detect, description: "Detect ST1 failure (status=4) and verify ST2 acquisition" }
   - { category: detect, description: "Detect CSS +X head failure from per-head illumination telemetry" }
-  - { category: detect, description: "Detect MAG-A failure from magnetometer readings going invalid" }
+  - { category: detect, description: "Detect magnetometer failure from readings going invalid (single-string unit — no redundant B mag to swap to)" }
   - { category: detect, description: "Detect the IMU bias from gyro_bias_x/y/z (0x0270-0x0272) diverging from the MEKF estimate, and from the rising ST innovation-rejection count (0x02C2)" }
   - { category: isolate, description: "Diagnose each failure independently and assess cumulative impact" }
   - { category: recover, description: "Switch to MAG-B, verify adequate sensor suite, or transition to safe mode" }

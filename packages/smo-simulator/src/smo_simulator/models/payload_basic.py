@@ -16,6 +16,9 @@ from typing import Any
 
 from smo_common.config.fpa_envelope import FPAEnvelope
 from smo_common.models.subsystem import SubsystemModel
+from smo_simulator.failure_spec import (
+    FailureSpec, ParamSpec, T_BOOL, enum, number,
+)
 
 # ── Wire-decode epsilon for the FPA setpoint envelope (2026-08b) ──
 # PAYLOAD_COOLER_SETPOINT (S8 func 36) carries the setpoint as unsigned
@@ -1953,6 +1956,50 @@ class PayloadBasicModel(SubsystemModel):
             }
 
         return {"success": False, "message": f"Unknown: {command}"}
+
+    # ─── Failure injection ───────────────────────────────────────────
+    # Declarative parameter specs — single source for the instructor form,
+    # FailureManager validation and the scenario content gate.
+    FAILURE_SPECS = {
+        "cooler_failure": FailureSpec(
+            name="cooler_failure", label="FPA cooler failure",
+            effect="The miniature Stirling-class FPA cooler stops: the focal "
+                   "plane warms off its centi-kelvin setpoint, dark current "
+                   "rises and per-band SNR collapses.",
+            magnitude=ParamSpec(name="magnitude", type=T_BOOL,
+                                label="Failed", default=True),
+        ),
+        "fpa_degraded": FailureSpec(
+            name="fpa_degraded", label="Focal plane degraded",
+            effect="Detector responsivity degraded — image quality metric and "
+                   "per-band SNR fall even at the correct FPA temperature.",
+            magnitude=ParamSpec(name="magnitude", type=T_BOOL,
+                                label="Degraded", default=True),
+        ),
+        "image_corrupt": FailureSpec(
+            name="image_corrupt", label="Corrupted image products",
+            effect="The next N captured images are marked corrupt (bad CRC on "
+                   "download), then capture returns to normal.",
+            magnitude=None,
+            params=(number("count", "Images to corrupt", unit="images", lo=1,
+                           hi=1000, default=3, integer=True),),
+        ),
+        "memory_segment_fail": FailureSpec(
+            name="memory_segment_fail", label="Payload memory segment failure",
+            effect="Fails one of the 8 payload mass-memory segments; usable "
+                   "storage shrinks by one segment.",
+            magnitude=None,
+            params=(enum("segment", "Memory segment", list(range(8)),
+                         labels=[f"Segment {i}" for i in range(8)], default=0),),
+        ),
+        "ccd_line_dropout": FailureSpec(
+            name="ccd_line_dropout", label="CCD line dropout",
+            effect="Dropped detector lines: a striped product, visible in the "
+                   "image quality metric and the downloaded thumbnail.",
+            magnitude=ParamSpec(name="magnitude", type=T_BOOL,
+                                label="Dropping lines", default=True),
+        ),
+    }
 
     def inject_failure(self, failure: str, magnitude: float = 1.0,
                        **kw) -> None:

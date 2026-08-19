@@ -2,8 +2,13 @@
 
 **Subsystem:** TT&C / OBDH / Ground Segment
 **Phase:** LEOP
-**Revision:** 2.0 — rewritten for cold-boot initial state
+**Revision:** 3.0 — 2026-08c flow redesign (entry/exit states, no operator
+pass override, time sync moved to LEOP-006, SAFE-tier naming)
 **Approved:** Flight Operations Director
+
+**Entry state:** cold boot — OBC in the bootloader, only `obc` and `ttc_rx`
+lines energised, all heaters / AOCS / payload lines OFF, clock unset (J2000),
+no contact established yet. This is the first card of LEOP.
 
 ## Purpose
 Establish first command path with EOSAT-1 following separation, exit the
@@ -18,11 +23,16 @@ application-running platform.
 ## Prerequisites
 - [ ] Launcher separation confirmed (launch provider telemetry)
 - [ ] Iqaluit ground station antenna configured for EOSAT-1 S-band receive frequency
-- [ ] Ground station demodulator configured for the **BEACON** rung of the TM rate
-      ladder — 1 000 bps, BPSK, conv(7,1/2)+RS, 1 kBd, ~3.1 kHz occupied bandwidth.
-      This is the ONLY rate the bootloader transmits (`subsystems/ttc.yaml`
-      `beacon_tier`); the demodulator must be re-configured for 16 kBd after
-      application boot (Step 5)
+- [ ] Ground station demodulator configured for the **SAFE** rung of the TM rate
+      ladder (the 1 000 bps rung, renamed from BEACON in 2026-08c — "beacon" now
+      always means the separate UHF whip transmitter) — BPSK, conv(7,1/2)+RS,
+      1 kBd, ~3.1 kHz occupied bandwidth. This is the ONLY rate the bootloader
+      transmits (`subsystems/ttc.yaml` `beacon_tier: SAFE`); the demodulator
+      must be re-configured for 16 kBd after application boot (Step 5)
+- [ ] A real ground-station pass is SCHEDULED for this card (predicted AOS/LOS
+      from the launch TLE). Pass override is an INSTRUCTOR control, not an
+      operator action — no card in this flow instructs the operator to force
+      contact
 - [ ] Predicted AOS/LOS timeline loaded into ground station schedule
 - [ ] Flight Dynamics have provided initial TLE from launch provider
 - [ ] MCS database loaded with EOSAT-1 TM/TC definitions
@@ -30,13 +40,12 @@ application-running platform.
 
 ## Procedure Steps
 
-### Step 1 — Configure Ground Station Receiver and Force Pass Override
-**Action:** Command Iqaluit ground station to point at predicted AOS azimuth/elevation. Enable auto-tracking on S-band downlink frequency. Set receiver bandwidth to wide acquisition mode (+/- 40 kHz Doppler window).
-**Action:** Set the demodulator to the BEACON tier: 1 kBd BPSK with conv(7,1/2)+RS. At 1 000 bps the beacon closes with ~56 dB of margin at 5 deg elevation even to the poorest station in the network, which is the whole point of the rung — first acquisition must not depend on a good pass.
-**Action:** In the MCS, enable **Pass Override** so the simulator treats the link as in contact regardless of orbital geometry. Cold-boot has `ttc_tx` OFF, so there is no carrier to acquire passively — the override gives the operator the assured uplink path the spacecraft autonomy is designed around.
-**Verify:** Ground station status = TRACKING_READY
-**Verify:** MCS reports `pass_override = 1` (param 0x05FF)
-**GO/NO-GO:** Ground station ready, override engaged
+### Step 1 — Configure Ground Station Receiver for the Scheduled Pass
+**Action:** Command Iqaluit ground station to point at predicted AOS azimuth/elevation for the SCHEDULED pass. Enable auto-tracking on S-band downlink frequency. Set receiver bandwidth to wide acquisition mode (+/- 40 kHz Doppler window).
+**Action:** Set the demodulator to the SAFE tier: 1 kBd BPSK with conv(7,1/2)+RS. At 1 000 bps this rung closes with ~56 dB of margin at 5 deg elevation even to the poorest station in the network, which is the whole point of the rung — first acquisition must not depend on a good pass.
+**Action:** Wait for predicted AOS. Cold-boot has `ttc_tx` OFF, so there is no carrier to acquire passively; the first uplink in Step 2 is sent blind into the scheduled window and the spacecraft's auto-TX hold-down answers it.
+**Verify:** Ground station status = TRACKING_READY at predicted AOS
+**GO/NO-GO:** Ground station ready, scheduled pass window open
 
 ### Step 2 — Send First Uplink (Connection Test)
 **TC:** `CONNECTION_TEST` (Service 17, Subtype 1)
@@ -83,17 +92,18 @@ application-running platform.
 **Verify:** S1.1 acceptance + S1.7 execution complete (NOT an S1.8) within 5s
 **Verify:** `ttc.tm_data_rate` (0x0506) = 16000 bps and `ttc.tm_tier` (0x0539) = 1 (LOW)
 **Verify:** `ttc.tm_symbol_rate` (0x053B) = 16000 Bd
-**Note:** The full order of gates on the ladder is: **beacon mode off** → LOW selectable; **antenna deployed** (func 69, LEOP-007) **+ DOWNLINK mode on** (func 79) **+ elevation ≥ 10 deg** → HIGH selectable. Each unmet gate is reported as its own S1.8 failure notice naming that gate; read the notice, not the code (they all report `0x0007`). See `docs/LINK_BUDGET_AND_RATES.md` §6.3.
+**Note:** The full order of ON-BOARD gates on the ladder is: **beacon mode off** → LOW selectable; **antenna deployed** (func 69, COM-006) **+ DOWNLINK mode on** (func 79) → HIGH selectable. There is NO on-board elevation gate (2026-08c): the 10-deg rule on HIGH is GROUND arm-through policy — the MCS warns from its own contact geometry and the planner schedules HIGH dumps above it. Each unmet on-board gate is reported as its own S1.8 failure notice naming that gate; read the notice, not the code (they all report `0x0007`). See `docs/LINK_BUDGET_AND_RATES.md` §6.3.
 **Note:** LOW carries the full periodic HK set (1 557 bps of channel after RS and TM framing) at under 10 % duty, so the spacecraft never falls behind on housekeeping at the routine rate. The HIGH tier (128 kbps) is NOT entered here — it is only used for dumps (see NOM-011).
 **GO/NO-GO:** Beacon mode cleared, downlink at LOW, ground demodulator reconfigured to 16 kBd
 
-### Step 6 — Synchronise On-Board Time
-**TC:** `SET_TIME(cuc_seconds=T_corrected)` (Service 9, Subtype 1)
-**Action:** Upload current UTC epoch as CUC seconds. Now that the application image is running, S9.1 is no longer rejected by the bootloader filter. Use ground-station-stamped uplink time and add the one-way light time correction (~2–8 ms for LEO, negligible at this stage).
-**Verify:** S1.1 acceptance and S1.7 execution complete received within 5s
-**TC:** `TIME_REPORT_REQUEST` (Service 9, Subtype 2)
-**Verify:** Time report TM received within 10s; |T_obc - T_ground| < 1.0 s
-**GO/NO-GO:** Onboard clock synchronised to UTC within 1.0 s
+### Step 6 — Note the Unset Clock (do NOT sync here)
+**Action:** Record that `obdh.time_ref` (0x0A13) reads 0 (NONE): the clock has
+never been set and every packet timestamp reads year-2000 CUC. That is correct
+behaviour, not a fault.
+**Note:** Time synchronisation is **LEOP-006's job** — both the ground path
+(S9.1 set-time) and the GPS path (S8.1 func 80) live in that one card so the
+boot-then-sync logic is written exactly once. This card sends no time command.
+**GO/NO-GO:** Clock state understood and logged
 
 ### Step 7 — Request EPS Housekeeping (Power Sanity Check)
 **TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
@@ -103,22 +113,31 @@ application-running platform.
 **GO/NO-GO:** Power state plausible for post-separation conditions
 
 ### Step 8 — Log and Report
-**Action:** Record AOS time, override-arming time, time of first accepted TC, time of application boot, time-sync residual, and all received HK values. Distribute First Acquisition Report. Confirm pass duration sufficient for LEOP-007 (sequential power-on) on this contact, or schedule the next pass.
-**GO/NO-GO:** Sufficient data collected and OBC in application image — clear to LEOP-007
+**Action:** Record AOS time, time of first accepted TC, time of application boot, and all received HK values. Distribute First Acquisition Report. Confirm pass duration sufficient for LEOP-002 (initial health check) on this contact, or schedule the next pass.
+**GO/NO-GO:** Sufficient data collected and OBC in application image — clear to LEOP-002
 
 ## Off-Nominal Handling
-- **No S1.1 returned to CONNECTION_TEST:** the platform's auto-TX hold-down only fires on accepted TCs, so if S1.1 never arrives, either the uplink is not getting through (check pass override / ground station) or the receiver is unhealthy. Retry once. If still nothing, repoint and try Troll.
+- **No S1.1 returned to CONNECTION_TEST:** the platform's auto-TX hold-down only fires on accepted TCs, so if S1.1 never arrives, either the uplink is not getting through (check the pass geometry and ground-station pointing) or the receiver is unhealthy. Retry once. If still nothing, repoint and try Troll on its next scheduled pass.
 - **`obdh.sw_image` does not transition after OBC_BOOT_APP:** the boot-app countdown is 10s. Wait 30s, then re-request HK SID 11 (which carries `obdh.sw_image`). If still 0, the application CRC is failing — escalate to OBDH engineer and consider `OBC_BOOT_INHIBIT(0)` then `OBC_REBOOT`.
 - **SID 1 not emitting after boot_app, or SIDs 3/4/6 still absent after the `HK_ENABLE`s in Step 5:** verify `obdh.sw_image` actually went to 1. If yes, remember that application boot re-applies `default_enabled_sids: [1, 11]` and disables everything else, so any SID commanded on before the boot is switched back off. Re-issue `HK_ENABLE(sid=N)` (Service 3, Subtype 5) for each missing SID after the boot.
-- **SET_TIME rejected with 0x0006:** the OBC may not have completed the boot-app transition yet (race with the 10s CRC window). Wait 5s and retry.
 - **`TTC_SET_DATA_RATE` answered with S1.8 error 0x0007 after the application booted:** beacon mode is still latched — Step 5a was skipped or its `TTC_SET_BEACON_MODE(on=0)` was not accepted. Read the S1.8 failure notice: it names the gate verbatim ("TM rate is forced to the beacon tier in beacon mode (LOW refused)"), and the same text appears as S5 event `0x030B COMMAND_REJECTED` in the event log and the FDIR journal. Re-issue Step 5a. The application boot deliberately does not clear beacon mode.
 - **Auto-TX hold-down expires before procedure complete:** any subsequent accepted TC re-arms the timer to 15 minutes, so this should not happen during a normal pass. If the operator goes 15 minutes without commanding, the link will drop — re-issue any TC to re-energise.
 
+## Exit state
+- Bidirectional S-band link established (auto-TX hold-down active; `ttc_tx`
+  will drop again if the operator goes 15 min without commanding — LEOP cards
+  that need the downlink re-establish it, they do not assume it)
+- OBC in application image (`obdh.sw_image` 0x0311 = 1); mission phase = 4
+  (LEOP, advanced automatically by the boot)
+- Beacon mode cleared (`ttc.beacon_mode` 0x0521 = 0), downlink on the LOW rung
+  (`ttc.tm_tier` 0x0539 = 1); HK SIDs 1, 3, 4, 6, 11 enabled — SIDs 2/5/7/12
+  stay disabled until the card that powers their subsystem enables them
+- Clock still UNSET (`obdh.time_ref` 0x0A13 = 0) — synced in LEOP-006
+- All heaters, AOCS, payload, cooler and prop lines still OFF; nothing beyond
+  the link and the OBC image was changed by this card
+
 ## Post-Conditions
-- [ ] Bidirectional S-band link established (auto-TX hold-down active)
-- [ ] OBC in application image (`obdh.sw_image` = 1)
-- [ ] Beacon mode cleared (`ttc.beacon_mode` = 0) and downlink on the LOW rung (`ttc.tm_tier` = 1)
-- [ ] On-board time synchronised to UTC within 1.0 s
-- [ ] EPS housekeeping confirms plausible power state
 - [ ] First Acquisition Report distributed
-- [ ] Ready to execute LEOP-007 (Sequential Power-On) on this or next pass
+- [ ] Exit state above verified
+
+**NEXT:** LEOP-002 (Initial Health Check)

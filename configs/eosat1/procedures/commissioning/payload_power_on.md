@@ -1,8 +1,14 @@
 # COM-009: Payload Power On
 **Subsystem:** Payload / EPS
 **Phase:** COMMISSIONING
-**Revision:** 1.0
+**Revision:** 2.0 --- 2026-08c: the payload EPS line is now THIS card's to
+energise --- LEOP-007 no longer touches it (owner finding: LEOP powered
+everything including the payload). Entry/exit states declared.
 **Approved:** Flight Operations Director
+
+**Entry state:** COM-008 exit state --- platform fully commissioned, OBC
+NOMINAL, AOCS commanded NOMINAL, payload line OFF (`eps.pl_payload` 0x0113 =
+0, untouched since separation), FPA-cooler line OFF, downlink LOW.
 
 ## Purpose
 Power on the multispectral imager payload for the first time in orbit. Transition
@@ -12,10 +18,8 @@ the baseline payload state required for subsequent cooler activation and imaging
 
 ## Prerequisites
 - [ ] COM-001 through COM-008 completed — platform fully commissioned
-- [ ] AOCS holding attitude: `aocs.mode` (0x020F) = 3 (COARSE_SUN) minimum,
-      preferably 4 (NOMINAL). There is no COARSE_SUN or NOMINAL mode —
-      2 is DETUMBLE (rate damping, no pointing) and 3 is COARSE_SUN. The codes
-      are in `configs/eosat1/aocs/aocs_mode_codes.yaml`.
+- [ ] AOCS holding attitude in the NOMINAL family: `aocs.mode` (0x020F) = 4
+      (or 8 in eclipse). Codes per `configs/eosat1/aocs/aocs_mode_codes.yaml`.
 - [ ] `eps.bat_soc` (0x0101) > 75% (payload power-on adds ~15W load)
 - [ ] `eps.power_gen` (0x0107) > 40W (sunlit phase, wings deployed)
 - [ ] OBC in NOMINAL mode
@@ -140,4 +144,15 @@ imagery from the store's baseline fill.
 - [ ] Data interface operational, storage available
 - [ ] Bus voltage stable under payload load
 - [ ] Payload Power-On Report distributed
-- [ ] GO decision for COM-010 (FPA Cooler Activation)
+
+## Exit state
+- Payload line ON, payload in STANDBY (`payload.mode` 0x0600 = 1), SID 5
+  enabled and emitting
+- NOTE: since Phase 4 EVERY cooler command path --- including the
+  `PAYLOAD_SET_MODE` used here (funcs 16/17/26/43 and S2 device 0x0601) ---
+  energises EPS line 4, so `eps.pl_fpa_cooler` (0x0114) may already read 1 at
+  exit. The COOLER itself is commanded (and its performance verified) in
+  COM-010; this card claims only the line side effect.
+- No AOCS, OBC, TTC or heater state touched
+
+**NEXT:** COM-010 (FPA Cooler Activation)

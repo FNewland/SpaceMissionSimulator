@@ -2,19 +2,27 @@ name: "LCL Overcurrent Trip"
 difficulty: INTERMEDIATE
 duration_s: 1800
 briefing: |
-  An overcurrent condition develops on the payload power line at T+180s,
-  causing the LCL to trip. The operator must detect the tripped line,
-  diagnose the cause, and decide whether to re-enable.
+  An overcurrent condition develops on the TT&C transmitter power line at
+  T+180s, causing the LCL to trip and the downlink to drop out mid-pass. The
+  operator must detect the tripped line, diagnose the cause, and decide
+  whether to reset the trip flag and re-enable.
 events:
+  # NOTE: this used to inject a 2.0x multiplier on line_index 3 (the payload
+  # line). `overcurrent` scales the line's ACTUAL draw, and the payload line
+  # draws 0 W unless the imager is powered — so 2 x 0 A never reached the
+  # 2.5 A payload LCL threshold and the scenario could not trip anything at
+  # any magnitude. It now targets line 2 (ttc_tx), which draws ~0.18 A while
+  # the transmitter is on, against a 1.0 A threshold: 8x takes it to ~1.45 A
+  # and the LCL trips as the briefing describes.
   - time_offset_s: 180
     action: inject
     params:
       subsystem: eps
       failure: overcurrent
-      magnitude: 2.0
+      magnitude: 8.0        # x nominal line draw
       onset: step
-      line_index: 3
+      line_index: 2         # ttc_tx — TTC transmitter (1.0 A LCL threshold)
 expected_responses:
-  - { category: detect, description: "Detect overcurrent trip flag and payload power line OFF" }
-  - { category: isolate, description: "Identify payload line as the tripped circuit" }
+  - { category: detect, description: "Detect overcurrent trip flag and TX power line OFF" }
+  - { category: isolate, description: "Identify the ttc_tx line as the tripped circuit" }
   - { category: recover, description: "Investigate cause, then reset OC flag and re-enable if safe" }

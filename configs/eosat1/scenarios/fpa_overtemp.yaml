@@ -6,13 +6,10 @@ briefing: |
   The operator must detect the rising FPA temperature and transition
   the payload to standby before data quality degrades.
 events:
-  - time_offset_s: 60
-    action: inject
-    params:
-      subsystem: eps
-      failure: solar_array_partial
-      magnitude: 0.0
-      array: A
+  # NOTE: this used to carry an `eps/solar_array_partial magnitude: 0.0`
+  # event. `magnitude` on that failure is the OUTPUT LOSS fraction, so 0.0
+  # means "wing perfectly healthy" — the event loaded, fired and changed
+  # nothing. The scenario is about the FPA cooler; the dead EPS event is gone.
   - time_offset_s: 120
     action: inject
     params:

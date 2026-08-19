@@ -16,8 +16,6 @@ loader and cross-check every reference against a code-derived catalog:
 * a scenario driven past ``duration_s`` auto-stops, clears the failures it
   injected, and produces a debrief.
 """
-import ast
-import re
 from pathlib import Path
 
 import pytest
@@ -29,8 +27,6 @@ from smo_simulator.scenario_engine import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCENARIO_DIR = REPO_ROOT / "configs" / "eosat1" / "scenarios"
-MODEL_DIR = (REPO_ROOT / "packages" / "smo-simulator" / "src"
-             / "smo_simulator" / "models")
 
 # Scenario/instructor alias -> model file. "adcs" is the UI alias for "aocs".
 SUBSYSTEM_MODELS = {
@@ -50,19 +46,21 @@ SCENARIO_FILES = sorted(SCENARIO_DIR.glob("*.yaml"))
 SCENARIO_IDS = [p.stem for p in SCENARIO_FILES]
 
 
-def _model_failures(model_file: str) -> set[str]:
-    """Failure names handled by a model's inject_failure(), from its source."""
-    src = (MODEL_DIR / model_file).read_text()
-    tree = ast.parse(src)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "inject_failure":
-            body = ast.get_source_segment(src, node)
-            return set(re.findall(r'failure\s*==\s*["\']([\w]+)["\']', body))
-    raise AssertionError(f"inject_failure() not found in {model_file}")
-
-
 def _failure_catalog() -> dict[str, set[str]]:
-    return {sub: _model_failures(f) for sub, f in SUBSYSTEM_MODELS.items()}
+    """Failure names each subsystem implements, per the declarative catalogue.
+
+    This used to regex-scrape ``failure == "name"`` out of each model's
+    ``inject_failure()`` source, which missed table-driven branches — the seven
+    ground-segment impairments dispatch through ``failure in
+    _GS_FAILURE_FIELDS`` — and so reported them as unimplemented. The
+    catalogue is built from each model's own ``FAILURE_SPECS`` table, and a
+    separate gate (tests/test_simulator/test_failure_param_specs.py) keeps
+    that table and ``inject_failure()`` in bijection.
+    """
+    from smo_simulator.failure_catalog import canonical_subsystem, catalog
+    live = catalog()
+    return {alias: set(live.get(canonical_subsystem(alias), {}))
+            for alias in SUBSYSTEM_MODELS}
 
 
 class _FakeFailureManager:
@@ -313,3 +311,103 @@ def test_scenario_can_be_rerun_after_auto_stop():
         assert not engine.is_active(), f"run {run}: did not auto-stop"
         assert all(not ev.fired for ev in defn.events), (
             f"run {run}: fired flags not reset")
+
+
+# ── Typed-parameter gate (2026-08 failure-injection audit) ──────────
+#
+# The scenario library drifts behind the simulator: nine EPS power lines
+# instead of seven, a four-wheel pyramid, two star trackers, real
+# ground-segment failures where there used to be none. A scenario that still
+# names a parameter that has changed meaning LOADS FINE and then quietly does
+# the wrong thing (or nothing) — the worst failure mode for training content.
+# These gates check every shipped scenario against the declarative failure
+# catalogue, which is generated from the models' own FAILURE_SPECS.
+
+def _catalog_module():
+    from smo_simulator import failure_catalog
+    return failure_catalog
+
+
+def _scenario_injects(data: dict) -> list[tuple[str, dict]]:
+    """Every inject in a scenario: timed events and initial_conditions."""
+    out = [(f"event[{i}]", ev.get("params", {}) or {})
+           for i, ev in enumerate(data.get("events", []) or [])
+           if ev.get("action") == "inject"]
+    out += [(f"initial_conditions.failures[{i}]", f)
+            for i, f in enumerate(
+                (data.get("initial_conditions", {}) or {}).get("failures", []) or [])]
+    return out
+
+
+@pytest.mark.parametrize("path", SCENARIO_FILES, ids=SCENARIO_IDS)
+def test_scenario_inject_names_exist_in_the_failure_catalogue(path):
+    """Every failure a scenario names must exist for that subsystem."""
+    import yaml
+    fc = _catalog_module()
+    catalog = fc.catalog()
+    data = yaml.safe_load(path.read_text()) or {}
+    for where, params in _scenario_injects(data):
+        subsystem = fc.canonical_subsystem(params.get("subsystem", ""))
+        failure = params.get("failure", "")
+        assert subsystem in catalog, (
+            f"{path.name}: {where} targets unknown subsystem "
+            f"{params.get('subsystem')!r} (known: {sorted(catalog)})")
+        assert failure in catalog[subsystem], (
+            f"{path.name}: {where} injects {failure!r}, which {subsystem} does "
+            f"not implement any more (known: {sorted(catalog[subsystem])})")
+
+
+@pytest.mark.parametrize("path", SCENARIO_FILES, ids=SCENARIO_IDS)
+def test_scenario_inject_parameters_validate_against_the_spec(path):
+    """Every inject parameter must be one the failure declares, in range.
+
+    Catches a scenario carrying a renamed parameter, a unit index that no
+    longer exists (an EPS line 7 when there are nine, wheel 5 in a four-wheel
+    pyramid, star tracker 3 when there are two) or a value out of range.
+    """
+    import yaml
+    fc = _catalog_module()
+    from smo_simulator.failure_spec import FailureParamError
+    from smo_simulator.scenario_engine import ScenarioEngine
+
+    data = yaml.safe_load(path.read_text()) or {}
+    for where, params in _scenario_injects(data):
+        extra = {k: v for k, v in params.items()
+                 if k not in ScenarioEngine._INJECT_META_KEYS}
+        try:
+            fc.validate(params.get("subsystem", ""), params.get("failure", ""),
+                        params.get("magnitude"), extra)
+        except FailureParamError as e:
+            pytest.fail(f"{path.name}: {where} does not validate: {e}")
+
+
+@pytest.mark.parametrize("path", SCENARIO_FILES, ids=SCENARIO_IDS)
+def test_scenario_onset_is_one_the_failure_manager_implements(path):
+    """A typo'd onset used to be accepted and behave like `step`."""
+    import yaml
+    from smo_simulator.failure_manager import (
+        ONSET_GRADUAL, ONSET_INTERMITTENT, ONSET_STEP,
+    )
+    valid = {ONSET_STEP, ONSET_GRADUAL, ONSET_INTERMITTENT}
+    data = yaml.safe_load(path.read_text()) or {}
+    for where, params in _scenario_injects(data):
+        onset = params.get("onset", ONSET_STEP)
+        assert onset in valid, (
+            f"{path.name}: {where} uses onset {onset!r} (valid: {sorted(valid)})")
+
+
+def test_every_catalogue_failure_is_reachable_from_the_ui_or_a_scenario():
+    """No failure may be implemented, specced and then unreachable.
+
+    The instructor console generates its failure list from the catalogue, so
+    this is really a statement that the catalogue is the single index — but it
+    also flags a failure that exists with no scenario and no UI route at all.
+    """
+    fc = _catalog_module()
+    payload = fc.to_dict()
+    served = {(s["name"], f["name"])
+              for s in payload["subsystems"] for f in s["failures"]}
+    assert served == fc.all_failure_names(), (
+        "the API catalogue and the in-process catalogue disagree — the "
+        "instructor UI would show a different failure set from the one the "
+        "backend validates against")

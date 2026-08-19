@@ -371,12 +371,24 @@ button, select, input { font-family: inherit; font-size: inherit; }
 .tab-pane.active { display: block; }
 
 /* ===== PANELS ===== */
+/* PARAMETER TRUNCATION (owner defect: "we cannot see the whole field — e.g.
+   SA panel currents in EPS").  `.panel` used to carry `overflow: hidden`.
+   A panel is normally a GRID ITEM (.grid-1x2 / .grid-1x3 / .grid-2x3 — all
+   `1fr` tracks).  A grid item whose `overflow` is anything other than
+   `visible` loses its automatic minimum size (min-width:auto becomes 0), so
+   the track could be squeezed narrower than its content and the overflow was
+   CLIPPED — no ellipsis, no wrap, no tooltip, no scrollbar.  A current read
+   "-0.012" when it was "-0.0123", and nothing on the display said it had
+   been cut.  `overflow: visible` restores min-width:auto so the column sizes
+   to its content; `.panel-body` scrolls horizontally as the last resort. */
 .panel {
   background: var(--surface-primary);
   border: 1px solid var(--surface-tertiary);
-  border-radius: var(--r); overflow: hidden; margin-bottom: 8px;
+  border-radius: var(--r); overflow: visible; margin-bottom: 8px;
   box-shadow: 0 2px 8px rgba(0,0,0,.3);
 }
+/* `overflow: hidden` used to round the header gradient for us. */
+.panel > .panel-hdr:first-child { border-radius: var(--r) var(--r) 0 0; }
 .panel-hdr {
   display: flex; align-items: center; justify-content: space-between;
   padding: 6px 11px;
@@ -390,7 +402,9 @@ button, select, input { font-family: inherit; font-size: inherit; }
 .tag.warn    { background: rgba(240,180,41,.15); color: var(--status-warning); border: 1px solid rgba(240,180,41,.25); }
 .tag.alarm   { background: rgba(255,107,107,.15); color: var(--status-alarm);  border: 1px solid rgba(255,107,107,.25); }
 .tag.stale   { background: rgba(136,136,160,.12); color: var(--status-stale);  border: 1px solid rgba(136,136,160,.2); }
-.panel-body { padding: 9px 11px; }
+/* Last-resort escape hatch: if a table really is wider than the panel, the
+   operator gets a scrollbar, never a silently clipped digit. */
+.panel-body { padding: 9px 11px; overflow-x: auto; }
 
 /* ===== GRIDS ===== */
 .grid-2x3 { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
@@ -400,13 +414,24 @@ button, select, input { font-family: inherit; font-size: inherit; }
 .grid-1x4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; }
 
 /* ===== DATA DISPLAY ===== */
+/* The LABEL is the part that may wrap; the VALUE never does and is never
+   allowed to shrink. Previously both were nowrap flex items in a fixed-width
+   panel, so the value ran off the right edge and `.panel { overflow:hidden }`
+   ate it mid-digit. */
 .data-row {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 3px 0; border-bottom: 1px solid rgba(34,34,54,.7);
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: 10px; padding: 3px 0; border-bottom: 1px solid rgba(34,34,54,.7);
 }
 .data-row:last-child { border-bottom: none; }
-.data-row .lbl { color: var(--text-tertiary); font-size: 10px; }
-.data-row .val { font-size: 11px; font-weight: 500; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.data-row .lbl {
+  color: var(--text-tertiary); font-size: 10px;
+  min-width: 0; overflow-wrap: anywhere;
+}
+.data-row .val {
+  font-size: 11px; font-weight: 500; color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto; white-space: nowrap; text-align: right;
+}
 .data-row .unit { font-size: 9px; color: var(--text-tertiary); margin-left: 2px; }
 .val-nom  { color: var(--status-nominal)    !important; }
 .val-warn { color: var(--status-warning)    !important; }
@@ -448,15 +473,26 @@ button, select, input { font-family: inherit; font-size: inherit; }
 .lock-arrow { color: var(--text-tertiary); font-size: 12px; }
 
 /* ===== TABLE ===== */
-.data-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+/* `width: 100%` is a MINIMUM here, not a cap: `min-width: 100%` + `auto`
+   table layout lets a column grow to fit its widest value instead of
+   squeezing a number until the panel clips it. */
+.data-table {
+  min-width: 100%; border-collapse: collapse; font-size: 10px;
+  table-layout: auto;
+}
 .data-table th {
   text-align: left; padding: 4px 7px; color: var(--text-tertiary); font-weight: 700;
   border-bottom: 1px solid var(--surface-tertiary); letter-spacing: .8px; font-size: 9px;
-  background: var(--surface-secondary);
+  background: var(--surface-secondary); white-space: nowrap;
 }
 .data-table td {
   padding: 3px 7px; color: var(--text-primary);
   border-bottom: 1px solid rgba(34,34,54,.6); font-variant-numeric: tabular-nums;
+}
+/* A numeric cell must never wrap mid-digit and never be clipped. It carries
+   the full, unrounded value in its `title`, put there by numTd(). */
+.data-table td.num-cell, .num-cell {
+  white-space: nowrap; font-variant-numeric: tabular-nums;
 }
 .data-table tr:hover td { background: rgba(107,179,255,.04); }
 
@@ -566,8 +602,10 @@ button, select, input { font-family: inherit; font-size: inherit; }
 /* Failure code + on-board reason columns (defect #87). The full text is in
    the title attribute, so a long reason is readable on hover. */
 .verif-code { color: var(--status-alarm); white-space: nowrap; }
-.verif-reason { color: var(--status-alarm); max-width: 340px; overflow: hidden;
-                text-overflow: ellipsis; white-space: nowrap; }
+/* The on-board rejection reason WRAPS. It used to be clipped to one line with
+   an ellipsis, which reads as a complete sentence when it is not. */
+.verif-reason { color: var(--status-alarm); max-width: 340px;
+                white-space: normal; overflow-wrap: anywhere; }
 
 /* ===== STATUS BAR [F] ===== */
 #status-bar {
@@ -1438,10 +1476,11 @@ a.kbd-help-btn { text-decoration: none; display: inline-block; line-height: 14px
     </div>
   </div>
   <!-- EPS Charts -->
-  <div style="display:flex;gap:6px;margin-bottom:4px;align-items:center;">
-    <button class="dump-btn" onclick="requestTmDump('eps')" aria-label="Request EPS stored telemetry dump">Request S15 TM Dump (EPS)</button>
-    <span id="eps-dump-status" style="font-size:9px;color:var(--text-tertiary);"></span>
-  </div>
+  <!-- The "Request S15 TM Dump" button that used to sit here was a
+       TC(15,9) telecommand on a display page. It now lives on the
+       COMMAND page ("STORED TM (S15) & HK STRUCTURE (S3)"); the
+       playback chart below still renders here once a dump arrives. -->
+  <div style="font-size:9px;margin-bottom:4px;"><span id="eps-dump-status" style="color:var(--text-tertiary);"></span></div>
   <div class="grid-1x3">
     <div class="panel"><h2 class="panel-hdr">BATTERY SoC</h2><div class="panel-body"><div class="chart-container"><canvas id="eps-chart-soc"></canvas></div></div></div>
     <div class="panel"><h2 class="panel-hdr">POWER GEN / CONSUMED</h2><div class="panel-body"><div class="chart-container"><canvas id="eps-chart-power"></canvas></div></div></div>
@@ -1580,10 +1619,11 @@ a.kbd-help-btn { text-decoration: none; display: inline-block; line-height: 14px
     </div>
   </div>
   <!-- TCS Charts -->
-  <div style="display:flex;gap:6px;margin-bottom:4px;align-items:center;">
-    <button class="dump-btn" onclick="requestTmDump('tcs')" aria-label="Request TCS stored telemetry dump">Request S15 TM Dump (TCS)</button>
-    <span id="tcs-dump-status" style="font-size:9px;color:var(--text-tertiary);"></span>
-  </div>
+  <!-- The "Request S15 TM Dump" button that used to sit here was a
+       TC(15,9) telecommand on a display page. It now lives on the
+       COMMAND page ("STORED TM (S15) & HK STRUCTURE (S3)"); the
+       playback chart below still renders here once a dump arrives. -->
+  <div style="font-size:9px;margin-bottom:4px;"><span id="tcs-dump-status" style="color:var(--text-tertiary);"></span></div>
   <div class="grid-1x2">
     <div class="panel"><h2 class="panel-hdr">TEMPERATURES</h2><div class="panel-body"><div class="chart-container"><canvas id="tcs-chart-temps"></canvas></div></div></div>
     <div class="panel"><h2 class="panel-hdr">HEATER POWER</h2><div class="panel-body"><div class="chart-container"><canvas id="tcs-chart-heaters"></canvas></div></div></div>
@@ -1844,10 +1884,11 @@ a.kbd-help-btn { text-decoration: none; display: inline-block; line-height: 14px
     </div>
   </div>
   <!-- AOCS Charts -->
-  <div style="display:flex;gap:6px;margin-bottom:4px;align-items:center;">
-    <button class="dump-btn" onclick="requestTmDump('aocs')" aria-label="Request AOCS stored telemetry dump">Request S15 TM Dump (AOCS)</button>
-    <span id="aocs-dump-status" style="font-size:9px;color:var(--text-tertiary);"></span>
-  </div>
+  <!-- The "Request S15 TM Dump" button that used to sit here was a
+       TC(15,9) telecommand on a display page. It now lives on the
+       COMMAND page ("STORED TM (S15) & HK STRUCTURE (S3)"); the
+       playback chart below still renders here once a dump arrives. -->
+  <div style="font-size:9px;margin-bottom:4px;"><span id="aocs-dump-status" style="color:var(--text-tertiary);"></span></div>
   <div class="grid-1x2">
     <div class="panel"><h2 class="panel-hdr">BODY RATES</h2><div class="panel-body"><div class="chart-container"><canvas id="aocs-chart-rates"></canvas></div></div></div>
     <div class="panel"><h2 class="panel-hdr">ATTITUDE ERROR</h2><div class="panel-body"><div class="chart-container"><canvas id="aocs-chart-atterr"></canvas></div></div></div>
@@ -2209,21 +2250,23 @@ a.kbd-help-btn { text-decoration: none; display: inline-block; line-height: 14px
       <div class="data-row"><span class="lbl">Checksum Errors</span><span class="val" id="pld-cksum-err">--</span></div>
     </div>
   </div>
-  <!-- Payload command console (Phase E WP-5): generated from the
-       tc_catalog.yaml quick_commands PAYLOAD group — the hex is computed by
-       the shared encoder, never hand-typed. The display-only Payload tab
-       finally carries the ops-card command set. -->
-  <div class="panel" role="region" aria-label="Payload commands">
-    <h2 class="panel-hdr">PAYLOAD COMMANDS</h2>
-    <div class="panel-body">
-      <div class="quick-cmds" id="payload-quick-cmds"></div>
+  <!-- The PAYLOAD COMMANDS console that used to sit here was a second copy
+       of the catalogue's PAYLOAD quick-command group on a display page. The
+       COMMAND page's QUICK COMMANDS panel renders the same group, from the
+       same /api/tc-catalog list, with the same encoder — nothing is lost. -->
+  <div class="panel" role="region" aria-label="Where payload commands live">
+    <h2 class="panel-hdr">PAYLOAD COMMANDING</h2>
+    <div class="panel-body" style="font-size:10px;color:var(--text-tertiary);">
+      Payload telecommands are issued from the <b>COMMANDING</b> tab &rarr;
+      QUICK COMMANDS &rarr; <b>PAYLOAD</b> group (same catalogue, same encoder).
     </div>
   </div>
   <!-- Payload Chart -->
-  <div style="display:flex;gap:6px;margin-bottom:4px;align-items:center;">
-    <button class="dump-btn" onclick="requestTmDump('payload')" aria-label="Request Payload stored telemetry dump">Request S15 TM Dump (Payload)</button>
-    <span id="payload-dump-status" style="font-size:9px;color:var(--text-tertiary);"></span>
-  </div>
+  <!-- The "Request S15 TM Dump" button that used to sit here was a
+       TC(15,9) telecommand on a display page. It now lives on the
+       COMMAND page ("STORED TM (S15) & HK STRUCTURE (S3)"); the
+       playback chart below still renders here once a dump arrives. -->
+  <div style="font-size:9px;margin-bottom:4px;"><span id="payload-dump-status" style="color:var(--text-tertiary);"></span></div>
   <div class="panel"><h2 class="panel-hdr">FPA TEMPERATURE</h2><div class="panel-body"><div class="chart-container"><canvas id="pld-chart-fpa"></canvas></div></div></div>
   <!-- Payload Events -->
   <div class="panel"><h2 class="panel-hdr">PAYLOAD EVENTS</h2><div class="panel-body"><div id="payload-events" class="subsys-events"></div></div></div>
@@ -2244,11 +2287,16 @@ a.kbd-help-btn { text-decoration: none; display: inline-block; line-height: 14px
 <div class="tab-pane" id="pane-prop" role="tabpanel" aria-labelledby="tab-prop">
   <div class="panel" id="prop-sid-banner" role="status" style="display:none;border-color:var(--status-warning);">
     <div class="panel-body" style="color:var(--status-warning);font-size:11px;font-weight:700;letter-spacing:1px;">
+      <!-- The ENABLE SID 9 / ONE-SHOT REQUEST buttons that used to sit here
+           were TC(3,5) / TC(3,27) telecommands on a display page. The banner
+           still DIAGNOSES the problem — that is a display job — but the
+           command is issued from the COMMAND page ("STORED TM (S15) & HK
+           STRUCTURE (S3)", SID field) or from PUS SERVICES / S3 HK Manager. -->
       <span id="prop-sid-banner-text">HK SID 9 (PROP) NOT ENABLED — SEND TC(3,5) HK_ENABLE sid=9</span>
-      <button class="btn btn-ghost" style="font-size:9px;padding:2px 8px;margin-left:10px;"
-              onclick="hkEnableSid(9)" aria-label="Enable propulsion housekeeping">ENABLE SID 9</button>
-      <button class="btn btn-ghost" style="font-size:9px;padding:2px 8px;"
-              onclick="hkRequest(9)" aria-label="Request one propulsion housekeeping packet">ONE-SHOT REQUEST</button>
+      <div style="font-size:9px;font-weight:400;letter-spacing:0;margin-top:3px;color:var(--text-tertiary);">
+        Issue it from COMMANDING &rarr; &ldquo;STORED TM (S15) &amp; HK STRUCTURE (S3)&rdquo;
+        with SID 9, or from PUS SERVICES &rarr; S3 HK Manager.
+      </div>
     </div>
   </div>
 
@@ -2375,24 +2423,35 @@ a.kbd-help-btn { text-decoration: none; display: inline-block; line-height: 14px
          Generated from the tc_catalog.yaml quick_commands PROPULSION group, so
          the two-step arm sequence and its `critical: true` confirmations come
          from the catalogue rather than being hand-typed here. -->
-    <div class="panel" role="region" aria-label="Propulsion commands">
-      <h2 class="panel-hdr">PROPULSION COMMANDS</h2>
+    <!-- The PROPULSION COMMANDS console that used to sit here was a second
+         copy of the catalogue's PROPULSION quick-command group on a display
+         page. The COMMAND page's QUICK COMMANDS panel renders the same group
+         in the same catalogue order, and shows the same "this position may
+         not command propulsion (allowed_func_ids excludes 108-118)" notice
+         when the position is not allowed to. The PROCEDURE, which is the
+         operationally important half, stays here. -->
+    <div class="panel" role="region" aria-label="Where propulsion commands live">
+      <h2 class="panel-hdr">PROPULSION COMMANDING</h2>
       <div class="panel-body">
         <div style="font-size:9px;color:var(--text-tertiary);margin-bottom:5px;line-height:1.5;">
           Two-step arm: <b>SET_BURN</b> (loads dV, publishes the predicted duration at
           0x0B10 for FDS cross-check) &rarr; <b>ARM</b> within 300 s &rarr; <b>EXECUTE</b>.
           ARM runs every interlock in 0x0B15; the catbed must reach 180 &deg;C first.
         </div>
-        <div class="quick-cmds" id="prop-quick-cmds"></div>
+        <div style="font-size:10px;color:var(--text-tertiary);">
+          Issue them from the <b>COMMANDING</b> tab &rarr; QUICK COMMANDS &rarr;
+          <b>PROPULSION</b> group.
+        </div>
       </div>
     </div>
   </div>
 
   <!-- PROP charts -->
-  <div style="display:flex;gap:6px;margin-bottom:4px;align-items:center;">
-    <button class="dump-btn" onclick="requestTmDump('prop')" aria-label="Request propulsion stored telemetry dump">Request S15 TM Dump (PROP)</button>
-    <span id="prop-dump-status" style="font-size:9px;color:var(--text-tertiary);"></span>
-  </div>
+  <!-- The "Request S15 TM Dump" button that used to sit here was a
+       TC(15,9) telecommand on a display page. It now lives on the
+       COMMAND page ("STORED TM (S15) & HK STRUCTURE (S3)"); the
+       playback chart below still renders here once a dump arrives. -->
+  <div style="font-size:9px;margin-bottom:4px;"><span id="prop-dump-status" style="color:var(--text-tertiary);"></span></div>
   <div class="grid-1x2">
     <div class="panel"><h2 class="panel-hdr">TANK PRESSURE / PROPELLANT</h2><div class="panel-body"><div class="chart-container"><canvas id="prop-chart-tank"></canvas></div></div></div>
     <div class="panel"><h2 class="panel-hdr">THRUST vs ATTITUDE ERROR</h2><div class="panel-body"><div class="chart-container"><canvas id="prop-chart-burn"></canvas></div></div></div>
@@ -2562,19 +2621,27 @@ a.kbd-help-btn { text-decoration: none; display: inline-block; line-height: 14px
           <div class="data-row"><span class="lbl">Last TC Failure</span><span class="val" id="obdh-last-tc-err" style="font-size:9px;">--</span></div>
         </div>
       </div>
-      <div class="panel" role="region" aria-label="Buffer fill levels" style="margin-top:8px">
-        <h2 class="panel-hdr">BUFFER FILL</h2>
+      <!-- These three gauges are the S15 on-board stores, carried in routine
+           HK (0x0312/0x0313/0x0314) so the fill is visible without polling
+           TC(15,13). They are the SAME numbers as PUS SERVICES -> S15 Storage,
+           which is why each row names its store id. They are NOT the
+           mass-memory usage — that is "Memory Used" (0x0303). -->
+      <div class="panel" role="region" aria-label="On-board S15 store fill" style="margin-top:8px">
+        <h2 class="panel-hdr">S15 STORE FILL (FROM HK)</h2>
         <div class="panel-body">
-          <div class="data-row"><span class="lbl">HK TM</span><span class="val" id="obdh-buf-hk">--%</span></div>
-          <div class="gauge-bar" role="meter" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" aria-label="HK TM buffer" id="obdh-buf-hk-gauge">
+          <div style="font-size:9px;color:var(--text-tertiary);margin-bottom:6px;">
+            Same stores as PUS SERVICES &rarr; S15 Storage: packets held &divide; store capacity.
+          </div>
+          <div class="data-row"><span class="lbl" title="S15 store 1, HK_Store">HK store (S15 #1)</span><span class="val" id="obdh-buf-hk">--%</span></div>
+          <div class="gauge-bar" role="meter" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" aria-label="S15 store 1 HK_Store fill" id="obdh-buf-hk-gauge">
             <div class="gauge-fill nom" id="obdh-buf-hk-fill" style="width:0%"></div>
           </div>
-          <div class="data-row"><span class="lbl">Event</span><span class="val" id="obdh-buf-evt">--%</span></div>
-          <div class="gauge-bar" role="meter" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" aria-label="Event buffer" id="obdh-buf-evt-gauge">
+          <div class="data-row"><span class="lbl" title="S15 store 2, Event_Store">Event store (S15 #2)</span><span class="val" id="obdh-buf-evt">--%</span></div>
+          <div class="gauge-bar" role="meter" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" aria-label="S15 store 2 Event_Store fill" id="obdh-buf-evt-gauge">
             <div class="gauge-fill nom" id="obdh-buf-evt-fill" style="width:0%"></div>
           </div>
-          <div class="data-row"><span class="lbl">Alarm</span><span class="val" id="obdh-buf-alm">--%</span></div>
-          <div class="gauge-bar" role="meter" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" aria-label="Alarm buffer" id="obdh-buf-alm-gauge">
+          <div class="data-row"><span class="lbl" title="S15 store 4, Alarm_Store">Alarm store (S15 #4)</span><span class="val" id="obdh-buf-alm">--%</span></div>
+          <div class="gauge-bar" role="meter" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" aria-label="S15 store 4 Alarm_Store fill" id="obdh-buf-alm-gauge">
             <div class="gauge-fill nom" id="obdh-buf-alm-fill" style="width:0%"></div>
           </div>
         </div>
@@ -2582,10 +2649,11 @@ a.kbd-help-btn { text-decoration: none; display: inline-block; line-height: 14px
     </div>
   </div>
   <!-- OBDH Chart -->
-  <div style="display:flex;gap:6px;margin-bottom:4px;align-items:center;">
-    <button class="dump-btn" onclick="requestTmDump('obdh')" aria-label="Request OBDH stored telemetry dump">Request S15 TM Dump (OBDH)</button>
-    <span id="obdh-dump-status" style="font-size:9px;color:var(--text-tertiary);"></span>
-  </div>
+  <!-- The "Request S15 TM Dump" button that used to sit here was a
+       TC(15,9) telecommand on a display page. It now lives on the
+       COMMAND page ("STORED TM (S15) & HK STRUCTURE (S3)"); the
+       playback chart below still renders here once a dump arrives. -->
+  <div style="font-size:9px;margin-bottom:4px;"><span id="obdh-dump-status" style="color:var(--text-tertiary);"></span></div>
   <div class="panel"><h2 class="panel-hdr">CPU LOAD</h2><div class="panel-body"><div class="chart-container"><canvas id="obdh-chart-cpu"></canvas></div></div></div>
   <!-- OBDH Events -->
   <div class="panel"><h2 class="panel-hdr">OBDH EVENTS</h2><div class="panel-body"><div id="obdh-events" class="subsys-events"></div></div></div>
@@ -2650,6 +2718,69 @@ a.kbd-help-btn { text-decoration: none; display: inline-block; line-height: 14px
            is computed by the shared schema encoder at click time — no
            hand-written byte literal exists anywhere in this page. -->
       <div class="cmd-group-label" id="quick-cmds-loading">loading /api/tc-catalog…</div>
+    </div>
+  </div>
+
+  <!-- ── STORED TM / HK STRUCTURE COMMANDS ────────────────────────────────
+       These two controls used to be scattered across the subsystem tabs: a
+       "Request S15 TM Dump (<SUBSYSTEM>)" button on each of EPS, TCS, AOCS,
+       PAYLOAD, PROP and OBDH, and an "ENABLE SID 9 / ONE-SHOT REQUEST" pair
+       on the PROP banner. They are telecommands — TC(15,9), TC(3,5), TC(3,6)
+       and TC(3,27) — so by the console's own rule they belong on the COMMAND
+       page and nowhere else. The subsystem tabs keep the DISPLAY half: the
+       playback chart and its scrubber still render there once a dump has been
+       requested from here. -->
+  <div class="panel" role="region" aria-label="Stored telemetry and housekeeping commands">
+    <h2 class="panel-hdr">STORED TM (S15) &amp; HK STRUCTURE (S3)</h2>
+    <div class="panel-body">
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+        <div>
+          <label for="cmd-dump-subsystem" style="font-size:9px;color:var(--text-tertiary);display:block;">Downlink target</label>
+          <select id="cmd-dump-subsystem" aria-label="Stored telemetry dump subsystem">
+            <option value="eps">EPS (HK_Store)</option>
+            <option value="tcs">TCS (HK_Store)</option>
+            <option value="aocs">AOCS (HK_Store)</option>
+            <option value="ttc">TTC (HK_Store)</option>
+            <option value="obdh">OBDH (HK_Store)</option>
+            <option value="prop">PROP (HK_Store)</option>
+            <option value="payload">PAYLOAD (Science_Store)</option>
+            <option value="events">EVENTS (Event_Store)</option>
+            <option value="alarms">ALARMS (Alarm_Store)</option>
+          </select>
+        </div>
+        <div>
+          <label for="cmd-dump-store" style="font-size:9px;color:var(--text-tertiary);display:block;">Store override</label>
+          <select id="cmd-dump-store" aria-label="Stored telemetry store id override">
+            <option value="">from target</option>
+            <option value="1">1 — HK_Store</option>
+            <option value="2">2 — Event_Store</option>
+            <option value="3">3 — Science_Store</option>
+            <option value="4">4 — Alarm_Store</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" id="cmd-dump-btn"
+                aria-label="Request stored telemetry dump">REQUEST S15 TM DUMP</button>
+        <span id="cmd-dump-status" style="font-size:9px;color:var(--text-tertiary);"></span>
+      </div>
+      <div style="font-size:9px;color:var(--text-tertiary);margin-top:4px;">
+        TC(15,9) downlink-request. The playback chart appears on the target's
+        own tab; per-store Enable / Disable / Clear live on PUS SERVICES &rarr; S15 Storage.
+      </div>
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-top:10px;
+                  border-top:1px solid var(--surface-tertiary);padding-top:9px;">
+        <div>
+          <label for="cmd-hk-sid" style="font-size:9px;color:var(--text-tertiary);display:block;">HK structure ID (SID)</label>
+          <input type="number" id="cmd-hk-sid" min="1" max="255" value="9"
+                 aria-label="Housekeeping structure identifier" style="width:80px;">
+        </div>
+        <button class="btn" id="cmd-hk-enable-btn" aria-label="Enable housekeeping structure">ENABLE (3,5)</button>
+        <button class="btn" id="cmd-hk-disable-btn" aria-label="Disable housekeeping structure">DISABLE (3,6)</button>
+        <button class="btn" id="cmd-hk-request-btn" aria-label="Request one housekeeping packet">ONE-SHOT REQUEST (3,27)</button>
+      </div>
+      <div style="font-size:9px;color:var(--text-tertiary);margin-top:4px;">
+        SID 9 is the propulsion structure, off by default. The full per-SID
+        table with observed arrival state is on PUS SERVICES &rarr; S3 HK Manager.
+      </div>
     </div>
   </div>
 
@@ -2849,8 +2980,12 @@ a.kbd-help-btn { text-decoration: none; display: inline-block; line-height: 14px
     <div class="panel" role="region" aria-label="Onboard storage manager">
       <h2 class="panel-hdr">ONBOARD STORAGE (S15)</h2>
       <div class="panel-body">
-        <div style="display:flex;gap:8px;margin-bottom:12px;">
+        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;">
           <button class="btn btn-primary" onclick="s15GetStatus()">Refresh Status</button>
+          <span style="font-size:9px;color:var(--text-tertiary);">
+            Stores 1, 2 and 4 are also carried in routine HK and shown on OBDH &rarr; S15 Store Fill;
+            both pages report the same packets &divide; capacity.
+          </span>
         </div>
         <div class="grid-1x4" id="s15-stores">
           <div class="store-card" id="s15-store-1">
@@ -3435,6 +3570,13 @@ a.kbd-help-btn { text-decoration: none; display: inline-block; line-height: 14px
      overlay, eclipse + contact-arc shading, event/alarm markers and CSV
      export, all against the SQLite archive. -->
 <div class="tab-pane" id="pane-trends" role="tabpanel" aria-labelledby="tab-trends">
+  <!-- Archive health. An archive that cannot be read must SAY so: an empty
+       trend page and a corrupt one used to look identical, and the only clue
+       an operator got was a raw SQLite string like "database disk image is
+       malformed" in an error toast. -->
+  <div id="archive-banner" role="status" style="display:none;font-size:10px;
+       font-weight:600;padding:5px 9px;margin-bottom:6px;border-radius:var(--r);
+       border:1px solid var(--surface-tertiary);background:var(--surface-secondary);"></div>
   <div class="panel" role="region" aria-label="Trend query controls">
     <h2 class="panel-hdr">PARAMETER HISTORY &mdash; ARCHIVE QUERY</h2>
     <div class="panel-body">
@@ -3652,14 +3794,11 @@ a.kbd-help-btn { text-decoration: none; display: inline-block; line-height: 14px
   <div class="alarm-journal-header">
     <h2>ALARM JOURNAL</h2>
     <div style="display:flex;gap:6px;align-items:center;">
-      <!-- S12 limit checks are stored in the on-board Alarm store (4), not in
-           HK or Science. Dumping it plays back the spacecraft's own record of
-           every limit transition; /dumps decodes the S12 contents (parameter,
-           direction, value, check type, severity and limit band). -->
-      <button class="btn btn-ghost" id="alarm-dump-btn" style="font-size:9px;padding:2px 8px;"
-              onclick="requestTmDump('alarms', 4)"
-              title="TC(15,9) on store 4 (Alarm_Store) — plays back every S12 limit transition"
-              aria-label="Dump the on-board alarm store">DUMP S12 STORE</button>
+      <!-- The "DUMP S12 STORE" button that used to sit here was a TC(15,9)
+           telecommand in a display dialog. It moved to the COMMAND page
+           ("STORED TM (S15) & HK STRUCTURE (S3)", target ALARMS /
+           Alarm_Store). The ARCHIVE link below is a read-only view of what
+           has already been downlinked, so it stays. -->
       <a class="btn btn-ghost" href="/dumps" target="_blank" rel="noopener"
          style="font-size:9px;padding:2px 8px;text-decoration:none;"
          title="Decoded delayed-TM archive, including full S12 contents">ARCHIVE</a>
@@ -4459,6 +4598,94 @@ function fmtUnit(v, dp, unit) {
   if (v == null || !isFinite(Number(v))) return '--' + (unit ? ' ' + unit : '');
   return Number(v).toFixed(dp == null ? 1 : dp) + (unit ? ' ' + unit : '');
 }
+
+// ===== FULL-VALUE READBACK =====
+// Owner defect: "in simulator parameter windows, we cannot see the whole
+// field — e.g. SA panel currents in EPS".  Two halves to the fix: the CSS
+// above stops the console clipping a cell, and these helpers guarantee that
+// whatever the cell shows, the FULL, UNROUNDED value plus its unit is one
+// hover away.  A displayed number on an ops console is always rounded; the
+// operator must still be able to get at the number the spacecraft sent.
+
+/** The full-precision value + unit, for a tooltip. Never rounded. */
+function fmtRaw(v, unit) {
+  if (v == null || !isFinite(Number(v)))
+    return 'NO VALUE' + (unit ? ' (' + unit + ')' : '');
+  return String(Number(v)) + (unit ? ' ' + unit : '');
+}
+
+/**
+ * Attach a tooltip carrying the complete value to an element.
+ * An author-written `title=` in the markup explains the FIELD, not the value,
+ * so it is never clobbered — only tooltips this helper wrote are replaced.
+ */
+function applyFullValueTitle(el, text) {
+  if (!el || !el.setAttribute) return;
+  if (el.__valTip !== true && el.getAttribute &&
+      el.getAttribute('title') != null) return;
+  el.__valTip = true;
+  el.setAttribute('title', text);
+  try { el.title = text; } catch (e) { /* attribute wins */ }
+}
+
+/**
+ * Set a numeric parameter field: rounded text for the display, full raw value
+ * (+ unit) in the tooltip and in `data-raw` so it is machine-readable too.
+ */
+function setNum(id, v, dp, unit, rawUnit) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = fmtUnit(v, dp, unit);
+  el.__valTip = true;
+  // `rawUnit` is for cells whose unit lives in the COLUMN HEADER rather than
+  // in the cell: the tooltip must still name it.
+  const raw = fmtRaw(v, rawUnit != null ? rawUnit : unit);
+  el.setAttribute('title', raw);
+  try { el.title = raw; } catch (e) { /* attribute wins */ }
+  if (el.dataset) el.dataset.raw = (v == null ? '' : String(v));
+}
+
+/**
+ * A hex-blob <td>. The blob really is abbreviated (a 200-byte memory load is
+ * not a table cell), but the abbreviation is now EXPLICIT — a trailing '…'
+ * and the byte count — and the complete hex is in the tooltip and data-raw.
+ * It used to be silently sliced to 24 characters, which reads as a short
+ * command rather than a truncated one.
+ */
+function hexCell(hex, maxChars) {
+  const full = String(hex || '');
+  const cap = maxChars || 24;
+  const cut = full.length > cap;
+  const shown = cut ? full.substr(0, cap) + '…' : full;
+  const nbytes = Math.floor(full.length / 2);
+  const tip = full ? `${full} (${nbytes} byte${nbytes === 1 ? '' : 's'})`
+                   : 'no data field';
+  return `<td class="hex-cell" style="font-size:9px;color:var(--text-tertiary);"`
+       + ` title="${esc(tip)}" data-raw="${esc(full)}">${esc(shown)}</td>`;
+}
+
+/**
+ * A timestamp <td>. The column shows HH:MM:SS because that is what fits;
+ * the tooltip carries the full ISO instant AND the raw epoch, so an operator
+ * reading a trend table can tell which DAY a row is from.
+ */
+function tsTd(epoch) {
+  const n = Number(epoch);
+  if (epoch == null || !isFinite(n))
+    return '<td class="num-cell" title="no timestamp">--</td>';
+  const iso = new Date(n * 1000).toISOString();
+  return `<td class="num-cell" title="${esc(iso.replace('T', ' ') + ' (epoch ' + n + ')')}"`
+       + ` data-raw="${esc(String(n))}">${esc(iso.substr(11, 8))}</td>`;
+}
+
+/** A numeric <td>: sized to content, never clipped, tooltip = full raw value.
+ *  `rawUnit` names the unit in the tooltip when the cell itself omits it
+ *  because the column header already carries it. */
+function numTd(v, dp, unit, rawUnit) {
+  return `<td class="num-cell" title="${esc(fmtRaw(v, rawUnit != null ? rawUnit : unit))}"`
+       + ` data-raw="${v == null ? '' : esc(String(v))}"`
+       + `>${esc(fmtUnit(v, dp, unit))}</td>`;
+}
 const ST_STATUS = ['OFF','BOOT','TRACK','BLIND','FAIL'];
 const SC_MODES = {0:'SAFE',1:'NOMINAL',2:'SCIENCE',3:'EMERGENCY'};
 const REBOOT_CAUSES = {0:'NONE',1:'WATCHDOG',2:'COMMANDED',3:'SEU',4:'POWER'};
@@ -4470,6 +4697,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initBottomTabs();
   initCmdBuilder();
   initQuickCmds();
+  initCommandPageServiceControls();
   loadFailureCodes();
   loadLimitBands();
   initKeyboardNav();
@@ -6512,27 +6740,20 @@ function renderQuickCmds() {
         for (const q of byGroup[g]) html += quickCmdButtonHtml(q);
         html += '</div>';
       }
+      // The PROPULSION and PAYLOAD groups used to be mirrored onto the PROP
+      // and PAYLOAD display tabs. Those copies are gone — telecommands are
+      // issued here — so the "why is this group empty" explanation that lived
+      // on the PROP tab has to be given here instead, or a position that may
+      // not command propulsion is told nothing at all.
+      if (!byGroup['PROPULSION']) {
+        html += '<div class="cmd-group-label">PROPULSION</div>'
+              + `<div class="quick-cmds"><span style="font-size:9px;color:var(--text-tertiary);">${
+                  tcCatalogLoaded
+                    ? 'this position may not command propulsion (allowed_func_ids excludes 108-118)'
+                    : 'loading /api/tc-catalog…'}</span></div>`;
+      }
       body.innerHTML = html;
     }
-  }
-  // Payload tab console: the PAYLOAD group only.
-  const pldBody = document.getElementById('payload-quick-cmds');
-  if (pldBody) {
-    pldBody.innerHTML = tcQuickCommands
-      .filter(q => (q.group || '') === 'PAYLOAD')
-      .map(quickCmdButtonHtml).join('');
-  }
-  // PROP tab console: the PROPULSION group, in catalogue order — which is the
-  // order NOM-004 flies (preheat, valves, SET_BURN, ARM, EXECUTE). The
-  // `critical: true` entries render with the confirmation styling.
-  const propBody = document.getElementById('prop-quick-cmds');
-  if (propBody) {
-    const propCmds = tcQuickCommands.filter(q => (q.group || '') === 'PROPULSION');
-    propBody.innerHTML = propCmds.length
-      ? propCmds.map(quickCmdButtonHtml).join('')
-      : `<div class="cmd-group-label">${tcCatalogLoaded
-          ? 'this position may not command propulsion (allowed_func_ids excludes 108-118)'
-          : 'loading /api/tc-catalog…'}</div>`;
   }
   initQuickCmds();
 }
@@ -7266,7 +7487,9 @@ function updateStorageStatus() {
     if (stateEl) {
       const bits = [];
       if (s.enabled != null) bits.push(s.enabled ? 'ENABLED' : 'DISABLED');
-      if (pct != null) bits.push(`${pct.toFixed(0)}% full`);
+      // 0.1 % — the resolution TM(15,14) carries, and the resolution the OBDH
+      // page renders the same stores at, so the two pages read identically.
+      if (pct != null) bits.push(`${pct.toFixed(1)}% full`);
       if (s.overflow) bits.push('OVERFLOW');
       if (s.wrap != null) bits.push(s.wrap ? 'WRAP (oldest overwritten)' : 'NO WRAP (stops when full)');
       stateEl.textContent = bits.length ? bits.join(' · ') : 'state not reported';
@@ -7428,14 +7651,19 @@ function updateEpsWingsAndEnergy() {
   setText('eps-wing-status', info ? info.short
     : (wing == null ? '--' : `0x${Number(wing).toString(16).toUpperCase()}`));
   const timer = param(0x0145);
-  setText('eps-wing-timer', timer ? fmtUnit(timer, 0, 's') : '--');
-  setText('eps-wing-a', fmtUnit(param(0x0146), 3, 'A'));
-  setText('eps-wing-b', fmtUnit(param(0x0147), 3, 'A'));
-  setText('eps-array-age', fmtUnit(param(0x0123), 4, ''));
+  setNum('eps-wing-timer', timer || null, 0, 's');
+  setNum('eps-wing-a', param(0x0146), 3, 'A');
+  setNum('eps-wing-b', param(0x0147), 3, 'A');
+  setNum('eps-array-age', param(0x0123), 4, '');
 
   // ── R-5: SADA readout, so "stuck" is distinguishable from "tracking" ──
   const sada = param(0x0133);
-  setText('eps-sada', sada == null ? '--' : `${Number(sada).toFixed(1)}°`);
+  const sadaEl = document.getElementById('eps-sada');
+  if (sadaEl) {
+    sadaEl.textContent = sada == null ? '--' : `${Number(sada).toFixed(1)}°`;
+    sadaEl.__valTip = true;
+    sadaEl.setAttribute('title', fmtRaw(sada, 'deg'));
+  }
 
   // ── R-5: per-face currents ──
   const faces = [
@@ -7447,8 +7675,10 @@ function updateEpsWingsAndEnergy() {
     let html = '';
     for (let i = 0; i < faces.length; i += 2) {
       const [l1, p1] = faces[i], [l2, p2] = faces[i + 1];
-      html += `<tr><td>${l1}</td><td>${fmtUnit(param(p1), 3, 'A')}</td>`
-            + `<td>${l2}</td><td>${fmtUnit(param(p2), 3, 'A')}</td></tr>`;
+      // numTd(): the cell shows 3 dp, the tooltip and data-raw carry the
+      // unrounded ampere value the spacecraft actually reported.
+      html += `<tr><td>${l1}</td>${numTd(param(p1), 3, 'A')}`
+            + `<td>${l2}</td>${numTd(param(p2), 3, 'A')}</tr>`;
     }
     fbody.innerHTML = html;
   }
@@ -7571,9 +7801,10 @@ function updateEPS() {
     if (statusEl) {
       statusEl.style.color = lineEnabled ? 'var(--status-nominal)' : 'var(--status-stale)';
     }
-    setText(`eps-line-${i}-cur`, cur != null ? cur.toFixed(3) : '--');
+    // Unit lives in the column header, so it goes in the tooltip instead.
+    setNum(`eps-line-${i}-cur`, cur, 3, '', 'A');
     const w = (cur != null && busV != null) ? cur * busV : null;
-    setText(`eps-line-${i}-w`, w != null ? w.toFixed(1) : '--');
+    setNum(`eps-line-${i}-w`, w, 1, '', 'W');
     if (cur != null) { totalA += cur; anyLine = true; }
     if (w != null) totalW += w;
   }
@@ -7584,11 +7815,11 @@ function updateEPS() {
     propStatusEl.textContent = propLine == null ? '--' : (propLine ? 'ON' : 'OFF');
     propStatusEl.style.color = propLine ? 'var(--status-nominal)' : 'var(--status-stale)';
   }
-  setText('eps-line-8-cur', propCur != null ? propCur.toFixed(3) : '--');
-  setText('eps-line-8-w', (propCur != null && busV != null)
-    ? (propCur * busV).toFixed(1) : '--');
-  setText('eps-lines-total-a', anyLine ? totalA.toFixed(3) : '--');
-  setText('eps-lines-total-w', anyLine ? totalW.toFixed(1) : '--');
+  setNum('eps-line-8-cur', propCur, 3, '', 'A');
+  setNum('eps-line-8-w',
+         (propCur != null && busV != null) ? propCur * busV : null, 1, '', 'W');
+  setNum('eps-lines-total-a', anyLine ? totalA : null, 3, '', 'A');
+  setNum('eps-lines-total-w', anyLine ? totalW : null, 1, '', 'W');
   setText('eps-lines-pcons', pf(eps, 'power_cons_W', 1, 'W'));
 
   // ── wings, generation detail and the energy integral ──
@@ -8946,6 +9177,36 @@ const PROP_INTERLOCK_BITS = [
   {bit: 10, label: 'NO BURN LOADED', hint: 'No burn loaded, or PROP_SET_BURN is older than 300 s'},
 ];
 
+/**
+ * Wire the COMMAND page's "STORED TM (S15) & HK STRUCTURE (S3)" panel.
+ *
+ * This is where the S15 dump request and the HK enable/disable/one-shot now
+ * live. They used to be buttons scattered over the EPS / TCS / AOCS /
+ * PAYLOAD / PROP / OBDH tabs; every one of them is a telecommand, and the
+ * console's rule is that telecommands are issued from the command page.
+ */
+function initCommandPageServiceControls() {
+  const dumpBtn = document.getElementById('cmd-dump-btn');
+  if (dumpBtn) {
+    dumpBtn.addEventListener('click', () => {
+      const sub = document.getElementById('cmd-dump-subsystem').value;
+      const storeRaw = document.getElementById('cmd-dump-store').value;
+      requestTmDump(sub, storeRaw === '' ? undefined : Number(storeRaw));
+    });
+  }
+  const sidOf = () => {
+    const n = Number(document.getElementById('cmd-hk-sid').value);
+    return isFinite(n) && n > 0 ? Math.floor(n) : null;
+  };
+  const wire = (id, fn) => {
+    const b = document.getElementById(id);
+    if (b) b.addEventListener('click', () => { const s = sidOf(); if (s != null) fn(s); });
+  };
+  wire('cmd-hk-enable-btn', hkEnableSid);
+  wire('cmd-hk-disable-btn', hkDisableSid);
+  wire('cmd-hk-request-btn', hkRequest);
+}
+
 /** Enable one HK structure from a display that depends on it. */
 function hkEnableSid(sid) {
   sendPusCmd(3, 5, sidToHex(sid), `HK_ENABLE_SID${sid}`);
@@ -9263,13 +9524,17 @@ function updateOBDH() {
     }
   }
 
-  // Buffers
+  // S15 store fill carried in routine HK. Same quantity as the store cards on
+  // PUS SERVICES -> S15 Storage (stores 1 / 2 / 4), so it is rendered to the
+  // same 0.1 % resolution TM(15,14) reports — rounding to whole percent here
+  // made a 0.4 % store read "0 %" next to the S15 card's "0.4%" and invited
+  // exactly the "these two disagree" question this panel exists to answer.
   const bufHk = param(0x0312);
   const bufEvt = param(0x0313);
   const bufAlm = param(0x0314);
-  setText('obdh-buf-hk', bufHk != null ? bufHk.toFixed(0)+' %' : '-- %');
-  setText('obdh-buf-evt', bufEvt != null ? bufEvt.toFixed(0)+' %' : '-- %');
-  setText('obdh-buf-alm', bufAlm != null ? bufAlm.toFixed(0)+' %' : '-- %');
+  setText('obdh-buf-hk', bufHk != null ? bufHk.toFixed(1)+' %' : '-- %');
+  setText('obdh-buf-evt', bufEvt != null ? bufEvt.toFixed(1)+' %' : '-- %');
+  setText('obdh-buf-alm', bufAlm != null ? bufAlm.toFixed(1)+' %' : '-- %');
   setBufGauge('obdh-buf-hk', bufHk);
   setBufGauge('obdh-buf-evt', bufEvt);
   setBufGauge('obdh-buf-alm', bufAlm);
@@ -9341,7 +9606,14 @@ function updateAlarmBadges() {
 // ===== UTILITY FUNCTIONS =====
 function setText(id, val) {
   const el = document.getElementById(id);
-  if (el) el.textContent = val != null ? val : '--';
+  if (!el) return;
+  const s = val != null ? String(val) : '--';
+  el.textContent = s;
+  // Safety net for the truncation defect: whatever the layout does to this
+  // cell, the complete rendered string is always available on hover. Fields
+  // that carry a rounded number use setNum() instead, whose tooltip holds the
+  // unrounded value.
+  applyFullValueTitle(el, s);
 }
 
 function setHtml(id, html) {
@@ -9490,6 +9762,8 @@ function renderHkTable() {
   hkSids.forEach(s => {
     const st = hkSidState(s);
     const age = s.last_seen_age_s == null ? '—' : `${s.last_seen_age_s.toFixed(1)}s ago`;
+    const ageTip = s.last_seen_age_s == null
+      ? 'never seen' : fmtRaw(s.last_seen_age_s, 's') + ' since the last packet';
     const tr = document.createElement('tr');
     let actions;
     if (s.readonly) {
@@ -9511,10 +9785,10 @@ function renderHkTable() {
       `<td style="color:var(--text-primary);font-weight:500">${s.sid}</td>` +
       `<td>${esc(s.name)}${s.readonly ? ' <span style="color:var(--status-warning);font-size:9px;">(read-only)</span>' : ''}</td>` +
       `<td>0x${(s.apid || 1).toString(16).toUpperCase().padStart(3, '0')}</td>` +
-      `<td>${s.interval_s}s</td>` +
-      `<td>${s.param_count}</td>` +
+      `<td class="num-cell" title="${esc(fmtRaw(s.interval_s, 's'))}">${s.interval_s}s</td>` +
+      `<td class="num-cell" title="${esc(String(s.param_count) + ' parameters in this structure')}">${s.param_count}</td>` +
       `<td><span class="led ${st.cls}" role="status" aria-label="SID ${s.sid}: ${esc(st.label)}"></span> ${esc(st.label)}</td>` +
-      `<td style="color:var(--text-tertiary)">${age}</td>` +
+      `<td class="num-cell" style="color:var(--text-tertiary)" title="${esc(ageTip)}">${age}</td>` +
       `<td>${actions}</td>`;
     if (s.readonly && s.note) tr.title = s.note;
     tbody.appendChild(tr);
@@ -9561,6 +9835,13 @@ function hkToggle(sid) {
 
 function hkRequest(sid) {
   sendPusCmd(3, 27, sidToHex(sid), `HK_REQUEST_SID${sid}`);
+}
+
+/** Disable one HK structure. Counterpart of hkEnableSid, for the command page. */
+function hkDisableSid(sid) {
+  sendPusCmd(3, 6, sidToHex(sid), `HK_DISABLE_SID${sid}`);
+  addEventLog('info', 'HK', `HK_DISABLE(sid=${sid}) sent — watch the SID's `
+    + `state column on PUS SERVICES / S3 HK Manager for the round-trip`);
 }
 
 function hkRequestAll() {
@@ -11615,6 +11896,18 @@ let trendBands = {};             // name -> {yellow_low, yellow_high, red_low, r
 let trendSeries = {};            // name -> [{utc_epoch, value}]
 let trendMeta = { start: 0, end: 0 };
 let trendsInited = false;
+// Provenance of the last archive answer: `{status, time_base, message, ...}`
+// straight from `TMArchive.meta()`. An empty plot has FOUR distinct causes and
+// an operator has to be able to tell them apart:
+//   'ok'          — the query ran and the window genuinely holds no rows
+//   'unavailable' — the archive is corrupt/unopenable, nothing can be read
+//   'failed'      — the request itself errored (HTTP status, bad JSON, network)
+//   'legacy'      — the file predates the sim-time migration, so its wall-clock
+//                   rows can never intersect a sim-time window
+// Before this they all rendered the identical string "NO ARCHIVED DATA IN THIS
+// WINDOW", which is how a broken trends tab looked exactly like a quiet one.
+let trendArchiveMeta = {};
+let trendNamesError = '';        // why the parameter list is empty, if it is
 const TREND_COLOURS = ['#6BB3FF', '#00C896', '#F0B429', '#FF6B6B', '#C084FC',
                        '#22D3EE', '#F472B6', '#A3E635'];
 
@@ -11636,13 +11929,101 @@ async function initTrendsTab() {
   trendLoad();
 }
 
-async function trendLoadNames() {
+/**
+ * One archive GET, with the three failure modes kept separate.
+ *
+ * `fetch` only rejects on a transport failure: a 500 from the server resolves
+ * normally, and `(await r.json()).data` is then `undefined`. The trends tab
+ * used to coalesce that into `[]` and report "no data in this window", so a
+ * server-side error was indistinguishable from a quiet spacecraft. Every
+ * archive request now goes through here and carries its outcome with it.
+ *
+ * Returns `{ ok, payload, error, unavailable, meta }` and never throws.
+ */
+async function trendArchiveFetch(url) {
+  let r;
   try {
-    const r = await fetch('/api/archive/param-names');
-    const d = await r.json();
-    trendNames = d.names || [];
-    trendBands = d.bands || {};
-  } catch (e) { trendNames = []; trendBands = {}; }
+    r = await fetch(url);
+  } catch (e) {
+    return { ok: false, payload: null, unavailable: false, meta: {},
+             error: 'archive request failed: ' + (e && e.message || e) };
+  }
+  let payload = null;
+  try {
+    payload = await r.json();
+  } catch (e) {
+    return { ok: false, payload: null, unavailable: false, meta: {},
+             error: `archive returned HTTP ${r.status} with a non-JSON body` };
+  }
+  const meta = (payload && payload.archive) || {};
+  if (meta && Object.keys(meta).length) trendArchiveMeta = meta;
+  const unavailable = !!(payload && payload.archive_unavailable) ||
+                      meta.available === false;
+  if (r.ok === false) {
+    return { ok: false, payload, unavailable, meta,
+             error: `archive returned HTTP ${r.status}`
+                    + (payload && payload.error ? ': ' + payload.error : '') };
+  }
+  if (payload && payload.error) {
+    return { ok: false, payload, unavailable, meta,
+             error: 'archive error: ' + payload.error };
+  }
+  return { ok: true, payload, unavailable, meta, error: '' };
+}
+
+/** Human summary of the archive's own state, or '' when it is healthy. */
+function trendArchiveProblem() {
+  const m = trendArchiveMeta || {};
+  if (m.available === false)
+    return 'ARCHIVE UNAVAILABLE — ' + (m.message || m.status || 'unreadable');
+  if (m.status === 'corrupt' || m.status === 'unavailable')
+    return 'ARCHIVE UNAVAILABLE — ' + (m.message || m.status);
+  if (m.time_base && m.time_base !== 'sim')
+    // A pre-migration file holds host wall-clock epochs. The window here is
+    // sim time, so the two can never intersect and "no data" would be a lie
+    // about the spacecraft rather than a fact about the file.
+    return 'LEGACY ARCHIVE (time_base=' + m.time_base + ') — its rows are on '
+         + 'the host WALL CLOCK and cannot line up with this sim-time window';
+  return '';
+}
+
+function trendSetStatus(text, kind) {
+  const el = document.getElementById('trend-status');
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = kind === 'bad' ? 'var(--status-alarm)'
+                 : kind === 'warn' ? 'var(--status-warning)'
+                                   : 'var(--text-tertiary)';
+}
+
+/** Window as an operator-readable UTC range, so "empty" names its window. */
+function trendWindowLabel() {
+  const f = t => {
+    const n = Number(t);
+    return isFinite(n) ? new Date(n * 1000).toISOString().replace('T', ' ')
+                                                        .substr(0, 19) + 'Z'
+                       : '?';
+  };
+  return `${f(trendMeta.start)} → ${f(trendMeta.end)} (sim time)`;
+}
+
+async function trendLoadNames() {
+  const res = await trendArchiveFetch('/api/archive/param-names');
+  if (!res.ok) {
+    // The whole tab is unusable when this fails — an empty selector with no
+    // explanation is exactly the "trends does not work at all" report.
+    trendNames = []; trendBands = {};
+    trendNamesError = res.error;
+    trendRenderParamList();
+    trendSetStatus('PARAMETER LIST UNAVAILABLE — ' + res.error, 'bad');
+    return;
+  }
+  trendNamesError = res.unavailable
+    ? (res.meta.message || 'the archive is unreadable') : '';
+  const d = res.payload || {};
+  trendNames = d.names || [];
+  trendBands = d.bands || {};
+  applyArchiveState(d);
   trendRenderParamList();
 }
 
@@ -11658,8 +12039,18 @@ function trendRenderParamList() {
     return `<option value="${esc(n)}"${sel2}>${esc(n)}${band}</option>`;
   }).join('');
   const cnt = document.getElementById('trend-param-count');
-  if (cnt) cnt.textContent =
-    `${shown.length} of ${trendNames.length} archived · ● = ground limit band`;
+  if (!cnt) return;
+  if (!trendNames.length && trendNamesError) {
+    // "0 of 0 archived" is not a diagnosis. Say why the list is empty.
+    cnt.textContent = 'No parameter list — ' + trendNamesError;
+    cnt.style.color = 'var(--status-alarm)';
+    return;
+  }
+  cnt.style.color = 'var(--text-tertiary)';
+  cnt.textContent = trendNames.length
+    ? `${shown.length} of ${trendNames.length} archived · ● = ground limit band`
+    : 'The archive holds no parameters yet — it fills as telemetry arrives '
+      + 'during this session.';
 }
 
 function trendSelected() {
@@ -11684,39 +12075,64 @@ function trendWindow() {
 }
 
 async function trendLoad() {
-  const status = document.getElementById('trend-status');
   const { start, end } = trendWindow();
   trendMeta = { start, end };
   const names = trendSelected();
-  if (status) status.textContent = 'Querying archive…';
+  trendSetStatus('Querying archive…');
   trendSeries = {};
-  try {
-    await Promise.all(names.map(async name => {
-      const url = `/api/archive/parameters?name=${encodeURIComponent(name)}`
-                + `&start=${start}&end=${end}&limit=5000`;
-      const r = await fetch(url);
-      const d = await r.json();
-      trendSeries[name] = d.data || [];
-    }));
-    // Context series for the eclipse / contact arcs. They are ground-derived
-    // (TLE geometry), in no HK SID, and archived alongside the TM so that a
-    // plot of falling SoC can show WHY it is falling.
-    for (const ctx of ['orbit.eclipse', 'orbit.contact']) {
-      if (trendNames.indexOf(ctx) < 0) continue;
-      const r = await fetch(`/api/archive/parameters?name=${ctx}`
-                          + `&start=${start}&end=${end}&limit=5000`);
-      trendSeries[ctx] = (await r.json()).data || [];
-    }
-  } catch (e) {
-    if (status) status.textContent = 'Archive query failed: ' + e.message;
-    return;
+  const failures = [];          // per-parameter query errors, name + reason
+  let anyUnavailable = false;
+
+  await Promise.all(names.map(async name => {
+    const res = await trendArchiveFetch(
+      `/api/archive/parameters?name=${encodeURIComponent(name)}`
+      + `&start=${start}&end=${end}&limit=5000`);
+    trendSeries[name] = (res.payload && res.payload.data) || [];
+    if (res.unavailable) anyUnavailable = true;
+    if (!res.ok) failures.push(`${name}: ${res.error}`);
+    if (res.payload) applyArchiveState(res.payload);
+  }));
+  // Context series for the eclipse / contact arcs. They are ground-derived
+  // (TLE geometry), in no HK SID, and archived alongside the TM so that a
+  // plot of falling SoC can show WHY it is falling. A failure here must not
+  // blank the parameter plot — it only costs the shading.
+  for (const ctx of ['orbit.eclipse', 'orbit.contact']) {
+    if (trendNames.indexOf(ctx) < 0) continue;
+    const res = await trendArchiveFetch(
+      `/api/archive/parameters?name=${ctx}&start=${start}&end=${end}&limit=5000`);
+    trendSeries[ctx] = (res.payload && res.payload.data) || [];
   }
+
+  // Report the WORST thing that happened, most-specific first. The old code
+  // overwrote the archive-unavailable banner with a sample count, so a corrupt
+  // archive announced itself as "NO ARCHIVED DATA IN THIS WINDOW".
   const points = names.reduce((n, k) => n + (trendSeries[k] || []).length, 0);
-  if (status) {
-    status.textContent = points
-      ? `${points} sample(s) across ${names.length} parameter(s)`
-      : (names.length ? 'NO ARCHIVED DATA IN THIS WINDOW'
-                      : 'Select one or more parameters');
+  const archiveProblem = trendArchiveProblem();
+  if (anyUnavailable || (archiveProblem && archiveProblem.indexOf('UNAVAIL') === 0)) {
+    trendSetStatus(archiveProblem
+      || 'ARCHIVE UNAVAILABLE — the telemetry archive cannot be read', 'bad');
+  } else if (failures.length) {
+    trendSetStatus(
+      `ARCHIVE QUERY FAILED for ${failures.length} of ${names.length} `
+      + `parameter(s) — ${failures[0]}`
+      + (points ? ` (showing ${points} sample(s) that did return)` : ''), 'bad');
+  } else if (!names.length) {
+    trendSetStatus(trendNames.length
+      ? 'Select one or more parameters'
+      : 'No archived parameters to select — ' +
+        (trendNamesError || 'the archive is empty for this session'),
+      trendNames.length ? '' : 'warn');
+  } else if (!points) {
+    // The query SUCCEEDED and the window is empty. Say which window, so the
+    // operator can widen it, and flag the one file state that guarantees an
+    // empty answer no matter how wide the window gets.
+    trendSetStatus(
+      `Archive queried OK — no samples in ${trendWindowLabel()}`
+      + (archiveProblem ? ` · ${archiveProblem}` : ''),
+      archiveProblem ? 'warn' : '');
+  } else {
+    trendSetStatus(`${points} sample(s) across ${names.length} parameter(s) · `
+                   + trendWindowLabel());
   }
   trendDraw();
   trendLoadAnnotations();
@@ -11850,11 +12266,11 @@ async function trendLoadAnnotations() {
     document.getElementById('trend-alarm-tag').textContent = `${alarms.length} in window`;
     document.getElementById('trend-alarm-body').innerHTML = alarms.length
       ? alarms.slice().reverse().map(a => `<tr>
-          <td>${new Date(a.utc_epoch * 1000).toISOString().substr(11, 8)}</td>
+          ${tsTd(a.utc_epoch)}
           <td>${sevLabels[a.severity] || a.severity}</td>
           <td>${esc((a.subsystem || '').toUpperCase())}</td>
           <td>${esc(a.parameter || '')}</td>
-          <td>${esc(String(a.value ?? ''))}</td>
+          <td class="num-cell" title="${esc(String(a.value ?? '') + ' (value that tripped the limit)')}">${esc(String(a.value ?? ''))}</td>
           <td>${esc(a.source || '')}</td>
           <td>${a.acknowledged ? 'YES' : '<span style="color:var(--status-alarm);">NO</span>'}</td>
         </tr>`).join('')
@@ -11867,7 +12283,7 @@ async function trendLoadAnnotations() {
     const events = (await r.json()).events || [];
     document.getElementById('trend-event-body').innerHTML = events.length
       ? events.slice().reverse().map(ev => `<tr>
-          <td>${new Date(ev.utc_epoch * 1000).toISOString().substr(11, 8)}</td>
+          ${tsTd(ev.utc_epoch)}
           <td>${sevLabels[ev.severity] || ev.severity}</td>
           <td>0x${Number(ev.event_id).toString(16).toUpperCase().padStart(4, '0')}</td>
           <td>${esc(ev.description || '')}</td>
@@ -11899,6 +12315,39 @@ async function trendLoadAlarmTrend(alarms) {
   }
 }
 
+/**
+ * Render the archive's own health from any /api/archive/* answer.
+ *
+ * Every archive response carries `archive.status` / `archive.message` and an
+ * `archive_unavailable` flag. A corrupt or unopenable archive is a normal,
+ * expected state of the ground segment — it is shown as a labelled banner,
+ * never as a driver exception, and it never stops the rest of the page.
+ */
+function applyArchiveState(payload, statusElId) {
+  const meta = (payload && payload.archive) || {};
+  const down = !!(payload && payload.archive_unavailable) ||
+               (meta.available === false);
+  const banner = document.getElementById('archive-banner');
+  if (banner) {
+    const show = down || meta.status === 'legacy' || meta.status === 'new';
+    banner.style.display = show ? '' : 'none';
+    banner.textContent = show ? ('TM ARCHIVE — ' + (meta.message || '')) : '';
+    banner.style.color = down ? 'var(--status-alarm)'
+                       : (meta.status === 'legacy' ? 'var(--status-warning)'
+                                                   : 'var(--text-tertiary)');
+    banner.style.borderColor = down ? 'rgba(255,107,107,.5)'
+                                    : 'var(--surface-tertiary)';
+  }
+  if (statusElId) {
+    const el = document.getElementById(statusElId);
+    if (el && down) {
+      el.textContent = 'ARCHIVE UNAVAILABLE — ' + (meta.message || '');
+      el.style.color = 'var(--status-alarm)';
+    }
+  }
+  return down;
+}
+
 async function trendLoadCommands() {
   const { start, end } = trendMeta;
   try {
@@ -11909,12 +12358,12 @@ async function trendLoadCommands() {
                          : 'var(--text-secondary)';
     document.getElementById('trend-cmd-body').innerHTML = cmds.length
       ? cmds.slice().reverse().map(c => `<tr>
-          <td>${new Date(c.utc_epoch * 1000).toISOString().substr(11, 8)}</td>
+          ${tsTd(c.utc_epoch)}
           <td>${c.seq}</td><td>${esc(c.name || '')}</td>
           <td>S${c.service}.${c.subtype}</td>
           <td>${esc(c.position || '')}</td>
           <td style="color:${stateColour(c.state)};">${esc(c.state || '')}</td>
-          <td style="font-size:9px;color:var(--text-tertiary);">${esc((c.data_hex || '').substr(0, 24))}</td>
+          ${hexCell(c.data_hex, 24)}
         </tr>`).join('')
       : '<tr><td colspan="7" style="color:var(--text-tertiary);">No archived commands in this window</td></tr>';
   } catch (e) { /* leave the table as-is */ }
@@ -12073,9 +12522,11 @@ async function refreshPowerBudget() {
     const total = d.total_subsystem_power || 0;
     document.getElementById('pwrb-breakdown').innerHTML = rows.length
       ? rows.sort((a, b) => b[1] - a[1]).map(([k, v]) => `<tr>
-          <td>${esc(k.toUpperCase())}</td><td>${v}</td>
-          <td>${total ? ((v / total) * 100).toFixed(1) + ' %' : '--'}</td></tr>`).join('')
-        + `<tr><td><b>TOTAL</b></td><td><b>${total}</b></td><td></td></tr>`
+          <td>${esc(k.toUpperCase())}</td>${numTd(v, 1, '', 'W')}
+          ${numTd(total ? (v / total) * 100 : null, 1, '%')}</tr>`).join('')
+        + `<tr><td><b>TOTAL</b></td>`
+        + `<td class="num-cell" title="${esc(fmtRaw(total, 'W'))}"><b>${esc(fmtUnit(total, 1, ''))}</b></td>`
+        + `<td></td></tr>`
       : '<tr><td colspan="3" style="color:var(--text-tertiary);">'
         + 'NO DATA — per-subsystem power (0x013C-0x0141) is in HK SID 8; enable it with TC(3,5)</td></tr>';
   } catch (e) { /* panel keeps its previous content */ }
@@ -12384,8 +12835,12 @@ async function requestTmDump(subsystem, storeOverride) {
       body: JSON.stringify({ store_id: storeId, subsystem })
     });
     const result = await res.json();
+    // A corrupt ground archive is not a command failure and must not be
+    // reported as one — the S15.9 telecommand still went to the spacecraft.
+    const archiveDown = applyArchiveState(
+      result, subsystem + '-dump-status');
     if (result.status === 'sent' || result.dump_key) {
-      if (statusEl) statusEl.textContent = 'Dump requested, fetching data...';
+      if (statusEl && !archiveDown) statusEl.textContent = 'Dump requested, fetching data...';
       // Fetch dump data after small delay
       setTimeout(() => fetchDumpData(result.dump_key || `${subsystem}_${storeId}`, subsystem), 1000);
     } else {

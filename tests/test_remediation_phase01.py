@@ -137,11 +137,14 @@ def test_obc_heater_command_persists_across_ticks(engine):
 # ─────────────────────────── #26: MAG_SELECT picks A/B ──────────────────────
 
 def test_mag_select_via_s8_func7(engine):
+    """2026-08-19: MAG_SELECT is retired -- EO-Sat-1 flies ONE magnetometer
+    (owner ruling, no redundancy). The handler is kept so the command gets an
+    honest 0x0007 refusal instead of vanishing into an unknown-func error."""
+    result = engine._dispatcher._route_aocs_cmd(7, bytes([1]))
+    ok = result.get("success") if isinstance(result, dict) else result
+    assert not ok
     aocs = engine.subsystems["aocs"]
-    engine._dispatcher._route_aocs_cmd(7, bytes([1]))  # unit 1 -> Mag B
-    assert aocs._state.mag_select == "B"
-    engine._dispatcher._route_aocs_cmd(7, bytes([0]))  # unit 0 -> Mag A
-    assert aocs._state.mag_select == "A"
+    assert not hasattr(aocs._state, "mag_select")
 
 
 # ─────────────────────────── #28: uplink loss kills the downlink lock ────────

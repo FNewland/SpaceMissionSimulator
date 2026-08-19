@@ -115,12 +115,9 @@ CASES = [
     ("aocs", "mag_failure", {},
      lambda m: m._state.mag_failed is True,
      lambda m: m._state.mag_failed is False),
-    ("aocs", "mag_a_fail", {},
-     lambda m: m._state.mag_a_failed is True,
-     lambda m: m._state.mag_a_failed is False),
-    ("aocs", "mag_b_fail", {},
-     lambda m: m._state.mag_b_failed is True,
-     lambda m: m._state.mag_b_failed is False),
+    # mag_a_fail / mag_b_fail retired 2026-08-19: EO-Sat-1 flies a SINGLE
+    # magnetometer (owner ruling -- no MAG redundancy; like the gyros, no
+    # spare). The one honest injection is mag_failure above.
     ("aocs", "mtq_failure", {"axis": "x"},
      lambda m: m._state.mtq_x_failed is True,
      lambda m: m._state.mtq_x_failed is False),

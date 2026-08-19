@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SMO Instructor — EOSAT-1</title>
+<!-- ==========================================================================
+  SMO INSTRUCTOR — MODERN CONSOLE (design_2026-08 plan §2.4)
+
+  This page is SIM-SIDE BY DEFINITION: it may (and does) show simulation
+  speed, scenarios, failure injection and onboard-clock ground truth. The
+  labelled INSTRUCTOR accent strip at the top exists so a projected
+  instructor screen is never mistaken for the operator console.
+
+  Functional parity source: ../index.html (CLASSIC — frozen, do not edit)
+  as inventoried in Report 1 §1C. Intentional deviations from classic:
+    - OVERRIDE PASSES appears ONCE (interventions column); the classic
+      duplicate in the orbit bar is removed by design.
+    - Every instructor command is sent ONCE via POST /api/command (the
+      synchronous error surface); the WebSocket is INBOUND-ONLY. The classic
+      page double-sent via WS+POST.
+    - Event-log timestamps are SIM time (classic used the wall clock —
+      inconsistent with everything else on the page).
+    - NEW: DEBRIEF panel wiring GET /api/scenario/debrief (previously an
+      endpoint with zero UI clients).
+    - fonts.css / static/vendor dependency dropped entirely — system font
+      stack from the shared design system.
+
+  Assets: /static/shared/* is the frozen Agent-1 design-system contract.
+  Page logic: /static/modern/instructor.js (ES module).
+========================================================================== -->
+<link rel="stylesheet" href="/static/shared/design-system.css?v=1">
+<style>
+/* Page-level layout only — component look & feel comes from the design
+   system. No font-size below the 12 px floor (B1). */
+html,body{ height:100%; }
+body{ display:flex; flex-direction:column; overflow:hidden; }
+
+/* ── header ─────────────────────────────────────────────────────────── */
+header{ flex:0 0 auto; background:var(--s1); border-bottom:1px solid var(--line);
+  display:flex; align-items:center; gap:16px; padding:8px 16px; flex-wrap:wrap; }
+.mark b{ font-size:15px; letter-spacing:.4px; display:block; line-height:1.1; }
+.mark span{ font-size:12px; color:var(--tx3); letter-spacing:1.4px; }
+.clk label{ display:block; font-size:12px; letter-spacing:1.2px; color:var(--tx3);
+  text-transform:uppercase; }
+.clk b{ font-family:var(--mono); font-size:19px; font-weight:600; }
+.grow{ flex:1; }
+.hgroup{ display:flex; align-items:center; gap:8px; }
+/* speed control group — ONE stepper component (plan §2.4): the speed
+   buttons and FREEZE form a single segmented control. */
+.speed-group{ display:inline-flex; border:1px solid var(--line-2);
+  border-radius:var(--r); overflow:hidden; }
+.speed-group button{ padding:6px 10px; font-family:var(--mono); font-size:12.5px;
+  color:var(--tx2); border-right:1px solid var(--line-2); }
+.speed-group button:last-child{ border-right:none; }
+.speed-group button:hover{ background:var(--s2); color:var(--tx); }
+.speed-group button.on{ background:var(--s3); color:var(--tx); font-weight:700;
+  box-shadow:inset 0 -2px 0 var(--info); }
+.speed-group button.freeze.on{ box-shadow:inset 0 -2px 0 var(--alarm);
+  color:var(--alarm); }
+
+/* ── shell: three columns + collapsible bottom log ──────────────────── */
+main{ flex:1; display:grid; min-height:0;
+  grid-template-columns:300px minmax(0,1fr) 340px; gap:10px; padding:10px; }
+.col{ display:flex; flex-direction:column; gap:10px; min-height:0; overflow-y:auto; }
+.col-head{ font-size:12px; font-weight:700; letter-spacing:1.6px;
+  text-transform:uppercase; color:var(--tx3); padding:2px 2px 0; }
+
+/* ── truth dashboard ────────────────────────────────────────────────── */
+.sub-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(215px,1fr));
+  gap:10px; }
+.prow{ display:flex; justify-content:space-between; align-items:baseline;
+  gap:8px; padding:2px 0; font-size:13px; }
+.prow .pl{ color:var(--tx3); font-size:12px; }
+.prow .pv{ font-family:var(--mono); font-variant-numeric:tabular-nums;
+  color:var(--tx); text-align:right; }
+.prow .pv.warn{ color:var(--warn); font-weight:600; }
+.prow .pv.alarm{ color:var(--alarm); font-weight:700; }
+.prow .pv.good{ color:var(--tx); }
+.mini-bar{ display:inline-block; width:52px; height:7px; background:var(--s3);
+  border:1px solid var(--line-2); border-radius:3px; overflow:hidden;
+  vertical-align:middle; margin-right:6px; }
+.mini-bar i{ display:block; height:100%; background:var(--tx3); }
+.mini-bar.warn i{ background:var(--warn); }
+.mini-bar.alarm i{ background:var(--alarm); }
+.note{ font-size:12px; color:var(--tx3); margin-top:4px; }
+
+.orbit-bar{ display:flex; align-items:center; gap:18px; flex-wrap:wrap;
+  padding:8px 14px; }
+.orbit-bar .op label{ display:block; font-size:12px; letter-spacing:1px;
+  color:var(--tx3); text-transform:uppercase; }
+.orbit-bar .op b{ font-family:var(--mono); font-size:14px; font-weight:600; }
+
+.launcher-grid{ display:flex; flex-wrap:wrap; gap:6px; }
+.launcher-grid a{ display:inline-flex; align-items:center; gap:6px;
+  border:1px solid var(--line-2); border-radius:var(--r); padding:3px 9px;
+  font-family:var(--mono); font-size:12px; color:var(--tx2);
+  text-decoration:none; }
+.launcher-grid a:hover{ background:var(--s2); color:var(--tx);
+  text-decoration:none; }
+.launcher-grid a .ct{ color:var(--tx3); font-size:12px; }
+
+/* full snapshot browser (?sub= deep-dive) */
+.snap-tabs{ display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px; }
+.snap-tab{ border:1px solid var(--line-2); border-radius:var(--r);
+  padding:3px 9px; font-family:var(--mono); font-size:12px; color:var(--tx2);
+  cursor:pointer; }
+.snap-tab:hover{ background:var(--s2); }
+.snap-tab.active{ background:var(--s3); color:var(--tx);
+  box-shadow:inset 0 -2px 0 var(--info); }
+.snap-tab .count{ color:var(--tx3); margin-left:5px; }
+.snap-body{ display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr));
+  gap:2px 14px; max-height:70vh; overflow-y:auto; }
+.param-cell{ display:flex; justify-content:space-between; gap:8px;
+  padding:2px 4px; border-bottom:1px solid var(--line); font-size:12.5px; }
+.param-cell .pkey{ font-family:var(--mono); color:var(--tx3); }
+.param-cell .pval{ font-family:var(--mono); color:var(--tx);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:55%; }
+#raw-snapshot-container{ display:none; margin-top:8px; max-height:300px;
+  overflow-y:auto; background:var(--s2); border:1px solid var(--line);
+  border-radius:var(--r); padding:8px;
+  font-family:var(--mono); font-size:12px; color:var(--tx2); }
+#raw-snapshot-container pre{ margin:0; white-space:pre-wrap; word-break:break-all; }
+#param-search-results{ display:none; font-size:12.5px; margin:6px 0; }
+#param-search-results .hit{ display:flex; justify-content:space-between; gap:8px;
+  padding:3px 6px; border-bottom:1px solid var(--line); font-family:var(--mono); }
+#param-search-results .hit .k{ color:var(--tx2); }
+
+/* ── forms (interventions) ──────────────────────────────────────────── */
+.form-group{ margin-bottom:9px; }
+.form-label{ display:block; font-size:12px; letter-spacing:.6px;
+  color:var(--tx3); margin-bottom:3px; text-transform:uppercase; }
+.form-input,.form-select{ width:100%; background:var(--s2); color:var(--tx);
+  border:1px solid var(--line-2); border-radius:var(--r); padding:5px 8px;
+  font-size:13px; }
+.form-multi{ height:auto; }
+.form-unit{ color:var(--tx3); text-transform:none; }
+.form-hint{ display:block; font-size:12px; color:var(--tx3); margin-top:2px;
+  text-transform:none; letter-spacing:0; }
+.checkbox-label{ display:flex; align-items:center; gap:7px; font-size:13px;
+  color:var(--tx); }
+.radio-group{ display:flex; gap:14px; }
+.radio-label{ display:flex; align-items:center; gap:5px; font-size:13px; }
+.fail-effect{ font-size:12.5px; color:var(--tx2); background:var(--s2);
+  border:1px solid var(--line); border-radius:var(--r); padding:6px 8px;
+  margin-bottom:9px; min-height:18px; }
+/* server-rejection error box: the REASON the engine refused an injection */
+.fail-error{ display:none; font-size:12.5px; color:var(--alarm);
+  background:var(--alarm-wash); border:1px solid var(--alarm);
+  border-radius:var(--r); padding:6px 8px; margin-bottom:9px; }
+.wfull{ width:100%; }
+.failure-item{ border:1px solid var(--line); border-left:3px solid var(--alarm);
+  border-radius:var(--r); padding:6px 8px; margin-bottom:6px; font-size:12.5px; }
+.failure-item.bp{ border-left-color:var(--info); }
+.failure-item .fh{ display:flex; justify-content:space-between;
+  align-items:center; gap:8px; }
+.failure-item .fname{ font-family:var(--mono); color:var(--tx); }
+.failure-item .fmeta{ display:flex; justify-content:space-between;
+  color:var(--tx3); font-size:12px; margin-top:3px; }
+.no-data{ color:var(--tx3); font-size:12.5px; padding:6px 2px; }
+
+/* scenario list */
+.scenario-item{ border:1px solid var(--line); border-radius:var(--r);
+  padding:6px 9px; margin-bottom:5px; cursor:pointer; font-size:13px; }
+.scenario-item:hover{ background:var(--s2); }
+.scenario-item.selected{ border-color:var(--info);
+  box-shadow:inset 2px 0 0 var(--info); }
+.scenario-item.active{ border-color:var(--warn); }
+.scenario-item .sd{ display:flex; justify-content:space-between;
+  color:var(--tx3); font-size:12px; margin-top:2px; }
+.progress-track{ height:8px; background:var(--s3); border:1px solid var(--line-2);
+  border-radius:4px; overflow:hidden; margin-top:4px; }
+.progress-fill{ height:100%; width:0%; background:var(--info); }
+.progress-label{ display:flex; justify-content:space-between;
+  font-family:var(--mono); font-size:12px; color:var(--tx2); }
+
+/* debrief */
+#debrief-body table{ width:100%; border-collapse:collapse; font-size:12.5px; }
+#debrief-body td{ padding:2px 4px; border-bottom:1px solid var(--line); }
+#debrief-body td:first-child{ color:var(--tx3); }
+#debrief-body td:last-child{ font-family:var(--mono); text-align:right; }
+
+/* ── bottom log (collapsible) ───────────────────────────────────────── */
+#log-panel{ flex:0 0 auto; border-top:1px solid var(--line);
+  background:var(--s1); display:flex; flex-direction:column; }
+#log-panel .log-head{ display:flex; align-items:center; gap:10px;
+  padding:4px 14px; font-size:12px; font-weight:700; letter-spacing:1.4px;
+  text-transform:uppercase; color:var(--tx3); }
+#event-log{ height:150px; overflow-y:auto; }
+#log-panel.collapsed #event-log{ display:none; }
+
+/* connection chip + toast */
+#toast{ position:fixed; right:16px; bottom:16px; z-index:50;
+  background:var(--s3); border:1px solid var(--line-2); border-radius:var(--r);
+  padding:8px 14px; font-size:13px; opacity:0; pointer-events:none;
+  transition:opacity .2s; }
+#toast.show{ opacity:1; }
+#toast.error{ border-color:var(--alarm); color:var(--alarm); }
+#toast.success{ border-color:var(--line-2); color:var(--tx); }
+
+/* ── ?sub= subpage deep-dive mode (preserved exactly from classic):
+     hides header, side panels, log, subsystem grid, orbit bar, launcher and
+     search; renders only the requested snapshot tab full-width. */
+body.subpage header, body.subpage #left-col, body.subpage #right-col,
+body.subpage #log-panel, body.subpage .sub-grid, body.subpage .orbit-bar,
+body.subpage #launcher-card, body.subpage #search-block,
+body.subpage #centre-head, body.subpage #conn-chip{ display:none !important; }
+body.subpage main{ grid-template-columns:1fr; }
+#full-snapshot-container{ display:none; }
+body.subpage #full-snapshot-container{ display:block; }
+.subpage-back{ display:inline-block; margin:0 0 8px; font-family:var(--mono);
+  font-size:12.5px; }
+
+@media (max-width:1200px){ main{ grid-template-columns:260px 1fr 300px; } }
+</style>
+</head>
+<body>
+<a class="ds-skip" href="#centre-col">Skip to truth dashboard</a>
+
+<!-- INSTRUCTOR accent strip: a projected instructor screen must never be
+     mistaken for the operator console (plan §2.4). -->
+<div class="ds-instructor-strip">Instructor console — simulation ground truth · not an operator display</div>
+
+<header>
+  <div class="mark"><b>SMO INSTRUCTOR</b><span>EOSAT-1 SIMULATION</span></div>
+  <div class="clk"><label>Sim time</label><b class="num" id="sim-time">—</b></div>
+  <div class="hgroup" role="group" aria-label="Simulation speed">
+    <span class="speed-group" id="speed-group">
+      <button data-speed="0.5">0.5×</button>
+      <button data-speed="1" class="on">1×</button>
+      <button data-speed="2">2×</button>
+      <button data-speed="5">5×</button>
+      <button data-speed="10">10×</button>
+      <button class="freeze" id="freeze-btn">FREEZE</button>
+    </span>
+  </div>
+  <span class="ds-badge" id="sc-mode-badge" title="Spacecraft mode (simulation truth)">SC —</span>
+  <span id="scenario-chip"></span>
+  <div class="grow"></div>
+  <span class="ds-badge" id="param-completeness"
+        title="Snapshot fields currently rendered/populated">—/—</span>
+  <a class="ds-btn" id="config-tab-link" href="/config" target="_blank" rel="noopener"
+     title="Mission configuration editor — read-write (instructor only)">CONFIG</a>
+  <span id="conn-chip"></span>
+</header>
+
+<main>
+  <!-- ══ LEFT — SCENARIOS & SESSION ══ -->
+  <div class="col" id="left-col">
+    <div class="col-head">Scenarios &amp; session</div>
+
+    <section class="ds-card">
+      <h2>Scenarios <span class="r"><button class="ds-btn" id="refresh-scenarios"
+        title="Refresh scenario list">REFRESH</button></span></h2>
+      <div class="bd">
+        <div id="scenario-list"><div class="no-data">Loading scenarios…</div></div>
+        <div id="scenario-detail" hidden>
+          <div class="note" id="scenario-briefing"></div>
+          <div class="hgroup" style="margin-top:8px;">
+            <button class="ds-btn primary" id="btn-start-scenario">START</button>
+            <button class="ds-btn danger" id="btn-stop-scenario" disabled>STOP</button>
+          </div>
+        </div>
+        <div id="scenario-progress" hidden>
+          <div class="progress-label">
+            <span id="progress-elapsed" class="num">00:00</span>
+            <span id="progress-remaining" class="num">--:--</span>
+          </div>
+          <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+          <div class="note">Progress in SIM time — freezes with the sim.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- NEW (plan §2.4): debrief panel wiring GET /api/scenario/debrief,
+         previously an endpoint with no UI client. Shown after STOP (or
+         auto-stop on duration_s) or on demand. -->
+    <section class="ds-card" id="debrief-panel">
+      <h2>Debrief <span class="r"><button class="ds-btn" id="btn-fetch-debrief"
+        title="Fetch the debrief for the most recently finished scenario">FETCH</button></span></h2>
+      <div class="bd" id="debrief-body">
+        <div class="no-data">No debrief yet — appears when a scenario ends
+        (STOP or its duration elapsing).</div>
+      </div>
+    </section>
+
+    <section class="ds-card">
+      <h2>Breakpoints</h2>
+      <div class="bd">
+        <div class="hgroup" style="margin-bottom:8px;">
+          <input type="text" class="form-input" id="breakpoint-name"
+                 placeholder="Breakpoint name…" aria-label="Breakpoint name">
+          <button class="ds-btn primary" id="btn-save-bp">SAVE</button>
+        </div>
+        <div id="breakpoints-list"><div class="no-data">No breakpoints saved</div></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ══ CENTRE — TRUTH DASHBOARD ══ -->
+  <div class="col" id="centre-col">
+    <div class="col-head" id="centre-head">Truth dashboard — simulation ground truth (bypasses RF link gating)</div>
+
+    <div class="sub-grid">
+      <section class="ds-card" id="card-eps"><h2>EPS <span class="r" id="eps-mode">—</span></h2>
+        <div class="bd">
+          <div class="prow"><span class="pl">Battery SoC</span><span class="pv"><span class="mini-bar" id="eps-soc-bar"><i></i></span><span id="eps-soc">—</span> %</span></div>
+          <div class="prow"><span class="pl">Bus voltage</span><span class="pv" id="eps-bus-v">— V</span></div>
+          <div class="prow"><span class="pl">Bat voltage</span><span class="pv" id="eps-bat-v">— V</span></div>
+          <div class="prow"><span class="pl">Bat temp</span><span class="pv" id="eps-bat-temp">— °C</span></div>
+          <div class="prow"><span class="pl">Power gen</span><span class="pv" id="eps-pgen">— W</span></div>
+          <div class="prow"><span class="pl">Power cons</span><span class="pv" id="eps-pcons">— W</span></div>
+          <div class="prow"><span class="pl">SA-A / SA-B</span><span class="pv" id="eps-sa">— / — A</span></div>
+        </div>
+      </section>
+      <section class="ds-card" id="card-aocs"><h2>AOCS <span class="r" id="aocs-mode">—</span></h2>
+        <div class="bd">
+          <div class="prow"><span class="pl">Att error</span><span class="pv" id="aocs-atterr">— °</span></div>
+          <div class="prow"><span class="pl">Rate roll</span><span class="pv" id="aocs-rr">— °/s</span></div>
+          <div class="prow"><span class="pl">Rate pitch</span><span class="pv" id="aocs-rp">— °/s</span></div>
+          <div class="prow"><span class="pl">Rate yaw</span><span class="pv" id="aocs-ry">— °/s</span></div>
+          <div class="prow"><span class="pl">RW 1 / 2</span><span class="pv" id="aocs-rw12">— / — rpm</span></div>
+          <div class="prow"><span class="pl">RW 3 / 4</span><span class="pv" id="aocs-rw34">— / — rpm</span></div>
+        </div>
+      </section>
+      <section class="ds-card" id="card-tcs"><h2>TCS <span class="r" id="tcs-mode">THERMAL</span></h2>
+        <div class="bd">
+          <div class="prow"><span class="pl">OBC temp</span><span class="pv" id="tcs-obc">— °C</span></div>
+          <div class="prow"><span class="pl">Bat temp</span><span class="pv" id="tcs-bat">— °C</span></div>
+          <div class="prow"><span class="pl">FPA temp</span><span class="pv" id="tcs-fpa">— °C</span></div>
+          <div class="prow"><span class="pl">Htr bat</span><span class="pv" id="tcs-htr-bat">—</span></div>
+          <div class="prow"><span class="pl">Htr OBC</span><span class="pv" id="tcs-htr-obc">—</span></div>
+          <div class="prow"><span class="pl">Cooler FPA</span><span class="pv" id="tcs-cooler">—</span></div>
+        </div>
+      </section>
+      <section class="ds-card" id="card-obdh"><h2>OBDH <span class="r" id="obdh-mode">—</span></h2>
+        <div class="bd">
+          <div class="prow"><span class="pl">CPU load</span><span class="pv"><span class="mini-bar" id="obdh-cpu-bar"><i></i></span><span id="obdh-cpu">—</span> %</span></div>
+          <div class="prow"><span class="pl">Memory</span><span class="pv"><span class="mini-bar" id="obdh-mem-bar"><i></i></span><span id="obdh-mem">—</span> %</span></div>
+          <div class="prow"><span class="pl">Reboots</span><span class="pv" id="obdh-reboots">—</span></div>
+        </div>
+      </section>
+      <!-- ONBOARD CLOCK — instructor ground truth (TIME_ARCHITECTURE.md
+           Part B). The true onboard-vs-sim offset is NOT downlinked; it is
+           shown here only, fed from /api/instructor/snapshot -> clock_truth. -->
+      <section class="ds-card" id="card-clock"><h2>Onboard clock truth <span class="r" id="clock-ref">—</span></h2>
+        <div class="bd">
+          <div class="prow"><span class="pl">SIM UTC</span><span class="pv" id="clock-sim-utc">—</span></div>
+          <div class="prow"><span class="pl">OBC UTC</span><span class="pv" id="clock-obc-utc">—</span></div>
+          <div class="prow"><span class="pl">Since sync</span><span class="pv" id="clock-since-sync">—</span></div>
+          <div class="prow"><span class="pl">Drift (this run)</span><span class="pv" id="clock-drift">— ppm</span></div>
+          <div class="prow" style="border-top:1px solid var(--line);margin-top:4px;padding-top:4px;">
+            <span class="pl" title="Ground truth — instructor only, never downlinked">TRUE OFFSET</span>
+            <span class="pv" id="clock-offset">— s</span>
+          </div>
+          <div class="note">OBC − SIM. Instructor only: not downlinked, not in telemetry.</div>
+        </div>
+      </section>
+      <section class="ds-card" id="card-ttc"><h2>TT&amp;C <span class="r" id="ttc-mode">—</span></h2>
+        <div class="bd">
+          <div class="prow"><span class="pl">Link</span><span class="pv" id="ttc-link">—</span></div>
+          <div class="prow"><span class="pl">RSSI</span><span class="pv" id="ttc-rssi">— dBm</span></div>
+          <div class="prow"><span class="pl">Margin</span><span class="pv" id="ttc-margin">— dB</span></div>
+          <div class="prow"><span class="pl">Range</span><span class="pv" id="ttc-range">— km</span></div>
+          <div class="prow"><span class="pl">Elevation</span><span class="pv" id="ttc-elev">— °</span></div>
+        </div>
+      </section>
+      <section class="ds-card" id="card-payload"><h2>Payload <span class="r" id="payload-mode">—</span></h2>
+        <div class="bd">
+          <div class="prow"><span class="pl">FPA temp</span><span class="pv" id="pl-fpa">— °C</span></div>
+          <div class="prow"><span class="pl">Storage</span><span class="pv"><span class="mini-bar" id="pl-store-bar"><i></i></span><span id="pl-store">—</span> %</span></div>
+          <div class="prow"><span class="pl">Images</span><span class="pv" id="pl-images">—</span></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- orbit bar: lat/lon/alt/eclipse/contact. The classic OVERRIDE PASSES
+         duplicate that lived here is intentionally removed — the one copy is
+         in the INTERVENTIONS column. -->
+    <section class="ds-card"><div class="orbit-bar">
+      <span class="op"><label>Lat</label><b id="orb-lat">—</b></span>
+      <span class="op"><label>Lon</label><b id="orb-lon">—</b></span>
+      <span class="op"><label>Alt</label><b id="orb-alt">— km</b></span>
+      <span class="op" id="orb-eclipse"></span>
+      <span class="op" id="orb-contact"></span>
+    </div></section>
+
+    <!-- subsystem deep-dive launcher (?sub= links, propagating ?ui=) -->
+    <section class="ds-card" id="launcher-card">
+      <h2>Subsystem deep-dive pages</h2>
+      <div class="bd"><div id="subsystem-launcher-buttons" class="launcher-grid">
+        <span class="no-data">Loading subsystem list…</span>
+      </div></div>
+    </section>
+
+    <div id="search-block">
+      <div class="hgroup" style="margin-bottom:6px;">
+        <input type="text" class="form-input" id="param-search"
+               placeholder="Search parameters (name or hex ID 0x0143)…"
+               aria-label="Parameter search">
+        <button class="ds-btn" id="btn-clear-search" title="Clear search">CLEAR</button>
+      </div>
+      <div id="param-search-results"></div>
+      <button class="ds-btn wfull" id="btn-toggle-raw"
+              title="Show/hide the raw JSON of /api/instructor/snapshot">SHOW RAW SNAPSHOT</button>
+      <div id="raw-snapshot-container"><pre id="raw-snapshot-json">Loading…</pre></div>
+    </div>
+
+    <!-- full god-mode snapshot browser — only visible on ?sub= subpages -->
+    <section class="ds-card" id="full-snapshot-container">
+      <h2 id="full-snapshot-title">Full simulator state</h2>
+      <div class="bd">
+        <div id="full-snapshot-tabs" class="snap-tabs"></div>
+        <div id="full-snapshot-body" class="snap-body"></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ══ RIGHT — INTERVENTIONS ══ -->
+  <div class="col" id="right-col">
+    <div class="col-head">Interventions</div>
+
+    <!-- Typed failure-injection form — every control GENERATED from
+         GET /api/failure-catalog (bool→checkbox, enum→select/multi,
+         number→min/max/step with engineering unit). Do NOT hand-write a
+         control for a new failure: add a ParamSpec to the model's
+         FAILURE_SPECS and it appears here, validated on both sides. -->
+    <section class="ds-card">
+      <h2>Failure injection</h2>
+      <div class="bd">
+        <div class="form-group">
+          <label class="form-label" for="fail-subsystem">Subsystem</label>
+          <select class="form-select" id="fail-subsystem"></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="fail-type">Failure type</label>
+          <select class="form-select" id="fail-type"></select>
+        </div>
+        <div class="fail-effect" id="fail-effect"></div>
+        <div id="fail-params"></div>
+        <div class="form-group">
+          <span class="form-label">Onset</span>
+          <div class="radio-group">
+            <label class="radio-label"><input type="radio" name="fail-onset" value="step" checked> Step</label>
+            <label class="radio-label"><input type="radio" name="fail-onset" value="gradual"> Gradual</label>
+            <label class="radio-label"><input type="radio" name="fail-onset" value="intermittent"> Intermittent</label>
+          </div>
+        </div>
+        <div class="form-group" id="onset-duration-group">
+          <label class="form-label" for="fail-onset-dur">Onset duration (s)</label>
+          <input type="number" class="form-input" id="fail-onset-dur" value="30" min="1" max="3600">
+        </div>
+        <div class="fail-error" id="fail-error" role="alert"></div>
+        <button class="ds-btn danger wfull" id="btn-inject">INJECT FAILURE</button>
+      </div>
+    </section>
+
+    <section class="ds-card">
+      <h2>Active failures</h2>
+      <div class="bd">
+        <div id="failures-list"><div class="no-data">No active failures</div></div>
+        <button class="ds-btn wfull" id="btn-clear-all" style="margin-top:6px;">CLEAR ALL FAILURES</button>
+      </div>
+    </section>
+
+    <section class="ds-card">
+      <h2>Mission phase &amp; separation</h2>
+      <div class="bd">
+        <div class="form-group">
+          <label class="form-label" for="phase-select">Spacecraft phase</label>
+          <select class="form-select" id="phase-select">
+            <option value="0">0 — PRE_SEPARATION</option>
+            <option value="1">1 — SEPARATION_TIMER</option>
+            <option value="2">2 — INITIAL_POWER_ON</option>
+            <option value="3">3 — BOOTLOADER_OPS</option>
+            <option value="4">4 — LEOP</option>
+            <option value="5">5 — COMMISSIONING</option>
+            <option value="6" selected>6 — NOMINAL</option>
+          </select>
+        </div>
+        <button class="ds-btn wfull" id="btn-set-phase" style="margin-bottom:6px;">SET PHASE</button>
+        <button class="ds-btn danger wfull" id="btn-start-separation">START SEPARATION</button>
+      </div>
+    </section>
+
+    <section class="ds-card">
+      <h2>Overrides</h2>
+      <div class="bd">
+        <!-- Battery SoC override: the instructor editing the world to keep a
+             lesson running — logged as an INSTRUCTOR OVERRIDE, never physics. -->
+        <div class="form-group">
+          <label class="form-label" for="soc-override-input">Battery SoC %</label>
+          <div class="hgroup">
+            <input type="number" class="form-input" id="soc-override-input"
+                   min="0" max="100" step="1" value="80">
+            <button class="ds-btn" id="btn-set-soc"
+                    title="Set battery SoC now (0–100 %) — logged as an instructor override">SET&nbsp;SoC</button>
+          </div>
+        </div>
+        <!-- The ONE copy of OVERRIDE PASSES (classic had two). -->
+        <!-- 2026-08c item 6 semantics: the override forces GEOMETRIC
+             visibility only — "pretend a station is in view". It substitutes
+             for the contact leg of the downlink gate and forces the uplink,
+             but it can NOT resurrect a transmitter that is off: with the
+             S-band PA off (or the ttc_tx line cold) there is still no TM and
+             the radio shows the carrier down, override or not. -->
+        <button class="ds-btn wfull" id="btn-override"
+                title="Force GEOMETRIC visibility (as if a station were in view): uplink forced, downlink contact leg satisfied. Does NOT power a dead transmitter — PA off / ttc_tx line off still means no TM carrier.">OVERRIDE PASSES</button>
+        <div class="ds-help" style="font-size:11px;opacity:.75;margin-top:4px">
+          Override = station-in-view geometry only. A transmitter the crew has
+          switched OFF stays silent — PA / ttc_tx line state still gates the
+          downlink.</div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<!-- ══ collapsible bottom log — timestamps in SIM time ══ -->
+<div id="log-panel">
+  <div class="log-head">
+    <button class="ds-btn" id="btn-log-toggle" aria-expanded="true"
+            title="Collapse/expand the event log">▾ EVENT LOG</button>
+    <span class="note">timestamps in SIM time · 200-entry cap</span>
+    <div class="grow"></div>
+    <button class="ds-btn" id="clear-log" title="Clear log">CLEAR</button>
+  </div>
+  <div id="event-log" role="log" aria-live="polite"></div>
+</div>
+
+<div id="toast" role="status"></div>
+
+<script type="module" src="/static/modern/instructor.js?v=1"></script>
+</body>
+</html>

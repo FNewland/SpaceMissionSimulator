@@ -18,7 +18,7 @@ the single inventory of what the mission configuration is allowed to contain.
 """
 from __future__ import annotations
 from typing import Any, ClassVar, Optional
-from pydantic import (BaseModel, ConfigDict, Field, field_validator,
+from pydantic import (AliasChoices, BaseModel, ConfigDict, Field, field_validator,
                       model_validator)
 
 
@@ -56,6 +56,17 @@ class MissionConfig(StrictModel):
     # this config field > built-in default ("sim").
     time_source: str = Field(default="sim", description='Ground/Planner clock source: "sim" (follow simulator sim_time/speed) or "real" (wall-clock UTC).')
     sim_state_url: str | None = Field(default=None, description="URL of the simulator state endpoint to poll for sim_time/speed when time_source=sim. Overridden by SMO_SIM_STATE_URL env. Defaults to http://<connect_host>:8080/api/state.")
+    # ── UI generation switch (design_2026-08 plan §1.2) ──
+    # Which console every server's `/` serves: the classic single-file pages
+    # or the modern design-system pages. Precedence mirrors time_source:
+    # CLI --ui > SMO_UI env > this field > built-in default. A per-request
+    # `?ui=` query (and the /classic and /modern routes) overrides everything
+    # for that one response. None = defer to env / built-in default.
+    ui: str | None = Field(
+        default=None,
+        description='Console generation served at "/": "classic" or "modern". '
+                    'Overridden by SMO_UI env and --ui CLI; per-request ?ui= '
+                    'wins over all.')
     # Declared so mission.yaml's `network:` block (ports + sim_tick_hz) is
     # actually parsed instead of being dropped as an undeclared key. NetworkConfig
     # is defined below; the forward reference is resolved at class build time.
@@ -321,18 +332,28 @@ class TMRateTier(StrictModel):
     bps: int
     #: uint8 value of TTC_SET_DATA_RATE (S8 func 65)'s `rate` field that
     #: selects this tier. LOW=0 ("the low rate") / HIGH=1 ("the high rate")
-    #: preserve the legacy binary encoding verbatim; BEACON=0xFF is not
+    #: preserve the legacy binary encoding verbatim; SAFE=0xFF is not
     #: commandable in nominal software.
     command_code: int = 0
     modulation: str = "BPSK"          # BPSK | QPSK | 8PSK | OQPSK
     coding: str = "RS"                # RS | CONV_RS | NONE
     coding_gain_db: float = 6.0
-    # Permission gates. A tier whose gate is not satisfied is REJECTED when
-    # commanded (S1.8, error 0x0007) — never silently clamped.
-    beacon_only: bool = False         # selectable only in bootloader/beacon mode
+    # ON-BOARD permission gates. A tier whose gate is not satisfied is
+    # REJECTED when commanded (S1.8, error 0x0007) — never silently clamped.
+    # These are things the spacecraft CAN know about itself.
+    #: selectable only in bootloader/beacon mode. Renamed from `beacon_only`
+    #: (2026-08c: "beacon" always means the UHF whip transmitter now); the
+    #: old key is accepted as a validation alias.
+    bootloader_only: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("bootloader_only", "beacon_only"))
     requires_antenna: bool = True     # needs the antenna deployed
     requires_downlink_mode: bool = False   # needs DOWNLINK/dump mode
-    min_elevation_deg: float = 0.0    # elevation gate while in contact
+    #: GROUND POLICY, not an on-board gate (2026-08c item 4): the minimum
+    #: pass elevation at which the ground segment plans (smo-planner) or
+    #: commands (MCS warning) this tier. A real spacecraft does not know its
+    #: elevation as seen from a station, so flight software ignores this.
+    min_elevation_deg: float = 0.0
 
     #: Bits per symbol for each supported modulation, used to derive the
     #: symbol rate (and therefore the occupied bandwidth) from ``bps``.
@@ -381,9 +402,10 @@ class TMRateTier(StrictModel):
 #: exactly the -10*log10(R) term in the link budget. LOW is the ROUTINE
 #: operations rate; HIGH is for delayed telemetry and image dumps only.
 _DEFAULT_TM_RATE_TIERS: list[dict[str, Any]] = [
-    {"name": "BEACON", "bps": 1000, "command_code": 0xFF,
+    {"name": "SAFE", "bps": 1000, "command_code": 0xFF,
      "modulation": "BPSK", "coding": "CONV_RS",
-     "coding_gain_db": 7.5, "beacon_only": True, "requires_antenna": False},
+     "coding_gain_db": 7.5, "bootloader_only": True,
+     "requires_antenna": False},
     {"name": "LOW", "bps": 16000, "command_code": 0x00,
      "modulation": "BPSK", "coding": "CONV_RS",
      "coding_gain_db": 7.5, "requires_antenna": False},
@@ -432,7 +454,7 @@ class TTCConfig(StrictModel):
     tm_rate_tiers: list[TMRateTier] = Field(
         default_factory=lambda: [TMRateTier(**t) for t in _DEFAULT_TM_RATE_TIERS])
     default_tier: str = "LOW"       # routine operations
-    beacon_tier: str = "BEACON"     # bootloader / beacon mode
+    beacon_tier: str = "SAFE"       # bootloader / beacon mode — the SAFE (1 kbps) rung
     safe_tier: str = "LOW"          # safe mode, FDIR fallback, antenna stowed
 
     # Deprecated aliases kept so out-of-lane readers (smo-planner
@@ -600,6 +622,25 @@ class FDIRRuleConfig(StrictModel):
     # 0 = immediate (legacy). Needed once transients are real physics: an
     # AOCS acquisition legitimately crosses att_error thresholds for minutes.
     persist_s: float = 0.0
+    # Lowest spacecraft phase in which this rule is ARMED. ``None`` (the
+    # default) = armed in every phase, which is the legacy behaviour and the
+    # right answer for hardware-protection rules (battery SoC/voltage,
+    # thermal, reboot count, CAN bus): those protect the spacecraft whether or
+    # not it is commissioned, and blanket-gating the whole rule set would
+    # disable genuine LEOP protections.
+    #
+    # A rule needs a ``min_phase`` only when its trigger condition IS the
+    # expected configuration of the spacecraft earlier in the mission.
+    # ``aocs.wheels_enabled < 2`` is the archetype: the bootloader
+    # legitimately leaves all four wheels off, so the rule latched SAFE on the
+    # first tick of every run and nothing could clear it — the same deadlock
+    # the advanced fault-propagation model already avoids by arming only at
+    # phase >= 6 (see ``Engine._tick_fdir_advanced``).
+    #
+    # A gated-out rule is DISARMED, not merely suppressed: any latch it holds
+    # is dropped and its persistence accumulator is reset, so falling back
+    # below ``min_phase`` cannot leave a stale contingency behind.
+    min_phase: int | None = None
 
 class FDIRConfig(StrictModel):
     enabled: bool = True

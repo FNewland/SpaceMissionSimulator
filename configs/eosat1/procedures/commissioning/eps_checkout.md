@@ -1,8 +1,15 @@
 # COM-001: EPS Power System Checkout
 **Subsystem:** EPS
 **Phase:** COMMISSIONING
-**Revision:** 1.0
+**Revision:** 2.0 --- 2026-08c: entry/exit states; the load-transient test no
+longer borrows the payload (its line is OFF until COM-009 --- the old Step 7
+commanded a payload mode on a dark line and the mode silently reverted);
+OBC_SET_MODE encodings corrected (0=NOMINAL, 1=SAFE).
 **Approved:** Flight Operations Director
+
+**Entry state:** LEOP-003 exit state --- mission phase 5, COARSE_SUN sun hold,
+wheels disabled, payload/cooler/heater(unless LEOP-007 needed one)/prop lines
+OFF, downlink LOW, SIDs 1/2/3/4/6/11/12 enabled.
 
 ## Purpose
 Perform a comprehensive checkout of the Electrical Power System. Verify bus voltage
@@ -11,8 +18,10 @@ at various sun angles, and overall power budget. Establish baseline performance 
 for mission operations.
 
 ## Prerequisites
-- [ ] LEOP phase completed successfully
-- [ ] Spacecraft in COARSE_SUN mode (sun-pointing)
+- [ ] LEOP completed --- `eps.spacecraft_phase` (0x0129) = 5
+- [ ] Spacecraft in the COARSE_SUN sun hold (`aocs.mode` 0x020F = 3 --- still
+      valid here: no star tracker is powered until COM-003, so the hold has
+      nothing to auto-promote on)
 - [ ] At least 2 full orbits of continuous telemetry archived since LEOP completion
 - [ ] Bidirectional S-band link active with link margin > 3 dB
 - [ ] Battery SOC > 70% at start of procedure
@@ -67,19 +76,24 @@ for mission operations.
 **GO/NO-GO:** Positive orbit-average energy balance confirmed
 
 ### Step 7 — Bus Voltage Regulation Under Load Transient
-**Action:** Test bus regulation by commanding a known load change (enable payload standby).
-**TC:** `PAYLOAD_SET_MODE(mode=1)` (Service 8, Subtype 1) — STANDBY (brief test)
-**Verify:** `eps.bus_voltage` (0x0105) remains in range [27.0V, 29.0V] within 5s
-**TC:** `PAYLOAD_SET_MODE(mode=0)` (Service 8, Subtype 1) — OFF (restore)
-**Verify:** `eps.bus_voltage` (0x0105) returns to [27.5V, 28.5V] within 10s
-**GO/NO-GO:** Bus regulation stable under transient load
+**Action:** Test bus regulation by commanding a known load change. Do NOT use
+the payload for this: its line is OFF until COM-009, and a mode command on a
+dark line silently reverts. The battery-heater line (~6 W) is the transient
+source, and it is restored to its entry state afterwards.
+**Action:** Record the entry state of `eps.pl_htr_bat` (0x0115) first.
+**TC:** `EPS_POWER_ON(line_index=5)` (Service 8, Subtype 1, func_id 19) — htr_bat (brief test)
+**Verify:** `eps.bus_voltage` (0x0105) remains in range [26.5V, 29.5V] within 5s
+**TC:** `EPS_POWER_OFF(line_index=5)` (Service 8, Subtype 1, func_id 20) — restore, ONLY if the line was off at entry
+**Verify:** `eps.pl_htr_bat` (0x0115) back to its entry value within 5s
+**Verify:** `eps.bus_voltage` (0x0105) returns to [27.0V, 29.0V] within 10s
+**GO/NO-GO:** Bus regulation stable under transient load, line state restored
 
 ## Off-Nominal Handling
-- If bus voltage < 27.0V: Check battery SOC. If SOC < 30%, reduce loads immediately. Disable non-essential heaters. Verify sun-pointing attitude. If bus voltage < 26.0V, enter safe mode via `OBC_SET_MODE(mode=0)`.
+- If bus voltage < 27.0V: Check battery SOC. If SOC < 30%, reduce loads immediately. Disable non-essential heaters. Verify sun-pointing attitude. If bus voltage < 26.0V, execute CTG-001 (load shed) and, with FD approval, `OBC_SET_MODE(mode=1)` — 1 is SAFE (0 is NOMINAL; the old text had the encoding backwards).
 - If power generation < 35W in sunlight with good sun-pointing: Check individual array string currents via `GET_PARAM(param_id=0x0112)` and `GET_PARAM(param_id=0x0113)`. If one wing underperforming, log anomaly. Assess single-wing power budget viability.
 - If battery SOC < 50% at end of eclipse: Reduce operational load. Defer commissioning activities requiring high power. Re-assess power budget.
 - If charge recovery rate below prediction: Check solar array degradation. Verify battery charge controller via `GET_PARAM(param_id=0x0109)`. If charge controller fault suspected, investigate redundant path.
-- If bus voltage oscillation detected: Check regulation mode via `GET_PARAM(param_id=0x010A)`. Log anomaly for EPS engineer review. If unstable, command `OBC_SET_MODE(mode=0)` for safe mode.
+- If bus voltage oscillation detected: Check regulation mode via `GET_PARAM(param_id=0x010A)`. Log anomaly for EPS engineer review. If unstable, command `OBC_SET_MODE(mode=1)` (SAFE) with FD approval; restore with mode=0 (NOMINAL) after investigation.
 
 ## Post-Conditions
 - [ ] Bus voltage confirmed regulated at 28.0V +/- 0.5V
@@ -90,4 +104,9 @@ for mission operations.
 - [ ] Positive orbit-average energy balance confirmed
 - [ ] Bus regulation stable under transient loads
 - [ ] EPS Checkout Report generated with baseline values
-- [ ] GO decision for COM-002 (TCS Verification)
+
+## Exit state
+- IDENTICAL to the entry state: every line touched by this card (htr_bat in
+  Step 7) is restored; no mode, tier or latch changed
+
+**NEXT:** COM-002 (TCS Verification)

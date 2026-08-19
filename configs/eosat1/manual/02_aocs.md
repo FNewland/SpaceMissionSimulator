@@ -23,34 +23,39 @@ receiver) but does not perform orbital control manoeuvres — EOSAT-1 has no pro
 |-------------------------------|----------|---------------------------------------------|
 | Star Camera (Zenith)          | 1        | High-accuracy attitude reference (-Z face)  |
 | Star Camera (Nadir)           | 1        | High-accuracy attitude reference (+Z face)  |
-| 3-Axis Magnetometer A         | 1        | Coarse attitude and magnetic field (primary) |
-| 3-Axis Magnetometer B         | 1        | Coarse attitude and magnetic field (redundant) |
+| 3-Axis Magnetometer           | 1        | Coarse attitude and magnetic field (single-string) |
 | Fibre-Optic Gyros             | 3        | Angular rate measurement (body axes)         |
 | Coarse Sun Sensor Heads       | 6        | Sun direction for safe mode (one per face)   |
 | GPS Receiver                  | 1        | Orbit determination (zenith antenna)         |
 
-#### 2.1.1 Dual Magnetometers (A/B)
+#### 2.1.1 Magnetometer (single-string)
 
-EOSAT-1 carries two redundant 3-axis magnetometers (MAG-A and MAG-B). Only one magnetometer
-is active at any time; the other is in cold standby:
+EOSAT-1 carries ONE 3-axis fluxgate magnetometer on a short boom — like the gyro
+fit, there is no spare and no prime/backup switch. A magnetometer failure is a
+mission-level degradation (B-dot detumble and magnetic desaturation are blind
+without it), which is exactly why the instructor failure catalogue teaches it by
+injection (`mag_failure`) rather than by a redundancy drill:
 
-| Parameter       | MAG-A (Primary)       | MAG-B (Redundant)     |
-|-----------------|----------------------|-----------------------|
-| Location        | Deployed boom (tip)   | Deployed boom (mid)   |
-| Range           | +/- 60 uT            | +/- 60 uT            |
-| Resolution      | 10 nT                 | 10 nT                 |
-| Noise           | < 50 nT (1-sigma)    | < 50 nT (1-sigma)    |
-| Status Param    | aocs.mag_a_x..z (0x0223-25) | aocs.mag_b_x..z (0x0226-28) |
+| Parameter       | Magnetometer          |
+|-----------------|-----------------------|
+| Location        | Deployed boom (tip)   |
+| Range           | +/- 60 uT             |
+| Resolution      | 10 nT                 |
+| Noise           | < 50 nT (1-sigma)     |
+| Measured field  | `aocs.mag_x/y/z` (0x020B-0D), magnitude `aocs.mag_field_total` (0x0277) |
+| Validity        | `aocs.mag_enabled` (0x025C): 0 = off/failed (B reads 0) |
+| Power           | S2 device 0x0209 (no dedicated EPS line)              |
 
-**Magnetometer Switchover Procedure:**
+The measured values are what the B-dot law consumes: the IGRF field rotated into
+the body frame plus sensor bias and noise. When the unit is unpowered, failed or
+the AOCS suite is dark the readings are zeroed — never frozen — and 0x025C drops
+to 0. There is no MAG_SELECT command any more; a stale procedure sending S8
+func 7 receives an explanatory refusal (error 0x0007).
 
-1. Verify MAG-A health via `mag_a_valid` (0x0214). If invalid or noisy, proceed.
-2. Enable MAG-B power via PDM switchable line.
-3. Wait 5 seconds for MAG-B stabilisation.
-4. Send AOCS configuration command to select MAG-B as active source.
-5. Verify `mag_b_valid` (0x0215) = 1 and magnetometer readings are consistent with
-   the expected field model.
-6. Power off MAG-A to conserve power.
+**If the magnetometer fails:** there is nothing to switch to. Expect DETUMBLE to
+be ineffective (B-dot has no input), magnetic desaturation to refuse, and the
+coarse CSS+MAG TRIAD to degrade to CSS-plus-gyro coasting. Recovery is an
+instructor/maintenance action, not an operator switchover.
 
 #### 2.1.2 Coarse Sun Sensors — 6-Head Configuration
 
@@ -212,14 +217,21 @@ NOMINAL mode will cause the FDIR to command a transition to COARSE_SUN.
 
 1. Each star camera requires a minimum of 3 identified stars for a valid attitude solution.
    During eclipse exit (Sun blinding), attitude is propagated using gyros only for up to 60 s.
-2. Gyro bias calibration is performed autonomously every 12 hours using star tracker data.
+2. Gyro bias calibration is a ground-commanded activity (`AOCS_GYRO_CALIBRATION`,
+   S8 func 13). Preconditions (2026-08c item 11): all three gyro units powered,
+   the selected star tracker TRACKING (>= 5 stars) and actually aiding the
+   estimator (`aocs.est_source` 0x02C1 bit 0), and rates within 0.10 deg/s of
+   the reference. It does NOT require wheel control or NOMINAL mode — a
+   quiescent COARSE_SUN with the tracker in the loop qualifies, which is what
+   lets COM-003 calibrate before COM-004 enables the wheels. Refusal codes
+   0x0A01-0x0A08.
 3. In DETUMBLE mode, only magnetorquers are active. Reaction wheels are not used for
    control until NOMINAL mode is entered.
 4. Attitude knowledge accuracy budget is 0.05 deg (3-sigma) in NOMINAL with the zenith
    star camera available; the flight system typically achieves ~0.015 deg 3-sigma
    (downlinked at `aocs.knowledge_err_3sig`, 0x02A7).
-5. Only one magnetometer (A or B) is active at a time. Switchover is a ground-commanded
-   operation (see Section 2.1.1).
+5. The magnetometer is single-string (see Section 2.1.1); there is no switchover
+   and no MAG_SELECT command.
 6. The GPS receiver provides position and velocity for orbit determination. The ADCS
    software uses this data for orbit propagation but does not perform orbital control.
 
@@ -231,10 +243,10 @@ operations. It follows a strict order to verify each component before enabling t
 | Step | Activity                          | Prerequisite                      | GO/NO-GO |
 |------|-----------------------------------|-----------------------------------|----------|
 | 1    | Sensor power-on and health check  | OBC in APPLICATION mode           | Yes      |
-| 2    | Magnetometer calibration          | MAG-A powered, rates < 0.5 deg/s | Yes      |
+| 2    | Magnetometer calibration          | Magnetometer powered, rates < 0.5 deg/s | Yes      |
 | 3    | CSS verification (all 6 heads)    | Sunlit portion of orbit           | Yes      |
 | 4    | Star camera commissioning         | Rates < 0.1 deg/s, eclipse-free  | Yes      |
-| 5    | Gyro bias calibration             | Star camera providing valid fix   | Yes      |
+| 5    | Gyro bias calibration             | ST tracking + in estimator loop (est_source bit 0), rates < 0.1 deg/s | Yes      |
 | 6    | Attitude determination validation | All sensors operational           | Yes      |
 | 7    | Actuator power-on                 | Determination validated           | Yes      |
 | 8    | Magnetorquer sign check           | Known magnetic field region       | Yes      |

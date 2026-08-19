@@ -1,0 +1,33 @@
+# ============================================================================
+# Operational display configuration for the SMO MCS modern console.
+# Served by GET /api/display-config; consumed by static/modern/mcs.js.
+#
+# These are OPERATIONAL tables (moved here from the retired training
+# annotations.yaml on 2026-08-19) — they drive live console verdicts, not
+# teaching text.
+# ============================================================================
+
+# NOM-002 capture-readiness gates (POSITION_NEEDS G4).
+# One card on the PLD page gathers these across three subsystems into a
+# single GO / NO-GO / UNKNOWN verdict. One red gate = NO-GO; a grey gate
+# means the telemetry to judge it is missing, which is NOT a GO.
+# ops: eq | ne | gt | ge | lt | le | range (range uses min/max).
+capture_gates:
+  - { label: "AOCS mode = FINE_POINT", param: "0x020F", op: eq, value: 5 }
+  - { label: "fine_ready mask clear",  param: "0x02C5", op: eq, value: 0 }
+  - { label: "FPA ready flag",         param: "0x0610", op: eq, value: 1 }
+  - { label: "SoC > 50 %",             param: "0x0101", op: gt, value: 50 }
+  - { label: "FPA temp in band (−40…−10 °C)", param: "0x0408", op: range, min: -40, max: -10 }
+
+# Commissioning baseline snapshot for the baseline-vs-now health card on the
+# TRND page (POSITION_NEEDS G15). End-of-commissioning values are recorded
+# here; the console computes delta and percent drift client-side and flags
+# >5 % per NOM-011. abs_flag is the absolute-delta threshold used when the
+# baseline is zero (e.g. leak rate).
+health_baselines:
+  "0x0120": { label: "Battery DoD (orbit mean)", value: 18.0, units: "%" }
+  "0x0121": { label: "Battery charge cycles", value: 210, units: "" }
+  "0x0136": { label: "Battery health", value: 100.0, units: "%" }
+  "0x0124": { label: "Solar array A degradation factor", value: 1.0, units: "" }
+  "0x0125": { label: "Solar array B degradation factor", value: 1.0, units: "" }
+  "0x0B16": { label: "Propellant leak rate", value: 0.0, units: "mg/s", abs_flag: 0.05 }

@@ -44,14 +44,11 @@ must be evaluated after each recovery action.
 | aocs.css_my | 0x027D | CSS -Y face illumination |
 | aocs.css_pz | 0x027E | CSS +Z face illumination |
 | aocs.css_mz | 0x027F | CSS -Z face illumination |
-| aocs.mag_a_x | 0x0223 | Magnetometer A X-axis |
-| aocs.mag_a_y | 0x0224 | Magnetometer A Y-axis |
-| aocs.mag_a_z | 0x0225 | Magnetometer A Z-axis |
-| aocs.mag_b_x | 0x0226 | Magnetometer B X-axis |
-| aocs.mag_b_y | 0x0227 | Magnetometer B Y-axis |
-| aocs.mag_b_z | 0x0228 | Magnetometer B Z-axis |
-| aocs.mag_select | 0x0229 | Active magnetometer (0=A, 1=B) |
-| aocs.mag_valid | 0x0230 | Magnetometer validity flag |
+| aocs.mag_x | 0x020B | Measured field Bx, nT (single 3-axis unit) |
+| aocs.mag_y | 0x020C | Measured field By, nT |
+| aocs.mag_z | 0x020D | Measured field Bz, nT |
+| aocs.mag_field_total | 0x0277 | Total field magnitude, nT |
+| aocs.mag_enabled | 0x025C | Magnetometer valid/enabled (0=off, 1=valid) |
 | aocs.sun_body_x | 0x0220 | Sun vector body X (from CSS composite) |
 | aocs.sun_body_y | 0x0221 | Sun vector body Y (from CSS composite) |
 | aocs.sun_body_z | 0x0222 | Sun vector body Z (from CSS composite) |
@@ -61,9 +58,9 @@ must be evaluated after each recovery action.
 |---|---|---|---|---|
 | HK_REQUEST | 3 | 27 | — | Request one-shot HK report |
 | ST2_POWER | 8 | 1 | 5 | Star tracker 2 power on/off |
-| ST_SELECT | 8 | 1 | 6 | Select primary star tracker |
+| ST_SELECT | 8 | 1 | 6 | Select primary star tracker (wire: 1=ST1, 2=ST2, 0 refused) |
 | ST1_POWER | 8 | 1 | 4 | Star tracker 1 power on/off |
-| MAG_SELECT | 8 | 1 | 7 | Select active magnetometer source |
+| S2_AOCS_MAGNETOMETER | 2 | 1 | — | Power-cycle the single magnetometer (device 0x0209) |
 | AOCS_SET_MODE | 8 | 1 | 0 | Set AOCS mode |
 | PAYLOAD_SET_MODE | 8 | 1 | 26 | Set payload mode (for safe mode entry) |
 
@@ -75,8 +72,8 @@ must be evaluated after each recovery action.
 **Verify:** `aocs.st1_num_stars` (0x0241) — record tracked star count
 **Verify:** `aocs.st2_status` (0x0243) — record status
 **Verify:** `aocs.css_valid` (0x0248) — record CSS validity (1=valid)
-**Verify:** `aocs.mag_select` (0x0229) — record active magnetometer (0=A, 1=B)
-**Verify:** `aocs.mag_enabled` (0x025C) — record magnetometer validity
+**Verify:** `aocs.mag_enabled` (0x025C) — record magnetometer validity (there is
+ONE magnetometer; no unit selection exists)
 **Verify:** `aocs.mode` (0x020F) — record current AOCS mode
 **Verify:** `aocs.att_error` (0x0217) — record current attitude error
 **Action:** Document all sensor states to establish which sensors are healthy and
@@ -99,7 +96,9 @@ which have failed or are degraded.
 **Verify:** `aocs.st2_status` (0x0243) transitions to 2 (TRACKING) within 120 s
 **Note:** Only if the previous check confirmed TRACKING. If ST2 did not reach
 TRACKING, do NOT send this — go to the Off-Nominal section instead.
-**TC:** `ST_SELECT(unit=1)` (Service 8, Subtype 1, func_id 6) — select ST2 as primary
+**TC:** `ST_SELECT(unit=2)` (Service 8, Subtype 1, func_id 6) — select ST2 as
+primary. WIRE ENCODING IS 1=ST1, 2=ST2 (0 is refused): the old `unit=1` here
+SILENTLY SELECTED ST1 — the failed unit — when the card meant ST2 (2026-08c)
 **Verify:** `aocs.att_error` (0x0217) begins decreasing within 30 s
 
 **Step 2c — Isolate Failed ST1:**
@@ -147,36 +146,38 @@ and both STs are failed, proceed to Step 5.
 ### Step 4: Magnetometer Failure Response
 **Condition:** `aocs.mag_enabled` (0x025C) = 0 or magnetometer readings are invalid
 
-**Step 4a — Identify Failed Magnetometer:**
+**Note (2026-08c, owner ruling):** EO-Sat-1 carries **ONE** 3-axis
+magnetometer (S2 device 0x0209). There is no B unit, no selection telemetry
+and no `MAG_SELECT` — the on-board handler for the retired func 7 now REFUSES
+with 0x0007. The old Step 4 "switch to the redundant magnetometer" recovery
+was a fiction; the honest recovery is a power-cycle of the one unit, then a
+degraded-configuration decision if it stays dead.
+
+**Step 4a — Confirm the Failure:**
 **TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — Request AOCS housekeeping
-**Verify:** `aocs.mag_select` (0x0229) — identify which magnetometer is currently active
-**Verify:** `aocs.mag_a_x` (0x0223), `aocs.mag_a_y` (0x0224), `aocs.mag_a_z` (0x0225)
-— check MAG-A readings. If all near zero or NaN, MAG-A has failed.
-**Verify:** `aocs.mag_b_x` (0x0226), `aocs.mag_b_y` (0x0227), `aocs.mag_b_z` (0x0228)
-— check MAG-B readings.
-**Verify:** `aocs.mag_field_total` (0x0277) — should be approximately 25000-65000 nT
-for LEO. If near zero, the active magnetometer has failed.
-**Action:** Determine which magnetometer is failed:
-- If active is A (select=0) and readings invalid: MAG-A failed, switch to MAG-B
-- If active is B (select=1) and readings invalid: MAG-B failed, switch to MAG-A
+**Verify:** `aocs.mag_x` (0x020B), `aocs.mag_y` (0x020C), `aocs.mag_z` (0x020D)
+— all near zero with `aocs.mag_enabled` (0x025C) = 0 confirms the unit is off
+or failed (the channels publish honest zeros when invalid)
+**Verify:** `aocs.mag_field_total` (0x0277) — healthy LEO range is
+approximately 25000-65000 nT; near zero confirms the failure
 
-**Step 4b — Switch to Redundant Magnetometer:**
-**TC:** `MAG_SELECT(unit=1)` (Service 8, Subtype 1, func_id 7) — Command magnetometer switch — for MAG-B,
-or `MAG_SELECT(unit=0)` for MAG-A.
-**Verify:** `aocs.mag_select` (0x0229) reflects the new selection within 5 s
-**Action:** Wait 10 s for new magnetometer readings to stabilise.
+**Step 4b — Power-Cycle the Unit:**
+**TC:** `S2_AOCS_MAGNETOMETER(device_id=521, state=0)` (Service 2, Subtype 1) — unit OFF
+**Action:** Wait 10 s.
+**TC:** `S2_AOCS_MAGNETOMETER(device_id=521, state=1)` (Service 2, Subtype 1) — unit ON
 **TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — Request AOCS housekeeping
-**Verify:** `aocs.mag_enabled` (0x025C) = 1 — magnetometer is now providing valid data
-**Verify:** `aocs.mag_field_total` (0x0277) — in expected range (25000-65000 nT)
-**Action:** Log: "MAG-[A/B] FAILED — switched to MAG-[B/A]. No magnetometer redundancy."
+**Verify:** `aocs.mag_enabled` (0x025C) = 1 within 30 s — unit recovered
+**Verify:** `aocs.mag_field_total` (0x0277) in expected range (25000-65000 nT)
 
-**Note:** Magnetometer data is used for:
-- Magnetic field model updates for attitude determination
-- Magnetorquer control (momentum dumping, detumble mode)
-- If both magnetometers fail, detumble mode and momentum management are severely impaired.
+**Note:** Magnetometer data feeds the coarse attitude path, B-dot DETUMBLE and
+magnetorquer momentum dumping. If the power-cycle does not recover the unit
+there is NO redundancy: DETUMBLE will refuse with code 0x0A20, desaturation authority
+is lost, and the mission continues on wheels + ST with momentum managed by
+attitude biasing only — declare the degraded configuration and raise a
+spacecraft anomaly report.
 
-**GO/NO-GO:** Redundant magnetometer active and providing valid data — proceed to
-cumulative assessment.
+**GO/NO-GO:** Magnetometer recovered — or degraded no-mag configuration
+declared — proceed to cumulative assessment.
 
 ### Step 5: Cumulative Sensor Assessment and Mode Decision
 **TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27) — Request AOCS housekeeping

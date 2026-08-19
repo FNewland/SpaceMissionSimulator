@@ -67,6 +67,10 @@ class ActivityScheduler:
             "procedure_ref": atype.get("procedure_ref"),
             "command_sequence": atype.get("command_sequence", []),
             "conflicts_with": atype.get("conflicts_with", []),
+            # The RESOURCES this activity occupies. Two activities that overlap
+            # in time only really clash if they want the same subsystem, so the
+            # list has to travel with the instance — see check_time_overlap.
+            "requires_subsystems": atype.get("requires_subsystems", []),
             "pre_conditions": atype.get("pre_conditions", []),
             "state": int(ActivityState.PLANNED),
             "state_name": "PLANNED",
@@ -128,77 +132,118 @@ class ActivityScheduler:
                 return True
         return False
 
-    def check_conflicts(self, activity: dict) -> list[str]:
-        """Check for scheduling conflicts with existing activities."""
-        conflicts = []
-        name = activity.get("name", "")
-        start = activity.get("start_time", "")
-        duration = activity.get("duration_s", 300)
-        conflicts_with = activity.get("conflicts_with", [])
+    # ── Conflict detection ──────────────────────────────────────────
+    #
+    # Two orthogonal questions, and the planner used to answer both wrongly:
+    #
+    #   check_conflicts     — is this pair MUTUALLY EXCLUSIVE (activity_types
+    #                         .yaml ``conflicts_with``)? It used to report the
+    #                         exclusion for every pair in the plan regardless
+    #                         of when they run, so loading a 24 h template with
+    #                         8 dumps and 2 images produced 36 "conflicts"
+    #                         between activities that are hours apart. A
+    #                         mutual exclusion only bites while both are
+    #                         running: it is now gated on time overlap.
+    #
+    #   check_time_overlap  — do these two want the same HARDWARE at the same
+    #                         time? Overlap is per-RESOURCE, not global: a
+    #                         data_dump (ttc + obdh) and a calibration (payload
+    #                         + aocs) may legitimately share a clock slot, and
+    #                         a real spacecraft runs them concurrently. It is
+    #                         now gated on ``requires_subsystems`` intersecting.
+    #
+    # Both remain conservative when the catalogue is silent: an activity with
+    # no declared subsystems is treated as occupying an unknown resource and
+    # still overlaps everything.
 
+    @staticmethod
+    def _time_overlaps(a: dict, b: dict) -> bool:
+        """True if ``a`` and ``b`` occupy a common, non-empty interval.
+
+        Strict inequalities, so back-to-back activities (one starting exactly
+        as the other ends) do not overlap.
+        """
+        a_start = _parse_iso(a.get("start_time", "") or "")
+        b_start = _parse_iso(b.get("start_time", "") or "")
+        if a_start is None or b_start is None:
+            return False
+        a_end = a_start + timedelta(seconds=a.get("duration_s", 300) or 0)
+        b_end = b_start + timedelta(seconds=b.get("duration_s", 300) or 0)
+        return a_start < b_end and a_end > b_start
+
+    @staticmethod
+    def _shares_resource(a: dict, b: dict) -> bool:
+        """True if two activities compete for the same subsystem.
+
+        ``requires_subsystems`` in activity_types.yaml is the resource
+        declaration. Unknown (empty) means "we cannot tell", which is treated
+        as competing so an under-specified catalogue never hides a clash.
+        """
+        a_res = set(a.get("requires_subsystems") or [])
+        b_res = set(b.get("requires_subsystems") or [])
+        if not a_res or not b_res:
+            return True
+        return bool(a_res & b_res)
+
+    def _active_others(self, activity: dict):
+        """Iterate schedule entries that are neither *activity* nor dead."""
         for existing in self._schedule:
             if existing.get("state") in (
                 int(ActivityState.CANCELLED),
                 int(ActivityState.FAILED),
             ):
                 continue
+            if (activity.get("id") is not None
+                    and existing.get("id") == activity.get("id")):
+                continue
+            yield existing
 
-            # Name-based (mutual-exclusion) conflicts only. Time overlap is
-            # decided in check_time_overlap, which parses both instants; this
-            # method never compares time strings.
-            ex_start = existing.get("start_time", "")
+    def check_conflicts(self, activity: dict) -> list[str]:
+        """Mutual-exclusion conflicts with *concurrently running* activities."""
+        conflicts = []
+        name = activity.get("name", "")
+        conflicts_with = activity.get("conflicts_with", [])
 
-            if start and ex_start:
-                ex_name = existing.get("name", "")
-                if ex_name in conflicts_with or name in existing.get(
-                    "conflicts_with", []
-                ):
-                    conflicts.append(
-                        f"Conflicts with {ex_name} (id={existing['id']})"
-                    )
+        for existing in self._active_others(activity):
+            ex_name = existing.get("name", "")
+            if not (ex_name in conflicts_with
+                    or name in existing.get("conflicts_with", [])):
+                continue
+            # A mutual exclusion is a statement about simultaneity. Two
+            # activities that never run at the same time do not violate it.
+            if not self._time_overlaps(activity, existing):
+                continue
+            conflicts.append(
+                f"Conflicts with {ex_name} (id={existing['id']})"
+            )
 
         return conflicts
 
     def check_time_overlap(self, activity: dict) -> list[str]:
-        """Check for time-based overlap conflicts with existing activities."""
+        """Resource-contended time overlaps with existing activities."""
         overlaps = []
-        start_str = activity.get("start_time", "")
-        duration = activity.get("duration_s", 300)
-
-        if not start_str:
+        if not activity.get("start_time"):
+            return overlaps
+        if _parse_iso(activity["start_time"]) is None:
             return overlaps
 
-        start = _parse_iso(start_str)
-        if start is None:
-            return overlaps
-        end = start + timedelta(seconds=duration)
-
-        for existing in self._schedule:
-            if existing.get("state") in (
-                int(ActivityState.CANCELLED),
-                int(ActivityState.FAILED),
-            ):
+        for existing in self._active_others(activity):
+            if not existing.get("start_time"):
                 continue
-            if existing.get("id") == activity.get("id"):
+            if not self._time_overlaps(activity, existing):
                 continue
-
-            ex_start_str = existing.get("start_time", "")
+            if not self._shares_resource(activity, existing):
+                continue
             ex_duration = existing.get("duration_s", 300)
-            if not ex_start_str:
-                continue
-
-            ex_start = _parse_iso(ex_start_str)
-            if ex_start is None:
-                continue
-            ex_end = ex_start + timedelta(seconds=ex_duration)
-
-            # Overlap if one starts before the other ends
-            if start < ex_end and end > ex_start:
-                overlaps.append(
-                    f"Time overlap with '{existing['name']}' "
-                    f"(id={existing['id']}, "
-                    f"{ex_start_str} +{ex_duration}s)"
-                )
+            shared = sorted(
+                set(activity.get("requires_subsystems") or [])
+                & set(existing.get("requires_subsystems") or []))
+            overlaps.append(
+                f"Time overlap with '{existing['name']}' "
+                f"(id={existing['id']}, "
+                f"{existing['start_time']} +{ex_duration}s)"
+                + (f" on {', '.join(shared)}" if shared else "")
+            )
 
         return overlaps
 

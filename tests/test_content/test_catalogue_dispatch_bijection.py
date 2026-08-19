@@ -52,6 +52,16 @@ HANDLED_FUNCS = _handled_func_ids()
 #: dispatcher (e.g. a service handled elsewhere). Each needs a reason.
 UNROUTED_OK: dict[int, str] = {}
 
+#: Dispatcher branches deliberately NOT in the catalogue. Each needs a
+#: reason — the default remains "a handler with no catalogue entry is a
+#: command nobody can find".
+HANDLED_UNCATALOGUED: dict[int, str] = {
+    7: "MAG_SELECT retired from the catalogue (owner ruling 2026-08c: ONE "
+       "magnetometer, no redundant unit to select). The branch survives so "
+       "a stale procedure sending func 7 receives the model's explanatory "
+       "0x0007 refusal instead of a silent no-op.",
+}
+
 
 def _cat_func_ids() -> dict[int, str]:
     out = {}
@@ -77,7 +87,8 @@ def test_every_catalogued_s8_func_has_a_handler():
 def test_every_handled_s8_func_is_catalogued():
     """A handler with no catalogue entry is a command nobody can find."""
     orphans = sorted(fid for fid in HANDLED_FUNCS
-                     if fid not in CATALOGUE_FUNCS)
+                     if fid not in CATALOGUE_FUNCS
+                     and fid not in HANDLED_UNCATALOGUED)
     # The router also branches on non-func values in a few places; keep the
     # gate on the documented S8.1 range only.
     orphans = [f for f in orphans if 0 <= f <= 130]

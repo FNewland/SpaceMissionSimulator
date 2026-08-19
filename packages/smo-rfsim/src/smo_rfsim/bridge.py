@@ -69,6 +69,10 @@ class RFSimBridge:
         self._tm_packets_delivered = 0
         self._sim_eb_n0: float = config.channel.eb_n0_db
         self._sim_rssi: float = -120.0
+        # Spacecraft transmitter radiating, per the sim's tx_active gate
+        # (2026-08c item 6). True until the WS feedback says otherwise so a
+        # harness with no sim in the loop keeps its legacy behaviour.
+        self._sim_tx_active: bool = True
 
         # Display producer rate limiting (spectrum/eye FFT work)
         self._last_display_update = 0.0
@@ -82,6 +86,16 @@ class RFSimBridge:
         self._commanded_data_rate_bps: Optional[float] = None
         #: Name of the spacecraft's active TM rate tier, from the sim WS feed.
         self._commanded_tier_name: Optional[str] = None
+
+        # ── End-of-pass RF rollups (POSITION_NEEDS G14) ──
+        # One record per pass (predicted AOS vs achieved lock, mean Eb/N0,
+        # FER, data volume) appended at LOS; served by /api/pass-rollups.
+        from .pass_rollup import PassRollupTracker
+        self._pass_rollups = PassRollupTracker(
+            frame_length_bytes=int(getattr(config.ccsds, "tm_frame_length",
+                                           1115)))
+        #: Newest sim-time epoch seen on the WS feed (None = wall clock).
+        self._last_sim_ts: Optional[float] = None
 
         if self.mode == RFSimMode.FRAME:
             self._init_frame_mode()
@@ -297,10 +311,17 @@ class RFSimBridge:
             # If no TM packets received recently and TX is on, disable it
             if (self._pipeline._tx._transmitting and
                     self._tm_packets_relayed > 0):
-                # Check if the sim's state says no contact
-                # (WS feedback updates _link_in_view)
+                # Check if the sim's state says no contact, or the
+                # spacecraft transmitter itself is off (2026-08c item 6 —
+                # the pass override keeps _link_in_view True, so PA-off
+                # must be checked separately or the carrier never drops).
+                if "transmitting" in self._manual_overrides:
+                    continue
                 if not self._pipeline._link_in_view:
                     logger.info("No contact — disabling pipeline TX")
+                    self._pipeline.set_transmitting(False)
+                elif not self._sim_tx_active:
+                    logger.info("Spacecraft TX inactive — disabling pipeline TX")
                     self._pipeline.set_transmitting(False)
 
     async def _relay_recovered_tm(self):
@@ -434,6 +455,14 @@ class RFSimBridge:
                 self.radio.update_lock(LockState.LOCKED, LockState.LOCKED,
                                         LockState.LOCKED)
                 self.radio.update_rf(99.0)
+
+            # Pass-rollup sampling (G14): once per tick, whatever mode fed
+            # the frontend above.
+            try:
+                ts, _base = self._rollup_now_ts()
+                self._pass_rollups.sample(self.radio.status, ts)
+            except Exception as e:  # noqa: BLE001
+                logger.debug("pass-rollup sample failed: %s", e)
 
             await asyncio.sleep(1.0)
 
@@ -630,8 +659,32 @@ class RFSimBridge:
                 logger.warning("WS feedback connection failed: %s (retrying in 5s)", e)
             await asyncio.sleep(5.0)
 
+    def _rollup_now_ts(self) -> tuple[float, str]:
+        """(timestamp, time_base) for pass-rollup records.
+
+        Sim time when the WS feed provides it (records then line up with
+        the MCS archive and the planner's pass predictions), wall UTC
+        otherwise — each record says which.
+        """
+        if self._last_sim_ts is not None:
+            return self._last_sim_ts, "sim"
+        import time as _t
+        return _t.time(), "wall"
+
     def _apply_sim_feedback(self, data: dict):
         state = data.get("state", data)
+        # Sim clock for the pass-rollup records (G14). Parsed regardless of
+        # whether a ttc block is present — the clock is not a ttc field.
+        sim_time = state.get("sim_time")
+        if sim_time:
+            try:
+                from datetime import datetime, timezone
+                dt = datetime.fromisoformat(str(sim_time).replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                self._last_sim_ts = dt.timestamp()
+            except (ValueError, TypeError):
+                pass
         ttc = state.get("ttc", {})
         if not ttc:
             return
@@ -667,9 +720,47 @@ class RFSimBridge:
             if self._pipeline:
                 self._pipeline.set_doppler(float(doppler))
 
+        # ── Spacecraft transmitter state (2026-08c item 6) ───────────────
+        # `tx_active` (0x0525) is the sim's own downlink gate: PA commanded
+        # on and healthy, transponder alive, ttc_tx line hot, station in
+        # view (or pass override standing in for the contact leg). The
+        # bridge used to ignore it entirely and key the carrier purely on
+        # visibility, so a PA-OFF spacecraft still showed a live carrier on
+        # the radio page — and with the instructor pass override on, the
+        # carrier could never drop at all. The override forces GEOMETRIC
+        # visibility only; it must never resurrect a transmitter that is
+        # off, and tx_active already encodes exactly that (the sim computes
+        # it with the override substituted into the contact leg only).
+        tx_on = ttc.get("tx_active")
+        if tx_on is None:
+            # Older sim without 0x0525 in the snapshot: fall back to the PA
+            # switch AND the ttc_tx power line (both must be hot to radiate).
+            pa = ttc.get("pa_on")
+            line = ttc.get("ttc_tx_line_on")
+            if pa is not None:
+                tx_on = bool(pa) and (line is None or bool(line))
+        if tx_on is not None:
+            self._sim_tx_active = bool(tx_on)
+        self.radio.update_sc_tx(
+            tx_on=self._sim_tx_active,
+            pa_on=ttc.get("pa_on"),
+            pass_override=bool(state.get("override_passes")))
+
         # Link in view (determines if RF path exists — line of sight).
-        # Driven by contact state (orbital geometry or pass override).
+        # Driven by contact state (orbital geometry or pass override —
+        # the override IS geometric visibility, nothing more).
         in_contact = state.get("in_contact") or state.get("override_passes")
+        # Pass-rollup transitions (G14): geometric contact opens/closes the
+        # pass record; the LOS transition writes the rollup.
+        if in_contact is not None:
+            ts, base = self._rollup_now_ts()
+            try:
+                self._pass_rollups.set_contact(
+                    bool(in_contact),
+                    str(state.get("ground_station_name") or ""),
+                    ts, base, status=self.radio.status)
+            except Exception as e:  # noqa: BLE001 — stats must not break relay
+                logger.debug("pass-rollup transition failed: %s", e)
         if in_contact is not None and self._pipeline:
             was_in_view = self._pipeline._link_in_view
             self._pipeline.set_link_in_view(bool(in_contact))
@@ -680,11 +771,21 @@ class RFSimBridge:
             # packets when available; idle frames fill the gaps. The ground
             # station locks onto this carrier — it doesn't need data frames.
             #
-            # Enable TX whenever in view. The TX thread generates idle
-            # frames when no data is queued, maintaining the carrier.
-            if bool(in_contact) and not self._pipeline._tx._transmitting:
-                logger.info("Link in view — enabling continuous TX carrier")
-                self._pipeline.set_transmitting(True)
+            # Enable TX whenever in view AND the spacecraft transmitter is
+            # actually radiating (tx_active). A manual /api/link override
+            # of "transmitting" wins either way.
+            if "transmitting" not in self._manual_overrides:
+                if (bool(in_contact) and self._sim_tx_active
+                        and not self._pipeline._tx._transmitting):
+                    logger.info("Link in view and spacecraft TX active — "
+                                "enabling continuous TX carrier")
+                    self._pipeline.set_transmitting(True)
+                elif (not self._sim_tx_active
+                        and self._pipeline._tx._transmitting):
+                    logger.info("Spacecraft transmitter is OFF (PA / line / "
+                                "transponder) — carrier down. The pass "
+                                "override cannot resurrect a dead TX.")
+                    self._pipeline.set_transmitting(False)
 
         # Transmitter state: the spacecraft PA produces a carrier whenever
         # it's powered on and the spacecraft is in view. The link_status
@@ -702,10 +803,22 @@ class RFSimBridge:
             bit_sync = ttc.get("bit_sync")
             frame_sync = ttc.get("frame_sync")
             if carrier is not None:
-                self.radio.update_lock(
-                    LockState.LOCKED if carrier else LockState.UNLOCKED,
-                    LockState.LOCKED if bit_sync else LockState.UNLOCKED,
-                    LockState.LOCKED if frame_sync else LockState.UNLOCKED)
+                if not self._sim_tx_active:
+                    # 2026-08c item 6: the sim's carrier/bit/frame locks are
+                    # the spacecraft RECEIVER's uplink locks — they stay
+                    # LOCKED with the downlink PA off, which is exactly the
+                    # "no responses but the radio does not show the link
+                    # down" symptom. The ground radio's lock chips describe
+                    # the DOWNLINK, and a transmitter that is not radiating
+                    # gives the ground nothing to lock to.
+                    self.radio.update_lock(LockState.UNLOCKED,
+                                           LockState.UNLOCKED,
+                                           LockState.UNLOCKED)
+                else:
+                    self.radio.update_lock(
+                        LockState.LOCKED if carrier else LockState.UNLOCKED,
+                        LockState.LOCKED if bit_sync else LockState.UNLOCKED,
+                        LockState.LOCKED if frame_sync else LockState.UNLOCKED)
 
         # ── TM data-rate ladder (defect #85) ──
         # The tier drives the modulation AND the bit rate, so both are applied
@@ -742,7 +855,7 @@ class RFSimBridge:
 
         # Per-tier FEC. `convolutional_follow_tier` is opt-in because the
         # pure-Python Viterbi decoder is far too slow to run at the HIGH tier;
-        # when it is on, only the BEACON and LOW tiers (which code
+        # when it is on, only the SAFE and LOW tiers (which code
         # conv(7,1/2)+RS) switch it on and the rate is low enough to afford it.
         coding = ttc.get("tm_coding")
         if coding is not None and getattr(
@@ -817,6 +930,10 @@ def main():
                         help="Enable the radio UI control plane (POST routes "
                              "for channel/pipeline/link). Off by default so "
                              "the radio UI stays purely observational.")
+    parser.add_argument("--ui", default=None, choices=["classic", "modern"],
+                        help="Radio web UI generation. House precedence: "
+                             "--ui > SMO_UI env > default. Per-request "
+                             "?ui=, /classic and /modern always available.")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -847,7 +964,7 @@ def main():
             from .radio.web_ui import run_web_ui
             tasks.append(asyncio.create_task(
                 run_web_ui(bridge.radio, port=config.network.radio_port,
-                           control=bridge)))
+                           control=bridge, ui_mode=args.ui)))
         await asyncio.gather(*tasks)
 
     try:

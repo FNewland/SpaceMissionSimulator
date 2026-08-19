@@ -36,9 +36,8 @@ KNOWN_UNDECLARED: dict[int, str] = {
             "written by the engine, never downlinked",
     0x05FF: "instructor 'override passes' toggle — same: console state, not "
             "spacecraft telemetry",
-    0x0213: "aocs.gps_vx — GPS velocity, published by aocs_basic and not yet "
-            "in the AOCS parameter block (AOCS owner)",
-    0x0214: "aocs.gps_vy — as 0x0213",
+    # 0x0213/0x0214 dropped 2026-08c item 2: GPS velocity now rides the
+    # DECLARED ECEF PVT block 0x0234-0x0236 (aocs.gps_vel_x/y/z, HK SID 12).
     0x031F: "obdh heat dissipation (W), consumed by the TCS coupling only "
             "(OBDH owner)",
     0x0504: "ttc uplink frequency (MHz) readback (TT&C owner)",

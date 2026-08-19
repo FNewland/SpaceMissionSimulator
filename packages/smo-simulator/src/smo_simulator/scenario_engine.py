@@ -103,31 +103,43 @@ class ScenarioEngine:
     def _known_failures(self, subsystem: str) -> set[str]:
         """Failure-mode names a subsystem model actually implements.
 
-        Derived from the model's own ``inject_failure`` source so the registry
-        can never drift from the implementation. Returns an empty set when the
-        model (or its source) is unavailable — callers then skip the check
-        rather than rejecting a valid event.
+        Read from the declarative catalogue (``failure_catalog``), which is
+        built from each model's own ``FAILURE_SPECS`` table — so the registry
+        cannot drift from the implementation. Returns an empty set for an
+        unknown subsystem; callers then skip the check rather than rejecting.
         """
         if subsystem in self._failure_registry:
             return self._failure_registry[subsystem]
-        names: set[str] = set()
-        engine = self._engine
-        model = None
-        if engine is not None and hasattr(engine, "subsystems"):
-            # Instructor UI and scenarios use "adcs" as an alias for "aocs".
-            model = (engine.subsystems.get(subsystem)
-                     or engine.subsystems.get({"adcs": "aocs"}.get(subsystem, "")))
-        if model is not None and hasattr(model, "inject_failure"):
-            try:
-                import inspect
-                import re
-                src = inspect.getsource(model.inject_failure)
-                names = set(re.findall(r'failure\s*==\s*["\']([\w]+)["\']', src))
-            except Exception as e:  # noqa: BLE001 — introspection is best-effort
-                logger.debug("Failure registry introspection failed for %s: %s",
-                             subsystem, e)
+        try:
+            from smo_simulator.failure_catalog import canonical_subsystem, catalog
+            names = set(catalog().get(canonical_subsystem(subsystem), {}))
+        except Exception as e:  # noqa: BLE001 — never let this block loading
+            logger.debug("Failure catalogue unavailable for %s: %s", subsystem, e)
+            names = set()
         self._failure_registry[subsystem] = names
         return names
+
+    # Keys of an `inject` event's params block that belong to the failure
+    # MANAGER (timing/severity), not to the failure's own parameter spec.
+    _INJECT_META_KEYS = ("subsystem", "failure", "magnitude", "onset",
+                         "duration_s", "onset_duration_s")
+
+    @classmethod
+    def _validate_inject_params(cls, params: dict) -> str | None:
+        """Validate an inject event's typed parameters. None if it is fine."""
+        try:
+            from smo_simulator.failure_catalog import validate as _validate
+            from smo_simulator.failure_spec import FailureParamError
+        except Exception:  # noqa: BLE001 — catalogue unavailable, skip
+            return None
+        extra = {k: v for k, v in params.items()
+                 if k not in cls._INJECT_META_KEYS}
+        try:
+            _validate(params.get("subsystem", ""), params.get("failure", ""),
+                      params.get("magnitude"), extra)
+        except FailureParamError as e:
+            return str(e)
+        return None
 
     def _validate_event(self, ev_data: dict, scenario_name: str) -> str | None:
         """Return an error string if this event cannot execute, else None."""
@@ -145,6 +157,12 @@ class ScenarioEngine:
             if known and failure not in known:
                 return (f"unknown failure {failure!r} for subsystem {subsystem!r} "
                         f"(known: {', '.join(sorted(known))})")
+            # Typed-parameter check: a scenario that carries a parameter the
+            # failure does not accept (a rename, a removed unit, a value out of
+            # range) used to load fine and then hit the model's default unit.
+            err = self._validate_inject_params(params)
+            if err:
+                return err
         if ev_data.get("time_offset_s") is None and not ev_data.get("condition"):
             return "event has neither time_offset_s nor condition — can never fire"
         return None
@@ -316,11 +334,21 @@ class ScenarioEngine:
         for f in (ic.get("failures") or []):
             if not self._fm:
                 break
+            # Pass the TYPED parameters through: this used to forward only
+            # subsystem/failure/magnitude/onset/duration_s, so a pre-injected
+            # failure lost its unit selector (`wheel`, `unit`, `line_index`,
+            # `face`, ...) and silently hit the default unit instead.
+            extra = {k: v for k, v in f.items()
+                     if k not in ("subsystem", "failure", "magnitude", "onset",
+                                  "duration_s", "onset_duration_s")}
+            if f.get("onset_duration_s") is not None:
+                extra["onset_duration_s"] = float(f["onset_duration_s"])
             fid = self._fm.inject(
                 subsystem=f.get("subsystem", ""), failure=f.get("failure", ""),
                 magnitude=float(f.get("magnitude", 1.0)),
                 onset=f.get("onset", "step"),
                 duration_s=float(f.get("duration_s", 0)),
+                **extra,
             )
             if fid:
                 self._injected_fids.append(fid)

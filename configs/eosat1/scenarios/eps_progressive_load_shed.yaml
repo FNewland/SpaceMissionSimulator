@@ -15,14 +15,14 @@ events:
     params:
       subsystem: eps
       failure: undervoltage
-      magnitude: 2.0
+      soc_pct: 20.0
       onset: step
   - time_offset_s: 60
     action: inject
     params:
       subsystem: eps
       failure: undervoltage
-      magnitude: 1.5
+      soc_pct: 15.0
       onset: gradual
       onset_duration_s: 300
   - time_offset_s: 600
@@ -30,7 +30,7 @@ events:
     params:
       subsystem: eps
       failure: undervoltage
-      magnitude: 1.0
+      soc_pct: 10.0
       onset: gradual
       onset_duration_s: 300
   - time_offset_s: 1200
@@ -38,7 +38,7 @@ events:
     params:
       subsystem: eps
       failure: undervoltage
-      magnitude: 1.0
+      soc_pct: 10.0
       onset: gradual
       onset_duration_s: 300
 expected_responses:

@@ -12,13 +12,19 @@ briefing: |
   for mission replanning around the lost contact window.
 
 events:
+  # This used to inject `ttc/receiver_degrade` — a degradation of the
+  # SPACECRAFT receiver, which contradicts the briefing ("the spacecraft RF
+  # chain is healthy; the failure is entirely on the ground side") and made
+  # the exercise unsolvable: the students diagnose a ground fault but the
+  # spacecraft telemetry shows a spacecraft fault. ttc_basic implements real
+  # ground-segment impairments now.
   - time_offset_s: 120
     action: inject
     params:
       subsystem: ttc
-      failure: receiver_degrade
-      magnitude: 1.0
-      nf_db: 30.0
+      failure: gs_antenna_mispoint
+      db: 30.0
+    note: "Mechanical failure of the station antenna — ~30 dB signal loss"
 
 expected_responses:
   - { category: detect, description: "Detect sudden loss of link margin and RSSI drop" }

@@ -1,151 +1,120 @@
-# COM-013: ADCS Full Commissioning
+# COM-013: ADCS Commissioning Closure & NOMINAL Declaration
 
-**Subsystem:** AOCS
+**Subsystem:** AOCS / All
 **Phase:** COMMISSIONING
-**Revision:** 1.0
+**Revision:** 2.0 --- 2026-08c dedupe. Revision 1.0 re-ran work owned by other
+cards (magnetometer checks = LEOP-007/COM-003, star trackers and gyro
+calibration = COM-003, wheel and magnetorquer sign checks = COM-004, detumble
+and mode transitions = LEOP-005/COM-005) and referenced hardware that is not
+fitted: there is ONE magnetometer (the dual-unit TM block 0x0223-0x0229 and
+the MAG_SELECT command are retired --- func 7 is REFUSED on board). This
+revision is the CLOSURE card: it assumes every prior card's exit state,
+reads back the consolidated end state without re-testing anything, and makes
+the one declaration that ends commissioning.
 **Approved:** Flight Operations Director
 
+**Entry state:** COM-011 exit state (definitive order ... COM-010, COM-012
+first light, COM-011 calibration, COM-013) --- payload commissioned: first
+light captured and downlinked over S13, radiometric calibration data taken;
+AOCS in commanded NOMINAL with wheels enabled and gyros calibrated; downlink
+back at LOW; OBC NOMINAL; mission phase 5.
+
 ## Purpose
-Complete ADCS commissioning: verify all sensors individually, commission
-attitude determination, verify actuators with sign checks and gain tuning,
-establish rate damping, and transition to active pointing control.
+Close out commissioning: verify the consolidated spacecraft end state against
+each card's declared exit state, poll all positions, and declare mission phase
+6 (NOMINAL) --- the single commanded transition that unlocks the derived
+NOMINAL spacecraft mode, arms the phase-gated FDIR rules and the propulsion
+interlock. Nothing on board advances the phase for you; the declaration is
+this card's telecommand and no other card carries it.
 
 ## Prerequisites
-- [ ] Sequential power-on complete (LEOP-007)
-- [ ] AOCS in DETUMBLE (mode 2) or COARSE_SUN (mode 3) — `aocs.mode` (0x020F).
-      NOTE: this card used the pre-Phase-C 5-mode numbering throughout
-      (1=DETUMBLE, 2=SAFE, 3=NADIR). The canonical codes are in
-      `configs/eosat1/aocs/aocs_mode_codes.yaml`: 0 OFF, 1 SAFE_BOOT,
-      2 DETUMBLE, 3 COARSE_SUN, 4 NOMINAL, 5 FINE_POINT, 6 SLEW, 7 DESAT,
-      8 ECLIPSE, 9 INERTIAL. There is no mode named NADIR or SAFE.
-- [ ] Body rates < 1 deg/s on all axes
+- [ ] COM-001 through COM-012 completed with their exit states verified
 - [ ] `eps.bat_soc` (0x0101) > 60%
-- [ ] OBC in NOMINAL mode
-- [ ] Bidirectional S-band link active
-- [ ] At least 20 minutes of ground station pass remaining
+- [ ] Bidirectional S-band link active on a scheduled pass
+- [ ] Flight Director briefing held; pre-transition checklist from the LEOP
+      manual (§9.1) reviewed
 
 ## Procedure Steps
 
-### Phase 1 — Sensor Verification
-
-### Step 1 — Magnetometer A (Primary) Check
+### Step 1 --- Consolidated AOCS End-State Readback
 **TC:** `HK_REQUEST(sid=2)` (Service 3, Subtype 27)
-**Action:** AOCS reads magnetometer A (primary). Verify field vector magnitude 25-65 uT (typical LEO range).
-**Verify:** `aocs.mag_a_x` (0x0223), `aocs.mag_a_y` (0x0224), `aocs.mag_a_z` (0x0225)
-responding within 10 s. (These were cited as 0x0200-0x0202, which are
-`aocs.att_q1`-`q3` — the attitude quaternion, not the magnetometer.)
-**Verify:** Field magnitude sqrt(x^2+y^2+z^2) in range [25, 65] uT within 10s
-**GO/NO-GO:** Magnetometer A providing valid field vector
+**Verify:** `aocs.mode` (0x020F) in {4, 5, 8} --- operational family
+**Verify:** `aocs.commanded_mode` (0x0297) = 4 and `aocs.mode_demoted` (0x0298) = 0
+**Verify:** `aocs.wheels_enabled` (0x0260) = 4 (COM-004 exit state)
+**Verify:** `aocs.gyro_units_mask` (0x02D1) = 7 (COM-003 exit state)
+**Verify:** `aocs.st1_status` (0x0240) = 2 with `aocs.st1_num_stars` (0x0241) >= 5
+**Verify:** `aocs.mag_enabled` (0x025C) = 1 and `aocs.mag_field_total` (0x0277)
+in [5000, 70000] nT --- the single magnetometer (no B unit exists; nothing to
+select)
+**Verify:** `aocs.att_error` (0x0217) < 1.0 deg (sunlit side)
+**GO/NO-GO:** AOCS end state matches the sum of its cards
 
-### Step 2 — Magnetometer B (Backup) Check
-**Action:** AOCS reads magnetometer B (backup). Verify field vector and compare with A.
-**Verify:** Magnetometer B field vector agrees with A within 5% within 10s
-**TC:** `MAG_SELECT(unit=0)` (Service 8, Subtype 1, func_id 7) — select magnetometer A (unit 0) as primary
-**GO/NO-GO:** Both magnetometers operational, A selected as primary
+### Step 2 --- Consolidated Platform End-State Readback
+**TC:** `HK_REQUEST(sid=1)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=4)` (Service 3, Subtype 27)
+**TC:** `HK_REQUEST(sid=6)` (Service 3, Subtype 27)
+**Verify:** `obdh.mode` (0x0300) = 0 --- NOMINAL (COM-007 restored it; a
+spacecraft about to declare NOMINAL must not be carrying a SAFE OBC)
+**Verify:** `ttc.tm_tier` (0x0539) = 1 (LOW) and `ttc.downlink_mode` (0x053C) = 0
+--- no card left the HIGH gate open (COM-006/COM-012 exit states)
+**Verify:** `eps.load_shed_stage` (0x0134) = 0 --- no shed latch left set (COM-008)
+**Verify:** `eps.bus_voltage` (0x0105) in [26.5, 29.5] V; `eps.bat_soc`
+(0x0101) > 60%
+**Verify:** `obdh.time_ref` (0x0A13) != 0 --- clock referenced (LEOP-006)
+**GO/NO-GO:** Platform end state clean --- nothing left armed, shed or raised
 
-### Step 3 — Coarse Sun Sensor Check
-**Action:** AOCS reads all 6 CSS heads. Verify illuminated faces show > 0.1 output, shadowed faces ~0.
-**Verify:** CSS readings consistent with expected sun vector direction within 10s
-**GO/NO-GO:** CSS suite providing valid sun vector
+### Step 3 --- Consolidated Payload End-State Readback
+**TC:** `HK_REQUEST(sid=5)` (Service 3, Subtype 27)
+**Verify:** `payload.mode` (0x0600) = 1 --- STANDBY (never left IMAGING)
+**Verify:** `payload.fpa_ready` (0x0610) = 1 --- cooler regulating (COM-010)
+**Verify:** `payload.transfer_active` (0x062D) = 0 --- no S13 session left open
+**GO/NO-GO:** Payload commissioned and quiescent
 
-### Step 4 — Star Camera Verification
-**Action:** AOCS checks star camera A (zenith). Verify acquisition if rates < 0.1 deg/s.
-**Verify:** Star camera A status = TRACKING within 90s (requires low rates)
-**Action:** AOCS checks star camera B (nadir). Verify acquisition.
-**Verify:** Star camera B status = TRACKING within 90s
-**GO/NO-GO:** At least one star camera tracking
+### Step 4 --- Declare NOMINAL Operations (phase 6)
+**Action:** FD polls all positions. Work through the pre-transition checklist:
+OBC and AOCS modes, sustained attitude error, battery SoC and power margin,
+sensors and actuators responding, link stable, GPS fix valid, thermal zones in
+limits, S12 monitoring and S19 event-actions enabled.
+**Note:** Declaring NOMINAL (6) is what actually unlocks nominal operations.
+Below phase 6 the derived spacecraft mode (`sat.mode` 0x0001, and the console
+header) is pinned to SAFE regardless of spacecraft health; the advanced
+fault-propagation model and the phase-gated FDIR rules are disarmed; and the
+propulsion interlock refuses to arm a burn (`prop.yaml min_phase: 6`).
+**TC:** `SYS_SET_MISSION_PHASE(phase=6, flags=0)` (Service 8, Subtype 1, func_id 120)
+**Verify:** `eps.spacecraft_phase` (0x0129) = 6 within 5s
+**Verify:** `sat.mode` (0x0001) = 1 within 10s --- derived NOMINAL
+**Action:** Confirm event `MISSION_PHASE_CHANGED` (0x0055) appears in the
+event log carrying `5 (COMMISSIONING) -> 6 (NOMINAL)`, and record the
+transition time in the mission log.
+**Note:** Going back is refused unless the FORCE flag is set (flags bit 0 = 1)
+--- a deliberate speed bump. If a declaration was premature, re-send with the
+flag and record why.
+**GO/NO-GO:** Phase = NOMINAL, spacecraft declared operational
 
-### Step 5 — GPS Position Check
-**Action:** AOCS reads GPS position. Verify lat/lon/alt plausible for expected 450 km SSO orbit.
-**Verify:** GPS altitude in range [440, 460] km within 10s
-**GO/NO-GO:** GPS providing valid position fix
-
-### Phase 2 — Attitude Determination Validation
-
-### Step 6 — Enable All Sensor Inputs
-**Action:** AOCS enables all sensor inputs for attitude determination.
-**Action:** Compare magnetometer-derived attitude with sun sensor attitude.
-**Verify:** Coarse attitude solutions from mag and CSS consistent within 10 deg within 30s
-**GO/NO-GO:** Coarse attitude determination valid
-
-### Step 7 — Star Camera Cross-Check
-**Action:** When star camera acquires, compare star-camera attitude with mag+CSS solution.
-**Verify:** Star camera vs coarse solution agreement within 5 deg within 30s
-**Verify:** `aocs.att_error` (0x0217) < 2 deg within 60s (attitude solution converged)
-**GO/NO-GO:** Attitude determination converged
-
-### Step 8 — Angular Rate Verification
-**Action:** Verify angular rate measurement consistent across sensors.
-**Verify:** `aocs.rate_roll` (0x0204) < 0.1 deg/s within 10s
-**Verify:** `aocs.rate_pitch` (0x0205) < 0.1 deg/s within 10s
-**Verify:** `aocs.rate_yaw` (0x0206) < 0.1 deg/s within 10s
-**GO/NO-GO:** Rate measurements valid and consistent
-
-### Phase 3 — Actuator Sign Checks
-
-### Step 9 — Reaction Wheel Sign Checks
-**Action:** AOCS commands small positive torque on RW1 (+X axis). Verify rate change is positive in X.
-**Verify:** Rate response in correct axis and sign within 30s
-**Action:** Repeat for RW2 (+Y), RW3 (+Z), RW4 (skew).
-**Verify:** All 4 reaction wheel sign checks pass within 120s
-**GO/NO-GO:** Reaction wheel signs verified correct
-
-### Step 10 — Magnetorquer Sign Checks
-**Action:** AOCS commands small positive dipole on MTQ1. Verify expected field change.
-**Verify:** Magnetometer reading changes in expected direction within 30s
-**Action:** Repeat for MTQ2, MTQ3.
-**Verify:** All 3 magnetorquer sign checks pass within 90s
-**GO/NO-GO:** All actuator signs correct
-
-### Phase 4 — Rate Damping Verification
-
-### Step 11 — Detumble Mode Verification
-**TC:** `AOCS_SET_MODE(mode=2)` (Service 8, Subtype 1, func_id 0) — DETUMBLE (if not already)
-**Action:** AOCS monitors body rates decreasing (target < 0.1 deg/s in all axes).
-**Verify:** `aocs.rate_roll` (0x0204) < 0.1 deg/s within 900s
-**Verify:** `aocs.rate_pitch` (0x0205) < 0.1 deg/s within 900s
-**Verify:** `aocs.rate_yaw` (0x0206) < 0.1 deg/s within 900s
-**Action:** AOCS verifies magnetorquer activity (B-dot control).
-**Action:** Record time to achieve rate damping.
-**Action:** EPS/TCS monitors power consumption during detumble.
-**GO/NO-GO:** Rate damping achieved within 15 minutes
-
-### Phase 5 — Pointing Control
-
-### Step 12 — COARSE_SUN Mode (Sun-Pointing)
-**TC:** `AOCS_SET_MODE(mode=3)` (Service 8, Subtype 1, func_id 0) — COARSE_SUN (sun-pointing)
-**Action:** When rates < 0.1 deg/s, AOCS commands COARSE_SUN (mode 3) for sun-pointing.
-**Note:** COARSE_SUN is a HOLD, not a destination. Since the Phase 1 mode-management
-fix the model hands itself back to the commanded mode once sun lock and the star
-tracker recover, so `aocs.commanded_mode` (0x0297) and `aocs.mode_demoted` (0x0298)
-are the pair to watch here, not `aocs.mode` alone.
-**Verify:** `aocs.att_error` (0x0217) decreasing towards 0 within 120s
-**Action:** Verify solar array illumination increasing (EPS power_gen should increase).
-**Verify:** `eps.power_gen` increasing within 120s
-**GO/NO-GO:** Sun-pointing achieved, power generation optimal
-
-### Step 13 — NOMINAL Mode (Nadir-Pointing)
-**TC:** `AOCS_SET_MODE(mode=4)` (Service 8, Subtype 1, func_id 0) — NOMINAL (nadir pointing for imaging)
-**Verify:** `aocs.att_error` (0x0217) < 1 deg within 300s
-**Action:** FD records pointing performance for commissioning report.
-**GO/NO-GO:** Nadir pointing accuracy < 1 deg confirmed
+### Step 5 --- Hold and Hand Over
+**Action:** Hold for at least one full eclipse cycle with the now-armed FDIR
+rules evaluating. Confirm from the archive that `sat.mode` (0x0001) stays 1
+and `aocs.mode` (0x020F) stays in {4, 5, 8} throughout.
+**Action:** Distribute the Commissioning Closure Report and hand the console
+to the nominal-operations shift (NOM-001 onward).
+**GO/NO-GO:** NOMINAL held through an orbit --- commissioning CLOSED
 
 ## Off-Nominal Handling
-- If magnetometer field magnitude outside 25-65 uT range: Check orbit position (polar regions have higher fields). If consistent mismatch, flag for calibration via COM-003.
-- If star cameras fail to acquire: Verify body rates are below 0.1 deg/s. Check for bright objects in FOV. Wait for orbital geometry change. If persistent, proceed with coarse-sensor-only attitude.
-- If reaction wheel sign check fails: DO NOT enable that wheel in the control loop. Mark wheel for ground investigation. AOCS can operate with 3 wheels.
-- If magnetorquer sign check fails: Verify wiring table against as-built documentation. If sign is reversed, update sign convention parameter on-board. Do not use B-dot control until corrected.
-- If rate damping exceeds 15 minutes: Check for residual tip-off rate from separation. Verify magnetorquer authority is sufficient. Consider increasing MTQ duty cycle.
-- If nadir pointing accuracy > 2 deg: Remain in SAFE mode. Review sensor calibration data. Schedule extended commissioning pass.
+- If any Step 1-3 readback fails: do NOT declare phase 6. Return to the owning card's off-nominal section (the verify lines above name it) and re-establish its exit state first.
+- If `SYS_SET_MISSION_PHASE` is refused: 0x0C03 = OBC in bootloader (a reboot happened --- re-run LEOP-001 Step 5 and LEOP-006); 0x0C04 = backwards without FORCE.
+- If `sat.mode` does not derive 1 after the declaration: an FDIR contingency is latched --- read the FDIR journal, clear the cause, and the derived mode recovers by itself. There is no TC that sets sat.mode directly.
+- If AOCS demotes during the Step 5 hold: the now-armed `aocs.att_error` FDIR rule commands COARSE_SUN on a real excursion; the auto-resume ladder applies. Investigate the excursion before re-declaring anything.
+
+## Exit state
+- Mission phase 6, `sat.mode` = 1 (NOMINAL); FDIR fully armed
+- AOCS commanded NOMINAL; payload STANDBY with FPA regulating; downlink LOW;
+  OBC NOMINAL; no latches, sessions or gates left open
+- The spacecraft is the nominal-operations baseline that NOM-001 assumes
 
 ## Post-Conditions
-- [ ] All AOCS sensors verified operational and calibrated
-- [ ] Both magnetometers operational, primary selected
-- [ ] Star cameras tracking, integrated into attitude solution
-- [ ] GPS providing valid position fixes
-- [ ] All 4 reaction wheel signs verified correct
-- [ ] All 3 magnetorquer signs verified correct
-- [ ] Rate damping achieved within specification (< 15 min to < 0.1 deg/s)
-- [ ] Sun-pointing mode verified with power generation increase
-- [ ] Nadir pointing accuracy < 1 deg confirmed
-- [ ] ADCS Commissioning Report generated with all test results
+- [ ] Every commissioning card's exit state re-verified in consolidation
+- [ ] Phase 6 declared (event 0x0055 logged), `sat.mode` = 1
+- [ ] NOMINAL held through a full eclipse cycle
+- [ ] Commissioning Closure Report distributed
+
+**NEXT:** Nominal operations (NOM-001 Pass Startup). Commissioning is closed.

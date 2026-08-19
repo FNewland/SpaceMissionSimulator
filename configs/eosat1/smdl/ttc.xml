@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="TTC" Creator="EOSAT-1 SMDL Generator" Version="1.0+2fdbeaed7708">
+<Catalogue xmlns="http://www.ecss.nl/smp/2019/Smdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="TTC" Creator="EOSAT-1 SMDL Generator" Version="1.0+f46653e0637e">
   <Description>SMP2 model catalogue for TTC subsystem</Description>
   <Type Name="UInt8" Uuid="ab46787a-5742-5d41-9471-82b8d26b3826" xsi:type="Integer" Size="1" Signed="false"/>
   <Type Name="UInt16" Uuid="00ba295b-550c-5551-b87d-d604e30c7592" xsi:type="Integer" Size="2" Signed="false"/>
@@ -19,7 +19,7 @@
       <Description>[dB]</Description>
     </Field>
     <Field Name="ttc_tm_data_rate" Uuid="9daa0594-4459-5a14-a4a7-5e968a032f21" Type="UInt32" Kind="Output" View="true">
-      <Description>Active TM information rate (BEACON 1000 / LOW 16000 / HIGH 128000) [bps]</Description>
+      <Description>Active TM information rate (SAFE 1000 / LOW 16000 / HIGH 128000) [bps]</Description>
     </Field>
     <Field Name="ttc_xpdr_temp" Uuid="54465546-b34f-5c54-bda6-0e28850f3493" Type="Int16" Kind="Output" View="true">
       <Description>[C]</Description>
@@ -97,7 +97,7 @@
       <Description>Modulation scheme (0=BPSK, 1=QPSK, 2=8PSK, 3=OQPSK)</Description>
     </Field>
     <Field Name="ttc_tm_tier" Uuid="cbe3fcb8-91bd-5532-82e3-1cfbea673c1c" Type="UInt8" Kind="Output" View="true">
-      <Description>ACTIVE TM rate tier index (0=BEACON 1 kbps, 1=LOW 16 kbps, 2=HIGH 128 kbps) — what is on air now, after the permission gates</Description>
+      <Description>ACTIVE TM rate tier index (0=SAFE 1 kbps, 1=LOW 16 kbps, 2=HIGH 128 kbps) — what is on air now, after the permission gates</Description>
     </Field>
     <Field Name="ttc_tm_tier_cmd" Uuid="c66ee5c4-6cbb-525e-846f-cf1c0d12dd01" Type="UInt8" Kind="Output" View="true">
       <Description>COMMANDED TM rate tier index (TTC_SET_DATA_RATE, S8 func 65). Differs from 0x0539 whenever a gate demotes the active tier</Description>
@@ -142,7 +142,7 @@
       <Description>Backup power amplifier temperature [C]</Description>
     </Field>
     <Field Name="tc_TTC_SET_DATA_RATE_rate" Uuid="f1bdaa6a-aedb-5041-829a-5cbddae03e57" Type="UInt8" Kind="Input">
-      <Description>Tier code: 0=LOW(16 kbps, routine operations), 1=HIGH(128 kbps, dumps only), 255=BEACON(1 kbps, bootloader only). Codes come from tm_rate_tiers[].command_code in subsystems/ttc.yaml. | default 0 | 0=LOW | 1=HIGH | 255=BEACON</Description>
+      <Description>Tier code: 0=LOW(16 kbps, routine operations), 1=HIGH(128 kbps, dumps only), 255=SAFE(1 kbps, bootloader only). Codes come from tm_rate_tiers[].command_code in subsystems/ttc.yaml. | default 0 | 0=LOW | 1=HIGH | 255=SAFE</Description>
     </Field>
     <Field Name="tc_TTC_SET_TX_POWER_level" Uuid="8e5330e9-c10e-5025-8d51-585390d510b5" Type="UInt8" Kind="Input">
       <Description>0=LOW (1.0 W), 1=NOMINAL (2.0 W), 2=HIGH (5.0 W) | default 1 | 0=LOW | 1=NOMINAL | 2=HIGH</Description>

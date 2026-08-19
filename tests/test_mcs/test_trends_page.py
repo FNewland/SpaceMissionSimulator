@@ -261,3 +261,158 @@ return document.getElementById('alarm-journal-body').innerHTML;
     assert "Under-Voltage Load Shed" in out
     assert "alarm-proc-btn" in out
     assert "fresh" in out, "a new unacknowledged alarm carries no visual cue"
+
+
+# ── The empty trend page must name its own cause ──────────────────────────
+#
+# Owner report: "the trends tab does not work at all". Reproduced against a
+# running MCS: every one of the tab's failure modes — a corrupt archive, a
+# server-side query error, an unreachable `/api/archive/param-names`, and a
+# window that genuinely holds no rows — rendered the SAME thing, an empty
+# chart under the string "NO ARCHIVED DATA IN THIS WINDOW" (or, for the
+# parameter list, a silently empty selector reading "0 of 0 archived").
+#
+# The four are operationally different: one is a broken ground segment, one
+# is a broken request, one is a quiet spacecraft and one is a file whose
+# rows are on the wrong clock. These gates keep them distinguishable.
+
+_STUB = """
+adoptServerClock({ ground_utc: new Date(1773100000000).toISOString(), speed: 1 });
+function stubArchive(fn) { fetch = fn; }
+"""
+
+
+def _run_async(body: str, tmp_path: Path):
+    return run_js(_STUB + "return (async () => {\n" + body + "\n})();", tmp_path)
+
+
+@requires_node
+def test_an_unavailable_archive_is_not_reported_as_an_empty_window(tmp_path):
+    """A corrupt archive said 'NO ARCHIVED DATA IN THIS WINDOW'."""
+    out = _run_async("""
+stubArchive(async () => ({ ok: true, json: async () => ({
+  names: [], bands: {}, data: [], archive_unavailable: true,
+  archive: { available: false, status: 'corrupt',
+             message: 'TELEMETRY ARCHIVE CORRUPT — the archive file is damaged' } }) }));
+await trendLoadNames();
+document.getElementById('trend-params').selectedOptions = [{value:'eps.soc_pct'}];
+await trendLoad();
+return { status: document.getElementById('trend-status').textContent,
+         colour: document.getElementById('trend-status').style.color,
+         banner: document.getElementById('archive-banner').textContent };
+""", tmp_path)
+    assert out["status"].startswith("ARCHIVE UNAVAILABLE")
+    assert "damaged" in out["status"]
+    assert "NO ARCHIVED DATA" not in out["status"]
+    assert "alarm" in out["colour"]
+    assert "TELEMETRY ARCHIVE CORRUPT" in out["banner"]
+
+
+@requires_node
+def test_a_failed_query_is_not_reported_as_an_empty_window(tmp_path):
+    """`fetch` does not reject on HTTP 500 — the old code read it as [] rows."""
+    out = _run_async("""
+stubArchive(async (url) => url.indexOf('param-names') >= 0
+  ? { ok: true, json: async () => ({ names: ['eps.soc_pct'], bands: {},
+      archive: { available: true, status: 'ok', time_base: 'sim' } }) }
+  : { ok: false, status: 500, json: async () => ({ error: 'query_parameters blew up' }) });
+await trendLoadNames();
+document.getElementById('trend-params').selectedOptions = [{value:'eps.soc_pct'}];
+await trendLoad();
+return { status: document.getElementById('trend-status').textContent,
+         colour: document.getElementById('trend-status').style.color };
+""", tmp_path)
+    assert out["status"].startswith("ARCHIVE QUERY FAILED")
+    assert "500" in out["status"] and "query_parameters blew up" in out["status"]
+    assert "NO ARCHIVED DATA" not in out["status"]
+    assert "alarm" in out["colour"]
+
+
+@requires_node
+def test_an_unreachable_param_name_endpoint_says_so(tmp_path):
+    """The selector was silently empty: the literal 'does not work at all'."""
+    out = _run_async("""
+stubArchive(async () => { throw new Error('Failed to fetch'); });
+await trendLoadNames();
+return { count: document.getElementById('trend-param-count').textContent,
+         status: document.getElementById('trend-status').textContent };
+""", tmp_path)
+    assert "No parameter list" in out["count"]
+    assert "Failed to fetch" in out["count"]
+    assert "0 of 0 archived" not in out["count"]
+    assert out["status"].startswith("PARAMETER LIST UNAVAILABLE")
+
+
+@requires_node
+def test_a_genuinely_empty_window_names_the_window_it_queried(tmp_path):
+    """'No data' is only actionable if the operator can see which window."""
+    out = _run_async("""
+stubArchive(async () => ({ ok: true, json: async () => ({
+  names: ['eps.soc_pct'], bands: {}, data: [], archive_unavailable: false,
+  archive: { available: true, status: 'ok', time_base: 'sim',
+             message: 'Telemetry archive online' } }) }));
+await trendLoadNames();
+document.getElementById('trend-params').selectedOptions = [{value:'eps.soc_pct'}];
+await trendLoad();
+return document.getElementById('trend-status').textContent;
+""", tmp_path)
+    assert out.startswith("Archive queried OK")
+    assert "no samples in" in out
+    assert "sim time" in out          # names the clock the window is on
+    assert "2026-03-09" in out        # and the window itself
+
+
+@requires_node
+def test_a_legacy_wall_clock_archive_explains_why_it_can_never_match(tmp_path):
+    """A pre-migration file cannot intersect a sim-time window, ever.
+
+    Widening the window does not help and the operator must not be left
+    trying. The archive's own `time_base` is the evidence.
+    """
+    out = _run_async("""
+stubArchive(async () => ({ ok: true, json: async () => ({
+  names: ['eps.soc_pct'], bands: {}, data: [], archive_unavailable: false,
+  archive: { available: true, status: 'legacy', time_base: 'wall',
+             message: 'LEGACY ARCHIVE (schema v1)' } }) }));
+await trendLoadNames();
+document.getElementById('trend-params').selectedOptions = [{value:'eps.soc_pct'}];
+await trendLoad();
+return { status: document.getElementById('trend-status').textContent,
+         colour: document.getElementById('trend-status').style.color };
+""", tmp_path)
+    assert "LEGACY ARCHIVE" in out["status"]
+    assert "WALL CLOCK" in out["status"]
+    assert "warning" in out["colour"]
+
+
+@requires_node
+def test_the_trend_window_is_sim_time_not_browser_wall_clock(tmp_path):
+    """Archive rows carry sim-time epochs (schema v2).
+
+    The MCS sim epoch is months away from the host clock, so a window built
+    from `Date.now()` intersects nothing. The window must come from the
+    server-anchored clock (`simNowSec`), and the request must carry it.
+    """
+    out = _run_async("""
+const urls = [];
+// Sim time is 2026-03-10; the browser's own clock is irrelevant.
+adoptServerClock({ ground_utc: '2026-03-10T00:00:00Z', speed: 1 });
+stubArchive(async (url) => { urls.push(url); return { ok: true, json: async () => ({
+  names: ['eps.soc_pct'], bands: {}, data: [],
+  archive: { available: true, status: 'ok', time_base: 'sim' } }) }; });
+await trendLoadNames();
+document.getElementById('trend-window').value = '3600';
+document.getElementById('trend-params').selectedOptions = [{value:'eps.soc_pct'}];
+await trendLoad();
+// trendMeta is the window the request was actually built from.
+return { urls, win: trendMeta, wall: Date.now() / 1000 };
+""", tmp_path)
+    sim_epoch = 1773100800.0                       # 2026-03-10T00:00:00Z
+    assert abs(out["win"]["end"] - sim_epoch) < 30, out["win"]
+    assert abs(out["win"]["end"] - out["win"]["start"] - 3600) < 1
+    # And it is nowhere near the browser's wall clock, which is the bug class.
+    assert abs(out["win"]["end"] - out["wall"]) > 3600
+    q = [u for u in out["urls"] if "eps.soc_pct" in u]
+    assert q, out["urls"]
+    assert f"start={out['win']['start']}" in q[0]
+    assert f"end={out['win']['end']}" in q[0]

@@ -407,13 +407,19 @@ The tool outputs hex command strings for S20.1 SET_PARAM commands targeting:
 
 Also check the **BODY RATES chart** (bottom of aocs tab) for trending confirmation — rates should show a clear decay curve.
 
-### 9.2 Transition to COARSE_SUN (Safe Pointing)
+### 9.2 Observe the AUTOMATIC Transition to COARSE_SUN (Safe Pointing)
 
-**TC:** `AOCS_SET_MODE(mode=3)` (S8.1, func_id 0, data byte = 3)
+**No TC.** Once the body rates have held below 0.5°/s for 30 s, the AOCS hands
+itself from DETUMBLE to COARSE_SUN — this is an AUTOMATIC transition
+(`docs/plan_2026-08c/AOCS_MODE_TRANSITIONS.md` §1.2). Do not command mode 3
+here: you would be commanding the mode the spacecraft is about to enter by
+itself. COARSE_SUN is likewise a transient HOLD, never a destination — once a
+star tracker is tracking (Phase 12) it auto-promotes to the commanded mode, so
+never "verify mode = 3" minutes after the lock holds.
 
 **MCS screen: aocs tab**
-- Mode state machine shows COARSE_SUN (mode 3)
-- `att_error` (0x0217) should decrease toward < 10° within 5 minutes
+- Mode state machine shows COARSE_SUN (mode 3), reached without commanding
+- `att_error` (0x0217) should decrease toward < 15° within 10 minutes
 - CSS Sun Vector panel shows valid sun vector (X/Y/Z components)
 - **eps** tab → `power_gen` should increase as arrays face the sun
 
@@ -595,15 +601,20 @@ ST2 is now verified working; return to single-tracker operations to save power. 
 
 **Verify:** `ttc_mode` = 0, link locked.
 
-### 13.3 Redundant Magnetometer Check
+### 13.3 Magnetometer Health Check (single-string — no redundancy to exercise)
 
-**TC:** `MAG_SELECT(on=1)` (S8.1, func_id 7, data byte = 1) — select redundant mag
+EO-Sat-1 flies ONE 3-axis magnetometer (owner ruling 2026-08c) — like the gyro
+fit, there is no spare and no MAG_SELECT. This step verifies the one unit is
+healthy rather than exercising a switchover that does not exist. (A stale
+`MAG_SELECT` — S8 func 7 — is now refused with an explanatory 0x0007.)
 
-**MCS screen: aocs tab** → magnetometer X/Y/Z values should still be reasonable, attitude maintained.
+**MCS screen: aocs tab** → `aocs.mag_enabled` (0x025C) = 1; `aocs.mag_x/y/z`
+(0x020B-0D) plausible against the IGRF field for the current position;
+`aocs.mag_field_total` (0x0277) 20 000–55 000 nT in the 450 km orbit.
 
-**TC:** `MAG_SELECT(on=0)` (S8.1, func_id 7, data byte = 0) — return to primary
-
-**GO/NO-GO:** All redundant units verified functional. Return all to nominal (primary) configuration.
+**GO/NO-GO:** Magnetometer healthy. A failure here is a mission-level
+degradation (B-dot and magnetic desaturation are blind) — raise it, do not
+work around it.
 
 **⚠ If this step fails:** See [Commissioning Contingency Procedures](10_commissioning_contingency_procedures.md#phase-13--redundant-equipment-checkout) — covers bus switchover failure, transponder issues, comms loss.
 
@@ -761,7 +772,7 @@ The engine should automatically transition `spacecraft_phase` (0x0129) to 5 (COM
 | **TTC** | SET_PARAM(0x05FF), S17.1 ping, antenna deploy, transponder switch | **ttc** (link status, RSSI, margin, antenna) |
 | **FDIR/Systems** | OBC_BOOT_APP, OBC_SELECT_BUS, HK_ENABLE ×6, time-tagged tests | **obdh** (sw_image, mode, CPU, buffers), **commanding** (acceptance log) |
 | **EPS/TCS** | EPS_POWER_ON ×5, heater verification, cooler activation | **eps** (power lines, SoC, bus voltage), **tcs** (temps, heaters, cooler) |
-| **AOCS** | AOCS_SET_MODE ×4, ST power ×2, MAG_SELECT, GPS enable | **aocs** (mode, rates, att_error, wheels, star trackers, GPS) |
+| **AOCS** | AOCS_SET_MODE ×4, ST power ×2, GPS enable | **aocs** (mode, rates, att_error, wheels, star trackers, GPS) |
 | **Payload Ops** | PAYLOAD_SET_MODE ×3, PAYLOAD_CAPTURE, FPA cooler | **payload** (mode, FPA temp, storage, image count) |
 
 ---

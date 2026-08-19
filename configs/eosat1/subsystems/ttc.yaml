@@ -46,8 +46,10 @@ dl_freq_mhz: 2200.0
 # simulator, the S8 func-65 handler, the rate pacers and the RF pipeline
 # all follow.
 #
-# THREE rungs, per Franz's ruling of 2026-07-29:
-#   BEACON  1 kbps   bootloader / beacon lifeline
+# THREE rungs, per Franz's rulings of 2026-07-29 and 2026-08c (the bottom
+# rung was renamed BEACON -> SAFE; same rate, same wire values — "beacon"
+# now always means the UHF whip transmitter, never a rung of this ladder):
+#   SAFE    1 kbps   bootloader / contingency lifeline rate
 #   LOW    16 kbps   ROUTINE OPERATIONS — where the spacecraft normally sits
 #   HIGH  128 kbps   delayed telemetry and image dumps, gated and earned
 #
@@ -83,26 +85,27 @@ dl_freq_mhz: 2200.0
 # verbatim: **0 = "the low rate" = LOW, 1 = "the high rate" = HIGH**. FDIR's
 # ttc_reduce_power action sends 0x00 and still drops to the low operational
 # rate; anything that sent 0x01 for "high rate" still gets the high rate,
-# now 128 kbps instead of 64 kbps. BEACON has code 0xFF because it is not
+# now 128 kbps instead of 64 kbps. SAFE has code 0xFF because it is not
 # selectable by telecommand in nominal software — it is entered by
 # TTC_SET_BEACON_MODE (func 70) or by the bootloader.
 tm_rate_tiers:
-  - name: BEACON
+  - name: SAFE               # renamed from BEACON (owner ruling 2026-08c)
     bps: 1000
     command_code: 0xFF
     modulation: BPSK          # 0=BPSK 1=QPSK 2=8PSK 3=OQPSK
     coding: CONV_RS           # conv K=7 r=1/2 + RS(255,223)
     coding_gain_db: 7.5
-    # SID 11 is 28 bytes every 30 s = 7.47 bps, so 1 kbps carries the beacon
-    # with 134x headroom. Reachable ONLY from the bootloader / beacon mode.
+    # SID 11 is 28 bytes every 30 s = 7.47 bps, so 1 kbps carries it with
+    # 134x headroom. Reachable ONLY from the bootloader / beacon mode.
     #
-    # NOTE (2026-08b/R2): this rung is the S-BAND ladder's lowest rate. It is
-    # NOT the UHF beacon transmitter — that is the `beacon:` block at the foot
-    # of this file, and it has its own band, PA, antenna and budget. This rung
-    # is what the S-band chain drops to when `beacon_mode` is latched; the UHF
-    # beacon runs at its own 1 kbps regardless of which rung the S-band chain
-    # is on, and keeps running when the S-band PA is off altogether.
-    beacon_only: true
+    # NOTE: this rung is the S-BAND ladder's lowest rate. It is NOT the UHF
+    # beacon transmitter — that is the `beacon:` block at the foot of this
+    # file, with its own band, PA, antenna and budget ("beacon" always means
+    # that second radio now). This rung is what the S-band chain drops to
+    # when `beacon_mode` is latched; the UHF beacon runs at its own 1 kbps
+    # regardless of which rung the S-band chain is on, and keeps running
+    # when the S-band PA is off altogether.
+    bootloader_only: true     # renamed from beacon_only (accepted as alias)
     requires_antenna: false
   - name: LOW
     bps: 16000
@@ -145,11 +148,20 @@ tm_rate_tiers:
     # OQPSK; set `modulation: OQPSK` here if that fidelity matters more.
     requires_antenna: true
     requires_downlink_mode: true
+    # GROUND POLICY, not an on-board gate (2026-08c item 4): a real
+    # spacecraft does not know its elevation as seen from a ground station,
+    # so the flight software no longer refuses or demotes HIGH on elevation.
+    # This number is read by the GROUND segment only — the planner schedules
+    # HIGH dumps above it, and the MCS command path warns when HIGH is
+    # commanded below it (from the ground's own contact geometry). Below
+    # 10 deg the physics still bites honestly: cosec-scaled atmospheric
+    # loss and the G/T de-rate cost real margin and raise the BER the
+    # ground sees.
     min_elevation_deg: 10.0
 
 # Tier selected on entry to each regime. Names must exist in tm_rate_tiers.
 default_tier: LOW         # routine operations
-beacon_tier: BEACON       # bootloader / beacon mode
+beacon_tier: SAFE         # bootloader / beacon mode -> the SAFE (1 kbps) rung
 safe_tier: LOW            # safe mode, FDIR fallback, antenna stowed
 
 # Deprecated aliases. Nothing in the simulator reads these any more; they are
@@ -309,7 +321,7 @@ beacon:
   # station. The 9 m S-band dish is 20.0 dB/K — 28 dB better.
   gs_g_t_db: -8.0
   bps: 1000
-  # conv(7,1/2) + RS(255,223), the same concatenation the S-band BEACON rung
+  # conv(7,1/2) + RS(255,223), the same concatenation the S-band SAFE rung
   # uses. A beacon is the last thing you want uncoded.
   coding_gain_db: 7.5
   required_eb_n0_db: 9.6
