@@ -62,7 +62,70 @@ header{ flex:0 0 auto; background:var(--s1); border-bottom:1px solid var(--line)
 /* ── shell: three columns + collapsible bottom log ──────────────────── */
 main{ flex:1; display:grid; min-height:0;
   grid-template-columns:300px minmax(0,1fr) 340px; gap:10px; padding:10px; }
-.col{ display:flex; flex-direction:column; gap:10px; min-height:0; overflow-y:auto; }
+.col{ display:flex; flex-direction:column; gap:10px; min-height:0;
+  overflow-y:auto; scrollbar-gutter:stable; }
+
+/* ── INSTRUCTOR SCROLL FIX (field report 2026-08-20) ──────────────────
+   The columns are flex containers; their children are .ds-cards, which
+   carry `overflow:hidden` from the shared design system. An overflow-
+   not-visible flex ITEM loses its automatic minimum size (min-height:auto
+   -> 0), so the default `flex-shrink:1` squeezed every card below its own
+   content. The card then clipped what it could not fit AND -- the part
+   that makes this invisible rather than merely ugly -- the column's
+   scrollHeight stayed equal to its clientHeight, so no scrollbar ever
+   appeared and there was literally nothing to scroll to. Breakpoints, the
+   tail of the scenario list, the deep-dive launcher and the parameter
+   search were unreachable at every viewport size.
+   Fix in two parts: cards keep their natural height so the column really
+   overflows and really scrolls; and the three unbounded LISTS get their
+   own bounded scroll region, so a 38-item scenario list cannot push the
+   cards below it out of reach. */
+.col > *{ flex:0 0 auto; }
+
+/* Bounded lists: scroll inside themselves, keep siblings reachable. */
+#scenario-list, #failures-list, #breakpoints-list{
+  overflow-y:auto; scrollbar-gutter:stable;
+  /* Scroll shadow: a dark edge appears ONLY while content is off-screen
+     in that direction (background-attachment:local), so a scrollable
+     region announces itself without permanent chrome. */
+  background:
+    linear-gradient(var(--s1) 30%, rgba(0,0,0,0)) top / 100% 14px no-repeat local,
+    linear-gradient(rgba(0,0,0,0), rgba(0,0,0,.45)) bottom / 100% 14px no-repeat local,
+    linear-gradient(rgba(0,0,0,.35), rgba(0,0,0,0)) top / 100% 10px no-repeat scroll,
+    linear-gradient(rgba(0,0,0,0), rgba(0,0,0,.35)) bottom / 100% 10px no-repeat scroll; }
+#scenario-list{ max-height:40vh; }
+#failures-list{ max-height:34vh; }
+#breakpoints-list{ max-height:26vh; }
+
+/* Make the scrollbars actually visible. Chromium paints fading OVERLAY
+   bars when `scrollbar-width`/`scrollbar-color` are set, which on an ops
+   console reads as "no scrollbar" -- so style the -webkit- pseudo
+   elements instead and deliberately do NOT set the standard properties. */
+.col::-webkit-scrollbar,
+#scenario-list::-webkit-scrollbar,
+#failures-list::-webkit-scrollbar,
+#breakpoints-list::-webkit-scrollbar,
+.snap-body::-webkit-scrollbar,
+#raw-snapshot-container::-webkit-scrollbar{ width:12px; }
+.col::-webkit-scrollbar-track,
+#scenario-list::-webkit-scrollbar-track,
+#failures-list::-webkit-scrollbar-track,
+#breakpoints-list::-webkit-scrollbar-track,
+.snap-body::-webkit-scrollbar-track,
+#raw-snapshot-container::-webkit-scrollbar-track{
+  background:var(--s2); border-radius:6px; }
+.col::-webkit-scrollbar-thumb,
+#scenario-list::-webkit-scrollbar-thumb,
+#failures-list::-webkit-scrollbar-thumb,
+#breakpoints-list::-webkit-scrollbar-thumb,
+.snap-body::-webkit-scrollbar-thumb,
+#raw-snapshot-container::-webkit-scrollbar-thumb{
+  background:var(--line-2); border-radius:6px;
+  border:2px solid var(--s2); }
+.col::-webkit-scrollbar-thumb:hover,
+#scenario-list::-webkit-scrollbar-thumb:hover,
+#failures-list::-webkit-scrollbar-thumb:hover,
+#breakpoints-list::-webkit-scrollbar-thumb:hover{ background:var(--tx3); }
 .col-head{ font-size:12px; font-weight:700; letter-spacing:1.6px;
   text-transform:uppercase; color:var(--tx3); padding:2px 2px 0; }
 
