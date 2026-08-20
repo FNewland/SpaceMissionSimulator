@@ -2342,7 +2342,7 @@ async function sendCommand() {
   }
   setHTML("cmd-verif-stepper", renderStepper(["BUILD", "SENT", "ACCEPT (S1.1)", "EXEC (S1.7)"], 1));
   const r = await postJSON("/api/pus-command", {
-    service, subtype, data, name, position: S.position });
+    service, subtype, data_hex: data, name, position: S.position });
   const ok = r.ok && (!r.json || r.json.status !== "rejected");
   noteHistory({ ts: tsShort(), name: name || `S${service},${subtype}`, service, subtype, data,
     verdict: ok ? "sent" : `rejected${r.json && r.json.reason ? ": " + r.json.reason : ""}` });
@@ -2462,7 +2462,7 @@ async function sendQuick(key) {
   // builder (AOCS_DETUMBLE is AOCS_SET_MODE with mode=2, not the default).
   const data = encodeCatalogCommand(cmd, q.args || {});
   const r = await postJSON("/api/pus-command", {
-    service: cmd.service, subtype: cmd.subtype, data, name: cmd.name, position: S.position });
+    service: cmd.service, subtype: cmd.subtype, data_hex: data, name: cmd.name, position: S.position });
   noteHistory({ ts: tsShort(), name: cmd.name, service: cmd.service, subtype: cmd.subtype,
     data, verdict: r.ok ? "sent" : `rejected (${r.status})` });
   announce(`${cmd.name} ${r.ok ? "sent" : "rejected"}`);
@@ -2574,7 +2574,7 @@ async function s3Command(action, sid) {
   const map = { enable: [3, 5], disable: [3, 6], oneshot: [3, 27] };
   const [svc, sub] = map[action];
   await postJSON("/api/pus-command", { service: svc, subtype: sub,
-    data: sidToHex(sid), name: `HK_${action.toUpperCase()}_SID${sid}`, position: S.position });
+    data_hex: sidToHex(sid), name: `HK_${action.toUpperCase()}_SID${sid}`, position: S.position });
   announce(`S3 ${action} SID ${sid} sent`);
 }
 
@@ -2675,7 +2675,7 @@ function renderS11Table() {
 async function s11Command(action) {
   const map = { refresh: [11, 17, ""], enable: [11, 13, ""], disable: [11, 9, ""], clear: [11, 3, ""] };
   const [svc, sub, data] = map[action];
-  await postJSON("/api/pus-command", { service: svc, subtype: sub, data,
+  await postJSON("/api/pus-command", { service: svc, subtype: sub, data_hex: data,
     name: `S11_${action.toUpperCase()}`, position: S.position });
   announce(`S11 ${action} sent`);
   if (action === "refresh") setTimeout(loadS11Schedule, 800);
@@ -2692,14 +2692,14 @@ async function s11Add() {
   const payload = cucBytes.concat([svcSub[0], svcSub[1]])
     .map((b) => b.toString(16).toUpperCase().padStart(2, "0")).join(" ") +
     (dataHex ? " " + dataHex.replace(/(..)/g, "$1 ").trim() : "");
-  await postJSON("/api/pus-command", { service: 11, subtype: 4, data: payload,
+  await postJSON("/api/pus-command", { service: 11, subtype: 4, data_hex: payload,
     name: "S11_ADD", position: S.position });
   announce("S11 entry added");
 }
 async function s11Delete(id) {
   const v = Number(id) >>> 0;
   const data = [(v >>> 8) & 255, v & 255].map((b) => b.toString(16).toUpperCase().padStart(2, "0")).join(" ");
-  await postJSON("/api/pus-command", { service: 11, subtype: 5, data,
+  await postJSON("/api/pus-command", { service: 11, subtype: 5, data_hex: data,
     name: `S11_DELETE_${id}`, position: S.position });
 }
 
@@ -2766,7 +2766,7 @@ function s6AddrBytes() {
 }
 async function s6Command(subtype, extraHex) {
   const data = s6AddrBytes() + (extraHex ? " " + extraHex : "");
-  await postJSON("/api/pus-command", { service: 6, subtype, data,
+  await postJSON("/api/pus-command", { service: 6, subtype, data_hex: data,
     name: `S6_${subtype}`, position: S.position });
   announce(`S6.${subtype} sent`);
 }
@@ -2815,7 +2815,7 @@ async function s15StoreCommand(action, storeId) {
   const map = { enable: 1, disable: 2, dump: 9, clear: 11, refresh: 13 };
   const subtype = map[action];
   const data = storeId ? (Number(storeId) & 0xFF).toString(16).toUpperCase().padStart(2, "0") : "";
-  await postJSON("/api/pus-command", { service: 15, subtype, data,
+  await postJSON("/api/pus-command", { service: 15, subtype, data_hex: data,
     name: `S15_${action.toUpperCase()}`, position: S.position });
   announce(`S15 ${action} sent`);
 }
@@ -2864,7 +2864,7 @@ async function s9SetTime(iso) {
   const v = cuc >>> 0;
   const data = [(v >>> 24) & 255, (v >>> 16) & 255, (v >>> 8) & 255, v & 255]
     .map((b) => b.toString(16).toUpperCase().padStart(2, "0")).join(" ");
-  await postJSON("/api/pus-command", { service: 9, subtype: 1, data,
+  await postJSON("/api/pus-command", { service: 9, subtype: 1, data_hex: data,
     name: "S9_SET_TIME", position: S.position });
   announce("S9 set-time sent");
 }
@@ -2904,7 +2904,7 @@ async function onDemandGet(hexId) {
   const pid = parseInt(hexId, 16) >>> 0;
   const data = [(pid >>> 8) & 255, pid & 255]
     .map((b) => b.toString(16).toUpperCase().padStart(2, "0")).join(" ");
-  await postJSON("/api/pus-command", { service: 20, subtype: 3, data,
+  await postJSON("/api/pus-command", { service: 20, subtype: 3, data_hex: data,
     name: `OD_GET_${hexId}`, position: S.position });
   setTimeout(async () => {
     try { handleState(await getJSON("/api/state")); renderDiag(); } catch (e) { /* offline */ }
@@ -4056,7 +4056,7 @@ function initDelegatedEvents() {
     if (d.s12) return void s12Command(d.s12);
     if (d.s12row) return void s12RowCommand(d.s12row, d.mid);
     if (d.s12add) return void s12Add(d.s12add);
-    if (d.s19) return void postJSON("/api/pus-command", { service: 19, subtype: 8, data: "",
+    if (d.s19) return void postJSON("/api/pus-command", { service: 19, subtype: 8, data_hex: "",
       name: "S19_REPORT", position: S.position });
     if (d.s19row) return void s19RowCommand(d.s19row, d.eid);
     if (d.s19add) return void s19Add(d.s19add);
@@ -4069,7 +4069,7 @@ function initDelegatedEvents() {
       const map = { enable: [3, 5], disable: [3, 6], oneshot: [3, 27] };
       const [svc, sub] = map[d.hk];
       return void postJSON("/api/pus-command", { service: svc, subtype: sub,
-        data: sidToHex(sid), name: `HK_${d.hk.toUpperCase()}_SID${sid}`, position: S.position })
+        data_hex: sidToHex(sid), name: `HK_${d.hk.toUpperCase()}_SID${sid}`, position: S.position })
         .then(() => setText("hk-quick-result", `S3 ${d.hk} SID ${sid} sent`));
     }
     if (d.pbDel !== undefined) { pb.steps.splice(Number(d.pbDel), 1); return renderPbSteps(); }
@@ -4191,14 +4191,14 @@ function initDelegatedEvents() {
   });
   on("s6-verify", () => s6Command(9));
   on("s6-readback", () => s6Command(5));
-  on("s9-report", () => postJSON("/api/pus-command", { service: 9, subtype: 2, data: "",
+  on("s9-report", () => postJSON("/api/pus-command", { service: 9, subtype: 2, data_hex: "",
     name: "S9_REPORT", position: S.position }));
   on("s9-sync", () => s9SetTime(""));
   on("s9-set-now", () => { $("s9-set").value = fmtUTC(simNow(), { date: true }).replace(" ", "T"); s9UpdatePreview(); });
   on("s9-set-send", () => s9SetTime($("s9-set").value));
   on("fdir-refresh-all", () => {
-    postJSON("/api/pus-command", { service: 12, subtype: 12, data: "", name: "S12_REPORT", position: S.position });
-    postJSON("/api/pus-command", { service: 19, subtype: 8, data: "", name: "S19_REPORT", position: S.position });
+    postJSON("/api/pus-command", { service: 12, subtype: 12, data_hex: "", name: "S12_REPORT", position: S.position });
+    postJSON("/api/pus-command", { service: 19, subtype: 8, data_hex: "", name: "S19_REPORT", position: S.position });
     loadFdir();
   });
   on("fdir-ack-all", ackAllAlarms);
@@ -4224,14 +4224,14 @@ async function s3All(action) {
 async function s12Command(action) {
   const map = { refresh: [12, 12], enable: [12, 1], disable: [12, 2] };
   const [svc, sub] = map[action];
-  await postJSON("/api/pus-command", { service: svc, subtype: sub, data: "",
+  await postJSON("/api/pus-command", { service: svc, subtype: sub, data_hex: "",
     name: `S12_${action.toUpperCase()}`, position: S.position });
   if (action === "refresh") setTimeout(loadFdir, 800);
 }
 async function s12RowCommand(action, monId) {
   const map = { enable: 3, disable: 4, delete: 6 };
   const data = (Number(monId) & 0xFF).toString(16).toUpperCase().padStart(2, "0");
-  await postJSON("/api/pus-command", { service: 12, subtype: map[action], data,
+  await postJSON("/api/pus-command", { service: 12, subtype: map[action], data_hex: data,
     name: `S12_${action.toUpperCase()}_${monId}`, position: S.position });
   setTimeout(loadFdir, 800);
 }
@@ -4247,14 +4247,14 @@ async function s12Add(mount) {
   };
   const bytes = [mid, (pid >> 8) & 255, pid & 255, type, ...f32(lo), ...f32(hi)];
   await postJSON("/api/pus-command", { service: 12, subtype: 5,
-    data: bytes.map((b) => b.toString(16).toUpperCase().padStart(2, "0")).join(" "),
+    data_hex: bytes.map((b) => b.toString(16).toUpperCase().padStart(2, "0")).join(" "),
     name: `S12_ADD_${mid}`, position: S.position });
   setTimeout(loadFdir, 800);
 }
 async function s19RowCommand(action, eaId) {
   const map = { enable: 4, disable: 5, delete: 2 };
   const data = (Number(eaId) & 0xFF).toString(16).toUpperCase().padStart(2, "0");
-  await postJSON("/api/pus-command", { service: 19, subtype: map[action], data,
+  await postJSON("/api/pus-command", { service: 19, subtype: map[action], data_hex: data,
     name: `S19_${action.toUpperCase()}_${eaId}`, position: S.position });
   setTimeout(loadFdir, 800);
 }
@@ -4268,7 +4268,7 @@ async function s19Add(mount) {
   const head = [eid, kind, (trig >> 8) & 255, trig & 255, cmd.service & 255, cmd.subtype & 255]
     .map((b) => b.toString(16).toUpperCase().padStart(2, "0")).join(" ");
   await postJSON("/api/pus-command", { service: 19, subtype: 1,
-    data: head + (argHex ? " " + argHex : ""), name: `S19_ADD_${eid}`, position: S.position });
+    data_hex: head + (argHex ? " " + argHex : ""), name: `S19_ADD_${eid}`, position: S.position });
   setTimeout(loadFdir, 800);
 }
 
