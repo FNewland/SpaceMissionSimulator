@@ -1355,7 +1355,28 @@ class MCSServer:
 
     async def start(self) -> None:
         self._running = True
-        app = web.Application()
+        # FIELD DEFECT 2026-08-20 (owner: "you wiped out almost all the quick
+        # commands"). Nothing was wiped -- the browser was running a CACHED
+        # copy of the page's own JS against a freshly-served index.html. The
+        # page carries `Cache-Control: no-cache`, but the module it loads is
+        # referenced with a HARD-CODED `?v=1` and no cache directive, so
+        # Chrome cached it heuristically and never revalidated. Every fix
+        # shipped to these files stayed invisible until a manual hard-reload,
+        # and a half-updated pair renders as MISSING UI.
+        #
+        # `no-cache` does not mean "do not cache" -- it means "revalidate
+        # before use". With the ETag aiohttp already sends, an unchanged file
+        # costs one 304 and no body. Applied to the app's OWN assets only;
+        # /static/vendor/ (third-party, content-stable) keeps normal caching.
+        @web.middleware
+        async def _no_cache_own_assets(request, handler):
+            resp = await handler(request)
+            p = request.path
+            if p.startswith("/static/modern/") or p.startswith("/static/shared/"):
+                resp.headers["Cache-Control"] = "no-cache"
+            return resp
+
+        app = web.Application(middlewares=[_no_cache_own_assets])
         app.router.add_get("/", self._handle_index)
         # Explicit generation routes: /classic and /modern always serve their
         # page regardless of the resolved mode, so the two consoles can be
