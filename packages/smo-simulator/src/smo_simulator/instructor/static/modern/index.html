@@ -498,18 +498,8 @@ body.subpage #full-snapshot-container{ display:block; }
           </div>
         </div>
         <!-- The ONE copy of OVERRIDE PASSES (classic had two). -->
-        <!-- 2026-08c item 6 semantics: the override forces GEOMETRIC
-             visibility only — "pretend a station is in view". It substitutes
-             for the contact leg of the downlink gate and forces the uplink,
-             but it can NOT resurrect a transmitter that is off: with the
-             S-band PA off (or the ttc_tx line cold) there is still no TM and
-             the radio shows the carrier down, override or not. -->
         <button class="ds-btn wfull" id="btn-override"
-                title="Force GEOMETRIC visibility (as if a station were in view): uplink forced, downlink contact leg satisfied. Does NOT power a dead transmitter — PA off / ttc_tx line off still means no TM carrier.">OVERRIDE PASSES</button>
-        <div class="ds-help" style="font-size:11px;opacity:.75;margin-top:4px">
-          Override = station-in-view geometry only. A transmitter the crew has
-          switched OFF stays silent — PA / ttc_tx line state still gates the
-          downlink.</div>
+                title="Force ground contact (TM/TC available regardless of pass)">OVERRIDE PASSES</button>
       </div>
     </section>
   </div>

@@ -123,29 +123,45 @@ async def test_imaging_activity_executes_on_board_at_planned_time():
         # the payload's own capture gate refused every planner-scheduled
         # image ("Capture refused: AOCS not in FINE_POINT"), and
         # activity_types.yaml's precondition asked for mode 1 (SAFE_BOOT).
-        assert body["count"] == 3  # aocs-fine + payload-set-mode + capture
+        # 2026-08-19: the imaging expansion is now the PHYSICALLY COMPLETE
+        # sequence, not the three-command minimum. The owner flew it and found
+        # the old form unflyable: it desaturated immediately before the capture
+        # (20-50 min, and it INHIBITS imaging) and left no settle time to reach
+        # FINE_POINT. It now walks NOMINAL -> payload STANDBY -> FINE_POINT ->
+        # settle -> IMAGING -> shutter OPEN -> capture -> readout, then
+        # restores. Assert the SHAPE, not a magic number: a bare count pin
+        # taught us nothing when it broke.
+        n_cmds = body["count"]
+        assert n_cmds >= 3, "expansion collapsed"
 
         # 3. Simulator side: uplink each frame into the real engine.
         frames = writer.frames()
-        assert len(frames) == 3
+        assert len(frames) == n_cmds
         for raw in frames:
             engine._dispatch_tc(raw)
-        assert engine._tc_scheduler.get_status()["count"] == 3
+        assert engine._tc_scheduler.get_status()["count"] == n_cmds
 
         # Nothing fires before the planned time.
         due = engine._tc_scheduler.tick(start_cuc - 10)
         assert due == []
         assert payload._state.mode == 0
 
-        # At/after the planned start: set-mode fires first...
-        for pkt in engine._tc_scheduler.tick(start_cuc + 1):
-            engine._dispatch_tc(pkt)
-        assert payload._state.mode == 2
-        assert payload._state.image_count == images_before
+        # The sequence runs in ORDER, spread over its real settle time. Walk
+        # the on-board clock forward rather than pinning commands to guessed
+        # offsets (the old +1/+30 pins encoded the unflyable 3-command form).
+        # The payload must reach IMAGING before any capture fires.
+        saw_imaging_before_capture = False
+        for t in range(1, 601):
+            for pkt in engine._tc_scheduler.tick(start_cuc + t):
+                engine._dispatch_tc(pkt)
+            if payload._state.mode == 2 and \
+                    payload._state.image_count == images_before:
+                saw_imaging_before_capture = True
+            if engine._tc_scheduler.get_status()["count"] == 0:
+                break
 
-        # ...then the capture at start + wait offset.
-        for pkt in engine._tc_scheduler.tick(start_cuc + 30):
-            engine._dispatch_tc(pkt)
+        assert saw_imaging_before_capture, \
+            "capture fired without the payload first reaching IMAGING"
         assert payload._state.image_count == images_before + 1
         assert engine._tc_scheduler.get_status()["count"] == 0
 
@@ -156,7 +172,7 @@ async def test_imaging_activity_executes_on_board_at_planned_time():
             if p and p.secondary and p.secondary.service == 1 \
                     and p.secondary.subtype == 7:
                 completions += 1
-        assert completions >= 3  # all three embedded commands completed
+        assert completions >= n_cmds  # every embedded command completed
     finally:
         await client.close()
 

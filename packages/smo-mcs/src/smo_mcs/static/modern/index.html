@@ -14,12 +14,11 @@
 <!-- Vendor libraries. These were MISSING from the modern shell (field report
      2026-08-19): the page carried only the graceful-degradation notices, so
      "Chart.js not installed" and "map library not installed" rendered
-     permanently even on a checkout where vendor/ is present and correct.
-     Classic loads both the same way (its lines 9-10). Plain (not deferred):
-     mcs.js is an ES module and therefore already runs after parse, and it
-     reads window.Chart / window.svgWorldMap at render time -- so the
-     degradation guards stay, and now they only fire when the assets really
-     are absent. -->
+     permanently even though vendor/ is present and correct. Classic loads both
+     the same way. Plain (not deferred): mcs.js is an ES module and so already
+     runs after parse, and it reads window.Chart / window.svgWorldMap at render
+     time -- the degradation guards stay and now only fire when the assets are
+     genuinely absent. -->
 <script src="/static/vendor/js/chart.umd.min.js"></script>
 <script src="/static/vendor/js/svg-world-map.js"></script>
 <link rel="stylesheet" href="/static/shared/design-system.css?v=1">
@@ -208,6 +207,13 @@ svg.sc{width:100%;display:block;max-height:min(46vh,500px);margin:0 auto}
   max-width:860px;width:92%;max-height:86vh;overflow-y:auto;padding:18px 22px}
 .dlg h2{font-size:14px;letter-spacing:1px;text-transform:uppercase;color:var(--tx2);margin-bottom:10px}
 
+/* guided-mode annotations */
+.guided-note{display:none;border-left:3px solid var(--info);background:var(--info-wash);
+  padding:7px 10px;font-size:12.5px;color:var(--tx2);margin:6px 0;border-radius:0 6px 6px 0}
+.guided-note b.n{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;
+  border:1px solid var(--info);color:var(--info);font-size:11px;margin-right:7px}
+:root[data-guided="1"] .guided-note{display:block}
+
 @media(max-width:1280px){.sa{grid-template-columns:repeat(2,1fr)}}
 /* Compact header ≤1500px (Agent 5 screenshot fix): keeps the top row on a
    single 58 px line at 1366 px instead of wrapping to two. */
@@ -219,6 +225,16 @@ svg.sc{width:100%;display:block;max-height:min(46vh,500px);margin:0 auto}
   .abtn{padding:4px 9px;font-size:12px}
   .pos-wrap{padding:2px 7px}
 }
+
+/* Manual viewer (field fix 2026-08-20). The shipped manual is table-heavy;
+   without table styling a rendered page is unreadable even once it parses. */
+.man-tbl{ border-collapse:collapse; width:100%; margin:8px 0; font-size:12px; }
+.man-tbl th,.man-tbl td{ border:1px solid var(--line); padding:4px 8px;
+  text-align:left; vertical-align:top; }
+.man-tbl th{ background:var(--s2); color:var(--tx2); font-weight:700; }
+.man-toc-item{ padding:2px 0; }
+.man-toc-item a{ color:var(--info); text-decoration:none; }
+.man-toc-item a:hover{ text-decoration:underline; }
 </style>
 </head>
 <body>
@@ -238,6 +254,8 @@ svg.sc{width:100%;display:block;max-height:min(46vh,500px);margin:0 auto}
       <span class="n" id="alarm-unack-n">0</span> ALARMS</button>
     <a class="ibtn" href="/dumps" target="_blank" rel="noopener">DELAYED&nbsp;TM</a>
     <a class="ibtn" href="/reports" target="_blank" rel="noopener">REPORTS</a>
+    <button class="ibtn" id="guided-btn" aria-pressed="false"
+      title="Guided teaching mode: numbered annotations explaining each display">GUIDED</button>
     <button class="ibtn" id="grey-btn" aria-pressed="false"
       title="Greyscale check: the console must stay operable without colour (P6)">GREY</button>
     <button class="ibtn" id="theme-btn" aria-pressed="false" title="Light/dark theme">THEME</button>
@@ -289,6 +307,7 @@ svg.sc{width:100%;display:block;max-height:min(46vh,500px);margin:0 auto}
     <!-- G8: console/mission log — the merged decision record (server
          auto-entries + operator notes/marks), filterable by kind -->
     <div class="bd-pane hide" id="bdp-conlog" role="tabpanel">
+      <div class="guided-note" data-ann="drawer.conlog"></div>
       <div class="row" style="margin:4px 0">
         <select id="conlog-kind" class="in" aria-label="Console log kind filter" style="font-size:12px">
           <option value="all">All kinds</option><option value="tc">TC</option>
@@ -311,6 +330,7 @@ svg.sc{width:100%;display:block;max-height:min(46vh,500px);margin:0 auto}
       <div id="handover-list"></div>
     </div>
     <div class="bd-pane hide" id="bdp-gonogo" role="tabpanel">
+      <div class="guided-note" data-ann="gonogo.matrix"></div>
       <div class="row" style="margin:4px 0">
         <input id="gonogo-label" class="in" placeholder="Poll label (e.g. BURN GO/NO-GO)">
         <button class="ds-btn" id="gonogo-start">START POLL</button>
@@ -342,6 +362,7 @@ svg.sc{width:100%;display:block;max-height:min(46vh,500px);margin:0 auto}
     <a class="ibtn" href="/dumps" target="_blank" rel="noopener">ARCHIVE</a>
     <button class="ds-btn" id="alarm-close" aria-label="Close alarm drawer">✕</button>
   </div>
+  <div class="guided-note" data-ann="alarms.first-out" style="margin:6px 12px"></div>
   <div id="alarm-list" role="table" aria-label="Alarm rows"></div>
   <div class="ft">Blink is reserved for unacknowledged P1 and stops on acknowledgement.
     <kbd class="ds-kbd">a</kbd> open · <kbd class="ds-kbd">k</kbd> ack first · click ⛓ for the causal chain.</div>
@@ -369,6 +390,11 @@ svg.sc{width:100%;display:block;max-height:min(46vh,500px);margin:0 auto}
         <tr><td><kbd class="ds-kbd">k</kbd></td><td>acknowledge the first unacknowledged alarm</td></tr>
         <tr><td><kbd class="ds-kbd">?</kbd></td><td>this dialog</td></tr>
       </table>
+      <p style="margin-top:12px;font-size:13px">
+        Why does the console look like this? Read
+        <a href="/static/modern/why-this-design.html" target="_blank" rel="noopener">why-this-design</a>
+        — the teaching notes behind the grey-is-nominal rule, the four-question header,
+        the alarm model and the causal chain.</p>
     </div>
   </div>
 </div>

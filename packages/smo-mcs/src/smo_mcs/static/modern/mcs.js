@@ -24,7 +24,7 @@
  *  16. MAN             — operations manual
  *  17. DRAWER          — bottom log drawer (5 tabs, scroll lock)
  *  18. ALARMS          — docked alarm drawer + causal chain (P7/P9)
- *  19. DISPLAY CONFIG  — operational display config from /api/display-config
+ *  19. GUIDED          — teaching layer from /api/annotations
  *  20. BOOT
  *
  * House rules honoured here:
@@ -86,7 +86,7 @@ const S = {
   tcCatalogAll: [],        // unfiltered (flight_director view) for authority display
   quickCommands: [],       // /api/tc-catalog quick_commands[]
   clientConfig: {},        // /api/client-config
-  displayConfig: {},       // /api/display-config (capture gates, health baselines)
+  annotations: {},         // /api/annotations
   timeMode: "unknown",     // "sim" | "real" | "unknown"  (see resolveTimeMode)
   wsConnected: false,
   page: "ovr",
@@ -107,6 +107,9 @@ const S = {
   goNoGo: null,
   series: {},              // hex -> ring buffer for sparklines
   manual: null,
+  manualOpen: "",        // path of the open section (active-item highlight)
+  manualBodies: {},      // path -> markdown, cached so search covers body text
+
   procStatus: null,
   s11Schedule: null,
   armed: {},               // cmd name -> armed flag (arm→execute)
@@ -227,34 +230,19 @@ function spark(hexId, cls = "") {
 }
 /* Spacecraft mode, TM-derived with provenance (M5-M8). */
 export function scModeInfo() {
-  // M8 disposition: obdh.mode (0x0300) PRIMARY, FDIR level (0x0700)
-  // secondary escalation — never raw sim sc_mode. 2026-08c item 7: this
-  // used to read 0x0700 FIRST **as if it were a mode enum**, but 0x0700 is
-  // fdir.level (0=nominal 1=caution 2=warning 3=critical), so with FDIR
-  // quiet it decoded 0 -> "NOMINAL" forever and commanding the OBC to SAFE
-  // never raised the contingency banner.
   const p = S.state.params || {};
-  const obdhTm = p["0x0300"];
-  const obdh = (obdhTm !== undefined && obdhTm !== null)
-    ? obdhTm : (S.state.obdh || {}).mode;
+  const tm = p["0x0700"];
+  if (tm !== undefined && tm !== null) {
+    return { label: SC_MODES[Number(tm)] ?? `MODE_${tm}`, src: "TM 0x0700" };
+  }
+  const obdh = (S.state.obdh || {}).mode;
   if (obdh !== undefined && obdh !== null) {
-    return { label: SC_MODES[Number(obdh)] ?? String(obdh),
-             src: (obdhTm !== undefined && obdhTm !== null)
-               ? "TM obdh.mode 0x0300" : "TM obdh.mode" };
+    return { label: SC_MODES[Number(obdh)] ?? String(obdh), src: "TM obdh.mode" };
   }
   if (S.timeMode === "sim" && S.state.sc_mode) {
     return { label: String(S.state.sc_mode).toUpperCase(), src: "SIM (training)" };
   }
   return { label: "—", src: "not downlinked" };
-}
-
-/* FDIR alert level 0x0700 (0 nominal … 3 critical) — the banner's
- * SECONDARY driver per M8: a critical FDIR level raises the strip even
- * when the OBC still reports a nominal mode. */
-export function fdirLevelInfo() {
-  const v = (S.state.params || {})["0x0700"];
-  const lvl = Number(v);
-  return Number.isFinite(lvl) ? lvl : null;
 }
 
 /* ═══ 4. TRANSPORT ════════════════════════════════════════════════════════ */
@@ -559,22 +547,14 @@ function alarmCounts() {
 }
 
 function updateContingency() {
-  // M8: obdh.mode primary, 0x0700 (fdir.level) secondary escalation —
-  // never raw sim sc_mode. Fixed 2026-08c item 7 (see scModeInfo).
+  // M8: obdh.mode primary, 0x0700 secondary — never raw sim sc_mode.
   const mode = scModeInfo();
-  const badMode = mode.label === "SAFE" || mode.label === "EMERGENCY";
-  const lvl = fdirLevelInfo();
-  const badFdir = lvl !== null && lvl >= 2;
+  const bad = mode.label === "SAFE" || mode.label === "EMERGENCY";
   const el = $("contingency-banner");
   if (!el) return;
-  const bad = badMode || badFdir;
   el.classList.toggle("hide", !bad);
-  if (badMode) el.textContent =
+  if (bad) el.textContent =
     `CONTINGENCY — spacecraft mode ${mode.label} (source: ${mode.src}). ` +
-    `Open FDIR for recovery state; alarms drawer for the journal.`;
-  else if (badFdir) el.textContent =
-    `CONTINGENCY — FDIR level ${lvl === 3 ? "CRITICAL" : "WARNING"} ` +
-    `(TM fdir.level 0x0700) with OBC mode ${mode.label}. ` +
     `Open FDIR for recovery state; alarms drawer for the journal.`;
 }
 
@@ -770,6 +750,7 @@ function buildOverviewPage() {
         about. Position: <span id="pos-detail">—</span></p></div>
       <div class="row mono" id="ovr-orbit-bar" style="gap:16px;font-size:13px"></div>
     </div>
+    <div class="guided-note" data-ann="ovr.schematic"></div>
     <!-- ovr-* classes (Agent 5 screenshot fix): L1 is viewport-fit — the
          schematic absorbs the leftover height, so the work area never
          scrolls at 1366x768 (plan §2.1 "L1/L2 fit ... without scroll"). -->
@@ -783,6 +764,7 @@ function buildOverviewPage() {
           <div class="bd">
             <canvas id="ovr-timeline" height="64" style="width:100%"></canvas>
             <div id="ovr-timeline-legend" class="row" style="font-size:12px;margin-top:4px"></div>
+            <div class="guided-note" data-ann="ovr.timeline"></div>
             <!-- capped + scrollable (Agent 5): keeps L1 inside 1366x768 -->
             <div class="scroll-y" style="max-height:150px">
               <table class="plain" id="ovr-pass-table"></table></div>
@@ -980,16 +962,12 @@ const L2 = {
     equipment: [["TANK", "0x0B01", "bar"], ["LATCH A", "0x0B06", ""], ["LATCH B", "0x0B07", ""],
       ["FCV", "0x0B08", ""], ["CATBED", "0x0B05", "°C"], ["INHIBIT", "0x0B15", ""]] },
   obd: { title: "On-board data handling", sym: "sch-obd",
-    // 0x0307 tm_pkt_count and 0x0304/0x0305/0x0306 TC counters added
-    // 2026-08c item 7 — the packet counters existed in TM but were shown
-    // nowhere on the OBDH page.
-    key: ["0x0302", "0x0303", "0x0307", "0x0304", "0x0312", "0x0313", "0x0319", "0x0308"],
+    key: ["0x0302", "0x0303", "0x0312", "0x0313", "0x0319", "0x0308"],
     stepper: () => ({ label: "Active OBC",
       states: ["OBC-A", "OBC-B"],
       active: Number(paramVal("0x030C")) === 1 ? 1 : 0 }),
     equipment: [["CPU", "0x0302", "%"], ["MEM", "0x0303", "%"], ["HKTM BUF", "0x0312", "%"],
-      ["EVT BUF", "0x0313", "%"], ["SEU", "0x0319", ""], ["CAN", "0x0A11", ""],
-      ["TM PKTS", "0x0307", ""], ["TC REJ", "0x0306", ""]] },
+      ["EVT BUF", "0x0313", "%"], ["SEU", "0x0319", ""], ["CAN", "0x0A11", ""]] },
 };
 
 function buildSubsystemPage(pageId) {
@@ -1006,6 +984,7 @@ function buildSubsystemPage(pageId) {
           <a href="#" data-alarm-filter="${esc(sub)}">alarms for this subsystem</a></p></div>
       <button class="ibtn" data-page-nav="ovr">← Overview</button>
     </div>
+    <div class="guided-note" data-ann="${pageId}.schematic"></div>
     <div class="g l2-grid" style="grid-template-columns:minmax(0,1fr) 420px">
       <div class="g l2-col">
         <div class="ds-card"><h2>Schematic <span class="r">click a block to navigate; values live</span></h2>
@@ -1029,46 +1008,45 @@ function buildSubsystemPage(pageId) {
         ${(DERIVED_BY_PAGE[pageId] || []).length || FIT_PAGES.includes(pageId) ? `
         <div class="ds-card"><h2>Projections <span class="r">ground-derived · not downlinked</span></h2>
           <div class="bd">
-                        <div id="${pageId}-derived"></div>
+            <div class="guided-note" data-ann="l2.derived"></div>
+            ${FIT_PAGES.includes(pageId) ? `<div class="guided-note" data-ann="${pageId}.pass-fit"></div>` : ""}
+            <div id="${pageId}-derived"></div>
           </div></div>` : ""}
         ${pageId === "pld" ? `<div class="ds-card"><h2>Capture readiness (NOM-002)
-          <span class="r">gates from display_config.yaml</span></h2>
+          <span class="r">gates from annotations.yaml</span></h2>
           <div class="bd">
+            <div class="guided-note" data-ann="pld.capture-gates"></div>
             <div id="pld-capture"></div>
           </div></div>` : ""}
         ${pageId === "aocs" ? `<div class="ds-card"><h2>FINE-entry readiness
           <span class="r">aocs.fine_ready 0x02C5 decoded</span></h2>
           <div class="bd">
+            <div class="guided-note" data-ann="aocs.fine-ready"></div>
             <div id="aocs-fineready"></div>
-          </div></div>
-        <div class="ds-card"><h2>Magnetometer &amp; MTQ
-          <span class="r">measured B (0x020B-0D) beside the duties it drives</span></h2>
-          <div class="bd" id="aocs-magmtq"></div></div>
-        <div class="ds-card"><h2>GPS navigation (PVT)
-          <span class="r">valid only with fix ≥ 3D — honest zeros otherwise</span></h2>
-          <div class="bd" id="aocs-gpsnav"></div></div>` : ""}
-        ${pageId === "obd" ? `<div class="ds-card"><h2>Software state
-          <span class="r">obdh.sw_image 0x0311 · obdh.mode 0x0300</span></h2>
-          <div class="bd" id="obd-swstate"></div></div>` : ""}
+          </div></div>` : ""}
         ${pageId === "prp" ? `<div class="ds-card"><h2>Arm interlocks
           <span class="r">prop.arm_inhibit_mask 0x0B15 decoded</span></h2>
           <div class="bd">
+            <div class="guided-note" data-ann="prp.arm-inhibit"></div>
             <div id="prp-inhibit"></div>
           </div></div>
         <div class="ds-card"><h2>Loaded vs planned burn
           <span class="r">TM 0x0B0E/0x0B10 vs planner orbit_manoeuvre</span></h2>
           <div class="bd">
+            <div class="guided-note" data-ann="prp.burn-plan"></div>
             <div id="prp-burnplan">awaiting planner…</div>
           </div></div>` : ""}
         ${pageId === "ttc" ? `<div class="ds-card"><h2>Predicted vs measured link
           <span class="r">/api/displays/link-prediction</span></h2>
           <div class="bd">
+            <div class="guided-note" data-ann="ttc.link-overlay"></div>
             <div id="ttc-linkpred-now"></div>
             <canvas id="ttc-linkpred-chart" height="140" class="hide"></canvas>
           </div></div>
         <div class="ds-card"><h2>Blind commanding (CON-004)
           <span class="r">requires FD GO — armed toggle</span></h2>
           <div class="bd">
+            <div class="guided-note" data-ann="ttc.blind-tc"></div>
             <div class="row">
               <button class="ds-btn danger" data-blind-toggle="1" id="ttc-blind-btn">ENABLE BLIND-TC</button>
               <span id="ttc-blind-status" style="font-size:12.5px;color:var(--tx3)"></span>
@@ -1080,6 +1058,7 @@ function buildSubsystemPage(pageId) {
           <div class="bd g" style="grid-template-columns:1fr 1fr" id="${pageId}-equip"></div></div>
         <div class="ds-card"><h2>Command <span class="r">in place · position-gated (P9)</span></h2>
           <div class="bd" id="${pageId}-quick">
+            <div class="guided-note" data-ann="l2.quick-commands"></div>
             <div id="${pageId}-quick-list"></div></div></div>
         ${pageId === "ttc" ? `<div class="ds-card"><h2>Ground station network
           <span class="r">/api/ground-stations</span></h2>
@@ -1179,8 +1158,6 @@ function updateSubsystemPage(pageId, full) {
   renderDerivedCard(pageId);                                     // G1 + G3
   if (pageId === "aocs") setHTML("aocs-fineready",
     renderBitmaskChips("0x02C5", { clearLabel: "READY FOR FINE" }));   // G2
-  if (pageId === "aocs") { renderMagMtq(); renderGpsNav(); }     // 2026-08c 1+2
-  if (pageId === "obd") renderObdSwState();                      // 2026-08c 7
   if (pageId === "prp") {
     setHTML("prp-inhibit",
       renderBitmaskChips("0x0B15", { clearLabel: "ARM PERMITTED" }));  // G2
@@ -1192,99 +1169,6 @@ function updateSubsystemPage(pageId, full) {
   setHTML(`${pageId}-events`, (S.subsysEvents[sub] || []).slice(-30).reverse()
     .map((e) => `<div class="logrow">${esc(e)}</div>`).join("") ||
     `<div class="logrow nom">No events</div>`);
-}
-
-/* — 2026-08c item 1: measured field beside the MTQ duties it drives — */
-function renderMagMtq() {
-  const host = $("aocs-magmtq");
-  if (!host) return;
-  const valid = Number(paramVal("0x025C")) >= 1;
-  const row = (k, h, u, d) => {
-    const v = paramVal(h);
-    return `<tr><td>${esc(k)} <span class="mono" style="color:var(--tx3)">${esc(h)}</span></td>
-      <td class="mono">${Number.isFinite(Number(v)) ? num(v, d) : "—"}${u ? " " + esc(u) : ""}</td></tr>`;
-  };
-  host.innerHTML =
-    `<div style="font-size:12px;color:${valid ? "var(--tx3)" : "var(--alarm)"};margin-bottom:4px">
-      ${valid ? "MAG VALID — measured body-frame field (IGRF + bias + noise)"
-              : "MAG INVALID (unit off / failed / AOCS dark) — B reads 0, B-dot is blind"}
-      · single-string unit, no redundant B mag</div>
-    <table class="plain"><tbody>` +
-    row("Bx", "0x020B", "nT", 0) + row("By", "0x020C", "nT", 0) +
-    row("Bz", "0x020D", "nT", 0) + row("|B|", "0x0277", "nT", 0) +
-    row("MTQ X duty", "0x0258", "%", 1) + row("MTQ Y duty", "0x0259", "%", 1) +
-    row("MTQ Z duty", "0x025A", "%", 1) +
-    row("MTQ enabled", "0x025E", "", 0) +
-    `</tbody></table>`;
-}
-
-/* — 2026-08c item 2: GPS receiver PVT (LEOP-003 orbit determination) — */
-function renderGpsNav() {
-  const host = $("aocs-gpsnav");
-  if (!host) return;
-  const fix = Number(paramVal("0x0274"));
-  const FIX = ["NO FIX", "2D", "3D", "3D+VEL"];
-  const ok = fix >= 2;
-  const row = (k, h, u, d) => {
-    const v = paramVal(h);
-    return `<tr><td>${esc(k)} <span class="mono" style="color:var(--tx3)">${esc(h)}</span></td>
-      <td class="mono">${Number.isFinite(Number(v)) ? num(v, d) : "—"}${u ? " " + esc(u) : ""}</td></tr>`;
-  };
-  host.innerHTML =
-    `<div style="font-size:12px;color:${ok ? "var(--tx3)" : "var(--warn)"};margin-bottom:4px">
-      FIX ${FIX[fix] || "—"} · ${num(paramVal("0x0276"), 0)} sats ·
-      PDOP ${num(paramVal("0x0275"), 1)}${ok ? "" :
-      " — position/velocity are zero until the receiver holds a 3D fix"}</div>
-    <table class="plain"><tbody>` +
-    row("Latitude", "0x0210", "°", 3) + row("Longitude", "0x0211", "°", 3) +
-    row("Altitude", "0x0212", "km", 1) +
-    row("ECEF X", "0x0231", "m", 0) + row("ECEF Y", "0x0232", "m", 0) +
-    row("ECEF Z", "0x0233", "m", 0) +
-    row("Vel X", "0x0234", "m/s", 1) + row("Vel Y", "0x0235", "m/s", 1) +
-    row("Vel Z", "0x0236", "m/s", 1) +
-    `</tbody></table>`;
-}
-
-/* — 2026-08c item 7: OBDH software state (bootloader vs application) — */
-function renderObdSwState() {
-  const host = $("obd-swstate");
-  if (!host) return;
-  const img = Number(paramVal("0x0311"));
-  const mode = Number(paramVal("0x0300"));
-  const MODES = ["NOMINAL", "SAFE", "EMERGENCY"];
-  const imgLabel = img === 0 ? "BOOTLOADER" : img === 1 ? "APPLICATION" : "—";
-  const modeLabel = MODES[mode] ?? (Number.isFinite(mode) ? `MODE_${mode}` : "—");
-  /* Boot progress (0x0A15 / 0x0A16). OBC_BOOT_APP's S1.7 now lands when the
-     10 s CRC window CLOSES, so the window itself has to be visible: sw_image
-     alone reads 0 both for "sitting in the bootloader" and for "a boot is in
-     flight", which is what left the operator guessing. */
-  const bstate = Number(paramVal("0x0A15"));
-  const bleft = Number(paramVal("0x0A16"));
-  const BOOT_STATES = ["BOOTLOADER", "VERIFYING", "APPLICATION", "FAILED"];
-  const bootLabel = BOOT_STATES[bstate] ?? "—";
-  const booting = bstate === 1;
-  const bootFailed = bstate === 3;
-  const bad = mode >= 1 || img === 0;
-  host.innerHTML =
-    `<table class="plain"><tbody>
-      <tr><td>Running image <span class="mono" style="color:var(--tx3)">0x0311</span></td>
-        <td class="mono" style="${img === 0 ? "color:var(--warn)" : ""}">${imgLabel}</td></tr>
-      <tr><td>Boot state <span class="mono" style="color:var(--tx3)">0x0A15</span></td>
-        <td class="mono" style="${bootFailed ? "color:var(--alarm)" : booting ? "color:var(--warn)" : ""}">${bootLabel}${booting && Number.isFinite(bleft) ? " · " + num(bleft, 0) + " s left" : ""}</td></tr>
-      <tr><td>OBC mode <span class="mono" style="color:var(--tx3)">0x0300</span></td>
-        <td class="mono" style="${mode >= 1 ? "color:var(--alarm)" : ""}">${modeLabel}</td></tr>
-      <tr><td>Active OBC <span class="mono" style="color:var(--tx3)">0x030C</span></td>
-        <td class="mono">${Number(paramVal("0x030C")) === 1 ? "OBC-B" : "OBC-A"}</td></tr>
-      <tr><td>Reboot count <span class="mono" style="color:var(--tx3)">0x030A</span></td>
-        <td class="mono">${num(paramVal("0x030A"), 0)}</td></tr>
-    </tbody></table>` +
-    (booting ? `<div style="font-size:12px;color:var(--warn);margin-top:4px">
-      Application boot IN PROGRESS — the OBC is verifying the image CRC. Only the bootloader TC subset is accepted until it finishes; the S1.7 execution-complete for OBC_BOOT_APP arrives when it does.</div>` : "") +
-    (bootFailed ? `<div style="font-size:12px;color:var(--alarm);margin-top:4px">
-      Last OBC_BOOT_APP FAILED its image CRC — see the BOOT_FAILURE event. The OBC is held in the bootloader.</div>` : "") +
-    (bad ? `<div style="font-size:12px;color:var(--warn);margin-top:4px">
-      ${img === 0 && !booting ? "Bootloader: minimal TC subset, UHF beacon only — OBC_BOOT_APP (S8 func 55) to run the application. " : ""}
-      ${mode >= 1 ? "OBC in " + modeLabel + " — the contingency banner is driven from this parameter (M8)." : ""}</div>` : "");
 }
 
 /* ═══ 9b. POSITION-NEEDS GAP SURFACES (G1–G9, G12, G15) ═══════════════════ */
@@ -1387,7 +1271,7 @@ function renderDerivedCard(pageId) {
  * The bit legends ARE parsed from the served /api/param-catalog descriptions
  * (decision per POSITION_NEEDS G2: both descriptions follow the "bitN label,
  * bitN label" / "bN label" convention and are the single source of truth —
- * a separate config table would drift from the dictionary). */
+ * a table in annotations.yaml would drift from the dictionary). */
 export function parseBitLegend(description) {
   const s = String(description || "");
   const re = /\b(?:bit|b)(\d+)\b[ :=-]*/g;
@@ -1436,11 +1320,11 @@ export function renderBitmaskChips(hexId, opts = {}) {
 }
 function countBits(v) { let n = 0; for (let x = v >>> 0; x; x >>= 1) n += x & 1; return n; }
 
-/* — G4: capture-readiness composite (NOM-002 gates, table in
- *      display_config.yaml capture_gates so ops can tune it) — */
+/* — G4: capture-readiness composite (NOM-002 gates, table in annotations.yaml
+ *      pld.capture-gates.gates so instructors can tune it) — */
 export function captureGateTable() {
-  const g = S.displayConfig.capture_gates;
-  return Array.isArray(g) ? g : [];
+  const cfg = (S.annotations.pld || {})["capture-gates"];
+  return (cfg && Array.isArray(cfg.gates)) ? cfg.gates : [];
 }
 export function evalCaptureGate(g) {
   const v = paramVal(g.param);
@@ -1478,7 +1362,7 @@ function renderCaptureCard() {
   const c = computeCaptureReadiness();
   if (!c.available) {
     host.innerHTML = `<div class="ds-banner stale">no gate table — add ` +
-      `capture_gates to configs/&lt;mission&gt;/mcs/display_config.yaml</div>`;
+      `pld.capture-gates.gates to configs/&lt;mission&gt;/mcs/annotations.yaml</div>`;
     return;
   }
   const chips = c.rows.map((r) => renderChip({
@@ -1833,10 +1717,10 @@ export function blindHistoryChip(h) {
 }
 
 /* — G15: baseline-vs-now health card (TRND page; baselines from
- *        display_config.yaml health_baselines) — */
+ *        annotations.yaml trnd.baseline-health.baselines) — */
 export function baselineTable() {
-  const t = S.displayConfig.health_baselines;
-  return (t && typeof t === "object" && !Array.isArray(t)) ? t : null;
+  const cfg = (S.annotations.trnd || {})["baseline-health"];
+  return (cfg && cfg.baselines && typeof cfg.baselines === "object") ? cfg.baselines : null;
 }
 export function computeBaselineDeltas() {
   const t = baselineTable();
@@ -1868,7 +1752,7 @@ export function renderBaselineCard() {
   const c = computeBaselineDeltas();
   if (!c.available) {
     host.innerHTML = `<div class="ds-banner stale">no commissioning baseline — the instructor ` +
-      `fills health_baselines in configs/&lt;mission&gt;/mcs/display_config.yaml</div>`;
+      `fills trnd.baseline-health.baselines in configs/&lt;mission&gt;/mcs/annotations.yaml</div>`;
     return;
   }
   const rows = c.rows.map((r) => {
@@ -1890,7 +1774,7 @@ export function renderBaselineCard() {
     <thead><tr><th>Metric</th><th>ID</th><th>Baseline</th><th>Now</th><th>Drift</th><th></th></tr></thead>
     <tbody>${rows}</tbody></table>
     <div style="font-size:12px;color:var(--tx3);margin-top:6px">baseline: commissioning snapshot ` +
-    `(display_config.yaml) · drift computed on the console, flagged &gt;5 % per NOM-011</div>`;
+    `(annotations.yaml) · drift computed on the console, flagged &gt;5 % per NOM-011</div>`;
 }
 
 /* ═══ 10. FRESHNESS — display-wide staleness gate (P4) ════════════════════ */
@@ -1963,37 +1847,6 @@ function catFieldDefault(f) {
   if (f.min !== undefined) return f.min;
   if ((f.enum || []).length) return f.enum[0].value;
   return 0;
-}
-/* Length validation against the schema. Returns the reason the ground must
- * NOT send this packet, or null when the data field is long enough.
- *
- * 2026-08 command-safety defect: the typed-field editor always encodes one
- * value per declared field, so the builder itself cannot emit a short packet.
- * The hex box can — it is a free-text field that goes to /api/pus-command
- * verbatim — and until now `sendCommand` had no length gate at all, only the
- * advisory "0 / 1 B" chip. A TTC_SET_BEACON_MODE of bare "46" therefore left
- * the console with a clean conscience and turned beacon mode ON in the
- * spacecraft. Tell the operator BEFORE the packet is built, naming the field
- * that is missing. */
-export function catLengthError(cmd, hexStr) {
-  if (!cmd || !Array.isArray(cmd.fields) || !cmd.fields.length) return null;
-  const octets = String(hexStr || "").replace(/[\s,]+/g, "").length / 2;
-  const prefix = (Number(cmd.service) === 8 && Number(cmd.subtype) === 1
-    && cmd.func_id != null) ? 1 : 0;
-  let need = prefix;
-  for (const f of cmd.fields) {
-    const w = catFieldWidth(String(f.type || "uint8").toLowerCase());
-    if (w == null) return null;              // variable tail — not our call
-    need += w;
-    if (octets < need) {
-      const legend = f.description ? ` (${f.description})` : "";
-      return `${cmd.name} needs a ${w}-byte \`${f.name}\`${legend} —` +
-        ` the data field is ${octets} B, the schema needs ${need} B.` +
-        ` The spacecraft REJECTS a missing argument (S1.8 0x0003);` +
-        ` it does not assume one.`;
-    }
-  }
-  return null;
 }
 /* Engineering-units validation (classic catFieldError parity). Returns the
  * reason the spacecraft would reject the value, or null when valid. */
@@ -2145,6 +1998,7 @@ function buildCmdPage() {
     <h1 class="pt">Commanding</h1>
     <p class="sub">PUS telecommand builder · verification is a stepper attached to the
       command, not a separate log (P9)</p>
+    <div class="guided-note" data-ann="cmd.builder"></div>
     <div class="g" style="grid-template-columns:minmax(0,1fr) 420px;align-items:start">
       <div class="g">
         <div class="ds-card"><h2>Command builder <span class="r" id="cmd-authority"></span></h2>
@@ -2479,33 +2333,11 @@ async function sendCommand() {
   const data = $("cmd-data").value.trim();
   const name = $("cmd-name").value.trim() || (cmd ? cmd.name : "");
   if (cmd) {
-    // Length gate BEFORE anything else: a short data field is not a command
-    // with a default, it is a command the spacecraft will refuse (and used to
-    // execute in the dangerous direction). Never leaves the ground.
-    const lenErr = catLengthError(cmd, data);
-    if (lenErr) {
-      setHTML("cmd-result", `<span style="color:var(--alarm)">not sent — ${esc(lenErr)}</span>`);
-      setText("cmd-field-errors", lenErr);
-      return;
-    }
     const auth = commandAuthority(cmd.name);
     if (!auth.allowed) { setHTML("cmd-result", `<span style="color:var(--alarm)">${esc(auth.text)}</span>`); return; }
     if (isCritical(cmd) && !S.armed[cmd.name]) {
       setHTML("cmd-result", `<span style="color:var(--warn)">critical command — ARM first</span>`);
       return;
-    }
-    // 2026-08c item 5: GROUND-side HIGH-rate elevation policy (arm-through).
-    const rateByte = parseInt(String(data).replace(/[^0-9a-fA-F]/g, "").slice(0, 2), 16);
-    const ghWarn = groundHighRateWarning(cmd.name, rateByte);
-    if (ghWarn) {
-      const gk = "ghp:" + cmd.name;
-      if (!S.armed[gk]) {
-        S.armed[gk] = true;
-        setHTML("cmd-result", `<span style="color:var(--warn)">${esc(ghWarn)} SEND again within 8 s to override the ground hold.</span>`);
-        setTimeout(() => { S.armed[gk] = false; }, 8000);
-        return;
-      }
-      S.armed[gk] = false;
     }
   }
   setHTML("cmd-verif-stepper", renderStepper(["BUILD", "SENT", "ACCEPT (S1.1)", "EXEC (S1.7)"], 1));
@@ -2608,31 +2440,6 @@ function renderQuickCommands() {
   }
 }
 
-/* 2026-08c item 5: the 10° HIGH-tier elevation rule is a GROUND policy —
- * the spacecraft accepts TTC_SET_DATA_RATE(HIGH) whenever its own link
- * state permits (antenna, DOWNLINK mode, not beacon-latched); it has no
- * way to know station elevation. The MCS therefore warns (arm-through)
- * when HIGH is commanded below the policy threshold, computed from the
- * GROUND's own contact geometry (0x050A) against
- * subsystems/ttc.yaml tm_rate_tiers[HIGH].min_elevation_deg. */
-function groundHighRateWarning(cmdName, rateVal) {
-  if (cmdName !== "TTC_SET_DATA_RATE" || Number(rateVal) !== 1) return null;
-  const ladder = S.state.tm_rate_ladder || [];
-  const high = ladder.find((t) => String(t.name || "").toUpperCase() === "HIGH");
-  const gate = high && Number(high.min_elevation_deg) > 0
-    ? Number(high.min_elevation_deg) : 10;
-  const el = Number(paramVal("0x050A"));
-  const inContact = !!S.state.in_contact;
-  if (inContact && Number.isFinite(el) && el >= gate) return null;
-  const why = (!inContact || !Number.isFinite(el))
-    ? "no station in contact — pass elevation unknown"
-    : `current pass elevation ${num(el, 1)}° is below ${num(gate, 0)}°`;
-  return `GROUND policy hold (ttc.yaml HIGH min_elevation_deg ${num(gate, 0)}°): ${why}. ` +
-    `The spacecraft will ACCEPT HIGH — there is no on-board elevation gate — ` +
-    `but below the policy elevation the cosec atmospheric loss and G/T de-rate ` +
-    `cost real margin and raise BER.`;
-}
-
 async function sendQuick(key) {
   // `key` is the quick ENTRY name; fall back to a bare catalogue name so
   // older callers keep working.
@@ -2641,17 +2448,6 @@ async function sendQuick(key) {
   if (!cmd) return;
   const auth = commandAuthority(q.command);
   if (!auth.allowed) { announce(auth.text); return; }
-  const ghWarn = groundHighRateWarning(q.command, (q.args || {}).rate);
-  if (ghWarn) {
-    const gk = "ghp:" + key;
-    if (!S.armed[gk]) {
-      S.armed[gk] = true;
-      announce(`HOLD — ${ghWarn} Press again within 8 s to send anyway.`);
-      setTimeout(() => { S.armed[gk] = false; }, 8000);
-      return;
-    }
-    S.armed[gk] = false;
-  }
   if (isCritical(cmd)) {
     // arm→execute in place: first press arms, second within 8 s executes
     if (!S.armed[key]) {
@@ -2690,6 +2486,7 @@ function buildDiagPage() {
       <div class="fld"><label for="hdr-param-search">Parameter search (global)</label>
         <input id="hdr-param-search" class="in" placeholder="name or 0xHHHH" style="min-width:240px"></div>
     </div>
+    <div class="guided-note" data-ann="diag.pus"></div>
     <div class="row" role="tablist" id="diag-tabs">
       ${DIAG_TABS.map(([id, l], i) =>
         `<button class="ds-btn" role="tab" data-diag="${id}" aria-selected="${i === 0}">${l}</button>`).join("")}
@@ -2745,67 +2542,16 @@ function hkObserved(sid) {
   if (age <= interval * 2.5 + 1) return { label: `PERIODIC · ${fmtAge(age)}`, cls: "ok" };
   return { label: `SILENT · ${fmtAge(age)}`, cls: "warn" };
 }
-/** The enable bit the SPACECRAFT reported for a SID, or undefined. */
-function hkEnabledBit(sid) {
-  const rep = S.state.hk_enabled || {};
-  if (rep[String(sid)] !== undefined) return !!rep[String(sid)];
-  const meta = ((S.hkStructures || {}).structures || [])
-    .find((s2) => Number(s2.sid) === Number(sid)) || {};
-  return meta.enabled === null || meta.enabled === undefined
-    ? undefined : !!meta.enabled;
-}
-
-/**
- * "Who turned my SIDs off?"
- *
- * A boot or a bootloader entry legitimately replaces the on-board HK enable
- * set with simulation.yaml `default_enabled_sids` — but nothing said so, and
- * the operator's first evidence was a hole in the next S15 dump. The
- * spacecraft now raises S5 0x0056 and publishes the same record, which the
- * console prints here as an explicit banner naming the SIDs it silenced.
- */
-function hkEnableSummaryHtml() {
-  const structures = ((S.hkStructures || {}).structures) || [];
-  const on = [], off = [];
-  for (const s2 of structures) {
-    const bit = hkEnabledBit(s2.sid);
-    if (bit === true) on.push(s2.sid);
-    else if (bit === false) off.push(s2.sid);
-  }
-  const known = on.length || off.length;
-  const line = known
-    ? `<strong>Enable set reported by the spacecraft:</strong> ENABLED [${on.join(", ") || "—"}] · DISABLED [${off.join(", ") || "—"}]`
-    : `Enable set not reported by the spacecraft — the state column below is inferred from arriving telemetry.`;
-  const rst = S.state.hk_enable_reset;
-  let why = "";
-  if (rst && rst.reason) {
-    const dis = rst.sids_disabled || [];
-    why = `<div class="ds-banner warn" role="alert" style="margin-top:6px;white-space:normal;line-height:1.5">
-      <strong>The spacecraft reset the HK enable set itself</strong> — no HK_DISABLE was sent.<br>
-      Reason: ${esc(String(rst.reason))}<br>
-      ${dis.length
-        ? `SID(s) switched OFF: <strong>${dis.join(", ")}</strong>. Periodic HK and S15 storage stopped for those SIDs, so a dump spanning this moment contains a real gap. Re-send HK_ENABLE (TC 3,5) for each one.`
-        : `No commanded SID was switched off by this reset.`}
-    </div>`;
-  }
-  return `<div style="margin-bottom:8px;font-size:12px">${line}${why}</div>`;
-}
-
 function renderS3Panel() {
   const structures = ((S.hkStructures || {}).structures) || [];
   const rows = structures.map((s2) => {
     const obs = hkObserved(s2.sid);
     // /api/hk-structures serves `param_count`; older fixtures a list
     const nParams = s2.param_count ?? (s2.parameters || []).length;
-    const bit = hkEnabledBit(s2.sid);
-    const enChip = bit === undefined
-      ? renderChip({ kind: "stale", label: "NOT REPORTED" })
-      : renderChip({ kind: bit ? "ok" : "warn", label: bit ? "ENABLED" : "DISABLED" });
     return `<tr><td class="mono">${s2.sid}</td><td>${esc(s2.name || "")}</td>
       <td class="mono">${s2.apid ?? "—"}</td>
       <td class="mono">${s2.interval_s ?? "—"} s</td>
       <td class="mono">${nParams}</td>
-      <td>${enChip}</td>
       <td>${renderChip({ kind: obs.cls === "ok" ? "ok" : obs.cls === "warn" ? "warn" : "stale", label: obs.label })}</td>
       <td><button class="ds-btn" data-s3="enable" data-sid="${s2.sid}">EN</button>
           <button class="ds-btn" data-s3="disable" data-sid="${s2.sid}">DIS</button>
@@ -2813,7 +2559,6 @@ function renderS3Panel() {
   }).join("");
   setHTML("diag-s3", `
     <div class="ds-card"><h2>Housekeeping manager (S3)</h2><div class="bd">
-      ${hkEnableSummaryHtml()}
       <div class="row" style="margin-bottom:8px">
         <button class="ds-btn" id="s3-req-all">REQUEST ALL (ONE-SHOT)</button>
         <button class="ds-btn" id="s3-en-all">ENABLE ALL</button>
@@ -2821,8 +2566,8 @@ function renderS3Panel() {
         <button class="ds-btn" id="s3-reload">RELOAD DEFINITIONS</button>
       </div>
       <table class="plain"><thead><tr><th>SID</th><th>Name</th><th>APID</th><th>Interval</th>
-        <th>Params</th><th>Enabled</th><th>Observed</th><th></th></tr></thead>
-        <tbody>${rows || `<tr><td colspan="8">no HK structures</td></tr>`}</tbody></table>
+        <th>Params</th><th>Observed</th><th></th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="7">no HK structures</td></tr>`}</tbody></table>
     </div></div>`);
 }
 async function s3Command(action, sid) {
@@ -3272,6 +3017,7 @@ function buildFdirPage() {
   <div class="pad hide" id="page-fdir" role="tabpanel" aria-label="FDIR">
     <h1 class="pt">Fault detection, isolation &amp; recovery</h1>
     <p class="sub">What the spacecraft <em>told</em> us (S5 / S12 / S19 / mode), plus recovery controls.</p>
+    <div class="guided-note" data-ann="fdir.strip"></div>
     <div class="ds-card"><h2>FDIR state</h2><div class="bd row" id="fdir-strip" style="gap:18px"></div></div>
     <div class="row" style="margin:10px 0">
       <button class="ds-btn" id="fdir-refresh-all">REFRESH ALL</button>
@@ -3330,6 +3076,7 @@ function renderFdirPage() {
       const a = S.state.sim_health.fdir;
       host.innerHTML = `<div class="ds-card"><h2>SIMULATED ON-BOARD AUTONOMY
         <span class="r">instructor truth — not downlinked</span></h2><div class="bd">
+        <div class="guided-note" data-ann="fdir.autonomy"></div>
         <div class="row" style="gap:18px">
           <div>active faults: <b class="mono">${(a.active_faults || []).length}</b></div>
           <div>pending cascades: <b class="mono">${(a.pending_cascades || []).length}</b></div>
@@ -3338,6 +3085,7 @@ function renderFdirPage() {
         ${(a.procedures || []).map((p) => `<div style="margin-top:6px;font-size:12.5px">
           ${esc(p.name || "on-board procedure")} — ${num(p.progress, 0)} %</div>`).join("")}
         </div></div>`;
+      applyAnnotations();
     } else {
       host.innerHTML = `<div class="ds-card"><h2>On-board autonomy — as telemetered</h2>
         <div class="bd" style="font-size:13px;color:var(--tx2)">
@@ -3374,6 +3122,7 @@ function buildProcPage() {
     <h1 class="pt">Procedures</h1>
     <p class="sub">Loader · step-by-step runner · document viewer · manual override · builder.
       Reachable from any alarm row (P7.6).</p>
+    <div class="guided-note" data-ann="proc.runner"></div>
     <div class="g" style="grid-template-columns:minmax(0,1fr) 420px;align-items:start">
       <div class="g">
         <div class="ds-card"><h2>Load &amp; run</h2><div class="bd">
@@ -3465,7 +3214,9 @@ async function loadProcDoc() {
   if (src !== "ops" || !v) { return; }
   try {
     const txt = await (await fetch(`/api/procedures/${encodeURIComponent(v)}`)).text();
-    setHTML("proc-doc", renderMarkdown(txt));
+    // Same JSON-as-markdown defect as the manual viewer (2026-08-20).
+    setHTML("proc-doc", renderMarkdown(
+      (txt && typeof txt === "object") ? (txt.content_md || "") : txt));
   } catch (e) { setHTML("proc-doc", "document unavailable"); }
 }
 export function renderMarkdown(md) {
@@ -3476,7 +3227,21 @@ export function renderMarkdown(md) {
        .replace(/^# (.*)$/gm, "<h2>$1</h2>")
        .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
        .replace(/`([^`]+)`/g, "<code>$1</code>")
-       .replace(/^[-*] (.*)$/gm, "<li>$1</li>")
+       .replace(/^---+$/gm, "<hr>")
+       .replace(/^[-*] (.*)$/gm, "<li>$1</li>");
+  // GFM tables. The shipped manual is table-heavy (the command reference alone
+  // is >1000 table lines), so without this the page renders as a wall of pipes.
+  h = h.replace(
+    /^\|(.+)\|[ \t]*\n\|[ \t]*:?-{2,}[-:| \t]*\|[ \t]*\n((?:\|.*\|[ \t]*\n?)+)/gm,
+    (_m, head, body) => {
+      const cells = (row) => row.trim().replace(/^\||\|$/g, "").split("|");
+      const th = cells(head).map((c) => `<th>${c.trim()}</th>`).join("");
+      const tr = body.trim().split("\n").map((r) =>
+        `<tr>${cells(r).map((c) => `<td>${c.trim()}</td>`).join("")}</tr>`).join("");
+      return `<table class="man-tbl"><thead><tr>${th}</tr></thead>` +
+             `<tbody>${tr}</tbody></table>\n`;
+    });
+  h = h.replace(/(<li>[\s\S]*?<\/li>)(?!\s*<li>)/g, "<ul>$1</ul>")
        .replace(/\n{2,}/g, "<br><br>");
   return `<div style="font-size:13px;line-height:1.55">${h}</div>`;
 }
@@ -3572,6 +3337,7 @@ function buildTrndPage() {
     <h1 class="pt">Trends</h1>
     <p class="sub">Ground archive · eclipse/contact context · alarm &amp; event markers (P8)</p>
     <div id="trnd-provenance"></div>
+    <div class="guided-note" data-ann="trnd.archive"></div>
     <div class="g" style="grid-template-columns:280px minmax(0,1fr);align-items:start">
       <div class="g" style="align-content:start">
         <div class="ds-card"><h2>Query</h2><div class="bd">
@@ -3612,8 +3378,9 @@ function buildTrndPage() {
         <div class="ds-card"><h2>Command history (archived)</h2>
           <div class="bd scroll-y" style="max-height:150px" id="trnd-cmds"></div></div>
         <div class="ds-card"><h2>Baseline vs now — health (NOM-011)
-          <span class="r">baseline: display_config.yaml commissioning snapshot</span></h2>
+          <span class="r">baseline: annotations.yaml commissioning snapshot</span></h2>
           <div class="bd">
+            <div class="guided-note" data-ann="trnd.baseline"></div>
             <div id="trnd-baseline"></div>
           </div></div>
       </div>
@@ -3762,7 +3529,8 @@ function buildManPage() {
     <div class="g" style="grid-template-columns:300px minmax(0,1fr);align-items:start">
       <div class="ds-card"><h2>Contents</h2><div class="bd">
         <input id="man-search" class="in" placeholder="search…" style="width:100%;margin-bottom:8px">
-        <div id="man-toc" class="scroll-y" style="max-height:480px"></div></div></div>
+        <div id="man-toc" class="scroll-y" style="max-height:480px"></div>
+        <div class="sub" style="margin-top:6px">sections <span id="man-count">0/0</span></div></div></div>
       <div class="ds-card"><h2 id="man-title">—</h2>
         <div class="bd scroll-y" style="max-height:560px" id="man-body">select a section…</div></div>
     </div>
@@ -3774,28 +3542,60 @@ async function loadManual() {
   renderManual();
 }
 function manualSectionsForPosition() {
-  const secs = ((S.manual || {}).sections) || [];
+  // FIELD FIX 2026-08-20: the server serves {"pages":[{name,path,...}]} --
+  // this read `.sections` and `.title`, neither of which exists, so the TOC
+  // was ALWAYS empty ("no sections") and the manual looked absent. Accept the
+  // served shape; keep `.sections` tolerated so an old fixture cannot silently
+  // resurrect the bug (a test asserts a .sections payload yields NO entries).
+  const secs = ((S.manual || {}).pages) || [];
   const pos = S.positions[S.position];
-  if (S.position === "flight_director" || !pos || !pos.manual_sections || !pos.manual_sections.length)
+  if (S.position === "flight_director" || !pos ||
+      !pos.manual_sections || !pos.manual_sections.length ||
+      pos.manual_sections === "all" || pos.manual_sections[0] === "all")
     return secs;
-  return secs.filter((s2) =>
-    pos.manual_sections.some((m) => String(s2.path || s2.id || "").includes(m)));
+  // Classic's rule: the position's stems, PLUS the two everyone needs.
+  const always = ["00_mission_overview", "09_command_reference"];
+  return secs.filter((s2) => {
+    const stem = String(s2.path || s2.filename || "").replace(/\.md$/, "");
+    return always.some((a) => stem.includes(a)) ||
+           pos.manual_sections.some((m) => stem.includes(m));
+  });
 }
+function manualTitle(s2) { return s2.name || s2.title || s2.path || "(untitled)"; }
 function renderManual() {
   const host = $("man-toc");
   if (!host) return;
   const f = ($("man-search") ? $("man-search").value : "").toLowerCase();
-  const secs = manualSectionsForPosition()
-    .filter((s2) => !f || String(s2.title || s2.path || "").toLowerCase().includes(f));
-  host.innerHTML = secs.map((s2) =>
-    `<div><a href="#" data-man="${esc(String(s2.path || s2.id))}">${esc(s2.title || s2.path)}</a></div>`).join("") ||
-    `<div class="logrow nom">no sections</div>`;
+  const all = manualSectionsForPosition();
+  const secs = all.filter((s2) => {
+    if (!f) return true;
+    if (manualTitle(s2).toLowerCase().includes(f)) return true;
+    const body = S.manualBodies[String(s2.path || "")];   // body-text search
+    return body ? body.toLowerCase().includes(f) : false;
+  });
+  const cur = S.manualOpen || "";
+  host.innerHTML = secs.map((s2) => {
+    const path = String(s2.path || s2.filename || "");
+    const on = path === cur ? ' style="font-weight:700"' : "";
+    return `<div class="man-toc-item"><a href="#" data-man="${esc(path)}"${on}>` +
+           `${esc(manualTitle(s2))}</a></div>`;
+  }).join("") || `<div class="logrow nom">no sections</div>`;
+  setText("man-count", `${secs.length}/${all.length}`);
 }
 async function openManualSection(path) {
+  // FIELD FIX 2026-08-20: this took .text() of a JSON response and rendered the
+  // envelope as markdown, and encodeURIComponent() destroyed the slashes in a
+  // nested path. Decode properly, encode per segment.
   try {
-    const txt = await (await fetch(`/api/manual/${encodeURIComponent(path)}`)).text();
-    setText("man-title", path);
-    setHTML("man-body", renderMarkdown(txt));
+    const url = "/api/manual/" +
+      String(path).split("/").map(encodeURIComponent).join("/");
+    const data = await (await fetch(url)).json();
+    const md = data.content_md || "";
+    S.manualOpen = path;
+    S.manualBodies[path] = md;          // cache for body-text search
+    setText("man-title", data.title || path);
+    setHTML("man-body", renderMarkdown(md));
+    renderManual();                      // refresh active-item highlight
   } catch (e) { setHTML("man-body", "section unavailable"); }
 }
 
@@ -4091,15 +3891,38 @@ function initFocusTrap() {
   });
 }
 
-/* ═══ 19. DISPLAY CONFIG — operational display config ═════════════════════ */
+/* ═══ 19. GUIDED — teaching layer ═════════════════════════════════════════ */
 
-/* Two operational tables live here (NOT training content): the NOM-002
- * capture-readiness gates (G4) and the commissioning health baselines
- * (G15). Source: configs/<mission>/mcs/display_config.yaml via
- * /api/display-config. */
-async function loadDisplayConfig() {
-  try { S.displayConfig = await getJSON("/api/display-config"); }
-  catch (e) { S.displayConfig = {}; }
+async function loadAnnotations() {
+  try { S.annotations = await getJSON("/api/annotations"); }
+  catch (e) { S.annotations = {}; }
+  applyAnnotations();
+}
+export function annotationText(key) {
+  // key "page.element" -> annotations[page][element] (string or {n, text})
+  const [page, ...rest] = String(key).split(".");
+  const el = rest.join(".");
+  const pageMap = S.annotations[page];
+  if (!pageMap) return null;
+  const v = pageMap[el];
+  if (v === undefined || v === null) return null;
+  if (typeof v === "string") return { n: null, text: v };
+  return { n: v.n ?? null, text: v.text || "" };
+}
+function applyAnnotations() {
+  if (!document.querySelectorAll) return;
+  document.querySelectorAll("[data-ann]").forEach((el) => {
+    const a = annotationText(el.dataset.ann);
+    if (!a) { el.innerHTML = ""; return; }
+    el.innerHTML = (a.n !== null ? `<b class="n">${esc(String(a.n))}</b>` : "") + esc(a.text);
+  });
+}
+function setGuided(on) {
+  document.documentElement.setAttribute("data-guided", on ? "1" : "0");
+  const b = $("guided-btn");
+  if (b) b.setAttribute("aria-pressed", on ? "true" : "false");
+  try { localStorage.setItem("mcs.guided", on ? "1" : "0"); } catch (e) { /* */ }
+  if (on) applyAnnotations();
 }
 function setGreyscale(on) {
   document.documentElement.setAttribute("data-greyscale", on ? "1" : "0");
@@ -4188,6 +4011,7 @@ function renderCurrentPage(full) {
   else if (S.page === "proc") { if (full) { loadProcSources(); renderProcStatus(); } }
   else if (S.page === "trnd") { if (full) loadTrndParamNames(); renderBaselineCard(); }
   else if (S.page === "man") { if (full) loadManual(); }
+  if (full) applyAnnotations();
 }
 
 function buildPages() {
@@ -4325,6 +4149,7 @@ function initDelegatedEvents() {
   on("alarms-btn", () => toggleAlarmDrawer(true));
   on("alarm-close", () => toggleAlarmDrawer(false));
   on("alarm-ack-all", () => ackAllAlarms());
+  on("guided-btn", () => setGuided(document.documentElement.getAttribute("data-guided") !== "1"));
   on("grey-btn", () => setGreyscale(document.documentElement.getAttribute("data-greyscale") !== "1"));
   on("theme-btn", () => setTheme(document.documentElement.getAttribute("data-theme") !== "light"));
   on("help-btn", () => toggleHelp());
@@ -4524,6 +4349,7 @@ async function boot() {
   setHTML("pb-step-fields", pbFieldMarkup());
   // restore persisted prefs
   try {
+    setGuided(localStorage.getItem("mcs.guided") === "1");
     if (localStorage.getItem("mcs.theme") === "light") setTheme(true);
     const pos = localStorage.getItem("mcs.position");
     if (pos) S.position = pos;
@@ -4531,7 +4357,7 @@ async function boot() {
   restoreAlarmFilters();
   await Promise.all([loadParamCatalog(), loadLimits(), loadPositions()]);
   try { S.clientConfig = await getJSON("/api/client-config"); } catch (e) { S.clientConfig = {}; }
-  await Promise.all([loadTcCatalog(), loadSchematics(), loadDisplayConfig(),
+  await Promise.all([loadTcCatalog(), loadSchematics(), loadAnnotations(),
     loadHkStructures(), loadMemoryMap(), loadAlarms(), loadFailureCodes(),
     loadFaultGraph(), loadGonogoMatrix(), loadConsoleLog()]);
   const sel = $("pos-select");
@@ -4566,13 +4392,12 @@ export const __test = {
   S, adoptServerClock, simNowMs, updateSaHeader, trainingChipState,
   railVisibleForPosition, applyPositionFilter, showPage, buildRail, buildPages,
   renderAlarmDrawer, filteredAlarms, ackAlarm, ackAllAlarms, paramTriad,
-  scModeInfo, fdirLevelInfo, commandAuthority, encodeCatalogCommand, decodeCatalogArgs,
+  scModeInfo, commandAuthority, encodeCatalogCommand, decodeCatalogArgs,
   sidToHex, crc16Ccitt, s11CucSeconds, tmFreshness, handleState, handleTMPacket,
-  handleAlarmMsg, renderBottomDrawer, renderS12Block,
+  handleAlarmMsg, renderBottomDrawer, annotationText, renderS12Block,
   renderS19Block, renderMarkdown, provenanceText, updateTrainingChip,
   loadSchematics, updateRailHealth,
-  catFieldError, catLengthError, catFormatEng, isCritical, cmdFieldWidget,
-  sendCommand,
+  catFieldError, catFormatEng, isCritical, cmdFieldWidget,
   renderS3Panel, renderS11Table, renderS15Panel, renderS6Panel, renderS9Panel,
   renderParamsPanel, renderFdirPage, selectDiagTab, renderDiag,
   // POSITION_NEEDS gap surfaces (G1-G9, G12, G15)
