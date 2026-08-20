@@ -2446,8 +2446,8 @@ quick_commands:
   - { group: "AOCS EQUIPMENT", label: "ST Select 1", command: ST_SELECT, name: ST_SEL_1, args: { unit: 1 } }
   - { group: "AOCS EQUIPMENT", label: "ST Select 2", command: ST_SELECT, name: ST_SEL_2, args: { unit: 2 } }
   - { group: "AOCS MODES", label: "Fine-Ready Check", command: AOCS_FINE_READY_CHECK, name: AOCS_FINE_CHECK, args: {} }
-  - { group: "AOCS EQUIPMENT", label: "GPS Rx On",  command: S2_AOCS_GPS_RECEIVER, args: { device_id: 527, state: 1 } }
-  - { group: "AOCS EQUIPMENT", label: "GPS Rx Off", command: S2_AOCS_GPS_RECEIVER, args: { device_id: 527, state: 0 } }
+  - { group: "AOCS EQUIPMENT", label: "GPS Rx On",  command: S2_AOCS_GPS_RECEIVER, name: AOCS_GPS_RX_ON, args: { device_id: 527, state: 1 } }
+  - { group: "AOCS EQUIPMENT", label: "GPS Rx Off", command: S2_AOCS_GPS_RECEIVER, name: AOCS_GPS_RX_OFF, args: { device_id: 527, state: 0 } }
   - { group: "AOCS EQUIPMENT", label: "GPS Cold", command: AOCS_GPS_SET_START_MODE, name: AOCS_GPS_COLD, args: { start_mode: 0 } }
   - { group: "AOCS EQUIPMENT", label: "GPS Warm", command: AOCS_GPS_SET_START_MODE, name: AOCS_GPS_WARM, args: { start_mode: 1 } }
   - { group: "AOCS EQUIPMENT", label: "GPS Hot",  command: AOCS_GPS_SET_START_MODE, name: AOCS_GPS_HOT,  args: { start_mode: 2 } }
@@ -2493,8 +2493,8 @@ quick_commands:
   # ── TTC ──
   - { group: "TTC", label: "PA ON",  command: TTC_PA_ON,  args: {} }
   - { group: "TTC", label: "PA OFF", command: TTC_PA_OFF, args: {} }
-  - { group: "TTC", label: "DL Mode ON",  command: TTC_SET_DOWNLINK_MODE, args: { "on": 1 } }
-  - { group: "TTC", label: "DL Mode OFF", command: TTC_SET_DOWNLINK_MODE, args: { "on": 0 } }
+  - { group: "TTC", label: "DL Mode ON",  command: TTC_SET_DOWNLINK_MODE, name: TTC_DL_MODE_ON, args: { "on": 1 } }
+  - { group: "TTC", label: "DL Mode OFF", command: TTC_SET_DOWNLINK_MODE, name: TTC_DL_MODE_OFF, args: { "on": 0 } }
   - { group: "TTC", label: "Rate HIGH (128k)", command: TTC_SET_DATA_RATE, name: TTC_RATE_HIGH, args: { rate: 1 } }
   - { group: "TTC", label: "Rate LOW (16k)",   command: TTC_SET_DATA_RATE, name: TTC_RATE_LOW,  args: { rate: 0 } }
   - { group: "TTC", label: "TX Pwr LOW (1W)",  command: TTC_SET_TX_POWER, name: TTC_TX_PWR_LOW, args: { level: 0 } }

@@ -2407,6 +2407,9 @@ function renderQuickCommands() {
     const g = q.group || q.subsystem || "GENERAL";
     (groups[g] = groups[g] || []).push(q);
   }
+  // Stable identity per entry, independent of whether config gave it a
+  // `name:`. Stamped here so the CMD grid and the per-subsystem mirrors agree.
+  S.quickCommands.forEach((q, i) => { q._qi = i; });
   const btn = (q) => {
     const cmd = S.tcCatalog.find((c) => c.name === q.command);
     const auth = commandAuthority(q.command);
@@ -2417,7 +2420,15 @@ function renderQuickCommands() {
     // data-quick carries the quick ENTRY name (unique), not the catalogue
     // command name: several quick entries share a command with different
     // preset args (AOCS_SET_MODE mode=2/3/4/5) and the args must survive.
-    return `<button class="ds-btn ${critical ? "danger" : ""}" data-quick="${esc(q.name || q.command)}"
+    // FIELD DEFECT 2026-08-20: this carried `q.name || q.command`, and
+    // sendQuick resolved it with .find() -- which returns the FIRST match.
+    // Shipped entries without a `name:` collided on their bare command name,
+    // so BOTH buttons of a pair fired the first entry's args: "DL Mode OFF"
+    // sent TTC_SET_DOWNLINK_MODE(on=1) and "GPS Rx Off" sent
+    // S2_AOCS_GPS_RECEIVER(state=1). Neither could be turned off from the
+    // console, silently, while the button reported success. An index cannot
+    // collide -- fixed by construction, not by config hygiene.
+    return `<button class="ds-btn ${critical ? "danger" : ""}" data-quick="${q._qi}"
       title="${esc(provenanceText(cmd))}">${esc(q.label || q.command)}${critical ? " ⚠" : ""}</button>`;
   };
   setHTML("cmd-quick", Object.entries(groups).map(([g, qs]) =>
@@ -2443,7 +2454,12 @@ function renderQuickCommands() {
 async function sendQuick(key) {
   // `key` is the quick ENTRY name; fall back to a bare catalogue name so
   // older callers keep working.
-  const q = S.quickCommands.find((x) => (x.name || x.command) === key) || { command: key };
+  // `key` is the entry's index (see renderQuickCommands). Numeric first; the
+  // name lookup survives only for older callers, and is NOT what buttons use.
+  const _i = Number(key);
+  const q = (Number.isInteger(_i) && S.quickCommands[_i])
+    || S.quickCommands.find((x) => (x.name || x.command) === key)
+    || { command: key };
   const cmd = S.tcCatalog.find((c) => c.name === q.command);
   if (!cmd) return;
   const auth = commandAuthority(q.command);
