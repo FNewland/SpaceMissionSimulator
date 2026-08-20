@@ -133,6 +133,63 @@ _S1_EXEC_OK = {3, 5, 7}
 _S1_EXEC_FAIL = {4, 8}
 
 
+def _attach_command_identity(row: dict, dataset: TelemetryDataset) -> None:
+    """Join the ground command log onto a verification row by sequence count.
+
+    S1 verification telemetry identifies a telecommand by request-id and
+    nothing else -- no service, no subtype, no arguments; that is the protocol,
+    not a gap in the decoder. So "which command was this?" can only be answered
+    on the ground, from the log the MCS wrote when it sent the TC.
+
+    When no log was supplied the fields are empty strings rather than guesses:
+    a report that invents a command name is worse than one that admits it only
+    has a sequence number.
+    """
+    row.setdefault("name", "")
+    row.setdefault("service", None)
+    row.setdefault("subtype", None)
+    row.setdefault("args", "")
+    row.setdefault("data_hex", "")
+    entry = (dataset.command_log or {}).get(row.get("seq"))
+    if not entry:
+        return
+    row["name"] = entry.get("name") or ""
+    row["service"] = entry.get("service")
+    row["subtype"] = entry.get("subtype")
+    row["data_hex"] = entry.get("data_hex") or ""
+    row["args"] = _decode_args_text(entry, dataset)
+
+
+def _decode_args_text(entry: dict, dataset: TelemetryDataset) -> str:
+    """Argument octets -> "mode=4, rate=2" using the telecommand catalogue.
+
+    Uses the same decoder that powers the MCS builder's paste-to-decode path,
+    so the report and the console cannot disagree about what a byte string
+    means. Falls back to the raw hex when the catalogue cannot resolve it --
+    raw hex is still information; a wrong name is not.
+    """
+    data_hex = str(entry.get("data_hex") or "").strip()
+    if not data_hex:
+        return ""
+    try:
+        raw = bytes.fromhex(data_hex.replace(",", " "))
+    except ValueError:
+        return data_hex
+    if not raw:
+        return ""
+    try:
+        from ..commanding.decode import decode
+        catalog = getattr(dataset.catalogs, "tc_catalog", None)
+        _name, args = decode(raw, service=entry.get("service") or 8,
+                             subtype=entry.get("subtype") or 1,
+                             catalog=catalog, name=entry.get("name") or None)
+        if args:
+            return ", ".join(f"{k}={v}" for k, v in args.items())
+        return ""
+    except Exception:  # noqa: BLE001 - an undecodable TC still shows its bytes
+        return data_hex
+
+
 def commands_view(dataset: TelemetryDataset, period: Period) -> list[dict]:
     """Command history reconstructed from S1 verification reports.
 
@@ -188,6 +245,7 @@ def commands_view(dataset: TelemetryDataset, period: Period) -> list[dict]:
                                  if row["error_code"] else "")
         except Exception:  # noqa: BLE001
             row["error_text"] = ""
+        _attach_command_identity(row, dataset)
         out.append(row)
     out.sort(key=lambda r: r["t"])
     return out

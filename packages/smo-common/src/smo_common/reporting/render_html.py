@@ -548,20 +548,39 @@ def _render_commands(sec: CommandsSection, dataset, period) -> str:
         err = "0x%04X" % r["error_code"] if r["error_code"] else ""
         outcome = (f"<span class='flag'>{r['outcome']}</span>" if bad
                    else r["outcome"])
+        # Name/args come from the ground command log joined on `seq`; an
+        # em-dash means "no log for this period", never "no arguments".
+        svc = ("" if r.get("service") is None
+               else f"S{r['service']},{r['subtype']}")
         return (f"<tr><td>{_esc(r['utc'])}</td>"
                 f"<td class='num'>{r['apid']}</td>"
                 f"<td class='num'>{r['seq']}</td>"
+                f"<td>{_esc(r.get('name') or '—')}</td>"
+                f"<td>{_esc(svc)}</td>"
+                f"<td>{_esc(r.get('args') or '')}</td>"
                 f"<td>{r['accept']}</td><td>{r['execute']}</td>"
                 f"<td>{outcome}</td><td>{err}</td>"
                 f"<td>{_esc(r['error_text'] or r['reason'])}</td></tr>")
 
     body = "".join(_row(r) for r in rows)
     n_bad = sum(1 for r in rows if r["outcome"] in ("REJECTED", "FAILED"))
+    n_named = sum(1 for r in rows if r.get("name"))
+    # Say plainly where the identity came from, and how much of it we have.
+    # An S1 report cannot carry a command name (the protocol identifies a TC
+    # by request-id alone), so the name is a ground-side join on `seq`.
+    if n_named == len(rows):
+        prov = ("names and arguments joined from the ground command log "
+                "on sequence count")
+    elif n_named:
+        prov = (f"{n_named} of {len(rows)} named from the ground command log; "
+                "the rest were sent outside it")
+    else:
+        prov = ("no ground command log for this period — S1 verification "
+                "reports carry a request-id, never a command name")
     return (title + f"<table><caption>{len(rows)} commands from S1 "
-            f"verification reports, {n_bad} rejected/failed; identity is "
-            "request-id (apid, seq) — the archive carries no TC "
-            "packets</caption>"
-            "<tr><th>UTC</th><th>APID</th><th>Seq</th><th>Accept</th>"
+            f"verification reports, {n_bad} rejected/failed; {prov}</caption>"
+            "<tr><th>UTC</th><th>APID</th><th>Seq</th><th>Command</th>"
+            "<th>Svc</th><th>Arguments</th><th>Accept</th>"
             "<th>Execute</th><th>Outcome</th><th>Err</th><th>Reason</th></tr>"
             + body + "</table>")
 

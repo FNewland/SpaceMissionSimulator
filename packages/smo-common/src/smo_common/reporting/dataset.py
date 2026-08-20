@@ -50,6 +50,20 @@ class TelemetryDataset:
     crc_errors: int = 0
     undecodable: int = 0
     total_packets: int = 0
+    #: Ground-side command log, keyed by CCSDS sequence count, injected by the
+    #: caller (the MCS has it; this package must not import smo_mcs).
+    #:
+    #: Field report 2026-08-20: "In the delayed TM reports for 'sent commands',
+    #: I only have the sequence counter and command execution state - it would
+    #: be helpful to have the command name and parameters too."
+    #:
+    #: It cannot come from the dump: a PUS S1 verification report identifies a
+    #: telecommand by request-id only -- by protocol it never carries the TC's
+    #: service, subtype or arguments. The name exists on the GROUND, in the
+    #: MCS's tc_log table, and `seq` is the join key both sides share. Absent
+    #: this sidecar the report still renders, with the name columns empty,
+    #: which is the honest rendering of "we have the dump but not the log".
+    command_log: dict[int, dict] = field(default_factory=dict)
     files: list[dict] = field(default_factory=list)
     first_cuc: Optional[float] = None
     last_cuc: Optional[float] = None

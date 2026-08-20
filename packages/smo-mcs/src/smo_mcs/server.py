@@ -23,6 +23,7 @@ import aiohttp
 from aiohttp import web
 
 from smo_common.protocol.framing import frame_packet, read_framed_packet
+from smo_common.telemetry.eng_values import build_state_tables
 from smo_common.protocol.ecss_packet import (
     CUC_FINE_TICKS, cuc_seconds_to_datetime, datetime_to_cuc_seconds,
     decommutate_packet, get_time_epoch,
@@ -1424,6 +1425,7 @@ class MCSServer:
         app.router.add_post("/api/procedure/override-command", self._handle_proc_override)
         app.router.add_get("/api/procedure/activity-types", self._handle_activity_types)
         app.router.add_get("/api/procedure/index", self._handle_proc_index)
+        app.router.add_get("/api/procedure/cards", self._handle_proc_cards)
         app.router.add_get("/api/procedure/tlm-vocabulary",
                            self._handle_proc_tlm_vocabulary)
         # Procedure builder save/load
@@ -1493,7 +1495,8 @@ class MCSServer:
         try:
             from smo_common.reporting import register_report_routes
             register_report_routes(app, lambda: self._dump_dir,
-                                   self.config_dir, owner="MCS")
+                                   self.config_dir, owner="MCS",
+                                   get_command_log=self._report_command_log)
         except Exception as e:  # noqa: BLE001 — never block the MCS UI
             logger.warning("Delayed-TM report API not mounted: %s", e)
 
@@ -3198,6 +3201,41 @@ class MCSServer:
             "command_rejected_event_id": f"0x{COMMAND_REJECTED_EVENT_ID:04X}",
         })
 
+    def _report_command_log(self) -> dict[int, dict]:
+        """`{seq: {name, service, subtype, data_hex}}` for report generation.
+
+        Field report 2026-08-20: the delayed-TM "sent commands" section showed
+        only a sequence counter and an execution state. It could not show more:
+        its only source is PUS S1 verification TELEMETRY, and an S1 report
+        identifies a telecommand by request-id -- by protocol it never carries
+        the command's service, subtype or arguments.
+
+        The identity exists on the ground. `tc_log` records name, service,
+        subtype and the argument octets at the moment the MCS sends each TC,
+        indexed by the same CCSDS sequence count the S1 report echoes back. So
+        this is a join, not a decode. Keyed by `seq`, which wraps at 14 bits --
+        acceptable here because a report covers one pass, and a wrap inside a
+        single pass would need 16384 commands.
+        """
+        archive = getattr(self, "_tm_archive", None)
+        if archive is None:
+            return {}
+        try:
+            rows = archive.query_commands(limit=20000)
+        except Exception:  # noqa: BLE001 - a report without names still helps
+            logger.exception("tc_log unavailable for report generation")
+            return {}
+        out: dict[int, dict] = {}
+        for r in rows:
+            seq = r.get("seq")
+            if seq is None:
+                continue
+            out[int(seq)] = {"name": r.get("name") or "",
+                             "service": r.get("service"),
+                             "subtype": r.get("subtype"),
+                             "data_hex": r.get("data_hex") or ""}
+        return out
+
     async def _handle_param_catalog(self, request):
         """Return the full parameter catalog with HK/on-demand classification.
 
@@ -3226,6 +3264,8 @@ class MCSServer:
                     except Exception:
                         pass
             out = []
+            state_tables = build_state_tables(
+                pdata.get("parameters", []) or [], self.config_dir)
             for p in pdata.get("parameters", []) or []:
                 try:
                     pid = int(p["id"]) if isinstance(p["id"], int) else int(str(p["id"]), 0)
@@ -3249,6 +3289,13 @@ class MCSServer:
                     # not be judged against any HK interval.
                     "hk_sids": list(cad["sids"]) if cad else [],
                     "hk_interval_s": cad["interval_s"] if cad else None,
+                    # Engineering values for discrete parameters (field report
+                    # 2026-08-20: "only the raw values seem to display").
+                    # {code: name}, or absent when the parameter is not
+                    # enumerated -- see smo_common.telemetry.eng_values, which
+                    # derives these from configuration and never invents one.
+                    "states": {str(k): v for k, v in
+                               (state_tables.get(pid) or {}).items()} or None,
                 })
             return web.json_response({"parameters": out})
         except Exception as e:
@@ -3888,6 +3935,130 @@ class MCSServer:
             out.append(item)
         return web.json_response({"procedures": out,
                                   "schema_version": CANONICAL_SCHEMA_VERSION})
+
+    def _step_owner_positions(self, step: dict) -> list[str]:
+        """Which console position owns a procedure step.
+
+        No step in configuration carries an owner, and inventing one would be
+        worse than showing none. But a command step DOES carry the thing the
+        authority model is keyed on: for S8.1 the func_id, otherwise the
+        service. positions.yaml already says which func_ids and services each
+        position may command, so the owner is a JOIN against the authority
+        that is already enforced when the command is sent -- not a guess.
+
+        A position with `allowed_commands: "all"` (the Flight Director) is
+        deliberately excluded: FD may send anything, so counting FD as an owner
+        would mark every step as everyone's and highlight nothing.
+        """
+        if step.get("type") != "command":
+            return []
+        service = step.get("service")
+        subtype = step.get("subtype")
+        func_id = step.get("func_id")
+        owners: list[str] = []
+        for name, pos in (self._positions or {}).items():
+            if getattr(pos, "allowed_commands", None) == "all":
+                continue
+            func_ids = list(getattr(pos, "allowed_func_ids", []) or [])
+            services = list(getattr(pos, "allowed_services", []) or [])
+            if service == 8 and subtype == 1 and func_id is not None:
+                if func_id in func_ids:
+                    owners.append(name)
+                continue
+            # Service-level authority is NOT attribution. Every position may
+            # send S17 pings and S3 HK requests, so a service match "owns" a
+            # step for six positions at once and highlights nothing useful --
+            # measured: CONNECTION_TEST came back owned by all six. Only the
+            # func_id grain discriminates, so only it is claimed.
+            _ = services
+        return owners
+
+    async def _handle_proc_cards(self, request):
+        """Procedure cards with per-step ownership resolved for a position.
+
+        Field report 2026-08-20: "could the MAN page display the procedure
+        cards per position with the specific steps to be executed by that
+        position highlighted somehow (so this changes by position)?"
+
+        Two grades of attribution, and the card is explicit about which it is
+        showing, because they are not equally certain:
+
+        * whole-procedure — `required_positions` / `position_roles` from
+          procedure_index.yaml. Authored by a human, exact.
+        * per-step — derived by joining the step's func_id (or service) against
+          the position's commanding authority. Sound, but it answers "who is
+          allowed to send this" rather than "who was told to". Steps that are
+          not commands (GO/NO-GO calls, telemetry checks) have no owner at all
+          and are never highlighted.
+        """
+        position = (request.query.get("position") or "").strip()
+        pos_cfg = (self._positions or {}).get(position)
+        sees_all = (position == "flight_director"
+                    or getattr(pos_cfg, "allowed_commands", None) == "all")
+        out = []
+        for entry in self._procedure_index:
+            required = list(entry.get("required_positions") or [])
+            roles = dict(entry.get("position_roles") or {})
+            mine = sees_all or (position in required)
+            steps_out = []
+            n_mine = 0
+            for i, step in enumerate(self._procedure_steps_for(entry)):
+                owners = self._step_owner_positions(step)
+                step_mine = bool(position) and position in owners
+                if step_mine:
+                    n_mine += 1
+                steps_out.append({
+                    # `attribution` says how the owner was established, so the
+                    # card can be honest that an unattributed step is not
+                    # "nobody's" -- it is a step whose owner configuration does
+                    # not record at this grain (a GO/NO-GO call, a telemetry
+                    # check, or a service-level command anyone may send).
+                    "attribution": "func_id" if owners else "none",
+                    "index": i,
+                    "type": step.get("type", ""),
+                    "description": step.get("description", ""),
+                    "mnemonic": step.get("mnemonic", ""),
+                    "service": step.get("service"),
+                    "subtype": step.get("subtype"),
+                    "func_id": step.get("func_id"),
+                    "owners": owners,
+                    "mine": step_mine,
+                })
+            out.append({
+                "id": entry.get("id", ""),
+                "name": entry.get("name", ""),
+                "category": entry.get("category", ""),
+                "file": entry.get("file", ""),
+                "required_positions": required,
+                "position_roles": roles,
+                "my_role": roles.get(position, ""),
+                "relevant": mine,
+                "my_step_count": n_mine,
+                "steps": steps_out,
+            })
+        return web.json_response({
+            "position": position, "sees_all": sees_all, "cards": out,
+            "step_attribution": "derived from commanding authority "
+                                "(positions.yaml allowed_func_ids/services)"})
+
+    def _procedure_steps_for(self, entry: dict) -> list[dict]:
+        """Canonical steps for an index entry, or [] when it is prose-only."""
+        resolved = self._indexed_procedure(entry.get("id", ""))
+        if resolved and resolved.get("steps"):
+            return list(resolved["steps"])
+        rel = entry.get("file", "")
+        if not rel:
+            return []
+        path = self.config_dir / "procedures" / rel
+        if not path.is_file():
+            return []
+        try:
+            from smo_common.procedures import markdown_steps
+            steps, _ = markdown_steps(path.read_text())
+            return list(steps)
+        except Exception:  # noqa: BLE001 - a card without steps is still a card
+            logger.debug("no steps extractable from %s", rel)
+            return []
 
     # ── Shift handover ───────────────────────────────────────────────
 

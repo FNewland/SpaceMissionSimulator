@@ -83,6 +83,16 @@ nav.rail{flex:0 0 62px;background:var(--s1);border-right:1px solid var(--line);
   display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:4px;overflow-y:auto}
 .rail button{width:46px;height:40px;border-radius:var(--r);display:grid;place-items:center;
   font-family:var(--mono);font-size:12px;font-weight:700;color:var(--tx3);position:relative}
+/* Position filtering sets `hidden` on the rail buttons a position does not
+   own. The UA stylesheet's [hidden]{display:none} is an AUTHOR-beaten rule,
+   so the `display:grid` above silently won and every tab stayed on screen
+   regardless of position (field report 2026-08-20: "shows tabs that the
+   position does not see telemetry in"). The logic was right; the CSS undid
+   it. Keep this rule next to the display declaration it defends against. */
+.rail button[hidden]{display:none}
+/* A step attributed to the current position, on the MAN procedure cards. */
+tr.pcard-mine{background:var(--s3)}
+tr.pcard-mine td{border-left:2px solid var(--info)}
 .rail button:hover{background:var(--s2);color:var(--tx2)}
 .rail button.on{background:var(--s3);color:var(--tx);box-shadow:inset 2px 0 0 var(--info)}
 .rail button .hd{position:absolute;top:3px;right:4px;font-family:var(--mono);font-size:10px;

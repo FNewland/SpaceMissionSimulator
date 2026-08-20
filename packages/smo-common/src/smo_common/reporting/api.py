@@ -71,8 +71,17 @@ def register_report_routes(
     prefix: str = "/api/reports",
     page_path: str | None = "/reports",
     owner: str = "",
+    get_command_log: Callable[[], dict[int, dict]] | None = None,
 ) -> Any:
-    """Mount the report API (and optional browser page) on ``app``."""
+    """Mount the report API (and optional browser page) on ``app``.
+
+    ``get_command_log`` — optional callable returning ``{seq: {name, service,
+    subtype, data_hex}}``. The ground segment has this; this package must not
+    import it, so it is injected. It is what lets the sent-commands section
+    name a command: an S1 verification report identifies a telecommand by
+    request-id only, so without this the report can honestly show nothing but
+    the sequence count (field report 2026-08-20).
+    """
     from aiohttp import web
 
     config_dir = Path(config_dir)
@@ -152,11 +161,17 @@ def register_report_routes(
         vars_ = body.get("vars") or {}
         loop = asyncio.get_running_loop()
 
+        try:
+            cmd_log = get_command_log() if get_command_log else None
+        except Exception:  # noqa: BLE001 - a missing log must not kill a report
+            logger.exception("command log unavailable; report will be unnamed")
+            cmd_log = None
+
         def _work():
             return generate_report(
                 template, config_dir=config_dir, dump_dir=_dump_dir(),
                 dump_files=dump_files, vars=vars_, period_override=period,
-                out_dir=reports_dir)
+                out_dir=reports_dir, command_log=cmd_log)
 
         try:
             meta = await loop.run_in_executor(None, _work)

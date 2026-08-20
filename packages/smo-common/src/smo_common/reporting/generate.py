@@ -135,6 +135,7 @@ def generate_report(
     period_override: Optional[dict[str, Any]] = None,
     out_dir: str | Path | None = None,
     out_path: str | Path | None = None,
+    command_log: Optional[dict[int, dict]] = None,
 ) -> dict[str, Any]:
     """Generate one report. Returns metadata including the written path.
 
@@ -168,6 +169,11 @@ def generate_report(
                                dump_files)
     dataset = TelemetryDataset.from_dumps(
         files, catalogs)
+    # Ground-side command identity, keyed by CCSDS sequence count. The dump
+    # cannot supply it (S1 carries a request-id, never a name), so the caller
+    # injects it; without it the report renders honestly with empty names.
+    if command_log:
+        dataset.command_log = dict(command_log)
 
     all_vars = {**spec.vars, **(vars or {})}
     period_spec = (_period_override_spec(period_override)

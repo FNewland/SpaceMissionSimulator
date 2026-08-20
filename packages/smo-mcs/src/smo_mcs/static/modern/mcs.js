@@ -86,6 +86,8 @@ const S = {
   tcCatalogAll: [],        // unfiltered (flight_director view) for authority display
   quickCommands: [],       // /api/tc-catalog quick_commands[]
   clientConfig: {},        // /api/client-config
+  procCards: null,         // /api/procedure/cards (per position)
+  procCardOpen: "",        // expanded card id
   annotations: {},         // /api/annotations
   timeMode: "unknown",     // "sim" | "real" | "unknown"  (see resolveTimeMode)
   wsConnected: false,
@@ -209,6 +211,38 @@ function liveValues() {
   };
 }
 /* Page-level param triad: catalog + live + limits joined (P3). */
+/* ── Engineering values ───────────────────────────────────────────────────
+ *
+ * Field report 2026-08-20: "check in the new version that parameters are
+ * displayed in engineering values, e.g. for AOCS mode - but this may be a
+ * generic issue - at the minute only the raw values seem to display".
+ *
+ * It was generic. Every catalogue-driven surface here formatted values with a
+ * plain numeric formatter, so aocs.mode read `4` instead of `NOMINAL`. Two
+ * widgets (the AOCS mode chain and the SA-header mode chip) had their own
+ * hardcoded arrays -- a third copy of codes that already live in config.
+ *
+ * /api/param-catalog now serves a `states` map for every parameter whose codes
+ * are documented in configuration (see smo_common/telemetry/eng_values.py).
+ * This is the one place that turns a raw value into what an operator reads.
+ *
+ * The raw code is kept in parentheses on purpose: procedures, packet dumps and
+ * S12 limit definitions all quote the number, so hiding it would break the
+ * cross-check an operator actually performs.
+ */
+export function paramStates(hexId) {
+  const st = (S.paramByHex[hexId] || {}).states;
+  return st && Object.keys(st).length ? st : null;
+}
+export function engValue(hexId, raw) {
+  if (raw === undefined || raw === null) return "—";
+  const st = paramStates(hexId);
+  if (!st) return null;                 // not enumerated: caller formats numerically
+  const code = Math.round(Number(raw));
+  if (!Number.isFinite(code)) return String(raw);
+  const name = st[String(code)];
+  return name ? `${name} (${code})` : `UNKNOWN (${code})`;
+}
 export function paramTriad(hexId) {
   const def = S.paramByHex[hexId] || { hex: hexId, name: hexId };
   const band = S.limits[hexId] ? { ...S.limits[hexId] } : null;
@@ -216,6 +250,10 @@ export function paramTriad(hexId) {
   const age = paramAge(hexId);
   const lim = band || (st || age !== undefined ? {} : null);
   if (lim) { if (st) lim.state = st; if (age !== undefined) lim.age_s = age; }
+  const eng = engValue(hexId, paramVal(hexId));
+  // renderParam() formats numerically and appends `units`; for a discrete
+  // parameter the state NAME is the value, and a unit suffix is meaningless.
+  if (eng !== null) return renderParam({ ...def, units: "" }, eng, lim);
   return renderParam(def, paramVal(hexId), lim);
 }
 function pushSeries(hexId, v) {
@@ -224,8 +262,93 @@ function pushSeries(hexId, v) {
   s.push(Number(v));
   if (s.length > 120) s.shift();
 }
+/* ── Cadence-aware staleness ──────────────────────────────────────────────
+ *
+ * Field report 2026-08-20: "check the stale telemetry mechanism ... both in
+ * the old and new versions of the UI".
+ *
+ * The modern console was judging EVERY parameter against a flat 5 s / 15 s
+ * threshold (`freshness()` in the shared component library). That is exactly
+ * the defect configs/eosat1/mcs/staleness.yaml was written to kill: HK SID 3
+ * (TCS) has interval_s 60, so the thermal displays read STALE for ~45 s out of
+ * every 60, and SID 11 (beacon, 30 s) read STALE for 22 s out of every 30 --
+ * during the one mission phase where the beacon is the ONLY telemetry there
+ * is. Classic was fixed; modern was never wired up, and still fetched
+ * /api/client-config without reading the cadence join out of it.
+ *
+ * This is the classic algorithm, deliberately identical so the two consoles
+ * cannot disagree about whether a value is current:
+ *
+ *     fresh    while age <= max(floor_fresh_s, interval_s * fresh_factor)
+ *     degraded while age <= max(floor_stale_s, interval_s * stale_factor)
+ *     stale    beyond that
+ *
+ * plus the fourth state the policy file defines: NOT ENABLED, when every HK
+ * structure carrying the parameter is disabled. A value with no enabled source
+ * is not stale telemetry -- it is telemetry nobody has asked for, and the
+ * remedy is TC(3,5), not chasing a link fault. Rendering that as "stale" is
+ * the silent lie the four-state model exists to prevent.
+ *
+ * Ages are SIM seconds as served (params_age / subsystem_staleness /
+ * hk_sid_age_s). Never re-age them against the browser wall clock.
+ */
+const STALE_POLICY_FALLBACK = {
+  stale_factor: 1.5, fresh_factor: 0.9,
+  floor_fresh_s: 10.0, floor_stale_s: 20.0,
+  aperiodic_fresh_s: 300.0, aperiodic_stale_s: 900.0,
+};
+function stalePolicy() {
+  return Object.assign({}, STALE_POLICY_FALLBACK, (S.clientConfig || {}).staleness || {});
+}
+export function stalenessThresholds(intervalS) {
+  const pol = stalePolicy();
+  if (intervalS === null || intervalS === undefined || !(Number(intervalS) > 0)) {
+    return { fresh: pol.aperiodic_fresh_s, stale: pol.aperiodic_stale_s,
+             aperiodic: true, interval_s: null };
+  }
+  const iv = Number(intervalS);
+  const fresh = Math.max(pol.floor_fresh_s, iv * pol.fresh_factor);
+  const stale = Math.max(pol.floor_stale_s, iv * pol.stale_factor, fresh);
+  return { fresh, stale, aperiodic: false, interval_s: iv };
+}
+export function ageVerdict(ageS, intervalS) {
+  const th = stalenessThresholds(intervalS);
+  const age = Number(ageS);
+  if (!Number.isFinite(age)) return "stale";
+  if (age <= th.fresh) return "fresh";
+  if (age <= th.stale) return "degraded";
+  return "stale";
+}
+// Cadence for one parameter, from the /api/client-config join. null => aperiodic.
+function paramInterval(hexId) {
+  const cad = ((S.clientConfig || {}).param_cadence || {})[hexId] ||
+              ((S.clientConfig || {}).param_cadence || {})[String(parseInt(hexId, 16))];
+  if (!cad) return null;
+  return Array.isArray(cad) ? cad[0] : cad.interval_s;
+}
+function paramSids(hexId) {
+  const cad = ((S.clientConfig || {}).param_cadence || {})[hexId] ||
+              ((S.clientConfig || {}).param_cadence || {})[String(parseInt(hexId, 16))];
+  if (!cad) return [];
+  return (Array.isArray(cad) ? cad.slice(1) : cad.sids) || [];
+}
+/** 'fresh' | 'degraded' | 'stale' | 'disabled' for one parameter. */
+export function paramFreshness(hexId) {
+  const sids = paramSids(hexId);
+  if (sids.length) {
+    const en = S.state.hk_enabled || {};
+    // only claim "disabled" when we actually know the enable state
+    const known = sids.filter((sid) => en[String(sid)] !== undefined);
+    if (known.length && known.every((sid) => !en[String(sid)])) return "disabled";
+  }
+  return ageVerdict(paramAge(hexId), paramInterval(hexId));
+}
+export function paramIsStale(hexId) {
+  const v = paramFreshness(hexId);
+  return v === "stale" || v === "disabled";
+}
 function spark(hexId, cls = "") {
-  const stale = freshness(paramAge(hexId)) === "stale";
+  const stale = paramIsStale(hexId);
   return renderSparkline(S.series[hexId] || [], { stale, cls, w: 110, h: 24 });
 }
 /* Spacecraft mode, TM-derived with provenance (M5-M8). */
@@ -271,6 +394,11 @@ function handleState(data) {
   updateContingency();
   updateTrainingChip();
   renderCurrentPage(false);
+  // The drawer used to be driven ONLY by handleTMPacket, so on a quiet link --
+  // or in bootloader mode, where only SID 11 flows -- CMD HISTORY and the
+  // event/TM logs froze (field report 2026-08-20). State packets arrive on a
+  // fixed cadence; renderBottomDrawer() no-ops when the drawer is shut.
+  renderBottomDrawer();
 }
 
 function handleTMPacket(pkt) {
@@ -439,6 +567,14 @@ function startClocks() {
     setText("sc-time-clock", cuc.utc === "—" ? "—" : cuc.utc.slice(11));
     updateNextCard();     // countdowns re-derive every second on simNow()
   }, 1000);
+  // The PUS panels' fetched inputs -- S12 monitor definitions, S19 rules, the
+  // HK structure table -- used to refresh only on an S12 transition event or a
+  // tab click, so a monitor that changed quietly never showed. Poll them while
+  // a page that renders them is actually on screen.
+  setInterval(() => {
+    if (S.page === "fdir" || S.page === "diag") loadFdir();
+    if (S.page === "diag" && diagTab === "s3") loadHkStructures();
+  }, 5000);
 }
 
 function saDot(id, cls) {
@@ -631,6 +767,7 @@ export function applyPositionFilter() {
   }
   renderQuickCommands();     // in-place quick commands re-filter
   renderManual();            // manual section filter
+  if (S.page === "man") loadProcedureCards();   // cards are per position
   const pi = POSITION_INFO[S.position] || {};
   setText("pos-detail", pi.title || S.position);
 }
@@ -911,7 +1048,7 @@ const L2 = {
     key: ["0x0101", "0x0105", "0x0100", "0x0109", "0x0102", "0x0135", "0x0120"],
     stepper: () => {
       const stage = Number(paramVal("0x0134"));
-      return { label: "Load shed ladder",
+      return { label: "Load shed ladder", src: "0x0134",
         states: ["L0 NOMINAL", "L1 PAYLOAD", "L2 NON-ESS", "L3 SURVIVAL"],
         active: Number.isFinite(stage) ? stage : -1 };
     },
@@ -919,7 +1056,7 @@ const L2 = {
       ["BUS", "0x0105", "V"], ["MPPT", "0x0122", ""], ["LOAD", "0x0148", "A"]] },
   tcs: { title: "Thermal control", sym: "sch-tcs",
     key: ["0x0406", "0x0407", "0x0408", "0x0409", "0x0411", "0x041A"],
-    stepper: () => ({ label: "FPA cooldown", states: ["OFF", "COOLING", "REGULATING"],
+    stepper: () => ({ label: "FPA cooldown", src: "0x040C", states: ["OFF", "COOLING", "REGULATING"],
       active: Number(paramVal("0x040C")) > 0 ? (Number(paramVal("0x0425")) > 0 ? 2 : 1) : 0 }),
     equipment: [["HTR BAT", "0x040A", ""], ["HTR OBC", "0x040B", ""], ["COOLER FPA", "0x040C", ""],
       ["HTR THR", "0x041B", ""], ["DUTY BAT", "0x040E", "%"], ["DUTY OBC", "0x040F", "%"]] },
@@ -927,7 +1064,12 @@ const L2 = {
     key: ["0x0217", "0x0204", "0x0205", "0x0206", "0x025B", "0x0282", "0x02C5"],
     stepper: () => {
       const m = Number(paramVal("0x020F"));
-      return { label: "AOCS mode chain", states: AOCS_MODES,
+      // states from the catalogue (ultimately aocs/aocs_mode_codes.yaml, which
+      // calls itself canonical); AOCS_MODES stays as the pre-fetch fallback.
+      const cat = paramStates("0x020F");
+      const names = cat ? Object.keys(cat).map(Number).sort((x, y) => x - y).map((k) => cat[String(k)])
+                        : AOCS_MODES;
+      return { label: "AOCS mode chain", src: "0x020F", states: names,
         active: Number.isFinite(m) ? m : -1 };
     },
     equipment: [["RW1", "0x0207", "RPM"], ["RW2", "0x0208", "RPM"], ["RW3", "0x0209", "RPM"],
@@ -939,14 +1081,14 @@ const L2 = {
       const locks = [paramVal("0x0510"), paramVal("0x0511"), paramVal("0x0512")]
         .map((v) => Number(v) >= 1);
       const active = locks[2] ? 3 : locks[1] ? 2 : locks[0] ? 1 : 0;
-      return { label: "Link lock chain",
+      return { label: "Link lock chain", src: "0x0510",
         states: ["NO SIGNAL", "CARRIER", "BIT", "FRAME"], active };
     },
     equipment: [["XPDR", "0x0507", "°C"], ["PA", "0x050F", "°C"], ["PA ON", "0x0516", ""],
       ["BEACON", "0x0526", ""], ["TIER", "0x0539", ""], ["TIER CMD", "0x053A", ""]] },
   pld: { title: "Payload", sym: "sch-pld",
     key: ["0x0601", "0x0604", "0x0605", "0x0616", "0x0602", "0x060D"],
-    stepper: () => ({ label: "Instrument state",
+    stepper: () => ({ label: "Instrument state", src: "0x0600",
       states: ["OFF", "STANDBY", "IMAGING", "CAL", "TRANSFER"],
       active: (() => { const m = Number(paramVal("0x0600")); return Number.isFinite(m) ? Math.min(m, 4) : -1; })() }),
     equipment: [["FPA", "0x0601", "°C"], ["COOLER", "0x0602", "W"], ["STORE", "0x0604", "%"],
@@ -955,7 +1097,7 @@ const L2 = {
     key: ["0x0B01", "0x0B03", "0x0B04", "0x0B05", "0x0B0C", "0x0B16"],
     stepper: () => {
       const st2 = Number(paramVal("0x0B0D"));
-      return { label: "Burn sequence",
+      return { label: "Burn sequence", src: "0x0B0D",
         states: ["IDLE", "ARMED", "BURNING", "COMPLETE"],
         active: Number.isFinite(st2) ? Math.min(st2, 3) : 0 };
     },
@@ -963,7 +1105,7 @@ const L2 = {
       ["FCV", "0x0B08", ""], ["CATBED", "0x0B05", "°C"], ["INHIBIT", "0x0B15", ""]] },
   obd: { title: "On-board data handling", sym: "sch-obd",
     key: ["0x0302", "0x0303", "0x0312", "0x0313", "0x0319", "0x0308"],
-    stepper: () => ({ label: "Active OBC",
+    stepper: () => ({ label: "Active OBC", src: "0x030C",
       states: ["OBC-A", "OBC-B"],
       active: Number(paramVal("0x030C")) === 1 ? 1 : 0 }),
     equipment: [["CPU", "0x0302", "%"], ["MEM", "0x0303", "%"], ["HKTM BUF", "0x0312", "%"],
@@ -1135,18 +1277,27 @@ function updateSubsystemPage(pageId, full) {
        <div style="flex:1">${paramTriad(h)}</div>${spark(h)}</div>`).join(""));
   // stepper (ONE component for all chains — P5)
   const stp = cfg.stepper();
-  setText(`${pageId}-stepper-title`, stp.label);
-  setHTML(`${pageId}-stepper`, renderStepper(stp.states, stp.active));
+  // A chain widget reads as "this IS the state right now". Without a staleness
+  // check it kept asserting the last known step forever after its driving
+  // parameter went silent (field report 2026-08-20) -- the most confident
+  // possible way to show nothing.
+  const stpFr = stp.src ? paramFreshness(stp.src) : "fresh";
+  const stpDead = stpFr === "stale" || stpFr === "disabled";
+  setText(`${pageId}-stepper-title`,
+    stp.label + (stpDead ? (stpFr === "disabled" ? "  — HK DISABLED (TC 3,5)" : "  — STALE") : ""));
+  setHTML(`${pageId}-stepper`,
+    renderStepper(stp.states, stpDead ? -1 : stp.active));
   // equipment cards
   setHTML(`${pageId}-equip`, cfg.equipment.map(([nm, h, u]) => {
     const v = paramVal(h);
-    const fr = freshness(paramAge(h));
-    const lc = fr === "stale" ? "stale" : limitClass((S.state.param_limit_state || {})[h]);
+    const eng = engValue(h, v);
+    const fr = paramFreshness(h);
+    const lc = (fr === "stale" || fr === "disabled") ? "stale" : limitClass((S.state.param_limit_state || {})[h]);
     return `<div class="ds-card" style="border-radius:6px"><div class="bd" style="padding:8px 10px">
       <div style="font-size:12px;color:var(--tx3)">${esc(nm)} <span class="mono">${esc(h)}</span></div>
       <div class="mono" style="font-size:15px;font-weight:600;
         color:${lc === "a" ? "var(--alarm)" : lc === "w" ? "var(--warn)" : "var(--tx)"}">
-        ${fr === "stale" ? "—" : num(v, 1)}${u ? " " + esc(u) : ""}</div></div></div>`;
+        ${fr === "stale" ? "—" : (eng !== null ? esc(eng) : num(v, 1) + (u ? " " + esc(u) : ""))}</div></div></div>`;
   }).join(""));
   if (full) {
     // AND table from the catalog (never drifts from the dictionary)
@@ -1296,7 +1447,7 @@ export function renderBitmaskChips(hexId, opts = {}) {
            `${esc(hexId)} — cannot decode</div>`;
   }
   const raw = paramVal(hexId);
-  const stale = freshness(paramAge(hexId)) === "stale";
+  const stale = paramIsStale(hexId);
   if (raw === undefined || raw === null || stale) {
     return `<div class="ds-banner stale">${esc(def.name || hexId)} not in current TM ` +
            `(${stale ? "stale" : "never seen"}) — chips withheld rather than guessed</div>`;
@@ -1328,7 +1479,7 @@ export function captureGateTable() {
 }
 export function evalCaptureGate(g) {
   const v = paramVal(g.param);
-  const stale = freshness(paramAge(g.param)) === "stale";
+  const stale = paramIsStale(g.param);
   if (v === undefined || v === null || stale) {
     return { state: "unknown", actual: null,
              why: stale ? "telemetry stale" : "parameter not in TM" };
@@ -1401,7 +1552,7 @@ export function linkNowReadout() {
     ? Number(nowP.tiers[tierName].eb_n0_db) : null;
   const measured = Number(paramVal("0x0519"));
   const haveMeasured = Number.isFinite(measured) &&
-    freshness(paramAge("0x0519")) !== "stale";
+    !paramIsStale("0x0519");
   return {
     available: true, tierName,
     predicted: Number.isFinite(predicted) ? predicted : null,
@@ -1631,7 +1782,7 @@ function renderBurnCard() {
   if (!host) return;
   const dvTm = Number(paramVal("0x0B0E"));
   const tTm = Number(paramVal("0x0B10"));
-  const tmStale = freshness(paramAge("0x0B0E")) === "stale";
+  const tmStale = paramIsStale("0x0B0E");
   const tmRow = `<tr><td>LOADED (TM)</td>
     <td class="mono">${tmStale || !Number.isFinite(dvTm) ? "—" : num(dvTm, 2) + " m/s"}</td>
     <td class="mono">${tmStale || !Number.isFinite(tTm) ? "—" : num(tTm, 0) + " s burn"}</td>
@@ -1730,7 +1881,7 @@ export function computeBaselineDeltas() {
     const label = b.label || (S.paramByHex[hexId] || {}).name || hexId;
     const units = b.units || (S.paramByHex[hexId] || {}).units || "";
     const raw = paramVal(hexId);
-    const stale = freshness(paramAge(hexId)) === "stale";
+    const stale = paramIsStale(hexId);
     if (raw === undefined || raw === null || stale) {
       return { hexId, label, units, base, now: null, delta: null, drift: null,
                flag: false, state: "no-tm" };
@@ -1787,7 +1938,8 @@ export function tmFreshness(st, subsystem) {
   const s2 = st || S.state;
   if (subsystem && s2.subsystem_staleness &&
       s2.subsystem_staleness[subsystem] !== undefined) {
-    return freshness(s2.subsystem_staleness[subsystem]);
+    const sc = ((S.clientConfig || {}).subsystem_cadence || {})[subsystem];
+    return ageVerdict(s2.subsystem_staleness[subsystem], sc ? sc.interval_s : null);
   }
   if (s2.stale) return "stale";
   return freshness(s2.last_frame_age_s);
@@ -2341,11 +2493,10 @@ async function sendCommand() {
     }
   }
   setHTML("cmd-verif-stepper", renderStepper(["BUILD", "SENT", "ACCEPT (S1.1)", "EXEC (S1.7)"], 1));
-  const r = await postJSON("/api/pus-command", {
+  const r = await sendPus({
     service, subtype, data_hex: data, name, position: S.position });
   const ok = r.ok && (!r.json || r.json.status !== "rejected");
-  noteHistory({ ts: tsShort(), name: name || `S${service},${subtype}`, service, subtype, data,
-    verdict: ok ? "sent" : `rejected${r.json && r.json.reason ? ": " + r.json.reason : ""}` });
+  // (history is recorded by sendPus() for every send, builder included)
   setHTML("cmd-result", ok
     ? `sent TC(${service},${subtype})${name ? " — " + esc(name) : ""}`
     : `<span style="color:var(--alarm)">rejected — ${esc((r.json && (r.json.reason || r.json.error)) || `HTTP ${r.status}`)}</span>`);
@@ -2381,6 +2532,28 @@ function renderVerifLog() {
     `<div class="logrow ${v.verdict.includes("FAIL") ? "alarm" : ""}">` +
     `${esc(v.ts)} ${esc(v.verdict)} ${esc(v.text)}</div>`).join("") ||
     `<div class="logrow nom">no verification reports yet</div>`);
+}
+// EVERY telecommand this console sends goes out through here.
+//
+// Field report 2026-08-20: the PUS service panels commanded the spacecraft
+// but left no trace in the CMD HISTORY window. They posted to
+// /api/pus-command directly, and only two of the twenty call sites in this
+// module also called noteHistory() -- the command builder and the quick
+// commands. So an S3 ENABLE ALL, an S9 SET SC TIME or an S12 monitor change
+// went to the spacecraft and showed up nowhere on the ground: both a
+// usability failure and a hole in the decision record.
+//
+// The recording now happens at the transport instead of at each call site,
+// so a new panel cannot forget to do it.
+async function sendPus(body) {
+  const b = Object.assign({ position: S.position }, body);
+  const r = await postJSON("/api/pus-command", b);
+  const ok = r.ok && (!r.json || r.json.status !== "rejected");
+  const reason = (r.json && (r.json.reason || r.json.error)) || `HTTP ${r.status}`;
+  noteHistory({ ts: tsShort(), name: b.name || `S${b.service},${b.subtype}`,
+    service: b.service, subtype: b.subtype, data: b.data_hex || "",
+    verdict: ok ? "sent" : `rejected: ${reason}` });
+  return r;
 }
 function noteHistory(h) {
   // G12: while blind-TC mode is active, every send is tagged BLIND and stays
@@ -2477,10 +2650,8 @@ async function sendQuick(key) {
   // The quick entry's preset args ride through the SAME encoder as the
   // builder (AOCS_DETUMBLE is AOCS_SET_MODE with mode=2, not the default).
   const data = encodeCatalogCommand(cmd, q.args || {});
-  const r = await postJSON("/api/pus-command", {
+  const r = await sendPus({
     service: cmd.service, subtype: cmd.subtype, data_hex: data, name: cmd.name, position: S.position });
-  noteHistory({ ts: tsShort(), name: cmd.name, service: cmd.service, subtype: cmd.subtype,
-    data, verdict: r.ok ? "sent" : `rejected (${r.status})` });
   announce(`${cmd.name} ${r.ok ? "sent" : "rejected"}`);
 }
 
@@ -2529,6 +2700,76 @@ function selectDiagTab(id) {
     if (b) b.setAttribute("aria-selected", tid === id ? "true" : "false");
   }
   renderDiag();
+}
+
+/* ── Live re-render of panels that used to update only on a click ─────────
+ *
+ * Field report 2026-08-20: "the PUS windows and the bottom windows do not
+ * refresh properly - they need a user click to refresh".
+ *
+ * True, and by construction: renderCurrentPage(full) rebuilt the DIAG page
+ * only when `full` was set, and `full` is set on navigation, not on the state
+ * cadence. So HK ages, the S15 store fill, the S11 schedule, S12 monitor
+ * values and every PARAMS value sat frozen at whatever they were when the tab
+ * was opened. A console that shows a stale number as though it were live is
+ * worse than one that shows nothing.
+ *
+ * These panels were left click-only for a real reason: they carry form inputs
+ * and scrollable tables, and a naive rebuild throws away what the operator is
+ * typing and where they have scrolled. So the rebuild is wrapped -- focus,
+ * caret and scroll offsets are captured and restored around it, and a refresh
+ * is SKIPPED outright while a dropdown inside the panel has focus, because
+ * re-rendering under an open <select> yanks the rug mid-selection.
+ */
+function preservingUi(hostId, fn) {
+  const host = $(hostId);
+  if (!host) { fn(); return true; }
+  const act = document.activeElement;
+  if (act && host.contains(act) && (act.tagName === "SELECT" || act.tagName === "OPTION")) {
+    return false;                       // operator is mid-interaction: leave it alone
+  }
+  const actId = act && host.contains(act) ? act.id : null;
+  let selS = null, selE = null;
+  if (actId) { try { selS = act.selectionStart; selE = act.selectionEnd; } catch (e) { /* not a text field */ } }
+  // Scroll offsets are captured POSITIONALLY, not by id: the scrolling element
+  // in these panels is usually an anonymous <div class="scroll-y"> with no id,
+  // so an id-keyed capture silently restored nothing. A re-render of the same
+  // panel reproduces the same element order, so index alignment holds; if the
+  // shape changed (different tab, different row count) the lengths differ and
+  // restoration is skipped rather than applied to the wrong element.
+  const hostTop = host.scrollTop;
+  const before = Array.prototype.map.call(host.querySelectorAll("*"), (el) => el.scrollTop);
+  fn();
+  host.scrollTop = hostTop;
+  const after = host.querySelectorAll("*");
+  if (after.length === before.length) {
+    for (let i = 0; i < after.length; i++) {
+      if (before[i]) after[i].scrollTop = before[i];
+    }
+  }
+  if (actId) {
+    const el2 = $(actId);
+    if (el2) {
+      el2.focus();
+      if (selS !== null && el2.setSelectionRange) {
+        try { el2.setSelectionRange(selS, selE); } catch (e) { /* not selectable */ }
+      }
+    }
+  }
+  return true;
+}
+
+// The PARAMS table can be ~400 rows, so the re-render is throttled. This is a
+// PAINT budget, not a telemetry age: performance.now() is the right clock (and
+// keeps simNow() the single wall-clock reader, disposition M3). Telemetry
+// ages are still judged in sim seconds, by ageVerdict() above.
+let _diagLastRender = 0;
+function refreshDiagLive() {
+  const now = (typeof performance !== "undefined" && performance.now)
+    ? performance.now() : 0;
+  if (now - _diagLastRender < 900) return;
+  _diagLastRender = now;
+  preservingUi(`diag-${diagTab}`, renderDiag);
 }
 
 function renderDiag() {
@@ -2589,7 +2830,7 @@ function renderS3Panel() {
 async function s3Command(action, sid) {
   const map = { enable: [3, 5], disable: [3, 6], oneshot: [3, 27] };
   const [svc, sub] = map[action];
-  await postJSON("/api/pus-command", { service: svc, subtype: sub,
+  await sendPus({ service: svc, subtype: sub,
     data_hex: sidToHex(sid), name: `HK_${action.toUpperCase()}_SID${sid}`, position: S.position });
   announce(`S3 ${action} SID ${sid} sent`);
 }
@@ -2644,10 +2885,27 @@ export function s11CucSeconds(mode, value) {
   if (!Number.isFinite(t)) return null;
   return Math.round((t - epochMs) / 1000);
 }
+// Write a result or a refusal where the operator is actually looking.
+//
+// Field report 2026-08-20: ADD (11,4) "did nothing". It was in fact refusing —
+// with an empty Svc,Sub you cannot build a valid time-tagged command — but it
+// said so only through announce(), which writes to the screen-reader-only live
+// region. A refusal nobody can see is indistinguishable from a dead button, so
+// the reason now lands in the panel's own preview line, in the alarm colour.
+function panelResult(id, msg, bad) {
+  const el = $(id);
+  if (el) {
+    el.textContent = msg;
+    el.style.color = bad ? "var(--alarm)" : "var(--tx3)";
+  }
+  announce(msg);
+}
 function s11UpdatePreview() {
   const mode = $("s11-mode") ? $("s11-mode").value : "abs";
   const v = $("s11-time") ? $("s11-time").value : "";
   const cuc = s11CucSeconds(mode, v);
+  const el = $("s11-preview");
+  if (el) el.style.color = "var(--tx3)";      // clear any previous refusal
   setText("s11-preview", cuc === null ? "CUC —" : `CUC ${cuc} (0x${(cuc >>> 0).toString(16).toUpperCase()})`);
 }
 async function loadS11Schedule() {
@@ -2691,7 +2949,7 @@ function renderS11Table() {
 async function s11Command(action) {
   const map = { refresh: [11, 17, ""], enable: [11, 13, ""], disable: [11, 9, ""], clear: [11, 3, ""] };
   const [svc, sub, data] = map[action];
-  await postJSON("/api/pus-command", { service: svc, subtype: sub, data_hex: data,
+  await sendPus({ service: svc, subtype: sub, data_hex: data,
     name: `S11_${action.toUpperCase()}`, position: S.position });
   announce(`S11 ${action} sent`);
   if (action === "refresh") setTimeout(loadS11Schedule, 800);
@@ -2700,22 +2958,31 @@ async function s11Add() {
   const mode = $("s11-mode").value;
   const cuc = s11CucSeconds(mode, $("s11-time").value);
   const svcSub = String($("s11-svc").value || "").split(",").map((x) => Number(x.trim()));
-  if (cuc === null || svcSub.length !== 2 || svcSub.some((x) => !Number.isFinite(x))) {
-    announce("S11 add: bad time or service,subtype"); return;
+  const badTime = cuc === null;
+  const badSvc = svcSub.length !== 2 || svcSub.some((x) => !Number.isFinite(x));
+  if (badTime || badSvc) {
+    panelResult("s11-preview", "ADD refused — " + (
+      badTime && badSvc
+        ? "no time value and no Svc,Sub. Pick a catalogue command (it fills both), or press NOW and type Svc,Sub."
+        : badTime ? "the time value is empty or unparseable for this time-tag mode. Press NOW for a starting point."
+        : "Svc,Sub is empty. Pick a catalogue command to fill it, or type it (e.g. 8,1)."), true);
+    return;
   }
   const dataHex = String($("s11-data").value || "").replace(/[\s,]+/g, "");
   const cucBytes = [(cuc >>> 24) & 255, (cuc >>> 16) & 255, (cuc >>> 8) & 255, cuc & 255];
   const payload = cucBytes.concat([svcSub[0], svcSub[1]])
     .map((b) => b.toString(16).toUpperCase().padStart(2, "0")).join(" ") +
     (dataHex ? " " + dataHex.replace(/(..)/g, "$1 ").trim() : "");
-  await postJSON("/api/pus-command", { service: 11, subtype: 4, data_hex: payload,
+  await sendPus({ service: 11, subtype: 4, data_hex: payload,
     name: "S11_ADD", position: S.position });
-  announce("S11 entry added");
+  panelResult("s11-preview",
+    `ADD sent — CUC ${cuc} (0x${(cuc >>> 0).toString(16).toUpperCase()}), S${svcSub[0]},${svcSub[1]}` +
+    (dataHex ? ` + ${dataHex.length / 2} arg byte(s)` : ""), false);
 }
 async function s11Delete(id) {
   const v = Number(id) >>> 0;
   const data = [(v >>> 8) & 255, v & 255].map((b) => b.toString(16).toUpperCase().padStart(2, "0")).join(" ");
-  await postJSON("/api/pus-command", { service: 11, subtype: 5, data_hex: data,
+  await sendPus({ service: 11, subtype: 5, data_hex: data,
     name: `S11_DELETE_${id}`, position: S.position });
 }
 
@@ -2782,7 +3049,7 @@ function s6AddrBytes() {
 }
 async function s6Command(subtype, extraHex) {
   const data = s6AddrBytes() + (extraHex ? " " + extraHex : "");
-  await postJSON("/api/pus-command", { service: 6, subtype, data_hex: data,
+  await sendPus({ service: 6, subtype, data_hex: data,
     name: `S6_${subtype}`, position: S.position });
   announce(`S6.${subtype} sent`);
 }
@@ -2831,7 +3098,7 @@ async function s15StoreCommand(action, storeId) {
   const map = { enable: 1, disable: 2, dump: 9, clear: 11, refresh: 13 };
   const subtype = map[action];
   const data = storeId ? (Number(storeId) & 0xFF).toString(16).toUpperCase().padStart(2, "0") : "";
-  await postJSON("/api/pus-command", { service: 15, subtype, data_hex: data,
+  await sendPus({ service: 15, subtype, data_hex: data,
     name: `S15_${action.toUpperCase()}`, position: S.position });
   announce(`S15 ${action} sent`);
 }
@@ -2872,17 +3139,24 @@ function s9CucFor(iso) {
 }
 function s9UpdatePreview() {
   const cuc = s9CucFor($("s9-set") ? $("s9-set").value : "");
+  const el = $("s9-preview");
+  if (el) el.style.color = "var(--tx3)";      // clear any previous refusal
   setText("s9-preview", cuc === null ? "CUC —" : `CUC ${cuc} (0x${(cuc >>> 0).toString(16).toUpperCase().padStart(8, "0")})`);
 }
 async function s9SetTime(iso) {
   const cuc = s9CucFor(iso);
-  if (cuc === null) { announce("S9: unparseable time"); return; }
+  if (cuc === null) {
+    panelResult("s9-preview",
+      "SET SC TIME refused — the time value is empty or unparseable. Press NOW to fill it.", true);
+    return;
+  }
   const v = cuc >>> 0;
   const data = [(v >>> 24) & 255, (v >>> 16) & 255, (v >>> 8) & 255, v & 255]
     .map((b) => b.toString(16).toUpperCase().padStart(2, "0")).join(" ");
-  await postJSON("/api/pus-command", { service: 9, subtype: 1, data_hex: data,
+  await sendPus({ service: 9, subtype: 1, data_hex: data,
     name: "S9_SET_TIME", position: S.position });
-  announce("S9 set-time sent");
+  panelResult("s9-preview",
+    `SET SC TIME sent — CUC ${v} (0x${v.toString(16).toUpperCase().padStart(8, "0")})`, false);
 }
 
 /* — PARAMS panel (classic ON-DEMAND TM tab relocated here) — */
@@ -2895,11 +3169,12 @@ function renderParamsPanel() {
     (!f || (p.name || "").toLowerCase().includes(f) || (p.hex || "").toLowerCase().includes(f)));
   const rows = list.slice(0, 400).map((p) => {
     const v = paramVal(p.hex);
-    const fr = freshness(paramAge(p.hex));
-    return `<tr class="${fr === "stale" ? "stale" : ""}">
+    const eng = engValue(p.hex, v);
+    const fr = paramFreshness(p.hex);
+    return `<tr class="${(fr === "stale" || fr === "disabled") ? "stale" : ""}" title="${esc(fr)}">
       <td class="mono">${esc(p.hex)}</td><td>${esc(p.name)}</td><td>${esc(p.subsystem)}</td>
       <td>${esc(p.units || "")}</td><td>${p.in_hk ? "HK" : ""}</td><td>${p.on_demand ? "OD" : ""}</td>
-      <td class="mono">${fr === "stale" ? "—" : num(v, 3)}</td>
+      <td class="mono">${fr === "stale" ? "—" : (eng !== null ? esc(eng) : num(v, 3))}</td>
       <td>${p.on_demand || !p.in_hk
         ? `<button class="ds-btn" data-od-get="${esc(p.hex)}">GET (20,3)</button>` : ""}</td></tr>`;
   }).join("");
@@ -2920,7 +3195,7 @@ async function onDemandGet(hexId) {
   const pid = parseInt(hexId, 16) >>> 0;
   const data = [(pid >>> 8) & 255, pid & 255]
     .map((b) => b.toString(16).toUpperCase().padStart(2, "0")).join(" ");
-  await postJSON("/api/pus-command", { service: 20, subtype: 3, data_hex: data,
+  await sendPus({ service: 20, subtype: 3, data_hex: data,
     name: `OD_GET_${hexId}`, position: S.position });
   setTimeout(async () => {
     try { handleState(await getJSON("/api/state")); renderDiag(); } catch (e) { /* offline */ }
@@ -3550,7 +3825,96 @@ function buildManPage() {
       <div class="ds-card"><h2 id="man-title">—</h2>
         <div class="bd scroll-y" style="max-height:560px" id="man-body">select a section…</div></div>
     </div>
+    <div class="ds-card" style="margin-top:12px"><h2>Procedure cards — your position</h2>
+      <div class="bd">
+        <div class="row" style="gap:10px;align-items:center;margin-bottom:8px">
+          <label class="sub"><input type="checkbox" id="pcard-mine-only" checked>
+            only cards my position is required for</label>
+          <input id="pcard-search" class="in" placeholder="filter cards…" style="max-width:260px">
+          <span class="sub" id="pcard-count"></span>
+        </div>
+        <div id="pcard-list" class="scroll-y" style="max-height:520px"></div>
+      </div></div>
   </div>`;
+}
+
+/* ── Procedure cards, per position ────────────────────────────────────────
+ *
+ * Field report 2026-08-20: "could the MAN page display the procedure cards per
+ * position with the specific steps to be executed by that position highlighted
+ * somehow (so this changes by position)?"
+ *
+ * Two grades of attribution, shown differently because they are not equally
+ * certain:
+ *
+ *   * the ROLE line and which cards are relevant come from
+ *     procedure_index.yaml's `required_positions` / `position_roles` -- a
+ *     human wrote those, they are exact;
+ *   * the per-step highlight is DERIVED, by joining each command step's
+ *     func_id against the position's commanding authority in positions.yaml.
+ *
+ * Only the func_id grain is used. Service-level authority looked tempting and
+ * is useless: every position may send S17 pings and S3 HK requests, so a
+ * service match attributed CONNECTION_TEST to six positions at once and
+ * highlighted nearly every step of every card. A highlight that is always on
+ * is not a highlight.
+ *
+ * Steps with no owner at this grain -- GO/NO-GO calls, telemetry checks, and
+ * commands anyone may send -- are shown plainly and never highlighted. The
+ * card says so, so an operator does not read "not highlighted" as "not mine".
+ */
+async function loadProcedureCards() {
+  try {
+    S.procCards = await getJSON(
+      `/api/procedure/cards?position=${encodeURIComponent(S.position)}`);
+  } catch (e) { S.procCards = null; }
+  renderProcedureCards();
+}
+function renderProcedureCards() {
+  const host = $("pcard-list");
+  if (!host) return;
+  const data = S.procCards || {};
+  const all = data.cards || [];
+  const mineOnly = $("pcard-mine-only") ? $("pcard-mine-only").checked : true;
+  const f = ($("pcard-search") ? $("pcard-search").value : "").toLowerCase();
+  const cards = all.filter((c) => (!mineOnly || c.relevant) &&
+    (!f || `${c.id} ${c.name} ${c.category}`.toLowerCase().includes(f)));
+  setText("pcard-count", `${cards.length}/${all.length} cards`);
+  if (!cards.length) {
+    host.innerHTML = `<div class="logrow nom">no procedure cards for this position</div>`;
+    return;
+  }
+  host.innerHTML = cards.map((c) => {
+    const open = S.procCardOpen === c.id;
+    const roleLine = c.my_role
+      ? `<div class="sub" style="margin:2px 0 6px">Your role: ${esc(c.my_role)}</div>`
+      : (c.relevant
+          ? `<div class="sub" style="margin:2px 0 6px">Your position is required; no per-position role recorded for this card.</div>`
+          : "");
+    const mineChip = c.my_step_count
+      ? `<span class="ds-badge">${c.my_step_count} step${c.my_step_count === 1 ? "" : "s"} yours</span>`
+      : "";
+    const body = open ? `
+      ${roleLine}
+      <div class="sub" style="margin-bottom:6px">Required: ${
+        esc((c.required_positions || []).join(", ") || "—")}</div>
+      <table class="plain man-tbl"><tr><th>#</th><th>Step</th><th>Owner</th></tr>
+      ${(c.steps || []).map((st) => {
+        const own = (st.owners || []).join(", ");
+        return `<tr class="${st.mine ? "pcard-mine" : ""}">
+          <td class="mono">${st.index + 1}</td>
+          <td>${st.mine ? "<b>" : ""}${esc(st.description || st.mnemonic || st.type)}${st.mine ? "</b>" : ""}</td>
+          <td class="sub">${esc(own || "—")}</td></tr>`;
+      }).join("")}</table>
+      <div class="sub" style="margin-top:6px">Highlighted steps are attributed by
+        commanding authority (func id). Unhighlighted steps are calls, checks, or
+        commands any position may send — not necessarily someone else's.</div>` : "";
+    return `<div class="ds-card" style="border-radius:6px;margin-bottom:6px"><div class="bd" style="padding:8px 10px">
+      <a href="#" data-pcard="${esc(c.id)}" style="font-weight:600">${esc(c.id)} — ${esc(c.name)}</a>
+      ${mineChip}
+      <span class="sub"> ${esc(c.category || "")} · ${(c.steps || []).length} steps</span>
+      ${body}</div></div>`;
+  }).join("");
 }
 async function loadManual() {
   try { S.manual = await getJSON("/api/manual"); }
@@ -4022,11 +4386,11 @@ function renderCurrentPage(full) {
     if (full && S.page === "prp") loadBurnPlan();         // G9 warm fetch
   }
   else if (S.page === "cmd") { if (full) { renderCmdCatalogSelect(); updateCmdBuilder(); renderQuickCommands(); renderVerifLog(); } }
-  else if (S.page === "diag") { if (full) { renderDiag(); loadFdir(); } }
+  else if (S.page === "diag") { if (full) { renderDiag(); loadFdir(); } else refreshDiagLive(); }
   else if (S.page === "fdir") { if (full) loadFdir(); else renderFdirPage(); }
   else if (S.page === "proc") { if (full) { loadProcSources(); renderProcStatus(); } }
   else if (S.page === "trnd") { if (full) loadTrndParamNames(); renderBaselineCard(); }
-  else if (S.page === "man") { if (full) loadManual(); }
+  else if (S.page === "man") { if (full) { loadManual(); loadProcedureCards(); } }
   if (full) applyAnnotations();
 }
 
@@ -4072,7 +4436,7 @@ function initDelegatedEvents() {
     if (d.s12) return void s12Command(d.s12);
     if (d.s12row) return void s12RowCommand(d.s12row, d.mid);
     if (d.s12add) return void s12Add(d.s12add);
-    if (d.s19) return void postJSON("/api/pus-command", { service: 19, subtype: 8, data_hex: "",
+    if (d.s19) return void sendPus({ service: 19, subtype: 8, data_hex: "",
       name: "S19_REPORT", position: S.position });
     if (d.s19row) return void s19RowCommand(d.s19row, d.eid);
     if (d.s19add) return void s19Add(d.s19add);
@@ -4084,7 +4448,7 @@ function initDelegatedEvents() {
       const sid = Number($("hk-sid").value) || 1;
       const map = { enable: [3, 5], disable: [3, 6], oneshot: [3, 27] };
       const [svc, sub] = map[d.hk];
-      return void postJSON("/api/pus-command", { service: svc, subtype: sub,
+      return void sendPus({ service: svc, subtype: sub,
         data_hex: sidToHex(sid), name: `HK_${d.hk.toUpperCase()}_SID${sid}`, position: S.position })
         .then(() => setText("hk-quick-result", `S3 ${d.hk} SID ${sid} sent`));
     }
@@ -4103,7 +4467,11 @@ function initDelegatedEvents() {
     else if (t.id === "s9-set") s9UpdatePreview();
     else if (t.id === "trnd-filter") loadTrndParamNames();
     else if (t.id === "man-search") renderManual();
-    else if (t.id === "params-filter") { paramsFilter = t.value; renderParamsPanel(); }
+    else if (t.id === "pcard-search") preservingUi("pcard-list", renderProcedureCards);
+    // renderParamsPanel() replaces #diag-params, which CONTAINS this input --
+    // without preservingUi the element is destroyed on the first keystroke and
+    // every later character goes nowhere.
+    else if (t.id === "params-filter") { paramsFilter = t.value; preservingUi("diag-params", renderParamsPanel); }
     else if (t.id === "hdr-param-search") { paramsFilter = t.value; selectDiagTab("params"); }
     else if (t.id === "s6-patch") setText("s6-localcrc", `local CRC16 0x${crc16Ccitt(t.value).toString(16).toUpperCase().padStart(4, "0")}`);
   });
@@ -4117,6 +4485,7 @@ function initDelegatedEvents() {
       return;
     }
     if (t.id === "pos-select") setPosition(t.value);
+    else if (t.id === "pcard-mine-only") preservingUi("pcard-list", renderProcedureCards);
     else if (t.id === "cmd-catalog") { S.armed = {}; updateCmdBuilder(); }
     else if (t.id === "alarm-f-sub" || t.id === "alarm-f-sev") { persistAlarmFilters(); renderAlarmDrawer(); }
     else if (t.id === "evt-sev-filter") renderBottomDrawer();
@@ -4150,6 +4519,14 @@ function initDelegatedEvents() {
       });
     }
   });
+  document.addEventListener("click", (e) => {
+    const a = e.target && e.target.closest ? e.target.closest("[data-pcard]") : null;
+    if (!a) return;
+    e.preventDefault();
+    const id = a.dataset.pcard;
+    S.procCardOpen = (S.procCardOpen === id) ? "" : id;
+    preservingUi("pcard-list", renderProcedureCards);
+  });
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Enter") return;
     if (e.target && e.target.id === "cmd-data") { e.preventDefault(); sendCommand(); }
@@ -4160,8 +4537,27 @@ function initDelegatedEvents() {
     if (e.target && e.target.id === "handover-input") { e.preventDefault(); addHandoverNote(); }
     if (e.target && e.target.id === "conlog-input") { e.preventDefault(); postConsoleEntry("note"); }
   });
-  // direct button bindings (static header/drawer controls)
-  const on = (id, fn) => { const el = $(id); if (el) el.addEventListener("click", fn); };
+  // Button bindings by id, resolved through DELEGATION rather than by binding a
+  // listener to the element at init.
+  //
+  // Field report 2026-08-20: sixteen PUS-panel controls (s3-en-all, s6-dump,
+  // s9-report, s11-add, params-refresh, ...) posted nothing at all. The reason
+  // was that this helper used to be
+  //     const on = (id, fn) => { const el = $(id); if (el) el.addEventListener(...) };
+  // and it runs once at init — but the S3/S6/S9/S11/params panels are rendered
+  // LAZILY when their diag tab is first clicked. At init those elements do not
+  // exist, `if (el)` silently skipped them, and no listener was ever attached.
+  // Every control that did work used data-* delegation. So: same call sites,
+  // same ids, but the handler is looked up on the click instead.
+  const _clickById = new Map();
+  const on = (id, fn) => { _clickById.set(id, fn); };
+  document.addEventListener("click", (e) => {
+    let el = e.target;
+    while (el && el !== document) {
+      if (el.id && _clickById.has(el.id)) { _clickById.get(el.id)(e); return; }
+      el = el.parentElement;
+    }
+  });
   on("alarms-btn", () => toggleAlarmDrawer(true));
   on("alarm-close", () => toggleAlarmDrawer(false));
   on("alarm-ack-all", () => ackAllAlarms());
@@ -4207,14 +4603,14 @@ function initDelegatedEvents() {
   });
   on("s6-verify", () => s6Command(9));
   on("s6-readback", () => s6Command(5));
-  on("s9-report", () => postJSON("/api/pus-command", { service: 9, subtype: 2, data_hex: "",
+  on("s9-report", () => sendPus({ service: 9, subtype: 2, data_hex: "",
     name: "S9_REPORT", position: S.position }));
   on("s9-sync", () => s9SetTime(""));
   on("s9-set-now", () => { $("s9-set").value = fmtUTC(simNow(), { date: true }).replace(" ", "T"); s9UpdatePreview(); });
   on("s9-set-send", () => s9SetTime($("s9-set").value));
   on("fdir-refresh-all", () => {
-    postJSON("/api/pus-command", { service: 12, subtype: 12, data_hex: "", name: "S12_REPORT", position: S.position });
-    postJSON("/api/pus-command", { service: 19, subtype: 8, data_hex: "", name: "S19_REPORT", position: S.position });
+    sendPus({ service: 12, subtype: 12, data_hex: "", name: "S12_REPORT", position: S.position });
+    sendPus({ service: 19, subtype: 8, data_hex: "", name: "S19_REPORT", position: S.position });
     loadFdir();
   });
   on("fdir-ack-all", ackAllAlarms);
@@ -4240,14 +4636,14 @@ async function s3All(action) {
 async function s12Command(action) {
   const map = { refresh: [12, 12], enable: [12, 1], disable: [12, 2] };
   const [svc, sub] = map[action];
-  await postJSON("/api/pus-command", { service: svc, subtype: sub, data_hex: "",
+  await sendPus({ service: svc, subtype: sub, data_hex: "",
     name: `S12_${action.toUpperCase()}`, position: S.position });
   if (action === "refresh") setTimeout(loadFdir, 800);
 }
 async function s12RowCommand(action, monId) {
   const map = { enable: 3, disable: 4, delete: 6 };
   const data = (Number(monId) & 0xFF).toString(16).toUpperCase().padStart(2, "0");
-  await postJSON("/api/pus-command", { service: 12, subtype: map[action], data_hex: data,
+  await sendPus({ service: 12, subtype: map[action], data_hex: data,
     name: `S12_${action.toUpperCase()}_${monId}`, position: S.position });
   setTimeout(loadFdir, 800);
 }
@@ -4262,7 +4658,7 @@ async function s12Add(mount) {
     return Array.from(new Uint8Array(b));
   };
   const bytes = [mid, (pid >> 8) & 255, pid & 255, type, ...f32(lo), ...f32(hi)];
-  await postJSON("/api/pus-command", { service: 12, subtype: 5,
+  await sendPus({ service: 12, subtype: 5,
     data_hex: bytes.map((b) => b.toString(16).toUpperCase().padStart(2, "0")).join(" "),
     name: `S12_ADD_${mid}`, position: S.position });
   setTimeout(loadFdir, 800);
@@ -4270,7 +4666,7 @@ async function s12Add(mount) {
 async function s19RowCommand(action, eaId) {
   const map = { enable: 4, disable: 5, delete: 2 };
   const data = (Number(eaId) & 0xFF).toString(16).toUpperCase().padStart(2, "0");
-  await postJSON("/api/pus-command", { service: 19, subtype: map[action], data_hex: data,
+  await sendPus({ service: 19, subtype: map[action], data_hex: data,
     name: `S19_${action.toUpperCase()}_${eaId}`, position: S.position });
   setTimeout(loadFdir, 800);
 }
@@ -4283,7 +4679,7 @@ async function s19Add(mount) {
   const argHex = encodeCatalogCommand(cmd, {});
   const head = [eid, kind, (trig >> 8) & 255, trig & 255, cmd.service & 255, cmd.subtype & 255]
     .map((b) => b.toString(16).toUpperCase().padStart(2, "0")).join(" ");
-  await postJSON("/api/pus-command", { service: 19, subtype: 1,
+  await sendPus({ service: 19, subtype: 1,
     data_hex: head + (argHex ? " " + argHex : ""), name: `S19_ADD_${eid}`, position: S.position });
   setTimeout(loadFdir, 800);
 }
