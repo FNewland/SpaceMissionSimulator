@@ -29,7 +29,7 @@ before considering a memory reload or OBC unit switchover.
 | Parameter | ID | Expected Value |
 |---|---|---|
 | obdh.sw_image | 0x0311 | 0 (bootloader) — triggering condition |
-| obdh.last_reboot_cause | 0x0316 | Record value (1=watchdog, 2=memory, 3=switchover, 4=commanded) |
+| obdh.last_reboot_cause | 0x0316 | Record value (1=commanded, 2=watchdog, 3=memory, 4=switchover) |
 | obdh.reboot_count | 0x030A | Record value — compare with last known |
 | obdh.active_obc | 0x030C | Which OBC unit is active (0=A, 1=B) |
 | obdh.mode | 0x0300 | Current mode (limited in bootloader) |

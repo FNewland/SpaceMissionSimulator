@@ -3,7 +3,7 @@
 **Document ID:** EOSAT1-UM-MIS-001
 **Issue:** 2.0
 **Date:** 2026-03-13
-**Classification:** UNCLASSIFIED — For Simulation Use Only
+**Classification:** UNCLASSIFIED — Mission Operations
 
 ---
 

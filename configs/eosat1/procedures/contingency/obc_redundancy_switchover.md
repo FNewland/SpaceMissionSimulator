@@ -27,7 +27,7 @@ loads correctly, and verifies all subsystems return to nominal operation.
 | obdh.obc_b_status | 0x030D | 1 (STANDBY) — redundant unit ready |
 | obdh.sw_image | 0x0311 | 0 (bootloader) after switchover, then 1 (application) |
 | obdh.reboot_count | 0x030A | Record before and after |
-| obdh.last_reboot_cause | 0x0316 | 3 (switchover) expected after transition |
+| obdh.last_reboot_cause | 0x0316 | 4 (switchover) expected after transition |
 | obdh.sw_version | 0x030B | Correct application version after boot |
 | obdh.cpu_load | 0x0302 | < 80% after stabilization |
 | obdh.temp | 0x0301 | Within limits |
@@ -78,7 +78,7 @@ If `obdh.reboot_count` > 4, FDIR may have already triggered safe mode.
 **Note:** If no response within 15 s, retry the request. OBC-B may still be in early boot.
 **Verify:** `obdh.active_obc` (0x030C) = 1 (OBC-B is now active)
 **Verify:** `obdh.sw_image` (0x0311) = 0 (bootloader — not yet running application)
-**Verify:** `obdh.last_reboot_cause` (0x0316) = 3 (switchover)
+**Verify:** `obdh.last_reboot_cause` (0x0316) = 4 (switchover)
 **Verify:** `obdh.temp` (0x0301) — OBC-B temperature within limits
 **Verify:** `ttc.link_status` (0x0501) = 2 (LOCKED) — TTC link maintained
 **GO/NO-GO:** OBC-B in bootloader — proceed to boot application.

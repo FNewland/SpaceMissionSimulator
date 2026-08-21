@@ -3,7 +3,7 @@
 **Document ID:** EOSAT1-UM-EPS-002
 **Issue:** 2.0
 **Date:** 2026-03-13
-**Classification:** UNCLASSIFIED — For Simulation Use Only
+**Classification:** UNCLASSIFIED — Mission Operations
 
 ---
 
@@ -70,8 +70,8 @@ Two distinct SADA fault cases, both real and both diagnosable:
   to the MPPT — they need no drive and keep producing (~15-18 W sunlit).
   Generation collapsing to *exactly zero* would mean a total array loss, not a
   drive fault; the residual body generation is what tells the two apart.
-* **Drive STUCK** (`sada_stuck` failure injection, or `sada_tracking`
-  disabled). The shaft freezes where it is, so `solar_array_drive_angle`
+* **Drive STUCK** (mechanism seizure, or drive tracking disabled). The
+  shaft freezes where it is, so `solar_array_drive_angle`
   (0x0133) goes flat while the Sun walks away from the frozen normal. The
   wings revert to the fixed-wing |sin(orbit phase)| duty — roughly a 36 %
   orbit-average generation loss, with a characteristic once-per-orbit ripple
@@ -130,9 +130,8 @@ burn wire restraint mechanism. Deployment is commanded via S8 function managemen
 
 The EPS uses a cold-redundant Power Distribution Module (PDM) carrying **nine** power
 lines: two unswitchable and seven switchable. The line set, its ordering and its
-power-up defaults are defined once, in `POWER_LINE_DEFS` in
-`packages/smo-simulator/src/smo_simulator/models/eps_basic.py`, and overridden per
-mission by `subsystems/eps.yaml` `power_lines:`. The `line_index` argument of
+power-up defaults are fixed by the PDM harness and recorded in the mission
+configuration (`subsystems/eps.yaml`, `power_lines:`). The `line_index` argument of
 `EPS_POWER_ON` / `EPS_POWER_OFF` (S8 func 19 / 20) is the index in this table.
 
 | Idx | Line name      | Load                                   | Switchable | Power-up default | Status param | Current param | OC trip |

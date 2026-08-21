@@ -202,13 +202,47 @@ function paramAge(hexId) {
   return ages[String(parseInt(hexId, 16))];
 }
 /* Composite values object for renderAndTable / renderParam callers. */
+// The alphanumeric table can run to ~150 rows per subsystem, so it refreshes
+// on a paint budget rather than on every state message. preservingUi keeps
+// scroll position and any focused control across the rebuild.
+let _andLastRender = 0;
+function refreshAndTable(pageId, params) {
+  const host = $(`${pageId}-and`);
+  if (!host) return;
+  const now = (typeof performance !== "undefined" && performance.now)
+    ? performance.now() : 0;
+  if (now - _andLastRender < 900) return;
+  _andLastRender = now;
+  preservingUi(`${pageId}-and`, () =>
+    setHTML(`${pageId}-and`, renderAndTable(params, liveValues())));
+}
 function liveValues() {
   return {
     params: S.state.params || {},
     ages: S.state.params_age || {},
     limitState: S.state.param_limit_state || {},
     limits: S.limits,
+    // Engineering values + the cadence-aware four-state verdict, so the
+    // alphanumeric table reads like the rest of the console: state names
+    // instead of codes, and NOT ENABLED instead of a frozen number for a SID
+    // nobody has switched on.
+    states: paramStatesMap(),
+    verdicts: paramVerdictMap(),
   };
+}
+/* {hex: {code: name}} for every catalogued parameter that has state codes. */
+function paramStatesMap() {
+  const out = {};
+  for (const p of S.paramCatalog || []) {
+    if (p.states && Object.keys(p.states).length) out[p.hex] = p.states;
+  }
+  return out;
+}
+/* {hex: 'fresh'|'degraded'|'stale'|'disabled'} for the catalogue. */
+function paramVerdictMap() {
+  const out = {};
+  for (const p of S.paramCatalog || []) out[p.hex] = paramFreshness(p.hex);
+  return out;
 }
 /* Page-level param triad: catalog + live + limits joined (P3). */
 /* ── Engineering values ───────────────────────────────────────────────────
@@ -251,9 +285,13 @@ export function paramTriad(hexId) {
   const lim = band || (st || age !== undefined ? {} : null);
   if (lim) { if (st) lim.state = st; if (age !== undefined) lim.age_s = age; }
   const eng = engValue(hexId, paramVal(hexId));
-  // renderParam() formats numerically and appends `units`; for a discrete
-  // parameter the state NAME is the value, and a unit suffix is meaningless.
-  if (eng !== null) return renderParam({ ...def, units: "" }, eng, lim);
+  // The engineering STRING rides in `def.eng`; the numeric value is still
+  // passed as the value so limits, banding and the deviation bar keep working.
+  // Passing the string as the value made Number() NaN, so renderParam treated
+  // the parameter as having no value and drew "—" with a stale class — the
+  // mode chips went blank. Units are dropped for a discrete parameter: a state
+  // name has no unit.
+  if (eng !== null) return renderParam({ ...def, units: "", eng }, paramVal(hexId), lim);
   return renderParam(def, paramVal(hexId), lim);
 }
 function pushSeries(hexId, v) {
@@ -865,7 +903,12 @@ function schematicMarkup(symbolId) {
 function bindPageSchematic(pageId) {
   const sec = $(`page-${pageId}`);
   if (!sec || !sec.querySelectorAll) return;
-  sec.querySelectorAll("svg[data-schematic]").forEach((svg) => bindSchematic(svg, S.state));
+  // Hand the schematic the catalogue states and the four-state verdict as
+  // well as the raw state, so its value boxes read like the rest of the
+  // console (AOCS CORE -> "COARSE_SUN (3)", not "3").
+  const schState = { ...S.state, param_states: paramStatesMap(),
+                     param_verdicts: paramVerdictMap() };
+  sec.querySelectorAll("svg[data-schematic]").forEach((svg) => bindSchematic(svg, schState));
 }
 
 /* schematic-as-navigation: one document-level listener for ds-nav */
@@ -1299,11 +1342,22 @@ function updateSubsystemPage(pageId, full) {
         color:${lc === "a" ? "var(--alarm)" : lc === "w" ? "var(--warn)" : "var(--tx)"}">
         ${fr === "stale" ? "—" : (eng !== null ? esc(eng) : num(v, 1) + (u ? " " + esc(u) : ""))}</div></div></div>`;
   }).join(""));
+  // AND table from the catalog (never drifts from the dictionary).
+  //
+  // Field report 2026-08-20: "in the AOCS tab with the list of parameters I
+  // have aocs.mode as 2 ... and the display at the top of the AOCS page says
+  // AOCS CORE MODE 3". Both read the SAME telemetry dict -- the table was
+  // simply rebuilt only when `full` was set, which happens on navigation, so
+  // it froze at the values present when the page was opened while the
+  // schematic kept updating every second. Two numbers, one source, one of them
+  // minutes old. Its Age column froze with it, so it never even aged into
+  // looking stale. Same defect as the DIAG panels, same treatment.
+  const andParams = S.paramCatalog.filter((p) => p.subsystem === sub);
   if (full) {
-    // AND table from the catalog (never drifts from the dictionary)
-    const params = S.paramCatalog.filter((p) => p.subsystem === sub);
-    setHTML(`${pageId}-and`, renderAndTable(params, liveValues()));
+    setHTML(`${pageId}-and`, renderAndTable(andParams, liveValues()));
     renderQuickCommands();
+  } else {
+    refreshAndTable(pageId, andParams);
   }
   // POSITION_NEEDS gap surfaces on their owning pages
   renderDerivedCard(pageId);                                     // G1 + G3
@@ -4812,6 +4866,8 @@ export const __test = {
   catFieldError, catFormatEng, isCritical, cmdFieldWidget,
   renderS3Panel, renderS11Table, renderS15Panel, renderS6Panel, renderS9Panel,
   renderParamsPanel, renderFdirPage, selectDiagTab, renderDiag,
+  // re-exported so the node harness can pin the shared value surfaces
+  renderAndTable, renderParam, liveValues,
   // POSITION_NEEDS gap surfaces (G1-G9, G12, G15)
   derivedEntry, fmtDerivedValue, renderDerivedRow, fitVerdictLine,
   parseBitLegend, renderBitmaskChips,

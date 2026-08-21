@@ -1,9 +1,11 @@
 # EOSAT-1 Startup Guide — RF and Non-RF Modes
 
+**Manual-Scope:** system — training-system documentation, not part of the flight operations manual.
+
 **Document ID:** EOSAT1-UM-START-012
 **Issue:** 1.0
 **Date:** 2026-04-13
-**Classification:** UNCLASSIFIED — For Simulation Use Only
+**Classification:** UNCLASSIFIED — Mission Operations
 
 ---
 

@@ -3,7 +3,7 @@
 **Document ID:** EOSAT1-UM-FDIR-009
 **Issue:** 2.0
 **Date:** 2026-03-13
-**Classification:** UNCLASSIFIED — For Simulation Use Only
+**Classification:** UNCLASSIFIED — Mission Operations
 
 ---
 
@@ -16,7 +16,8 @@ from local subsystem-level responses to spacecraft-wide safe mode transitions.
 
 The FDIR implementation uses PUS Service 12 (Onboard Monitoring) for parameter limit
 checking and PUS Service 19 (Event-Action) for automated response triggering. Both
-services are evaluated every simulation tick, ensuring continuous monitoring coverage.
+services are evaluated on every on-board processing cycle, giving continuous
+monitoring coverage.
 
 ## 2. FDIR Hierarchy
 
@@ -146,8 +147,8 @@ payload that was correctly switched off already, on every orbit.
 ## 6. PUS Service 12 — Onboard Monitoring
 
 Service 12 implements the parameter monitoring framework used by the FDIR system. All
-monitoring definitions are evaluated every simulation tick (typically 1 Hz), providing
-continuous limit checking coverage.
+monitoring definitions are evaluated on every on-board processing cycle
+(nominally 1 Hz), providing continuous limit-checking coverage.
 
 ### 6.1 Monitoring Enforcement
 
@@ -320,13 +321,13 @@ switch those protections off for the entire early mission.
 
 A rule below its `min_phase` is **disarmed, not suppressed**: any latch it
 holds is dropped and its persistence accumulator is reset, so falling back
-below the threshold (an OBC reboot to bootloader, an instructor rewind) cannot
+below the threshold — an OBC reboot to the bootloader, for instance — cannot
 leave a stale contingency behind.
 
 ### 10.2 One Spacecraft Mode
 
-`sat.mode` (0x0001) is the telemetered copy of the derived `sc_mode` — the same
-value, on the same scale, as the MCS console header and the instructor UI show:
+`sat.mode` (0x0001) is the telemetered spacecraft mode word — the same value, on
+the same scale, that the MCS console header shows:
 
 | Value | Mode | Meaning |
 |---|---|---|

@@ -3,7 +3,7 @@
 **Document ID:** EOSAT1-UM-TTC-006
 **Issue:** 2.0
 **Date:** 2026-03-13
-**Classification:** UNCLASSIFIED — For Simulation Use Only
+**Classification:** UNCLASSIFIED — Mission Operations
 
 ---
 
@@ -184,8 +184,9 @@ health and initiate recovery commanding.
 
 ### 3.2 Downlink (Spacecraft to Ground)
 
-Computed by `python tools/link_budget_ladder.py`, which drives the same model object the
-simulator flies, so these numbers cannot drift from the spacecraft.
+Computed by the ground link-budget tool from the RF constants in
+`subsystems/ttc.yaml`, so the published budget cannot drift from the values the
+spacecraft was built to.
 
 | Parameter            | SAFE (1 kbps)   | LOW (16 kbps) | HIGH (128 kbps) |
 |----------------------|-----------------|---------------|-----------------|

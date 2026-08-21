@@ -2231,12 +2231,10 @@ class ServiceDispatcher:
             # on board; only its identity is reported.
             cmds = scheduler.list_commands()
             status = scheduler.get_status()
-            resp_data = struct.pack('>HBH', len(cmds),
-                                    1 if status.get('enabled', True) else 0,
-                                    int(status.get('next_id', 0)) & 0xFFFF)
+            records = []
             for c in cmds:
                 detail = bytes(c.get('data', b''))[:255]
-                resp_data += struct.pack(
+                records.append(struct.pack(
                     '>HIHBBBB',
                     c['id'] & 0xFFFF, c['exec_time'] & 0xFFFFFFFF,
                     int(c.get('apid', 0)) & 0xFFFF,
@@ -2244,10 +2242,17 @@ class ServiceDispatcher:
                     int(c.get('subtype', 0)) & 0xFF,
                     min(int(c.get('data_len', 0)), 255),
                     len(detail),
-                ) + detail
-            return [self._engine.tm_builder._pack_tm(
-                service=11, subtype=18, data=resp_data
-            )]
+                ) + detail)
+            # An entry is 12 octets plus its embedded detail, so a full pass
+            # upload overflowed a 256-octet packet. Count stays FIRST, exactly
+            # as the existing wire format and the ground parser expect, and the
+            # scheduler header rides on every segment.
+            enabled = 1 if status.get('enabled', True) else 0
+            next_id = int(status.get('next_id', 0)) & 0xFFFF
+            return self._engine.tm_builder.pack_tm_segmented(
+                11, 18,
+                prefix=lambda n: struct.pack('>HBH', n, enabled, next_id),
+                records=records)
         return []
 
     # ─── S12 On-Board Monitoring ─────────────────────────────────────
@@ -2326,17 +2331,19 @@ class ServiceDispatcher:
             # Report all monitoring definitions → TM(12,13).
             # Record: mon_id(u16) + param_id(u16) + check_type(u8)
             #         + enabled(u8) + low(f32) + high(f32)   [14 bytes]
-            resp_data = struct.pack('>H', len(self._s12_definitions))
-            for mon_id, defn in self._s12_definitions.items():
-                resp_data += struct.pack(
+            records = [
+                struct.pack(
                     '>HHBBff',
                     mon_id & 0xFFFF, defn['param_id'] & 0xFFFF,
                     int(defn.get('check_type', 0)) & 0xFF,
                     1 if defn.get('enabled', True) else 0,
                     defn['low_limit'], defn['high_limit'])
-            return [self._engine.tm_builder._pack_tm(
-                service=12, subtype=13, data=resp_data
-            )]
+                for mon_id, defn in self._s12_definitions.items()]
+            # 41 shipped monitors x 14 octets came to a 593-octet packet, over
+            # twice the 256-octet mission limit. Segmented on the CCSDS
+            # grouping flags (raised 2026-08-21).
+            return self._engine.tm_builder.pack_tm_segmented(
+                12, 13, prefix=lambda n: struct.pack('>H', n), records=records)
         return []
 
     def build_s12_transition_report(self, violation: dict, entered: bool) -> bytes:
@@ -2949,19 +2956,20 @@ class ServiceDispatcher:
             # The old record packed trigger_id as a *uint8*, so every shipped
             # rule (all >= 0x0100) raised struct.error and the whole report
             # came back empty (defect #70).
-            resp_data = struct.pack('>H', len(self._s19_definitions))
+            records = []
             for ea_id, defn in self._s19_definitions.items():
                 enabled = 1 if ea_id in self._s19_enabled_ids else 0
-                resp_data += struct.pack(
+                records.append(struct.pack(
                     '>HBHBB',
                     ea_id & 0xFFFF,
                     int(defn.get('trigger_kind', TRIGGER_KIND_EVENT)) & 0xFF,
                     int(defn['event_type']) & 0xFFFF,
                     int(defn['action_func_id']) & 0xFF,
-                    enabled)
-            return [self._engine.tm_builder._pack_tm(
-                service=19, subtype=128, data=resp_data
-            )]
+                    enabled))
+            # 32 shipped rules fit with three octets to spare; the 33rd would
+            # have overflowed the packet silently.
+            return self._engine.tm_builder.pack_tm_segmented(
+                19, 128, prefix=lambda n: struct.pack('>H', n), records=records)
         return []
 
     # S8 funcs that boot/reboot/reconfigure the OBC. While the OBC is in
@@ -3059,12 +3067,31 @@ class ServiceDispatcher:
                 setattr(self._engine, flag_attr, bool(value))
         elif subtype == 3 and len(data) >= 2:
             param_id = struct.unpack('>H', data[:2])[0]
+            # A parameter classified `instructor` or `ground_derived` is not
+            # the spacecraft's to report: the first is simulation ground truth,
+            # the second is what the GROUND measures about the downlink. The HK
+            # structures no longer carry them; refusing the on-demand read
+            # closes the other door, so truth cannot be fetched with TC(20,3)
+            # and mistaken for telemetry.
+            if not self._param_is_downlinkable(param_id):
+                self._err_code = 0x0C05
+                self._err_reason = (
+                    f"parameter 0x{param_id:04X} is not downlinkable "
+                    "telemetry (ground-derived or instructor-only)")
+                return []
             value = float(self._engine.params.get(param_id, 0.0))
             pkt = self._engine.tm_builder.build_param_value_report(
                 param_id, value
             )
             return [pkt]
         return []
+
+    def _param_is_downlinkable(self, param_id: int) -> bool:
+        """False for parameters the spacecraft could not report in reality."""
+        vis = getattr(self._engine, "param_visibility", None)
+        if vis is None:
+            return True          # older engine: fail open, do not block ops
+        return str(vis(param_id)) == "real"
 
     # ─── Power state checking ────────────────────────────────────────
 

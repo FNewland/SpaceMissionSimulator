@@ -236,6 +236,8 @@ class MCSServer:
         # hk_structures.yaml). The MCS has no other source of spacecraft state.
         # Maps param_id (int) -> {"value": float, "last_update_ts": float, "sid": int}
         self._param_cache: dict[int, dict] = {}
+        #: pending segments of multi-packet reports, keyed by (service, subtype)
+        self._report_segments: dict[tuple[int, int], list] = {}
         self._param_cache_lock = asyncio.Lock()
         # SIM-TIME epoch of the last received TM frame. Ages are computed
         # against sim_now_ts(), never the wall clock (spec Part D.2).
@@ -1624,6 +1626,38 @@ class MCSServer:
                 logger.warning("TM connection error: %s, reconnecting...", e)
                 await asyncio.sleep(2)
 
+    def _reassemble_report(self, pkt, service: int, subtype: int, parse):
+        """Rebuild a multi-packet "report all", or None while it is incomplete.
+
+        A report whose record count outgrows a 256-octet packet is segmented by
+        the spacecraft using the CCSDS grouping flags in the primary header
+        (01 first, 00 continuation, 10 last, 11 standalone). Without this, each
+        segment simply REPLACED the ground's table, so the 41-monitor TM(12,13)
+        would have left the console showing only the final nine monitors — and
+        looking perfectly healthy while doing it. (Raised 2026-08-21.)
+        """
+        flags = getattr(getattr(pkt, "primary", None), "sequence_flags", 0b11)
+        records = parse(pkt.data_field) or []
+        key = (service, subtype)
+        if flags == 0b11:                       # standalone: the whole report
+            self._report_segments.pop(key, None)
+            return records
+        if flags == 0b01:                       # first segment
+            self._report_segments[key] = list(records)
+            return None
+        acc = self._report_segments.get(key)
+        if acc is None:
+            # A continuation with no start: the first segment was lost. Do not
+            # ingest a partial table as though it were the whole one.
+            logger.warning("TM(%d,%d) continuation without a first segment; "
+                           "discarding partial report", service, subtype)
+            return None
+        acc.extend(records)
+        if flags == 0b10:                       # last segment
+            self._report_segments.pop(key, None)
+            return acc
+        return None
+
     async def _process_tm(self, pkt) -> None:
         self.tm_packets_received += 1
         # RECEIVE TIMESTAMP, in SIM TIME (spec Part D.2). Every age the
@@ -1830,17 +1864,21 @@ class MCSServer:
 
         # S12.13 — full on-board monitoring definition table
         elif svc == 12 and sub == 13:
-            defs = pus_reports.parse_s12_definitions(pkt.data_field)
-            self._fdir_model.ingest_s12_definitions(defs, ts=now)
-            self._sync_legacy_fdir_panel()
-            info["monitor_defs"] = {"count": len(defs)}
+            defs = self._reassemble_report(pkt, 12, 13,
+                                           pus_reports.parse_s12_definitions)
+            if defs is not None:
+                self._fdir_model.ingest_s12_definitions(defs, ts=now)
+                self._sync_legacy_fdir_panel()
+                info["monitor_defs"] = {"count": len(defs)}
 
         # S19.128 — full event-action rule table
         elif svc == 19 and sub == 128:
-            rules = pus_reports.parse_s19_definitions(pkt.data_field)
-            self._fdir_model.ingest_s19_definitions(rules, ts=now)
-            self._sync_legacy_fdir_panel()
-            info["ea_defs"] = {"count": len(rules)}
+            rules = self._reassemble_report(pkt, 19, 128,
+                                            pus_reports.parse_s19_definitions)
+            if rules is not None:
+                self._fdir_model.ingest_s19_definitions(rules, ts=now)
+                self._sync_legacy_fdir_panel()
+                info["ea_defs"] = {"count": len(rules)}
 
         # S11.18 — detailed on-board schedule report
         elif svc == 11 and sub == 18:
@@ -3267,6 +3305,14 @@ class MCSServer:
             state_tables = build_state_tables(
                 pdata.get("parameters", []) or [], self.config_dir)
             for p in pdata.get("parameters", []) or []:
+                # The OPERATOR dictionary. A ground console pointed at a real
+                # spacecraft can only show what the RF link delivers or what
+                # ground software computes, so simulation ground truth
+                # (`instructor`) is refused outright, and quantities the GROUND
+                # measures about the downlink (`ground_derived`) are refused
+                # too -- real, but not the spacecraft's to report.
+                if str(p.get("visibility", "real")) != "real":
+                    continue
                 try:
                     pid = int(p["id"]) if isinstance(p["id"], int) else int(str(p["id"]), 0)
                 except Exception:
@@ -4124,8 +4170,28 @@ class MCSServer:
         return web.json_response({"title": title, "content_md": content})
 
     async def _handle_manual_list(self, request):
+        """The FLIGHT OPERATIONS manual.
+
+        The manual directory also holds documentation about the training
+        system itself — installation guides, the software architecture, the RF
+        simulation layer. Those are real documents and stay on disk, but they
+        are not part of the operations manual an operator works from: this
+        console is meant to read the same against a real spacecraft as against
+        the simulator. A document opts out by carrying
+        ``**Manual-Scope:** system`` in its header block.
+        """
         manual_dir = self.config_dir / "manual"
-        entries = self._scan_docs(manual_dir)
+        entries = []
+        for entry in self._scan_docs(manual_dir):
+            rel = str(entry.get("path") or entry.get("filename") or "")
+            target = manual_dir / rel
+            try:
+                head = target.read_text(encoding="utf-8")[:1200]
+            except OSError:
+                head = ""
+            if "**Manual-Scope:** system" in head:
+                continue
+            entries.append(entry)
         return web.json_response({"pages": entries})
 
     async def _handle_manual_file(self, request):

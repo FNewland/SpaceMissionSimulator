@@ -112,7 +112,7 @@ direct patch-apply command. Consult OBDH engineer for patch-specific activation.
 **Verify:** `obdh.mode` (0x0300) responds within 90 s of reboot command
 **Verify:** `obdh.sw_version` (0x030B) = expected new version number
 **Verify:** `obdh.sw_image` (0x0311) = 1 (application, not bootloader)
-**Verify:** `obdh.last_reboot_cause` (0x0316) = 4 (commanded)
+**Verify:** `obdh.last_reboot_cause` (0x0316) = 1 (commanded)
 **Verify:** `obdh.active_obc` (0x030C) unchanged (same OBC unit as before)
 **Critical:** If OBC does not respond within 120 s, or boots into bootloader (sw_image=0),
 the new image may have failed boot validation. Execute Recovery Action 2.

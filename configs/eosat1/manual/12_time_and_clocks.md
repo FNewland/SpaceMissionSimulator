@@ -3,44 +3,45 @@
 **Document ID:** EOSAT1-UM-TIME-012
 **Issue:** 2.0
 **Date:** 2026-08-17
-**Classification:** UNCLASSIFIED — For Simulation Use Only
+**Classification:** UNCLASSIFIED — Mission Operations
 
 ---
 
 ## 1. Overview
 
-EOSAT-1 has **two clocks that can disagree**, plus one derived count:
+EOSAT-1 operations involve **two clocks that can disagree**, plus one derived
+count:
 
-* **SIM TIME** — the UTC of the simulated world. The ground segment works in it.
+* **GROUND TIME** — UTC, as held by the ground segment's time reference. Every
+  ground display, log, plan and archive entry is stamped in it.
 * **ONBOARD TIME** — the OBC's own clock. The spacecraft timestamps every packet
   it emits with it.
-* **MET** — Mission Elapsed Time, derived from sim time.
+* **MET** — Mission Elapsed Time, counted from the mission epoch.
 
-The gap between SIM TIME and ONBOARD TIME is not a defect of the simulation; it
-is what this chapter is about. The onboard oscillator drifts, the clock restarts
+The gap between GROUND TIME and ONBOARD TIME is the subject of this chapter. The onboard oscillator drifts, the clock restarts
 at the epoch after every reboot, and nothing corrects it unless GPS is
 disciplining it. Closing that gap is an operator task — see **NOM-008 Clock
 Synchronisation** and **LEOP-006 Time Synchronisation**.
 
-A third clock, the **wall clock** of the machine you are sitting at, is not a
-mission clock at all. It is legitimate for exactly three things: pacing the run
-loop, network timeouts, and session log/file names. If a mission-time display
-tracks your desk clock instead of sim time, that is a bug.
+A third clock, the **local clock** of the console you are sitting at, is not a
+mission clock at all. It is legitimate for exactly three things: pacing display
+refresh, network timeouts, and session log/file names. If a mission-time display
+tracks your desk clock instead of ground time, that is a fault — report it.
 
 ## 2. The clocks
 
 | Clock | Owner | Definition | Behaviour |
 |---|---|---|---|
-| **SIM TIME** | simulator engine | absolute UTC of the simulated world. Starts at `orbit.yaml` `t0_epoch`. | Advances by `dt_real x speed`. **Stops when `speed = 0`.** The single source of truth for *when things happen*. |
-| **ONBOARD TIME** | OBDH model | the OBC clock, in CUC seconds since the mission epoch. Starts at **CUC 0 = 2000-01-01T12:00:00 UTC (J2000)** on first start-up and after every bootloader reset. | Free-runs with oscillator drift; can be stepped by ground command (S9,1) or disciplined by GPS (S8 func 80). |
-| **MET** | derived, in the simulator | `sim_time - t0_epoch`, in seconds. | Computed **once**, in the engine, and published as `met_s` on `/api/state`. The MCS and Planner read that value; they do not recompute it. |
+| **GROUND TIME** | ground segment time reference | absolute UTC. Anchored to the mission epoch in `orbit.yaml` `t0_epoch`. | Disciplined to an external reference (GPS/NTP). The single source of truth for *when things happen* on the ground. |
+| **ONBOARD TIME** | spacecraft OBDH | the OBC clock, in CUC seconds since the mission epoch. Starts at **CUC 0 = 2000-01-01T12:00:00 UTC (J2000)** on first start-up and after every bootloader reset. | Free-runs with oscillator drift; can be stepped by ground command (S9,1) or disciplined by GPS (S8 func 80). |
+| **MET** | derived, on the ground | `ground_time - t0_epoch`, in seconds. | Computed **once** and distributed; the MCS and Planner read that value rather than each recomputing it from its own idea of the epoch. |
 
 Rules that follow:
 
 1. The spacecraft timestamps **every** packet it emits with ONBOARD TIME — S1
    verification, S3 housekeeping, S5 events, S11 reports, S15 stored TM, S13
    transfers. No exceptions.
-2. The ground segment (MCS and Planner) works in **SIM TIME** — displays,
+2. The ground segment (MCS and Planner) works in **GROUND TIME** — displays,
    staleness, alarm times, the archive, command history, pass predictions and
    plan activity times.
 3. **One epoch on the wire: J2000.** It is declared once, in
@@ -138,8 +139,8 @@ GPS-disciplined:
 obc_time_s += dt_sim * (1 + clock_drift_ppm * 1e-6)
 ```
 
-An instructor can make the drift bite inside a session with the `clock_drift`
-failure injection, which forces order **500 ppm (~43 s/day)**.
+A degraded oscillator makes the drift bite far faster than the nominal figure —
+of order **500 ppm (~43 s/day)**, which is visible within a single shift.
 
 Because drift is a *rate*, the error you measure grows with
 `time_since_sync_s`. A 3-second offset with `time_since_sync_s` = 3 days is a
@@ -212,7 +213,7 @@ anything about drift.
 
 The MCS console shows, side by side:
 
-* **SIM UTC** — ground/sim time, the clock everything on the ground runs on;
+* **GROUND UTC** — the clock everything on the ground runs on;
 * **ONBOARD** — `obdh.obc_time` + `obdh.obc_time_fine` decoded against the
   mission epoch;
 * **`time_ref`** — NONE / GROUND / GPS / HOLDOVER;
@@ -231,7 +232,8 @@ collection interval means the time service and the housekeeping sampler
 disagree about the clock, which is a different fault from the clock being wrong.
 
 The spacecraft cannot know its own offset from true time, so it is not
-downlinked. The simulator's instructor view holds the ground-truth value; it is
+downlinked: the spacecraft cannot measure its own clock error. The ground
+infers it from the time correlation, and that inference is
 the answer to the exercise, not an operational display.
 
 ## 10. Time-tagged commands (S11) and the planner
@@ -239,7 +241,7 @@ the answer to the exercise, not an operational display.
 The onboard schedule fires on **ONBOARD TIME**. It is the spacecraft's own
 schedule and has nothing else to run on.
 
-The Planner works in sim time: activity start times are absolute ISO-8601 UTC
+The Planner works in ground time: activity start times are absolute ISO-8601 UTC
 sim-time instants. On upload the Planner sends that sim-time instant to the MCS,
 and the **MCS** performs the single conversion to a CUC time tag through its
 time correlation (anchored on `0x0309`), so the tag lands on the OBC's own
@@ -248,7 +250,7 @@ clock.
 Nothing in the chain hides a clock error, and that is deliberate:
 
 * with a current correlation, the tag is expressed on the OBC's clock and the
-  activity executes at the planned sim time even while the clock is out;
+  activity executes at the planned ground time even while the clock is out;
 * if the clock has moved since the correlation was taken — the usual case for a
   plan uplinked on one pass and executed on the next, with drift in between —
   the activity fires **early by the amount the clock is fast** and late by the
@@ -265,16 +267,46 @@ may be decades in the OBC's future, and the command simply never fires.
 
 ## 11. MET and where it comes from
 
-`MET = sim_time - t0_epoch`. It is computed in the simulator and published as
-`met_s` on `/api/state`. The Planner reads it from there and carries it forward
-with its sim-clock anchor; the MCS does the same. No component recomputes MET
-from its own idea of a start epoch — one definition, one number, everywhere.
+`MET = ground_time - t0_epoch`. It is computed once and distributed; the MCS and
+Planner both read that value rather than recomputing it from their own idea of a
+start epoch — one definition, one number, everywhere.
 
 MET is not an onboard quantity and is not downlinked. Do not confuse it with
 `obdh.uptime`, which counts from the last OBC boot, or with the FDIR module's
 internal elapsed-time accumulator.
 
-## 12. The sim-vs-real switch
+## 12. Caveats
+
+* **Restart caveat.** The ground time source is resolved when the MCS/Planner
+  starts. Changing it requires restarting the affected service.
+* Ground configuration never alters spacecraft time: onboard time is only ever
+  changed by telecommand (S9,1) or by GPS discipline.
+* Nothing outside the spacecraft's OBDH writes onboard time, and only the
+  ground time reference owns ground time.
+
+## 13. Quick diagnosis
+
+| Symptom | Look at | Likely cause |
+|---|---|---|
+| Onboard time reads year 2000 | `time_ref` = NONE, small `uptime`, `reboot_count` up | OBC rebooted; the bootloader reset the clock. Re-sync (LEOP-006, or NOM-008 Steps 3-5) |
+| Offset grows steadily at ~1 s/day | `time_ref` = GROUND or HOLDOVER, `time_since_sync_s` | Normal oscillator drift at ~12 ppm |
+| Offset grows ~40x faster than that | a degraded oscillator (~500 ppm) | oscillator fault — raise an anomaly report |
+| Offset frozen at zero | `time_ref` = GPS | GPS-disciplined; correct behaviour |
+| `time_ref` flipped to HOLDOVER | event `0x030E`, `aocs.gps_fix` < 2 | GPS fix lost; drift has resumed |
+| GPS sync refused | `aocs.gps_fix` (`0x0274`) | Needs a 3D fix (>= 2) |
+| `SET_TIME` rejected | `obdh.sw_image` (`0x0311`) | Still in the bootloader; boot the application image first |
+| AOCS dropped to SAFE_BOOT right after a sync | event `0x020F`, jump in `0x030D` | The sync jump exceeded 5 s |
+| Scheduled activity fired early or late | the offset and `time_since_sync_s` at upload | A clock error, not a planning error. Sync, then re-check |
+
+
+---
+
+## Appendix A — Training-system time source
+
+**Manual-Scope:** system — this appendix applies only when the ground segment
+is connected to the training simulator instead of a spacecraft. It has no
+counterpart in flight operations, where ground time comes from the station's
+own reference.
 
 A single setting selects whether the **MCS** and **Planner** follow simulation
 time or real UTC. It does **not** affect spacecraft time: onboard time always
@@ -342,27 +374,3 @@ against the wrong day.
 Ground ages are measured in **sim** seconds: pausing the simulator freezes
 staleness rather than making everything go stale, and running at 60x ages
 telemetry 60x faster. That is intended.
-
-## 13. Caveats
-
-* **Restart caveat.** The time source and `sim_state_url` are resolved when the
-  MCS/Planner is constructed. Changing the config field, env var or CLI flag
-  requires restarting the affected service.
-* The simulator's own timekeeping is authoritative in sim mode and must not be
-  altered by ground configuration.
-* Nothing outside the OBDH model may write onboard time; nothing outside the
-  engine may own a sim clock.
-
-## 14. Quick diagnosis
-
-| Symptom | Look at | Likely cause |
-|---|---|---|
-| Onboard time reads year 2000 | `time_ref` = NONE, small `uptime`, `reboot_count` up | OBC rebooted; the bootloader reset the clock. Re-sync (LEOP-006, or NOM-008 Steps 3-5) |
-| Offset grows steadily at ~1 s/day | `time_ref` = GROUND or HOLDOVER, `time_since_sync_s` | Normal oscillator drift at ~12 ppm |
-| Offset grows ~40x faster than that | same, in an instructor session | `clock_drift` failure injection (~500 ppm) |
-| Offset frozen at zero | `time_ref` = GPS | GPS-disciplined; correct behaviour |
-| `time_ref` flipped to HOLDOVER | event `0x030E`, `aocs.gps_fix` < 2 | GPS fix lost; drift has resumed |
-| GPS sync refused | `aocs.gps_fix` (`0x0274`) | Needs a 3D fix (>= 2) |
-| `SET_TIME` rejected | `obdh.sw_image` (`0x0311`) | Still in the bootloader; boot the application image first |
-| AOCS dropped to SAFE_BOOT right after a sync | event `0x020F`, jump in `0x030D` | The sync jump exceeded 5 s |
-| Scheduled activity fired early or late | the offset and `time_since_sync_s` at upload | A clock error, not a planning error. Sync, then re-check |

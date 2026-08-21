@@ -241,32 +241,8 @@ s12_definitions:
 
   # ===== TTC (0x0500-0x0524) =====
   # RSSI monitoring (typical range -95 to -60 dBm; below -95 is poor)
-  - param_id: 0x0502  # ttc.rssi
-    name: "TTC RSSI Low"
-    check_type: 0  # absolute
-    low_limit: -95.0
-    high_limit: 0.0
-    severity: WARNING
-    description: "Received Signal Strength Indicator below -95 dBm"
-
   # Link margin monitoring (threshold 3 dB is critical)
-  - param_id: 0x0503  # ttc.link_margin
-    name: "TTC Link Margin Critical"
-    check_type: 0  # absolute
-    low_limit: 3.0
-    high_limit: 100.0
-    severity: ALARM
-    description: "Link margin below 3 dB (critical)"
-
   # Energy per bit to noise density (threshold 4 dB)
-  - param_id: 0x0519  # ttc.eb_n0
-    name: "TTC Eb/N0 Low"
-    check_type: 0  # absolute
-    low_limit: 4.0
-    high_limit: 100.0
-    severity: WARNING
-    description: "Energy per bit to noise density below 4 dB"
-
   # Power amplifier temperature monitoring
   - param_id: 0x050F  # ttc.pa_temp
     name: "TTC PA Overtemp"
@@ -277,14 +253,6 @@ s12_definitions:
     description: "Power amplifier temperature exceeds 60°C"
 
   # Bit error rate monitoring (log10 scale: -6 = 1e-6)
-  - param_id: 0x050C  # ttc.ber
-    name: "TTC Bit Error Rate High"
-    check_type: 0  # absolute
-    low_limit: -5.0  # 1e-5 is threshold
-    high_limit: 0.0
-    severity: WARNING
-    description: "Bit error rate exceeds 1e-5"
-
   # ===== OBDH (0x0300-0x031E) =====
   # CPU load monitoring
   - param_id: 0x0302  # obdh.cpu_load
@@ -359,14 +327,6 @@ s12_definitions:
     description: "Payload checksum errors detected"
 
   # Signal-to-noise ratio monitoring
-  - param_id: 0x0616  # payload.snr
-    name: "Payload SNR Low"
-    check_type: 0  # absolute
-    low_limit: 25.0
-    high_limit: 100.0
-    severity: WARNING
-    description: "Signal-to-noise ratio below 25 dB"
-
   # ===== PROP (0x0B00-0x0B1B) — Phase D =====
   # Tank pressure operating band (WARNING) and CTG-028 "out-of-band" (ALARM)
   - param_id: 0x0B01  # prop.tank_pressure

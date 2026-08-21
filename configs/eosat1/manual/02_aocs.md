@@ -3,7 +3,7 @@
 **Document ID:** EOSAT1-UM-AOCS-003
 **Issue:** 2.0
 **Date:** 2026-03-13
-**Classification:** UNCLASSIFIED — For Simulation Use Only
+**Classification:** UNCLASSIFIED — Mission Operations
 
 ---
 
@@ -33,8 +33,8 @@ receiver) but does not perform orbital control manoeuvres — EOSAT-1 has no pro
 EOSAT-1 carries ONE 3-axis fluxgate magnetometer on a short boom — like the gyro
 fit, there is no spare and no prime/backup switch. A magnetometer failure is a
 mission-level degradation (B-dot detumble and magnetic desaturation are blind
-without it), which is exactly why the instructor failure catalogue teaches it by
-injection (`mag_failure`) rather than by a redundancy drill:
+without it), and there is no redundancy drill to fall back on — the response is
+degraded-mode operation, not a switchover:
 
 | Parameter       | Magnetometer          |
 |-----------------|-----------------------|
@@ -54,8 +54,8 @@ func 7 receives an explanatory refusal (error 0x0007).
 
 **If the magnetometer fails:** there is nothing to switch to. Expect DETUMBLE to
 be ineffective (B-dot has no input), magnetic desaturation to refuse, and the
-coarse CSS+MAG TRIAD to degrade to CSS-plus-gyro coasting. Recovery is an
-instructor/maintenance action, not an operator switchover.
+coarse CSS+MAG TRIAD to degrade to CSS-plus-gyro coasting. There is no operator
+recovery: the mission continues in a permanently degraded attitude mode.
 
 #### 2.1.2 Coarse Sun Sensors — 6-Head Configuration
 

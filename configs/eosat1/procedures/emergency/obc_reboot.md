@@ -105,7 +105,7 @@ every application telecommand later in this card is rejected with error 0x0004.
 **Verify:** `obdh.mode` (0x0300) = 1 (SAFE) within 10 s --- OBC boots into SAFE mode after reboot
 **Verify:** `obdh.sw_image` (0x0311) = 1 (application) --- running from application image, not bootloader
 **Verify:** `obdh.reboot_count` (0x030A) = previous_count + 1 --- exactly one reboot occurred
-**Verify:** `obdh.last_reboot_cause` (0x0316) = 4 (commanded) --- reboot was from our command
+**Verify:** `obdh.last_reboot_cause` (0x0316) = 1 (commanded) --- reboot was from our command
 **Verify:** `obdh.sw_version` (0x030B) = expected version --- correct software loaded
 **Verify:** `obdh.cpu_load` (0x0302) < 50 % --- CPU no longer overloaded
 **Verify:** `obdh.mem_errors` (0x031E) = 0 --- memory errors cleared by reboot

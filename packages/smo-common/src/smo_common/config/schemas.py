@@ -17,7 +17,7 @@ AOCS dynamics blocks, for instance). Declaring them is the point: this file is
 the single inventory of what the mission configuration is allowed to contain.
 """
 from __future__ import annotations
-from typing import Any, ClassVar, Optional
+from typing import Any, ClassVar, Literal, Optional
 from pydantic import (AliasChoices, BaseModel, ConfigDict, Field, field_validator,
                       model_validator)
 
@@ -673,6 +673,24 @@ class ParameterDef(StrictModel):
     #: The on-board value is a fixed placeholder, not a modelled quantity.
     #: Surfaced by the MCS so a student is not told a stub is measurement.
     stub: bool = False
+    #: Where this quantity can legitimately be SEEN, in a real mission.
+    #:
+    #: The ground tools must work unchanged against a real spacecraft, where
+    #: the only inputs are the RF signal that arrives, what decommutating it
+    #: yields, and what ground software can compute from that plus prior
+    #: knowledge. A parameter that exists only because there is a simulator
+    #: behind the link teaches a console that cannot exist.
+    #:
+    #: * ``real`` (default) -- genuine spacecraft telemetry.
+    #: * ``instructor`` -- simulation ground truth: the magnitude of an
+    #:   injected fault, a model coefficient, a "true" value the spacecraft
+    #:   has no sensor for. Visible ONLY on the instructor console; refused
+    #:   by the operator catalogue and by S20 reads; barred from every HK
+    #:   structure by a gate test.
+    #: * ``ground_derived`` -- a real quantity the GROUND measures or
+    #:   computes (downlink Eb/N0, BER, slant range, station elevation).
+    #:   Not the spacecraft's to report.
+    visibility: Literal["real", "instructor", "ground_derived"] = "real"
 
 class LimitDef(StrictModel):
     param_id: int

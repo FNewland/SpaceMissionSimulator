@@ -3,10 +3,10 @@
 **Document ID:** EOSAT1-UM-REF-010  
 **Issue:** 2.0  
 **Source revision:** `tc_catalog.yaml@56789adadfa8`  
-**Classification:** UNCLASSIFIED — For Simulation Use Only
+**Classification:** UNCLASSIFIED — Mission Operations
 
 > **GENERATED FILE — DO NOT EDIT BY HAND.**  
-> Produced by `tools/gen_command_reference.py` from `configs/eosat1/commands/tc_catalog.yaml`, which is the single source of wire truth for every telecommand argument. Every example hex string below is computed by the same encoder the ground segment uses (`smo_common.commanding.encode`), so the manual and the spacecraft cannot disagree. Re-run the tool after any catalogue change.
+> Generated from the telecommand database (`configs/eosat1/commands/tc_catalog.yaml`), the single source of wire truth for every telecommand argument. Every example hex string below is produced by the ground segment's own encoder, so this reference and the uplinked bytes cannot disagree. Regenerate after any change to the database.
 
 ---
 

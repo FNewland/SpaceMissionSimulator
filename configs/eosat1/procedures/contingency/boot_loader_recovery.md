@@ -21,7 +21,7 @@ memory reload to restore the application.
 | Parameter | ID | Expected Value |
 |---|---|---|
 | obdh.sw_image | 0x0311 | 0 (bootloader) — triggering condition |
-| obdh.last_reboot_cause | 0x0316 | Record value (1=watchdog, 2=memory, 3=switchover, 4=commanded) |
+| obdh.last_reboot_cause | 0x0316 | Record value (1=commanded, 2=watchdog, 3=memory, 4=switchover) |
 | obdh.reboot_count | 0x030A | Record value |
 | obdh.active_obc | 0x030C | Which OBC unit is active |
 | obdh.mode | 0x0300 | Current mode (limited in bootloader) |
@@ -56,7 +56,7 @@ memory reload to restore the application.
 **Verify:** `obdh.reboot_count` (0x030A) — record value
 **Verify:** `obdh.active_obc` (0x030C) — record which unit is active
 **Verify:** `obdh.temp` (0x0301) — within limits
-**Note:** If `last_reboot_cause` = 2 (memory), the application image may be corrupt.
+**Note:** If `last_reboot_cause` = 3 (memory), the application image may be corrupt.
 If cause = 1 (watchdog), the application may have crashed but the image could be intact.
 **GO/NO-GO:** Bootloader state confirmed — proceed to diagnosis.
 

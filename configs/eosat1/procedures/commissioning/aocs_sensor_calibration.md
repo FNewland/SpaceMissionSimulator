@@ -65,7 +65,7 @@ device commands are it.
 `aocs.gyro_cal_bias_x/y/z` 0x02CB-0x02CD, `aocs.gyro_cal_comp_mag` 0x02CE,
 `aocs.gyro_cal_result` 0x02CF, `aocs.gyro_cal_reject` 0x02D0) at a 4 s cadence.
 Without it enabled the calibration runs blind from the ground.
-**Verify:** `obdh.hk_sids_enabled` (0x0316) reported within 20s
+**Verify:** `obdh.hk_sids_enabled` reported within 20s
 **GO/NO-GO:** Both AOCS housekeeping structures are downlinking
 
 ### Step 2 — Confirm All Three Gyro Units Are Powered

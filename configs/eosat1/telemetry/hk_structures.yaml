@@ -39,8 +39,6 @@ structures:
       # Phase 4: Battery DoD, cycles, MPPT, SA aging
       - { param_id: 0x0120, pack_format: H, scale: 100 }
       - { param_id: 0x0121, pack_format: H, scale: 1 }
-      - { param_id: 0x0122, pack_format: H, scale: 10000 }
-      - { param_id: 0x0123, pack_format: H, scale: 10000 }
       # Per-panel solar array currents (Defect #2 fix: per-panel telemetry for single-panel failure diagnostics)
       - { param_id: 0x012B, pack_format: H, scale: 1000 }  # px panel current
       - { param_id: 0x012C, pack_format: H, scale: 1000 }  # mx panel current
@@ -178,16 +176,6 @@ structures:
       - { param_id: 0x0281, pack_format: H, scale: 100 }
       - { param_id: 0x0282, pack_format: H, scale: 100 }
       - { param_id: 0x0283, pack_format: B, scale: 1 }
-      - { param_id: 0x0284, pack_format: H, scale: 100 }
-      - { param_id: 0x0285, pack_format: H, scale: 100 }
-      - { param_id: 0x0286, pack_format: H, scale: 100 }
-      - { param_id: 0x0287, pack_format: H, scale: 100 }
-      - { param_id: 0x0288, pack_format: H, scale: 100 }
-      - { param_id: 0x0289, pack_format: H, scale: 100 }
-      - { param_id: 0x028A, pack_format: H, scale: 100 }
-      - { param_id: 0x028B, pack_format: H, scale: 100 }
-      - { param_id: 0x028C, pack_format: H, scale: 100 }
-      - { param_id: 0x028D, pack_format: H, scale: 100 }
       # 2026-08b AOCS batch. Mode management is the highest-value addition
       # here: without commanded_mode / mode_demoted an operator cannot tell a
       # transient apart from a spacecraft that has quietly abandoned its
@@ -203,7 +191,6 @@ structures:
       # Gyro wiring — these make the three S2 gyro device commands observable.
       - { param_id: 0x0294, pack_format: B, scale: 1 }   # gyro_units_on
       - { param_id: 0x0295, pack_format: B, scale: 1 }   # gyro_saturated
-      - { param_id: 0x0296, pack_format: H, scale: 100000 }  # gyro_bias_injected
       # WHICH unit is off, not just how many — the count cannot tell "the X
       # channel is down" from "the Z channel is down", and those have very
       # different consequences for a nadir-pointing spacecraft.
@@ -325,13 +312,11 @@ structures:
       - { param_id: 0x060A, pack_format: I, scale: 1 }
       - { param_id: 0x060B, pack_format: I, scale: 1 }
       - { param_id: 0x060C, pack_format: H, scale: 1 }
-      - { param_id: 0x060D, pack_format: B, scale: 1 }
       - { param_id: 0x0610, pack_format: B, scale: 1 }
       - { param_id: 0x0612, pack_format: B, scale: 1 }
       # Phase 4: Compression, cal lamp, SNR, detector temp
       - { param_id: 0x0614, pack_format: H, scale: 100 }
       - { param_id: 0x0615, pack_format: B, scale: 1 }
-      - { param_id: 0x0616, pack_format: H, scale: 100 }
       - { param_id: 0x0617, pack_format: h, scale: 100 }
       # Calibration and transfer state
       - { param_id: 0x062A, pack_format: B, scale: 1 }
@@ -361,15 +346,10 @@ structures:
     parameters:
       - { param_id: 0x0500, pack_format: B, scale: 1 }
       - { param_id: 0x0501, pack_format: B, scale: 1 }
-      - { param_id: 0x0502, pack_format: h, scale: 10 }
-      - { param_id: 0x0503, pack_format: h, scale: 10 }
       - { param_id: 0x0506, pack_format: I, scale: 1 }
       - { param_id: 0x0507, pack_format: h, scale: 100 }
       - { param_id: 0x0508, pack_format: B, scale: 1 }
-      - { param_id: 0x0509, pack_format: I, scale: 1 }
-      - { param_id: 0x050A, pack_format: h, scale: 100 }
       # BER, PA, lock sequence
-      - { param_id: 0x050C, pack_format: h, scale: 100 }
       - { param_id: 0x050D, pack_format: h, scale: 10 }
       - { param_id: 0x050F, pack_format: h, scale: 100 }
       - { param_id: 0x0510, pack_format: B, scale: 1 }
@@ -385,11 +365,8 @@ structures:
       # (0x0526-0x052A) stay on-demand — one byte here, the diagnosis on
       # request. +1.15 bps of channel.
       - { param_id: 0x0525, pack_format: B, scale: 1 }
-      - { param_id: 0x0519, pack_format: h, scale: 100 }
       # Phase 4: AGC, Doppler, range rate, cmd auth
-      - { param_id: 0x051A, pack_format: h, scale: 10 }
       - { param_id: 0x051B, pack_format: i, scale: 1 }
-      - { param_id: 0x051C, pack_format: h, scale: 10 }
       - { param_id: 0x051D, pack_format: B, scale: 1 }
       # Hidden telemetry now exposed
       - { param_id: 0x051E, pack_format: I, scale: 1 }
@@ -433,9 +410,6 @@ structures:
       - { param_id: 0x02B0, pack_format: h, scale: 10000 }  # nadir_body x
       - { param_id: 0x02B1, pack_format: h, scale: 10000 }  # nadir_body y
       - { param_id: 0x02B2, pack_format: h, scale: 10000 }  # nadir_body z
-      - { param_id: 0x02B3, pack_format: h, scale: 10000 }  # sun_body_true x
-      - { param_id: 0x02B4, pack_format: h, scale: 10000 }  # sun_body_true y
-      - { param_id: 0x02B5, pack_format: h, scale: 10000 }  # sun_body_true z
       - { param_id: 0x02B6, pack_format: h, scale: 10000 }  # h_body_x (0.1 mNms res)
       - { param_id: 0x02B7, pack_format: h, scale: 10000 }  # h_body_y
       - { param_id: 0x02B8, pack_format: h, scale: 10000 }  # h_body_z
@@ -444,15 +418,11 @@ structures:
       - { param_id: 0x02BB, pack_format: h, scale: 1000 }   # mtq dipole x
       - { param_id: 0x02BC, pack_format: h, scale: 1000 }   # mtq dipole y
       - { param_id: 0x02BD, pack_format: h, scale: 1000 }   # mtq dipole z
-      - { param_id: 0x02BE, pack_format: h, scale: 10 }     # tau_dist x uNm
-      - { param_id: 0x02BF, pack_format: h, scale: 10 }     # tau_dist y uNm
-      - { param_id: 0x02C0, pack_format: h, scale: 10 }     # tau_dist z uNm
       - { param_id: 0x02C1, pack_format: B, scale: 1 }      # est_source
       - { param_id: 0x02C2, pack_format: H, scale: 1 }      # innov rejects
       - { param_id: 0x02C3, pack_format: H, scale: 10000 }  # rate stab 3sig
       - { param_id: 0x02C4, pack_format: H, scale: 10 }     # settle time s
       - { param_id: 0x02C5, pack_format: B, scale: 1 }      # fine_ready mask
-      - { param_id: 0x02C6, pack_format: B, scale: 1 }      # fidelity mode
       - { param_id: 0x02C7, pack_format: I, scale: 10 }     # geoloc err m
       - { param_id: 0x02C8, pack_format: H, scale: 10 }     # aocs power W
       # Gyro bias calibration (S8.1 func 13). It belongs on the determination
@@ -500,10 +470,7 @@ structures:
       - { param_id: 0x0B13, pack_format: H, scale: 10 }     # total on-time
       - { param_id: 0x0B14, pack_format: B, scale: 1 }      # abort reason
       - { param_id: 0x0B15, pack_format: H, scale: 1 }      # arm inhibit mask
-      - { param_id: 0x0B16, pack_format: H, scale: 100 }    # leak rate mg/s
       - { param_id: 0x0B18, pack_format: H, scale: 1000 }   # sc mass (kg)
-      - { param_id: 0x0B19, pack_format: H, scale: 1 }      # epoch version
-      - { param_id: 0x0B1A, pack_format: I, scale: 100 }    # SMA (km)
 
   # SID 10 (BootLoader) removed — the bootloader emits only SID 11 (Beacon).
   # Per the flight-representative design, the bootloader has a single minimal

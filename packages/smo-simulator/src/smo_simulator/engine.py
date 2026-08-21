@@ -2568,6 +2568,40 @@ class SimulationEngine:
         self._param_name_ids = names
         return names
 
+    def param_visibility(self, param_id: int) -> str:
+        """`real` | `instructor` | `ground_derived` for one parameter id.
+
+        Built once from telemetry/parameters.yaml, the same cheap YAML read as
+        the name map above (the pydantic loader costs ~130 ms and this is
+        consulted on the TC path).
+
+        A non-`real` parameter is not downlinkable: `instructor` is simulation
+        ground truth and `ground_derived` is something the ground measures
+        about the downlink. Neither is in an HK structure any more, and S20.3
+        refuses to read them, so the two doors are shut together.
+        """
+        cached = getattr(self, '_param_visibility', None)
+        if cached is None:
+            cached = {}
+            try:
+                import yaml as _yaml
+                path = self.config_dir / "telemetry" / "parameters.yaml"
+                with open(path) as f:
+                    data = _yaml.safe_load(f) or {}
+                for entry in data.get("parameters", []) or []:
+                    raw = entry.get("id")
+                    if raw is None:
+                        continue
+                    try:
+                        pid = int(raw) if isinstance(raw, int) else int(str(raw), 0)
+                    except (TypeError, ValueError):
+                        continue
+                    cached[pid] = str(entry.get("visibility", "real"))
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Parameter visibility unavailable: %s", e)
+            self._param_visibility = cached
+        return cached.get(int(param_id), "real")
+
     # ------------------------------------------------------------------
     # TC handling
     # ------------------------------------------------------------------

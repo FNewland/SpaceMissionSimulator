@@ -123,7 +123,14 @@ export function renderParam(def, value, limits) {
   const lc = stale ? "" : limitClass(state);
   const cls = ["ds-param", lc, stale ? "stale" : "", fr === "degraded" ? "degraded" : ""]
     .filter(Boolean).join(" ");
-  const vTxt = stale ? "—" : _num(Number(value));
+  // `def.eng` — the engineering-value string for a DISCRETE parameter
+  // ("COARSE_SUN (2)"). It is carried separately from `value` on purpose:
+  // `value` stays numeric so limits, banding and the deviation bar keep
+  // working, and only the rendered text changes. Passing the string as
+  // `value` instead makes Number() NaN, which trips `hasVal` and renders the
+  // parameter as "—" with a stale class — i.e. a mode chip that shows nothing.
+  const vTxt = stale ? "—" : (d.eng !== undefined && d.eng !== null
+                              ? esc(String(d.eng)) : _num(Number(value)));
   const unit = d.units ? `<u>${esc(d.units)}</u>` : "";
   const ageChip = fr === "degraded" && limits && "age_s" in limits
     ? ` <span class="ds-age degraded">${esc(_age(limits.age_s))}</span>` : "";
@@ -271,25 +278,44 @@ export function renderAndTable(params, values) {
     const hex = p.hex || (Number.isFinite(p.id) ? "0x" + p.id.toString(16).toUpperCase().padStart(4, "0") : "");
     const val = v.params ? v.params[hex] : undefined;
     const age = v.ages ? v.ages[String(p.id)] : undefined;
-    const fr = freshness(age !== undefined ? age : (val !== undefined ? 0 : null));
-    const stale = fr === "stale";
+    // `v.verdicts` — the caller's cadence-aware four-state verdict, which also
+    // knows about DISABLED HK structures. Without it we fall back to the flat
+    // threshold, which cannot distinguish "the link is down" from "nobody
+    // enabled this SID", and so shows the last known value as though it were
+    // arriving. See configs/eosat1/mcs/staleness.yaml.
+    const fr = (v.verdicts && v.verdicts[hex])
+      || freshness(age !== undefined ? age : (val !== undefined ? 0 : null));
+    const disabled = fr === "disabled";
+    const stale = fr === "stale" || disabled;
     const state = (v.limitState && v.limitState[hex]) || "";
     const lc = stale ? "" : limitClass(state);
     const band = v.limits ? v.limits[hex] : null;
     const hasVal = val !== null && val !== undefined && Number.isFinite(Number(val));
-    const raw = v.raw && v.raw[hex] !== undefined ? String(v.raw[hex]) : "—";
+    const st = v.states ? v.states[hex] : null;
+    const engTxt = disabled ? "NOT ENABLED"
+      : stale || !hasVal ? "—"
+      : (st && st[String(Math.round(Number(val)))] !== undefined
+          ? `${st[String(Math.round(Number(val)))]} (${Math.round(Number(val))})`
+          : _num(Number(val)));
+    // RAW follows the same gate as ENG. Showing the last received count beside
+    // an ENG cell reading "NOT ENABLED" is a mixed message: the operator sees a
+    // number in a value column and reads it as current. The value is not lost —
+    // it is still in the ground cache, and the Age column says how old it is —
+    // but a display column is not the place to assert it.
+    const raw = stale || !hasVal ? "—"
+      : (v.raw && v.raw[hex] !== undefined ? String(v.raw[hex]) : _num(Number(val)));
     const ool = !band ? "NO LIM"
       : stale || !hasVal ? "—"
       : lc === "a" ? (state.endsWith("high") ? "RH" : "RL")
       : lc === "w" ? (state.endsWith("high") ? "YH" : "YL")
       : "";
-    return `<tr class="${[lc, stale ? "stale" : ""].filter(Boolean).join(" ")}" ` +
+    return `<tr class="${[lc, stale ? "stale" : "", disabled ? "disabled" : ""].filter(Boolean).join(" ")}" ` +
            `data-param="${esc(hex)}">` +
            `<td class="id">${esc(hex)}</td>` +
            `<td>${esc(p.name || "")}` +
            (p.description ? `<br><small>${esc(p.description)}</small>` : "") + `</td>` +
            `<td class="raw">${esc(raw)}</td>` +
-           `<td class="eng">${stale || !hasVal ? "—" : _num(Number(val))}</td>` +
+           `<td class="eng">${esc(engTxt)}</td>` +
            `<td>${esc(p.units || "")}</td>` +
            `<td class="ool">${ool}</td>` +
            `<td class="ds-age${fr === "degraded" ? " degraded" : ""}">${_age(age)}</td>` +
@@ -470,6 +496,9 @@ export function renderEventRow(evt) {
  * @param {object} state — the WS `state` message `data` object (needs
  *        .params, .params_age, .param_limit_state; tolerates absence).
  */
+function hasFiniteNumber(v) {
+  return v !== null && v !== undefined && Number.isFinite(Number(v));
+}
 export function bindSchematic(svgRoot, state) {
   if (!svgRoot) return;
   const st = state || {};
@@ -481,8 +510,13 @@ export function bindSchematic(svgRoot, state) {
     const val = params[hex];
     const id = parseInt(hex, 16);
     const age = ages[String(id)];
-    const fr = freshness(age !== undefined ? age : (val !== undefined ? 0 : null));
-    const stale = fr === "stale" || val === undefined || val === null;
+    // Same four-state verdict as the tables when the caller supplies one
+    // (state.param_verdicts): a schematic that prints the last known number
+    // for a SID nobody enabled is the most confident possible way to be wrong.
+    const fr = (st.param_verdicts && st.param_verdicts[hex])
+      || freshness(age !== undefined ? age : (val !== undefined ? 0 : null));
+    const disabled = fr === "disabled";
+    const stale = fr === "stale" || disabled || val === undefined || val === null;
     const lc = stale ? "" : limitClass(limitState[hex] || "");
     node.classList.remove("warn", "alarm", "stale");
     if (stale) node.classList.add("stale");
@@ -491,7 +525,17 @@ export function bindSchematic(svgRoot, state) {
     const vl = node.querySelector(".vl");
     if (vl) {
       const units = node.getAttribute("data-units") || "";
-      vl.textContent = stale ? "—" : _num(Number(val)) + (units ? " " + units : "");
+      // Discrete parameters read as their state name. The AOCS CORE box on the
+      // L2 schematic is `data-param="0x020F"` — it showed a bare "3" where the
+      // operator needs "COARSE_SUN". States come from the parameter catalogue
+      // via state.param_states; a unit suffix on a state name is meaningless.
+      const stt = st.param_states && st.param_states[hex];
+      const code = hasFiniteNumber(val) ? Math.round(Number(val)) : null;
+      if (disabled) vl.textContent = "NOT ENABLED";
+      else if (stale) vl.textContent = "—";
+      else if (stt && code !== null && stt[String(code)] !== undefined) {
+        vl.textContent = `${stt[String(code)]} (${code})`;
+      } else vl.textContent = _num(Number(val)) + (units ? " " + units : "");
     }
   });
   svgRoot.querySelectorAll("[data-nav]").forEach((node) => {

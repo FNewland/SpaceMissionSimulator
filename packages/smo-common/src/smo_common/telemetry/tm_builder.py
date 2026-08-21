@@ -16,7 +16,7 @@ import struct
 import logging
 from typing import Callable, Optional, Union
 
-from ..protocol.ecss_packet import CucTime, crc16_ccitt
+from ..protocol.ecss_packet import CucTime, crc16_ccitt, TM_SEC_HDR_LEN
 from ..protocol.pus_services import encode_failure_reason
 
 logger = logging.getLogger(__name__)
@@ -43,6 +43,13 @@ class MissingTimeSourceError(RuntimeError):
 # identity together with the on-board software's reason for refusing it
 # (defect #87 — 32 octets truncated the reason to uselessness).
 EVENT_AUX_TEXT_MAX = 120
+
+#: Largest TM packet the mission is specified around, octets, INCLUDING the
+#: 6-octet primary header, the 9-octet PUS secondary header and the 2-octet
+#: CRC. Reports longer than this are segmented (see pack_tm_segmented).
+MAX_TM_PACKET_OCTETS = 256
+PRIMARY_HEADER_LEN = 6
+CRC_LEN = 2
 
 
 def _as_cuc(value: TimeSourceResult) -> CucTime:
@@ -204,7 +211,8 @@ class TMBuilder:
         return self._pack_tm(service=20, subtype=2, data=data, cuc=cuc)
 
     def _pack_tm(self, service: int, subtype: int, data: bytes,
-                 cuc: TimeSourceResult | None = None) -> bytes:
+                 cuc: TimeSourceResult | None = None,
+                 seq_flags: int = 0b11) -> bytes:
         """Assemble a TM packet with the 9-octet PUS secondary header.
 
         ``cuc`` may be seconds (float/int) or a ``CucTime``. Omitting it reads
@@ -218,11 +226,61 @@ class TMBuilder:
         data_length_field = len(payload) + 1  # CCSDS: (octets after primary including CRC) - 1
         self._seq_count = (self._seq_count + 1) & 0x3FFF
         packet_id = (0 << 13) | (0 << 12) | (1 << 11) | (self._apid & 0x7FF)
-        seq_ctrl = (0b11 << 14) | self._seq_count
+        seq_ctrl = ((seq_flags & 0b11) << 14) | self._seq_count
         primary = struct.pack('>HHH', packet_id, seq_ctrl, data_length_field)
         packet = primary + payload
         crc = crc16_ccitt(packet)
         return packet + struct.pack('>H', crc)
+
+    def pack_tm_segmented(self, service: int, subtype: int, *,
+                          prefix, records: list[bytes],
+                          cuc: TimeSourceResult | None = None) -> list[bytes]:
+        """Emit a report as one packet, or several if it will not fit.
+
+        A "report all" service — TM(12,13) monitoring definitions, TM(19,128)
+        event-action rules, TM(11,18) the on-board schedule — has an unbounded
+        record count, and building it as a single packet silently produces
+        something no real link would carry. With the 41 shipped monitors,
+        TM(12,13) came to **593 octets**, well over the 256-octet packet the
+        mission is specified around (raised 2026-08-21).
+
+        Segmentation uses the CCSDS grouping flags in the primary header, which
+        is what they are for: 01 first, 00 continuation, 10 last, 11 standalone.
+        The count field at the head of each packet is the number of records IN
+        THAT PACKET, so a receiver that ignores the flags still parses every
+        segment correctly — it just sees several short reports instead of one
+        long one.
+
+        Records must be fixed-size or self-delimiting; they are never split
+        across a packet boundary.
+        """
+        # `prefix(n)` builds the report's own leading fields for a packet
+        # carrying n records. It is a callable so each service keeps the field
+        # ORDER it already has on the wire — TM(11,18) puts the count first,
+        # TM(12,13) and TM(19,128) have nothing before it — and no existing
+        # ground parser has to change.
+        budget = (MAX_TM_PACKET_OCTETS - PRIMARY_HEADER_LEN - TM_SEC_HDR_LEN
+                  - CRC_LEN - len(prefix(0)))
+        chunks: list[list[bytes]] = [[]]
+        used = 0
+        for rec in records:
+            if chunks[-1] and used + len(rec) > budget:
+                chunks.append([]); used = 0
+            chunks[-1].append(rec); used += len(rec)
+        out = []
+        for i, chunk in enumerate(chunks):
+            if len(chunks) == 1:
+                flags = 0b11                      # standalone
+            elif i == 0:
+                flags = 0b01                      # first
+            elif i == len(chunks) - 1:
+                flags = 0b10                      # last
+            else:
+                flags = 0b00                      # continuation
+            body = prefix(len(chunk)) + b"".join(chunk)
+            out.append(self._pack_tm(service, subtype, body, cuc=cuc,
+                                     seq_flags=flags))
+        return out
 
     def _get_cuc(self, params: Optional[dict] = None) -> CucTime:
         """Read the on-board clock. Raises if none is wired.

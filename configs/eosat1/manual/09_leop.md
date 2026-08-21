@@ -3,7 +3,7 @@
 **Document ID:** EOSAT1-UM-LEOP-010
 **Issue:** 1.0
 **Date:** 2026-03-13
-**Classification:** UNCLASSIFIED — For Simulation Use Only
+**Classification:** UNCLASSIFIED — Mission Operations
 
 ---
 
@@ -483,8 +483,8 @@ Before declaring the spacecraft operational, verify the following:
    and confirm event `MISSION_PHASE_CHANGED` (0x0055) in the log.
 9. Record transition time for mission log.
 
-**On the phase declaration.** This is a real telecommand, not bookkeeping and
-not an instructor action. The on-board phase state machine advances itself only
+**On the phase declaration.** This is a real telecommand, not bookkeeping. The
+on-board phase state machine advances itself only
 as far as LEOP (4); COMMISSIONING (5) and NOMINAL (6) are ground declarations.
 Until phase 6 is declared:
 
@@ -553,8 +553,8 @@ If body rates exceed 5 deg/s after detumble attempt:
 
 1. Verify magnetometer readings are valid (not stuck or noisy).
 2. The magnetometer is single-string — there is no MAG-B to switch to. A faulty
-   unit means B-dot is blind; expect to rely on passive damping and instructor
-   intervention.
+   unit means B-dot is blind; expect to rely on passive damping, and escalate to
+   the spacecraft manufacturer's support team.
 3. If rates continue to increase, check for stuck magnetorquer (driving torque in wrong
    direction).
 4. As a last resort, power off all AOCS actuators and allow passive magnetic damping

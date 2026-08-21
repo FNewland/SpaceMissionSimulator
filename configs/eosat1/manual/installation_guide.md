@@ -1,5 +1,7 @@
 # SpaceMissionSimulation Installation Guide
 
+**Manual-Scope:** system — training-system documentation, not part of the flight operations manual.
+
 ## Quick Start
 
 Clone the repository, set up a virtual environment, install packages, and run the simulator.

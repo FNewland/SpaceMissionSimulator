@@ -19,6 +19,7 @@ cannot drift apart again.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -31,6 +32,8 @@ CONFIG_DIR = REPO / "configs" / "eosat1"
 STALENESS_YAML = CONFIG_DIR / "mcs" / "staleness.yaml"
 CLASSIC = REPO / "packages" / "smo-mcs" / "src" / "smo_mcs" / "static" / "index.html"
 MODERN_HARNESS = Path(__file__).resolve().parent / "js" / "modern_harness.js"
+MCS_JS = (REPO / "packages" / "smo-mcs" / "src" / "smo_mcs" / "static"
+          / "modern" / "mcs.js")
 CLASSIC_HARNESS = Path(__file__).resolve().parent / "js" / "mcs_harness.js"
 
 NODE = shutil.which("node") or shutil.which("nodejs")
@@ -211,3 +214,91 @@ def test_each_position_sees_only_the_tabs_it_owns(tmp_path):
         assert not_owned not in out, (
             f"the TT&C position is offered the {not_owned} tab, which carries "
             "no telemetry it owns")
+
+
+# ── engineering values reach EVERY value surface, not just some ─────
+
+@requires_node
+def test_the_triad_renders_the_state_name_not_a_dash(tmp_path):
+    """Regression: the first version of engValue blanked every mode chip.
+
+    renderParam() computes `hasVal` with Number.isFinite(Number(value)), so
+    passing the engineering STRING as the value made Number() NaN — the
+    parameter rendered as "—" with a stale class. The string must ride in
+    `def.eng` while `value` stays numeric, so limits and banding still work.
+    """
+    out = _run(MODERN_HARNESS, """
+        const S = mod.__test.S;
+        S.paramByHex["0x020F"] = { hex: "0x020F", name: "aocs.mode",
+          states: { "0": "OFF", "3": "COARSE_SUN" } };
+        S.state.params = { "0x020F": 3 };
+        S.state.params_age = { "527": 1.0 };
+        S.state.hk_enabled = { "2": true };
+        return { triad: mod.paramTriad("0x020F") };
+    """, tmp_path, "modern")
+    assert "COARSE_SUN (3)" in out["triad"], out["triad"]
+    assert ">—<" not in out["triad"], (
+        "the triad blanked a parameter that has a perfectly good value")
+
+
+@requires_node
+def test_the_alphanumeric_table_shows_engineering_values(tmp_path):
+    """The SCOS-style table is the densest value surface in the console.
+
+    It is in smo-common (shared with the planner/instructor), and it formatted
+    every value numerically — so `aocs.mode` read `2` on the AOCS page while
+    the schematic beside it read the state name.
+    """
+    out = _run(MODERN_HARNESS, """
+        const params = [{ id: 0x020F, hex: "0x020F", name: "aocs.mode", units: "" }];
+        const values = {
+          params: { "0x020F": 3 }, ages: { "527": 1.0 },
+          limitState: {}, limits: {},
+          states: { "0x020F": { "0": "OFF", "3": "COARSE_SUN" } },
+          verdicts: { "0x020F": "fresh" },
+        };
+        return { html: mod.__test.renderAndTable(params, values) };
+    """, tmp_path, "modern")
+    assert "COARSE_SUN (3)" in out["html"], out["html"]
+    # RAW is the count as received; it used to print "—" for every parameter
+    # on every page because no caller ever supplied `raw`.
+    assert ">3<" in out["html"].replace(" ", ""), (
+        "the RAW column lost the received count")
+
+
+@requires_node
+def test_a_disabled_hk_structure_reads_not_enabled(tmp_path):
+    """The answer to "are these really coming in telemetry?".
+
+    The parameter cache deliberately keeps the last known value after a SID is
+    disabled — that IS the spacecraft's last known state. But the table must
+    say the source is off, or the operator reads a frozen number as live.
+    """
+    out = _run(MODERN_HARNESS, """
+        const params = [{ id: 0x020F, hex: "0x020F", name: "aocs.mode", units: "" }];
+        const values = {
+          params: { "0x020F": 3 }, ages: { "527": 900.0 },
+          limitState: {}, limits: {}, states: {},
+          verdicts: { "0x020F": "disabled" },
+        };
+        return { html: mod.__test.renderAndTable(params, values) };
+    """, tmp_path, "modern")
+    assert "NOT ENABLED" in out["html"], out["html"]
+    assert ">3<" not in out["html"].replace(" ", ""), (
+        "a value from a disabled HK structure is still being shown as though "
+        "it were arriving")
+
+
+def test_the_alphanumeric_table_is_not_frozen_to_navigation():
+    """It used to be rebuilt only when `full` was set — i.e. on navigation.
+
+    That is why the AOCS page could show aocs.mode = 2 in the table and 3 on
+    the schematic at the same instant: same dict, one widget minutes old.
+    """
+    src = MCS_JS.read_text()
+    assert "refreshAndTable(" in src, (
+        "the alphanumeric table no longer has a live refresh path — it will "
+        "freeze at whatever the values were when the page was opened")
+    # and the live branch must actually be reached on a non-full render
+    assert re.search(r"else\s*\{\s*\n\s*refreshAndTable", src), (
+        "refreshAndTable exists but nothing calls it on the state cadence")

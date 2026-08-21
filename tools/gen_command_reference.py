@@ -226,13 +226,12 @@ def build_document(catalog) -> str:
     lines.append("**Classification:** UNCLASSIFIED — For Simulation Use Only")
     lines.append("")
     lines.append("> **GENERATED FILE — DO NOT EDIT BY HAND.**  ")
-    lines.append("> Produced by `tools/gen_command_reference.py` from "
-                 "`configs/eosat1/commands/tc_catalog.yaml`, which is the single "
+    lines.append("> Generated from the telecommand database "
+                 "(`configs/eosat1/commands/tc_catalog.yaml`), the single "
                  "source of wire truth for every telecommand argument. Every "
-                 "example hex string below is computed by the same encoder the "
-                 "ground segment uses (`smo_common.commanding.encode`), so the "
-                 "manual and the spacecraft cannot disagree. Re-run the tool "
-                 "after any catalogue change.")
+                 "example hex string below is produced by the ground segment's "
+                 "own encoder, so this reference and the uplinked bytes cannot "
+                 "disagree. Regenerate after any change to the database.")
     lines.append("")
     lines.append("---")
     lines.append("")

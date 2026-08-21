@@ -3,7 +3,7 @@
 **Document ID:** EOSAT1-UM-PLD-007
 **Issue:** 2.0
 **Date:** 2026-03-13
-**Classification:** UNCLASSIFIED — For Simulation Use Only
+**Classification:** UNCLASSIFIED — Mission Operations
 
 ---
 
@@ -52,8 +52,8 @@ correction and land/sea discrimination.
 ### 2.2 Altitude-Dependent Geometry
 
 The imaging geometry scales with orbital altitude and follows from the 29.856 deg
-full FOV of the optics (8192 px x 5.5 um on an 84.5 mm telescope). The simulator and
-planner compute both quantities from the live altitude; over the 503–530 km orbit
+full FOV of the optics (8192 px x 5.5 um on an 84.5 mm telescope). The ground
+segment computes both quantities from the current orbit solution; over the 503–530 km orbit
 (mean 513 km, 2026-08 epoch/altitude ruling):
 
 | Parameter              | At 513 km (mean) | At 450 km (retired declaration) | Scaling            |

@@ -3,7 +3,7 @@
 **Document ID:** EOSAT1-UM-TCS-004
 **Issue:** 2.0
 **Date:** 2026-03-13
-**Classification:** UNCLASSIFIED — For Simulation Use Only
+**Classification:** UNCLASSIFIED — Mission Operations
 
 ---
 
@@ -148,8 +148,7 @@ mode and deactivated when the payload is set to OFF.
 | temp_fpa (C)    | -22.0      | 14.0        | -25.5   | 17.5     |
 
 These bands are **derived**, not chosen: `subsystems/tcs.yaml: fpa_envelope`
-is the single source and `smo_common.config.fpa_envelope` computes the rest
-(DECISIONS §3). The FPA node has two legitimate resting states — regulated
+is the single source, and the ground software computes the rest from it. The FPA node has two legitimate resting states — regulated
 anywhere in the commandable **-20…0 deg C** setpoint envelope
 (`PAYLOAD_COOLER_SETPOINT`, S8 func 36), and uncooled at about **+11.5 deg C**
 (measured peak +12.4). The band brackets both, plus 3 sigma of control noise

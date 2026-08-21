@@ -38,10 +38,10 @@ parameters:
   # EPS Phase 4: Flight hardware realism
   - { id: 0x0120, name: eps.bat_dod, subsystem: eps, units: "%", description: Battery depth of discharge }
   - { id: 0x0121, name: eps.bat_cycles, subsystem: eps, description: Battery charge/discharge cycle count }
-  - { id: 0x0122, name: eps.mppt_efficiency, subsystem: eps, description: MPPT tracker efficiency }
-  - { id: 0x0123, name: eps.sa_age_factor, subsystem: eps, description: Solar array aging degradation factor }
-  - { id: 0x0124, name: eps.sa_a_degradation, subsystem: eps, description: Solar array A degradation factor, on_demand: true }
-  - { id: 0x0125, name: eps.sa_b_degradation, subsystem: eps, description: Solar array B degradation factor, on_demand: true }
+  - { id: 0x0122, name: eps.mppt_efficiency, subsystem: eps, description: MPPT tracker efficiency, visibility: instructor }  # model coefficient (constant 0.97) read out of the generation equation
+  - { id: 0x0123, name: eps.sa_age_factor, subsystem: eps, description: Solar array aging degradation factor, visibility: instructor }  # output of the array-ageing LAW; ground infers ageing by trending generation
+  - { id: 0x0124, name: eps.sa_a_degradation, subsystem: eps, description: Solar array A degradation factor, on_demand: true, visibility: instructor }  # 1.0 - injected fault magnitude
+  - { id: 0x0125, name: eps.sa_b_degradation, subsystem: eps, description: Solar array B degradation factor, on_demand: true, visibility: instructor }  # 1.0 - injected fault magnitude
   - { id: 0x0126, name: eps.sa_lifetime_hours, subsystem: eps, units: h, description: Solar array cumulative sunlit hours, on_demand: true }
   # EPS PDM and separation
   - { id: 0x0127, name: eps.sep_timer_active, subsystem: eps, description: "Separation timer active (0=no, 1=yes)", on_demand: true }
@@ -115,7 +115,7 @@ parameters:
   - { id: 0x0210, name: aocs.gps_lat, subsystem: aocs, units: deg, description: "GPS geodetic latitude (measured; valid when gps_fix >= 2)" }
   - { id: 0x0211, name: aocs.gps_lon, subsystem: aocs, units: deg, description: "GPS geodetic longitude (measured; valid when gps_fix >= 2)" }
   - { id: 0x0212, name: aocs.gps_alt, subsystem: aocs, units: km, description: "GPS geodetic altitude (measured; valid when gps_fix >= 2)" }
-  - { id: 0x0216, name: aocs.solar_beta, subsystem: aocs, units: deg, description: Solar beta angle, on_demand: true }
+  - { id: 0x0216, name: aocs.solar_beta, subsystem: aocs, units: deg, description: Solar beta angle, on_demand: true, visibility: ground_derived }  # solar beta angle - an ephemeris product the ground derives
   - { id: 0x0217, name: aocs.att_error, subsystem: aocs, units: deg }
   - { id: 0x0218, name: aocs.rw1_temp, subsystem: aocs, units: C , on_demand: true }
   - { id: 0x0219, name: aocs.rw2_temp, subsystem: aocs, units: C , on_demand: true }
@@ -189,16 +189,16 @@ parameters:
   - { id: 0x0281, name: aocs.slew_progress, subsystem: aocs, units: "%", description: Slew maneuver progress percentage }
   - { id: 0x0282, name: aocs.momentum_saturation_pct, subsystem: aocs, units: "%", description: Total momentum as percentage of max }
   - { id: 0x0283, name: aocs.attitude_source, subsystem: aocs, description: "Attitude source (0=ST,1=CSS,2=Gyro)" }
-  - { id: 0x0284, name: aocs.rw1_bearing_health, subsystem: aocs, units: "%", description: Reaction wheel 1 bearing health }
-  - { id: 0x0285, name: aocs.rw2_bearing_health, subsystem: aocs, units: "%", description: Reaction wheel 2 bearing health }
-  - { id: 0x0286, name: aocs.rw3_bearing_health, subsystem: aocs, units: "%", description: Reaction wheel 3 bearing health }
-  - { id: 0x0287, name: aocs.rw4_bearing_health, subsystem: aocs, units: "%", description: Reaction wheel 4 bearing health }
-  - { id: 0x0288, name: aocs.css_head_health_px, subsystem: aocs, units: "%", description: CSS +X head health }
-  - { id: 0x0289, name: aocs.css_head_health_mx, subsystem: aocs, units: "%", description: CSS -X head health }
-  - { id: 0x028A, name: aocs.css_head_health_py, subsystem: aocs, units: "%", description: CSS +Y head health }
-  - { id: 0x028B, name: aocs.css_head_health_my, subsystem: aocs, units: "%", description: CSS -Y head health }
-  - { id: 0x028C, name: aocs.css_head_health_pz, subsystem: aocs, units: "%", description: CSS +Z head health }
-  - { id: 0x028D, name: aocs.css_head_health_mz, subsystem: aocs, units: "%", description: CSS -Z head health }
+  - { id: 0x0284, name: aocs.rw1_bearing_health, subsystem: aocs, units: "%", description: Reaction wheel 1 bearing health, visibility: instructor }  # 100*(1-injected bearing degradation); real signal is wheel current + temperature
+  - { id: 0x0285, name: aocs.rw2_bearing_health, subsystem: aocs, units: "%", description: Reaction wheel 2 bearing health, visibility: instructor }  # as 0x0284
+  - { id: 0x0286, name: aocs.rw3_bearing_health, subsystem: aocs, units: "%", description: Reaction wheel 3 bearing health, visibility: instructor }  # as 0x0284
+  - { id: 0x0287, name: aocs.rw4_bearing_health, subsystem: aocs, units: "%", description: Reaction wheel 4 bearing health, visibility: instructor }  # as 0x0284
+  - { id: 0x0288, name: aocs.css_head_health_px, subsystem: aocs, units: "%", description: CSS +X head health, visibility: instructor }  # binary read-out of the css_head_fail injection; real signal is the head current
+  - { id: 0x0289, name: aocs.css_head_health_mx, subsystem: aocs, units: "%", description: CSS -X head health, visibility: instructor }  # as 0x0288
+  - { id: 0x028A, name: aocs.css_head_health_py, subsystem: aocs, units: "%", description: CSS +Y head health, visibility: instructor }  # as 0x0288
+  - { id: 0x028B, name: aocs.css_head_health_my, subsystem: aocs, units: "%", description: CSS -Y head health, visibility: instructor }  # as 0x0288
+  - { id: 0x028C, name: aocs.css_head_health_pz, subsystem: aocs, units: "%", description: CSS +Z head health, visibility: instructor }  # as 0x0288
+  - { id: 0x028D, name: aocs.css_head_health_mz, subsystem: aocs, units: "%", description: CSS -Z head health, visibility: instructor }  # as 0x0288
   # slew_state moved off 0x0285 (which is aocs.rw2_bearing_health, downlinked
   # in HK SID 2 — the collision made the ground read the slew state as RW2
   # bearing health; brief 02 root cause 10).
@@ -224,9 +224,9 @@ parameters:
   - { id: 0x02B0, name: aocs.nadir_body_x, subsystem: aocs, description: "Nadir unit vector in body frame X" }
   - { id: 0x02B1, name: aocs.nadir_body_y, subsystem: aocs, description: "Nadir unit vector in body frame Y" }
   - { id: 0x02B2, name: aocs.nadir_body_z, subsystem: aocs, description: "Nadir unit vector in body frame Z" }
-  - { id: 0x02B3, name: aocs.sun_body_true_x, subsystem: aocs, description: "TRUE sun vector in body X (distinct from the CSS estimate 0x0245)" }
-  - { id: 0x02B4, name: aocs.sun_body_true_y, subsystem: aocs, description: "TRUE sun vector in body Y" }
-  - { id: 0x02B5, name: aocs.sun_body_true_z, subsystem: aocs, description: "TRUE sun vector in body Z" }
+  - { id: 0x02B3, name: aocs.sun_body_true_x, subsystem: aocs, description: "TRUE sun vector in body X (distinct from the CSS estimate 0x0245)", visibility: instructor }  # TRUE sun vector from the truth quaternion
+  - { id: 0x02B4, name: aocs.sun_body_true_y, subsystem: aocs, description: "TRUE sun vector in body Y", visibility: instructor }  # as 0x02B3
+  - { id: 0x02B5, name: aocs.sun_body_true_z, subsystem: aocs, description: "TRUE sun vector in body Z", visibility: instructor }  # as 0x02B3
   - { id: 0x02B6, name: aocs.h_body_x, subsystem: aocs, units: Nms, description: "VECTOR wheel momentum in body frame X" }
   - { id: 0x02B7, name: aocs.h_body_y, subsystem: aocs, units: Nms, description: "Vector wheel momentum Y" }
   - { id: 0x02B8, name: aocs.h_body_z, subsystem: aocs, units: Nms, description: "Vector wheel momentum Z" }
@@ -235,22 +235,22 @@ parameters:
   - { id: 0x02BB, name: aocs.mtq_dipole_x, subsystem: aocs, units: Am2, description: "Commanded MTQ dipole X (0x0258-5A stay as duty)" }
   - { id: 0x02BC, name: aocs.mtq_dipole_y, subsystem: aocs, units: Am2, description: "Commanded MTQ dipole Y" }
   - { id: 0x02BD, name: aocs.mtq_dipole_z, subsystem: aocs, units: Am2, description: "Commanded MTQ dipole Z" }
-  - { id: 0x02BE, name: aocs.tau_dist_x, subsystem: aocs, units: uNm, description: "Total disturbance torque X (instructor insight)" }
-  - { id: 0x02BF, name: aocs.tau_dist_y, subsystem: aocs, units: uNm, description: "Total disturbance torque Y" }
-  - { id: 0x02C0, name: aocs.tau_dist_z, subsystem: aocs, units: uNm, description: "Total disturbance torque Z" }
+  - { id: 0x02BE, name: aocs.tau_dist_x, subsystem: aocs, units: uNm, description: "Total disturbance torque X (instructor insight)", visibility: instructor }  # modelled disturbance torque; no spacecraft measures this
+  - { id: 0x02BF, name: aocs.tau_dist_y, subsystem: aocs, units: uNm, description: "Total disturbance torque Y", visibility: instructor }  # as 0x02BE
+  - { id: 0x02C0, name: aocs.tau_dist_z, subsystem: aocs, units: uNm, description: "Total disturbance torque Z", visibility: instructor }  # as 0x02BE
   - { id: 0x02C1, name: aocs.est_source, subsystem: aocs, description: "Estimator source bitmask: bit0 ST, bit1 CSS, bit2 MAG, bit3 gyro" }
   - { id: 0x02C2, name: aocs.est_innov_rej_count, subsystem: aocs, description: "Rejected ST fixes since boot (innovation gate)" }
   - { id: 0x02C3, name: aocs.rate_stability_3sig, subsystem: aocs, units: deg/s, description: "Rate-error jitter metric over the last 60 s" }
   - { id: 0x02C4, name: aocs.settle_time_s, subsystem: aocs, units: s, description: "Time since last mode/target change until inside the gate" }
   - { id: 0x02C5, name: aocs.fine_ready, subsystem: aocs, description: "FINE-entry precondition bitmask (0 = ready): bit0 ST<5 stars, bit1 <3 wheels (a 3-of-4 pyramid still spans R^3 and flies FINE degraded — see aocs.fine_degraded 0x0299; two wheels cannot), bit2 MEKF unconverged, bit3 rates high, bit4 momentum >70%, bit5 propagate-only, bit6 slew not idle 60s" }
-  - { id: 0x02C6, name: aocs.fidelity_mode, subsystem: aocs, description: "0=full physics, 1=secular (accel bypass >60x)" }
+  - { id: 0x02C6, name: aocs.fidelity_mode, subsystem: aocs, description: "0=full physics, 1=secular (accel bypass >60x)", visibility: instructor }  # simulator integration-mode switch; not spacecraft state
   - { id: 0x02C7, name: aocs.geoloc_err_m, subsystem: aocs, units: m, description: "Altitude x total pointing error — ground geolocation error" }
   - { id: 0x02C8, name: aocs.power_w, subsystem: aocs, units: W, description: "AOCS suite power draw by mode (COARSE 4 / NOMINAL 9 / FINE 15 W); EPS bills the aocs_wheels line from this" }
 
   # ----- 2026-08b AOCS batch: gyro wiring, mode management, desaturation -----
   - { id: 0x0294, name: aocs.gyro_units_on, subsystem: aocs, description: "Number of gyro units powered (S2 devices 0x0206-0x0208). 0 = the MEKF has no rate reference and coasts on CSS+MAG only" }
   - { id: 0x0295, name: aocs.gyro_saturated, subsystem: aocs, description: "1 = at least one gyro channel is at its measurement-range limit (rate knowledge lost on that axis)" }
-  - { id: 0x0296, name: aocs.gyro_bias_injected, subsystem: aocs, units: 'deg/s', description: "Magnitude of the injected gyro-bias fault (instructor visibility; 0 in a healthy spacecraft)" }
+  - { id: 0x0296, name: aocs.gyro_bias_injected, subsystem: aocs, units: 'deg/s', description: "Magnitude of the injected gyro-bias fault (instructor visibility; 0 in a healthy spacecraft)", visibility: instructor }  # magnitude of the INJECTED gyro-bias fault
   - { id: 0x0297, name: aocs.commanded_mode, subsystem: aocs, description: "Operational mode last commanded from ground. Every transient and every automatic demotion resolves its return path against this" }
   - { id: 0x0298, name: aocs.mode_demoted, subsystem: aocs, description: "1 = the spacecraft is NOT in its commanded mode (transient or automatic demotion in progress)" }
   - { id: 0x0299, name: aocs.fine_degraded, subsystem: aocs, description: "1 = FINE_POINT is running on a degraded 3-wheel set (permitted per R3, relaxed jitter/deadband spec)" }
@@ -309,7 +309,7 @@ parameters:
   - { id: 0x0312, name: obdh.hktm_buf_fill, subsystem: obdh, units: "%", description: "S15 store 1 (HK_Store) fill — same value as TM(15,14) for store 1" }
   - { id: 0x0313, name: obdh.event_buf_fill, subsystem: obdh, units: "%", description: "S15 store 2 (Event_Store) fill — same value as TM(15,14) for store 2" }
   - { id: 0x0314, name: obdh.alarm_buf_fill, subsystem: obdh, units: "%", description: "S15 store 4 (Alarm_Store) fill — same value as TM(15,14) for store 4" }
-  - { id: 0x0316, name: obdh.last_reboot_cause, subsystem: obdh, description: "Last reboot cause (0=none,1=watchdog,2=memory,3=switchover,4=commanded)" , on_demand: true }
+  - { id: 0x0316, name: obdh.last_reboot_cause, subsystem: obdh, description: "Last reboot cause (0=none,1=commanded,2=watchdog,3=memory,4=switchover)" , on_demand: true }
   - { id: 0x0317, name: obdh.boot_count_a, subsystem: obdh, description: Total boot count for OBC-A , on_demand: true }
   - { id: 0x0318, name: obdh.boot_count_b, subsystem: obdh, description: Total boot count for OBC-B , on_demand: true }
 
@@ -390,27 +390,27 @@ parameters:
   - { id: 0x0B13, name: prop.total_on_time, subsystem: prop, units: s, description: "Cumulative thruster on-time" }
   - { id: 0x0B14, name: prop.abort_reason, subsystem: prop, description: "Last abort: 0=none, 1=att_err, 2=low_P, 3=overtemp, 4=low_SoC/shed, 5=eclipse, 6=ground, 7=timeout, 8=valve" }
   - { id: 0x0B15, name: prop.arm_inhibit_mask, subsystem: prop, description: "Bitmask of interlocks blocking arm: b0 catbed, b1 tank P, b2 propellant, b3 AOCS mode, b4 att err, b5 SoC, b6 phase, b7 eclipse, b8 valves, b9 inhibit latched, b10 no burn loaded" }
-  - { id: 0x0B16, name: prop.leak_rate, subsystem: prop, units: mg/s, description: "Propellant leak rate (0 nominal; the 0x0B01 delta monitor sees a leak first)" }
-  - { id: 0x0B17, name: prop.thrust_offset_torque, subsystem: prop, units: uNm, description: "Thrust-misalignment disturbance torque fed to AOCS (1650 uNm at BOL thrust)", on_demand: true }
+  - { id: 0x0B16, name: prop.leak_rate, subsystem: prop, units: mg/s, description: "Propellant leak rate (0 nominal; the 0x0B01 delta monitor sees a leak first)", visibility: instructor }  # set only by the leak injection; real signal is the 0x0B01 pressure trend
+  - { id: 0x0B17, name: prop.thrust_offset_torque, subsystem: prop, units: uNm, description: "Thrust-misalignment disturbance torque fed to AOCS (1650 uNm at BOL thrust)", on_demand: true, visibility: instructor }  # model coupling channel (torque fed to the AOCS model)
   - { id: 0x0B18, name: prop.sc_mass, subsystem: prop, units: kg, description: "Spacecraft mass m_dry + m_prop (12.40 BOL -> 12.00 dry)" }
-  - { id: 0x0B19, name: prop.orbit_epoch_version, subsystem: prop, description: "Orbit element-set version — increments per applied burn (planner/MCS cache key)" }
-  - { id: 0x0B1A, name: prop.sma_km, subsystem: prop, units: km, description: "Semi-major axis from the active (post-burn) element set" }
+  - { id: 0x0B19, name: prop.orbit_epoch_version, subsystem: prop, description: "Orbit element-set version — increments per applied burn (planner/MCS cache key)", visibility: instructor }  # counter on the simulator's orbit propagator object
+  - { id: 0x0B1A, name: prop.sma_km, subsystem: prop, units: km, description: "Semi-major axis from the active (post-burn) element set", visibility: ground_derived }  # semi-major axis - the archetypal ground orbit-determination product
   - { id: 0x0B1B, name: prop.power_draw, subsystem: prop, units: W, description: "Live propulsion power draw (valves while armed/firing + catbed heater) — the EPS prop line bills this", on_demand: true }
 
   # ===== TTC =====
   - { id: 0x0500, name: ttc.mode, subsystem: ttc }
   - { id: 0x0501, name: ttc.link_status, subsystem: ttc }
-  - { id: 0x0502, name: ttc.rssi, subsystem: ttc, units: dBm }
-  - { id: 0x0503, name: ttc.link_margin, subsystem: ttc, units: dB }
+  - { id: 0x0502, name: ttc.rssi, subsystem: ttc, units: dBm, visibility: ground_derived }  # downlink level at the GROUND antenna (an uplink RSSI would be real)
+  - { id: 0x0503, name: ttc.link_margin, subsystem: ttc, units: dB, visibility: ground_derived }  # downlink margin against a ground link budget
   # ACTIVE information bit rate of the tier now on air. Under the three-rung
   # ladder (subsystems/ttc.yaml tm_rate_tiers) this is 1000 / 16000 / 128000
   # and nothing else; anything in between means a corrupt decode.
   - { id: 0x0506, name: ttc.tm_data_rate, subsystem: ttc, units: bps, description: "Active TM information rate (SAFE 1000 / LOW 16000 / HIGH 128000)" }
   - { id: 0x0507, name: ttc.xpdr_temp, subsystem: ttc, units: C }
   - { id: 0x0508, name: ttc.ranging_status, subsystem: ttc, description: "Ranging active (0=no, 1=yes)" }
-  - { id: 0x0509, name: ttc.range_km, subsystem: ttc, units: km }
-  - { id: 0x050A, name: ttc.contact_elevation, subsystem: ttc, units: deg }
-  - { id: 0x050C, name: ttc.ber, subsystem: ttc, description: "Bit error rate (log10 scale, e.g. -6 = 1e-6)" }
+  - { id: 0x0509, name: ttc.range_km, subsystem: ttc, units: km, visibility: ground_derived }  # slant range - a ground ranging / OD product
+  - { id: 0x050A, name: ttc.contact_elevation, subsystem: ttc, units: deg, visibility: ground_derived }  # elevation above a ground station - ground geometry
+  - { id: 0x050C, name: ttc.ber, subsystem: ttc, description: "Bit error rate (log10 scale, e.g. -6 = 1e-6)", visibility: ground_derived }  # bit error rate measured by the GROUND demodulator
   - { id: 0x050D, name: ttc.tx_fwd_power, subsystem: ttc, units: dBm, description: Transmit forward power }
   - { id: 0x050F, name: ttc.pa_temp, subsystem: ttc, units: C, description: Power amplifier temperature }
   - { id: 0x0510, name: ttc.carrier_lock, subsystem: ttc, description: "Carrier lock (0=no, 1=yes)" }
@@ -418,12 +418,12 @@ parameters:
   - { id: 0x0512, name: ttc.frame_sync, subsystem: ttc, description: "Frame sync (0=no, 1=yes)" }
   - { id: 0x0513, name: ttc.cmd_rx_count, subsystem: ttc, description: Total received command counter }
   - { id: 0x0516, name: ttc.pa_on, subsystem: ttc, description: "PA status (0=off, 1=on)" }
-  - { id: 0x0519, name: ttc.eb_n0, subsystem: ttc, units: dB, description: Energy per bit to noise density }
+  - { id: 0x0519, name: ttc.eb_n0, subsystem: ttc, units: dB, description: Energy per bit to noise density, visibility: ground_derived }  # Eb/N0 at the ground receiver, using the ground station G/T
 
   # TTC Phase 4: Flight hardware realism
-  - { id: 0x051A, name: ttc.agc_level, subsystem: ttc, units: dB, description: Automatic gain control level }
+  - { id: 0x051A, name: ttc.agc_level, subsystem: ttc, units: dB, description: Automatic gain control level, visibility: ground_derived }  # AGC of the ground receiver tracking the downlink
   - { id: 0x051B, name: ttc.doppler_hz, subsystem: ttc, units: Hz, description: Doppler shift on downlink }
-  - { id: 0x051C, name: ttc.range_rate, subsystem: ttc, units: m/s, description: Range rate to ground station }
+  - { id: 0x051C, name: ttc.range_rate, subsystem: ttc, units: m/s, description: Range rate to ground station, visibility: ground_derived }  # range rate - a ground Doppler/ranging product
   - { id: 0x051D, name: ttc.cmd_auth_status, subsystem: ttc, description: "Command authentication (0=disabled, 1=enabled, 2=locked)" }
   - { id: 0x051E, name: ttc.total_bytes_tx, subsystem: ttc, units: B, description: Total bytes transmitted this pass }
   - { id: 0x051F, name: ttc.total_bytes_rx, subsystem: ttc, units: B, description: Total bytes received this pass }
@@ -448,8 +448,8 @@ parameters:
   - { id: 0x053A, name: ttc.tm_tier_cmd, subsystem: ttc, description: "COMMANDED TM rate tier index (TTC_SET_DATA_RATE, S8 func 65). Differs from 0x0539 whenever a gate demotes the active tier", on_demand: true }
   - { id: 0x053B, name: ttc.tm_symbol_rate, subsystem: ttc, units: Bd, description: "Symbol rate now on air = active bit rate / bits-per-symbol. 16 kBd at LOW (BPSK), 64 kBd at HIGH (QPSK) — the tier step is visible on the radio", on_demand: true }
   - { id: 0x053C, name: ttc.downlink_mode, subsystem: ttc, description: "DOWNLINK / payload-dump mode (TTC_SET_DOWNLINK_MODE, S8 func 79). 0=off, 1=on. This is the mode gate on the HIGH tier", on_demand: true }
-  - { id: 0x0523, name: ttc.active_gs, subsystem: ttc, description: "Active ground station: 1-based index into orbit.yaml ground_stations, 0 = out of contact", on_demand: true }
-  - { id: 0x0524, name: ttc.gs_equipment_status, subsystem: ttc, description: "GS equipment health bitmask, SET bit = healthy: bit0 antenna+tracking, bit1 LNA, bit2 uplink HPA, bit3 reference oscillator+feed. 15 = all healthy", on_demand: true }
+  - { id: 0x0523, name: ttc.active_gs, subsystem: ttc, description: "Active ground station: 1-based index into orbit.yaml ground_stations, 0 = out of contact", on_demand: true, visibility: ground_derived }  # which ground station is tracking - ground scheduling knowledge
+  - { id: 0x0524, name: ttc.gs_equipment_status, subsystem: ttc, description: "GS equipment health bitmask, SET bit = healthy: bit0 antenna+tracking, bit1 LNA, bit2 uplink HPA, bit3 reference oscillator+feed. 15 = all healthy", on_demand: true, visibility: instructor }  # GROUND STATION equipment health, from injected ground failures
 
   # ── The S-band downlink gate (2026-08b, finding T-a) ──
   # 0x0525 is THE parameter that says whether the prime transmitter is
@@ -473,8 +473,8 @@ parameters:
   # It carries HK SID 11 and nothing else, and it survives the S-band PA, the
   # ttc_tx line, the transponder and the deployable patch all being dead.
   - { id: 0x0526, name: ttc.beacon_tx_on, subsystem: ttc, description: "UHF beacon transmitter commanded on (TTC_BEACON_TX_ON/OFF, S8 funcs 97/98). 0=off, 1=on", on_demand: true }
-  - { id: 0x0527, name: ttc.beacon_active, subsystem: ttc, description: "UHF beacon actually radiating to a station now (commanded on AND in contact AND its link closes). Independent of ttc.tx_active by construction — that independence is the reason the beacon is a second box", on_demand: true }
-  - { id: 0x0528, name: ttc.beacon_link_margin, subsystem: ttc, units: dB, description: "UHF beacon link margin against its OWN budget: 437.5 MHz, 1 W into a 0 dBi dipole, 1 kbps, conv+RS, to a -8 dB/K Yagi station. Typically ~27 dB — compare with the S-band LOW rung's ~46 dB and read off where the difference comes from", on_demand: true }
+  - { id: 0x0527, name: ttc.beacon_active, subsystem: ttc, description: "UHF beacon actually radiating to a station now (commanded on AND in contact AND its link closes). Independent of ttc.tx_active by construction — that independence is the reason the beacon is a second box", on_demand: true, visibility: ground_derived }  # whether the beacon's link CLOSES at a ground station
+  - { id: 0x0528, name: ttc.beacon_link_margin, subsystem: ttc, units: dB, description: "UHF beacon link margin against its OWN budget: 437.5 MHz, 1 W into a 0 dBi dipole, 1 kbps, conv+RS, to a -8 dB/K Yagi station. Typically ~27 dB — compare with the S-band LOW rung's ~46 dB and read off where the difference comes from", on_demand: true, visibility: ground_derived }  # beacon margin against a ground station budget
   - { id: 0x0529, name: ttc.beacon_dl_freq, subsystem: ttc, units: MHz, description: "UHF beacon downlink frequency (435-438 MHz amateur-satellite segment; 437.5 MHz as flown)", on_demand: true }
   - { id: 0x052A, name: ttc.beacon_tx_power, subsystem: ttc, units: W, description: "UHF beacon RF output (1.0 W = 30 dBm, EnduroSat UHF Type II typical). 0 W when the beacon transmitter is commanded off", on_demand: true }
 
@@ -490,25 +490,25 @@ parameters:
   - { id: 0x060A, name: payload.mem_total_mb, subsystem: payload, units: MB, description: Total payload memory }
   - { id: 0x060B, name: payload.mem_used_mb, subsystem: payload, units: MB, description: Used payload memory }
   - { id: 0x060C, name: payload.last_scene_id, subsystem: payload, description: Last captured scene ID }
-  - { id: 0x060D, name: payload.last_scene_quality, subsystem: payload, units: "%", description: Quality metric of last image }
+  - { id: 0x060D, name: payload.last_scene_quality, subsystem: payload, units: "%", description: Quality metric of last image, visibility: instructor }  # image quality drawn from injected fault flags; a Level-1 ground verdict
   - { id: 0x0610, name: payload.fpa_ready, subsystem: payload, description: "FPA temperature in range (0=no, 1=yes)" }
   - { id: 0x0612, name: payload.mem_segments_bad, subsystem: payload, description: Number of bad memory segments }
   - { id: 0x0613, name: payload.duty_cycle_pct, subsystem: payload, units: "%", description: Imaging duty cycle, on_demand: true }
   # Payload Phase 4: Flight hardware realism
   - { id: 0x0614, name: payload.compression_ratio, subsystem: payload, description: Image compression ratio }
   - { id: 0x0615, name: payload.cal_lamp_on, subsystem: payload, description: "Calibration lamp status (0=off, 1=on)" }
-  - { id: 0x0616, name: payload.snr, subsystem: payload, units: dB, description: Signal-to-noise ratio }
+  - { id: 0x0616, name: payload.snr, subsystem: payload, units: dB, description: Signal-to-noise ratio, visibility: instructor }  # modelled scene SNR from truth pointing error + injected degradation
   - { id: 0x0617, name: payload.detector_temp, subsystem: payload, units: C, description: CCD/CMOS detector temperature }
   - { id: 0x0618, name: payload.integration_time, subsystem: payload, units: ms, description: Detector integration time, on_demand: true }
   - { id: 0x0619, name: payload.swath_width_km, subsystem: payload, units: km, description: "Ground swath width (~273 km at the 513 km mean altitude; 2*h*tan(FOV/2), FOV 29.856 deg from the payload.yaml optics)", on_demand: true }
   # Payload Multispectral band SNR
-  - { id: 0x0620, name: payload.band_blue_snr, subsystem: payload, units: dB, description: "Blue band (443 nm) SNR" , on_demand: true }
-  - { id: 0x0621, name: payload.band_green_snr, subsystem: payload, units: dB, description: "Green band (560 nm) SNR" , on_demand: true }
-  - { id: 0x0622, name: payload.band_red_snr, subsystem: payload, units: dB, description: "Red band (665 nm) SNR", on_demand: true }
-  - { id: 0x0623, name: payload.band_nir_snr, subsystem: payload, units: dB, description: "NIR band (865 nm) SNR", on_demand: true }
+  - { id: 0x0620, name: payload.band_blue_snr, subsystem: payload, units: dB, description: "Blue band (443 nm) SNR" , on_demand: true, visibility: instructor }  # as 0x0616
+  - { id: 0x0621, name: payload.band_green_snr, subsystem: payload, units: dB, description: "Green band (560 nm) SNR" , on_demand: true, visibility: instructor }  # as 0x0616
+  - { id: 0x0622, name: payload.band_red_snr, subsystem: payload, units: dB, description: "Red band (665 nm) SNR", on_demand: true, visibility: instructor }  # as 0x0616
+  - { id: 0x0623, name: payload.band_nir_snr, subsystem: payload, units: dB, description: "NIR band (865 nm) SNR", on_demand: true, visibility: instructor }  # as 0x0616
   - { id: 0x0624, name: payload.active_bands, subsystem: payload, description: Number of active spectral bands, on_demand: true }
   - { id: 0x0625, name: payload.band_enable_mask, subsystem: payload, description: "Spectral band enable bitmask (bits 0-3: blue/green/red/nir)", on_demand: true }
-  - { id: 0x0626, name: payload.att_quality_factor, subsystem: payload, description: Attitude-dependent image quality factor, on_demand: true }
+  - { id: 0x0626, name: payload.att_quality_factor, subsystem: payload, description: Attitude-dependent image quality factor, on_demand: true, visibility: instructor }  # dimensionless model coefficient that scales the modelled SNR
   - { id: 0x0627, name: payload.att_error_deg, subsystem: payload, units: deg, description: Attitude error used for quality calculation, on_demand: true }
   - { id: 0x0628, name: payload.gsd_m, subsystem: payload, units: m, description: "Ground sample distance (33.4 m at 513 km = h * pitch / focal length; swath / 8192 px)", on_demand: true }
   - { id: 0x0629, name: payload.scene_entropy, subsystem: payload, description: Scene entropy estimate for compression, on_demand: true }
