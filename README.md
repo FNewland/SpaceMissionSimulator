@@ -1,3 +1,9 @@
+> **This project has moved.** The SMO simulator suite is now part of **C2O — from Concept to Orbit**, together with
+> the SpaceCDF concurrent design facility: **https://github.com/FNewland/C2O** (folder `sim/`).
+> Development continues there, with full history. This repository is no longer updated.
+>
+> *Ce projet a déménagé : la suite SMO fait désormais partie de C2O — du Concept à l'Orbite.*
+
 # EO-Sat-1 Space Mission Operations Suite
 
 A spacecraft simulator, mission control system and mission planner for teaching
